@@ -195,12 +195,12 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
 			}
 			f.notePathChange(sub.FullPath, tsNs, true)
-			// hard-linked chunks are owned by the shared inode record; the
-			// origin's own events decide their deletion. A directory entry
-			// can still carry chunks of its own — an S3 child promotes an
-			// existing file to a directory without dropping them — so the
+			// chunks of a hard-linked child belong to the shared inode
+			// record; free them only once that record is gone. A directory
+			// entry can still carry chunks of its own — an S3 child promotes
+			// an existing file to a directory without dropping them — so the
 			// entry's chunks are keyed to its own path whatever it is.
-			if deleteChunks && len(sub.HardLinkId) == 0 && len(sub.GetChunks()) > 0 {
+			if deleteChunks && len(sub.GetChunks()) > 0 && (len(sub.HardLinkId) == 0 || f.hardLinkIsOrphaned(ctx, sub.HardLinkId)) {
 				sweep.add(sub.FullPath, sub.GetChunks())
 				if sweep.count >= folderSweepChunkBatch {
 					sweep.flush(ctx, f)

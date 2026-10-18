@@ -878,3 +878,109 @@ func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
 		t.Fatal("stale create resurrected a child under a directory the origin deleted")
 	}
 }
+
+// A swept hard link drops the shared inode record with the entry. When the
+// record is gone the sweep must free the chunks no sibling link can reach.
+func TestReplayDirectoryDeleteFreesOrphanedHardLinkChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.FilerConf = NewFilerConf()
+	f.FileIdDeletionQueue = util.NewUnboundedQueue()
+	ctx := context.Background()
+
+	hardLinkId := NewHardLinkId()
+	inode := &Entry{
+		FullPath:        "/d/a.txt",
+		Attr:            Attr{Mtime: time.Now()},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 1,
+		Chunks:          []*filer_pb.FileChunk{{FileId: "3,01637037d6"}},
+	}
+	blob, err := inode.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.KvPut(ctx, hardLinkId, blob); err != nil {
+		t.Fatal(err)
+	}
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/d/a.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 1})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: true,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.KvGet(ctx, hardLinkId); !errors.Is(err, ErrKvNotFound) {
+		t.Fatalf("hard link record should be gone, got %v", err)
+	}
+	if got := f.pendingDeletionCount(); got != 1 {
+		t.Fatalf("pending deletions = %d, want the orphaned shared chunks queued", got)
+	}
+}
+
+// A sibling link outside the swept tree keeps the inode record, so the shared
+// chunks stay owned and must not be deleted.
+func TestReplayDirectoryDeleteKeepsSharedHardLinkChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.FilerConf = NewFilerConf()
+	f.FileIdDeletionQueue = util.NewUnboundedQueue()
+	ctx := context.Background()
+
+	hardLinkId := NewHardLinkId()
+	inode := &Entry{
+		FullPath:        "/d/a.txt",
+		Attr:            Attr{Mtime: time.Now()},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 2,
+		Chunks:          []*filer_pb.FileChunk{{FileId: "3,01637037d6"}},
+	}
+	blob, err := inode.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.KvPut(ctx, hardLinkId, blob); err != nil {
+		t.Fatal(err)
+	}
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/d/a.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 2})
+	put(&Entry{FullPath: "/keep", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/keep/b.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 2})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: true,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.KvGet(ctx, hardLinkId); err != nil {
+		t.Fatalf("surviving link must keep the inode record: %v", err)
+	}
+	if got := f.pendingDeletionCount(); got != 0 {
+		t.Fatalf("pending deletions = %d, want 0 while a sibling link owns the chunks", got)
+	}
+}
