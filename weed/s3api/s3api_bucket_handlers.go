@@ -893,9 +893,8 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 // buildResourceARN builds a resource ARN from bucket and object
 // Used by the policy engine wrapper
 func buildResourceARN(bucket, object string) string {
-	// A bucket that is already an ARN (IAM management actions authorize
-	// against arn:aws:iam::...) passes through untouched; no S3 bucket name
-	// can start with "arn:" (colon is not a valid bucket character).
+	// An already-ARN resource (IAM management actions authorize against
+	// arn:aws:iam::...) passes through; no bucket name can contain ':'.
 	if strings.HasPrefix(bucket, "arn:") {
 		return bucket
 	}

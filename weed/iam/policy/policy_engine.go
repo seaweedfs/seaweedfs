@@ -653,7 +653,7 @@ func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, 
 // matchesResources checks if any resource in the list matches the requested resource
 func (e *PolicyEngine) matchesResources(resources []string, requestedResource string, evalCtx *EvaluationContext) bool {
 	for _, resource := range resources {
-		if awsIAMMatchResource(resource, requestedResource, evalCtx) {
+		if awsIAMMatch(resource, requestedResource, evalCtx) {
 			return true
 		}
 	}
@@ -1240,6 +1240,18 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 		return true // Universal wildcard
 	}
 
+	// IAM identity ARNs match case-sensitively: identity lookup is
+	// case-sensitive, so a case-variant names a different identity.
+	if strings.HasPrefix(value, "arn:aws:iam::") {
+		if expandedPattern == value {
+			return true
+		}
+		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+			return wildcard.MatchesWildcard(expandedPattern, value)
+		}
+		return false
+	}
+
 	// Step 3: Case-insensitive exact match
 	if strings.EqualFold(expandedPattern, value) {
 		return true
@@ -1251,29 +1263,6 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 	}
 
 	return false
-}
-
-// awsIAMMatchResource matches a policy resource pattern against the requested
-// resource ARN. IAM identity ARNs name principals whose lookup is
-// case-sensitive (CreateUser, findIdentityByName), so they are matched
-// case-sensitively like in AWS — otherwise a grant for
-// arn:aws:iam:::user/team-parent would also authorize TEAM-PARENT, a distinct
-// identity. Other resources keep the engine's case-insensitive matching.
-func awsIAMMatchResource(pattern, value string, evalCtx *EvaluationContext) bool {
-	if strings.HasPrefix(value, "arn:aws:iam::") {
-		expandedPattern := expandPolicyVariables(pattern, evalCtx)
-		if expandedPattern == "*" {
-			return true
-		}
-		if expandedPattern == value {
-			return true
-		}
-		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-			return wildcard.MatchesWildcard(expandedPattern, value)
-		}
-		return false
-	}
-	return awsIAMMatch(pattern, value, evalCtx)
 }
 
 // expandPolicyVariables substitutes AWS policy variables in the pattern

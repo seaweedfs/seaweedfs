@@ -2525,11 +2525,10 @@ func iamRequiresAdminForOthers(action string) bool {
 	return iamSelfServiceActions[action]
 }
 
-// iamSelfTargetActions are authorized against the target identity's ARN
-// instead of the wildcard, so a policy can scope the grant to specific
-// targets (arn:aws:iam:::user/team-parent) rather than "any identity or
-// none". The target parameter is action-specific (UserName for most,
-// ParentUser for CreateServiceAccount).
+// iamSelfTargetActions are authorized against the target identity's ARN so a
+// policy can scope the grant (arn:aws:iam:::user/team-parent). The target
+// parameter is action-specific (UserName for most, ParentUser for
+// CreateServiceAccount).
 var iamSelfTargetActions = map[string]bool{
 	"CreateServiceAccount": true,
 }
@@ -2572,14 +2571,9 @@ func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identit
 	if identity.isAdmin() {
 		return s3err.ErrNone
 	}
-	// Self-target actions are evaluated against the target identity's ARN:
-	// a grant scoped to arn:aws:iam:::user/team-parent allows targeting that
-	// identity (and no other), while a wildcard resource grant ("*" or
-	// arn:aws:iam:::*) keeps the operator's deliberate "any target" choice.
-	// The ARN keeps the account segment empty on purpose: that is the shape
-	// of the wildcard this authorization used historically, so existing
-	// arn:aws:iam:::* grants keep matching (a glob segment does not span a
-	// filled account).
+	// Self-target actions authorize against the target identity's ARN. The
+	// account segment stays empty so existing arn:aws:iam:::* wildcard
+	// grants keep matching.
 	resource := "arn:aws:iam:::*"
 	if iamRequiresSelfTarget(action) && targetUserName != "" {
 		resource = fmt.Sprintf("arn:aws:iam:::user/%s", targetUserName)

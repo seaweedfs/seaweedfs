@@ -221,8 +221,7 @@ func setupRoutingTestServerWithCreator(t *testing.T) *S3ApiServer {
 	const creatorAK, creatorSK = "creator-ak", "creator-sk"
 	const keymakerAK, keymakerSK = "keymaker-ak", "keymaker-sk"
 
-	// Policy-bearing identities route through the IAM integration; wire one
-	// with a Deny default, as a real deployment configures it.
+	// Policy-bearing identities route through the IAM integration.
 	mgr := integration.NewIAMManager()
 	require.NoError(t, mgr.Initialize(&integration.IAMConfig{
 		STS: &sts.STSConfig{
@@ -237,16 +236,10 @@ func setupRoutingTestServerWithCreator(t *testing.T) *S3ApiServer {
 	}, func() string { return "localhost:8888" }))
 	s3a.iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
 
-	// Scoped to the parent identity's ARN in the account-less shape this
-	// authorization used historically, so arn:aws:iam:::* wildcard grants
-	// keep matching.
 	const zonePolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["arn:aws:iam:::user/team-parent"]}]}`
 	require.NoError(t, s3a.iam.PutPolicy("CreateSvcAcctZonePolicy", zonePolicy))
-	// Store and memory must agree: SigV4 authentication reads the in-memory
-	// maps, the CreateServiceAccount handler re-reads the credential store,
-	// and a successful creation reloads memory from the store — anything
-	// seeded only in memory (identities, the policy) would vanish after the
-	// first request.
+	// Store and memory must agree: SigV4 auth reads memory, the handler
+	// re-reads the store, and a successful creation reloads memory from it.
 	idents := []*iam_pb.Identity{
 		{Name: "creator", Actions: []string{"iam:CreateServiceAccount"},
 			Credentials: []*iam_pb.Credential{{AccessKey: creatorAK, SecretKey: creatorSK}}},

@@ -15,11 +15,10 @@ const (
 	dataPlanePolicy        = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`
 	iamAdminPolicy         = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:*","Resource":"*"}]}`
 	iamCreateSvcAcctPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["*"]}]}`
-	// The wildcard ARN shape this authorization used pre-#11218: it must keep
-	// matching any parent, so existing grants survive the change.
+	// The wildcard ARN shape this authorization always used; it must keep
+	// matching any parent so existing grants survive.
 	iamCreateSvcAcctWildcardArnPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["arn:aws:iam:::*"]}]}`
-	// Scoped to one parent identity: the keymaker use case — mint service
-	// accounts for the shared zone parent, and for nothing else.
+	// Scoped to one parent identity.
 	iamCreateSvcAcctZonePolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["arn:aws:iam:::user/team-parent"]}]}`
 )
 
@@ -101,12 +100,10 @@ func TestAuthorizeIamActionDeniesAnonymous(t *testing.T) {
 		iam.AuthorizeIamAction(iamPostRequest(""), anonymous, "CreateUser", "victim"))
 }
 
-// CreateServiceAccount takes its target from the ParentUser parameter, not
-// UserName. A non-admin holding iam:CreateServiceAccount targets the
-// identities its policy resource covers: a wildcard resource is the
-// operator's explicit "any target" choice (as in AWS), a scoped resource
-// confines the grant to the named parent identity — e.g. a keymaker role
-// that may mint service accounts only for the shared zone parent.
+// CreateServiceAccount takes its target from the ParentUser parameter. A
+// non-admin holding iam:CreateServiceAccount targets the identities its
+// policy resource covers: a wildcard resource allows any target, a scoped
+// resource confines the grant to the named parent identity.
 func TestAuthorizeIamActionCreateServiceAccountScopedByPolicyResource(t *testing.T) {
 	iam := newIamAuthzTestIam(t)
 	require.NoError(t, iam.PutPolicy("CreateSvcAcctPolicy", iamCreateSvcAcctPolicy))
@@ -125,16 +122,14 @@ func TestAuthorizeIamActionCreateServiceAccountScopedByPolicyResource(t *testing
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeIamAction(iamPostRequest(""), dev, "CreateServiceAccount", "admin"))
 
-	// The historical wildcard ARN shape (arn:aws:iam:::*) keeps matching any
-	// parent — existing grants survive the switch to per-target resources.
+	// Wildcard ARN: any target.
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeIamAction(iamPostRequest(""), wildcardArn, "CreateServiceAccount", "team-parent"))
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeIamAction(iamPostRequest(""), wildcardArn, "CreateServiceAccount", "admin"))
 
-	// Scoped resource: the named parent identity, and no other. Resource
-	// matching is case-sensitive (as in AWS): a case variant is a different
-	// identity and must not match the grant.
+	// Scoped resource: the named parent only. IAM resource matching is
+	// case-sensitive, so a case variant is a different identity.
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeIamAction(iamPostRequest(""), keymaker, "CreateServiceAccount", "team-parent"))
 	assert.Equal(t, s3err.ErrAccessDenied,
