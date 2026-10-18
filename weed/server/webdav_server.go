@@ -205,7 +205,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 	}
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := util.FullPath(fullDirPath).DirAndName()
+		dir, name := util.NormalizePath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
