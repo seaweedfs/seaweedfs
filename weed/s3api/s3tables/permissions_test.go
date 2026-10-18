@@ -413,10 +413,16 @@ func TestCheckPermissionLegacyPolicyPrincipalShapes(t *testing.T) {
 	principal := sts.ComputeParentUser("alice-sub", "corp-idp")
 	other := "other-owner"
 
-	deny := `{"Statement":[{"Effect":"Deny","Principal":{"AWS":"alice-sub"},"Action":"s3tables:GetTable"}]}`
-	if CheckPermissionWithContext("GetTable", principal, other, deny, "arn", ctx) {
-		t.Error("legacy Deny with AWS-map principal must still match the scoped caller")
+	// The caller owns the resource, so only a matched Deny can veto it.
+	for _, policy := range []string{
+		`{"Statement":[{"Effect":"Deny","Principal":{"AWS":"alice-sub"},"Action":"s3tables:GetTable"}]}`,
+		`{"Statement":[{"Effect":"Deny","Principal":["alice-sub"],"Action":"s3tables:GetTable"}]}`,
+	} {
+		if CheckPermissionWithContext("GetTable", principal, principal, policy, "arn", ctx) {
+			t.Errorf("legacy Deny must veto the scoped caller's owner grant: %s", policy)
+		}
 	}
+
 	allow := `{"Statement":[{"Effect":"Allow","Principal":["alice-sub"],"Action":"s3tables:GetTable"}]}`
 	if !CheckPermissionWithContext("GetTable", principal, other, allow, "arn", ctx) {
 		t.Error("legacy Allow with array principal must still match the scoped caller")
