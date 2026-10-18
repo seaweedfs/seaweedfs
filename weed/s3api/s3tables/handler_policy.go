@@ -92,10 +92,11 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, "", bucketARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table bucket policy")
 		return NewAuthError("PutTableBucketPolicy", principal, "not authorized to put table bucket policy")
@@ -171,10 +172,11 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket policy")
 		return NewAuthError("GetTableBucketPolicy", principal, "not authorized to get table bucket policy")
@@ -248,10 +250,11 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table bucket policy")
 		return NewAuthError("DeleteTableBucketPolicy", principal, "not authorized to delete table bucket policy")
@@ -348,12 +351,13 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table policy")
 		return NewAuthError("PutTablePolicy", principal, "not authorized to put table policy")
@@ -457,12 +461,13 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table policy")
 		return NewAuthError("GetTablePolicy", principal, "not authorized to get table policy")
@@ -548,12 +553,13 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table policy")
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
@@ -646,14 +652,15 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("TagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			TableBucketTags: bucketTags,
-			RequestTags:     req.Tags,
-			TagKeys:         requestTagKeys,
-			ResourceTags:    existingTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			TableBucketTags:  bucketTags,
+			RequestTags:      req.Tags,
+			TagKeys:          requestTagKeys,
+			ResourceTags:     existingTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("TagResource", principal, "not authorized to tag resource")
 		}
@@ -767,12 +774,13 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("ListTagsForResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			TableBucketTags: bucketTags,
-			ResourceTags:    tags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("ListTagsForResource", principal, "not authorized to list tags for resource")
 		}
@@ -875,13 +883,14 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("UntagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			TableBucketTags: bucketTags,
-			TagKeys:         req.TagKeys,
-			ResourceTags:    tags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			TableBucketTags:  bucketTags,
+			TagKeys:          req.TagKeys,
+			ResourceTags:     tags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("UntagResource", principal, "not authorized to untag resource")
 		}

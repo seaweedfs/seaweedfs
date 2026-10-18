@@ -94,6 +94,10 @@ type PolicyContext struct {
 	// account IDs. A bare subject is only resolvable when exactly one issuer
 	// is configured; more than one leaves it ambiguous, so it must not match.
 	TrustedIssuers []string
+	// IsLocalAccountID reports whether an account ID belongs to a configured
+	// local identity. Such owner strings were never OIDC subjects and must not
+	// be re-anchored; a nil predicate means no string can be proven local.
+	IsLocalAccountID func(string) bool
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -306,7 +310,15 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 // subject is ambiguous — matching it under the caller's own issuer would let
 // a same-sub identity from any configured issuer claim it.
 func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
-	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 || ctx.IsLocalAccountID == nil {
+		return false
+	}
+	// "admin" and other configured account ids name local identities, not OIDC
+	// subjects; ARN-shaped values name IAM principals; and an already-scoped
+	// hash is not a legacy subject either. Without these exclusions any caller
+	// whose sub equals a stored owner string — including the reserved admin
+	// account or a victim's scoped id — could be re-anchored onto it.
+	if ctx.IsLocalAccountID(legacy) || sts.IsParentUserID(legacy) || strings.HasPrefix(legacy, "arn:") {
 		return false
 	}
 	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal

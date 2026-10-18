@@ -290,3 +290,32 @@ func TestDeclaredAccountOutranksInlineIdentityAccount(t *testing.T) {
 	assert.Equal(t, "100000000001", iam.GetAccountIdByEmail("alice@example.com"), "the declared email must stay indexed")
 	assert.Empty(t, iam.GetAccountIdByEmail("wrong@example.com"), "an inline block must not claim an email for a declared account")
 }
+
+// Stored owner strings that name a configured identity or account were never
+// OIDC subjects; recognizing them keeps issuer re-anchoring away from local
+// principals.
+func TestIsConfiguredAccountID(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "identities": [
+    {"name": "alice", "credentials": [{"accessKey": "alice_ak", "secretKey": "alice_sk"}], "actions": ["Read"]},
+    {"name": "bob", "account": {"id": "100000000002"}, "credentials": [{"accessKey": "bob_ak", "secretKey": "bob_sk"}], "actions": ["Read"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	for _, id := range []string{"admin", "anonymous", "alice", "bob", "100000000002"} {
+		assert.True(t, iam.isConfiguredAccountID(id), "%q is a configured local account", id)
+	}
+	for _, id := range []string{"mallory", "alice-sub", "000000000042"} {
+		assert.False(t, iam.isConfiguredAccountID(id), "%q is not a configured local account", id)
+	}
+}
