@@ -950,6 +950,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		return
 	}
 
+	// markerParentWalked tracks whether marker now names a directory whose
+	// subtree this call already walked: after the descent below it is the
+	// parent directory, and seeing its entry again must not re-list it.
+	markerParentWalked := false
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
@@ -961,9 +965,19 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		nextMarker = subDir + "/" + subNextMarker
 		// finished processing this subdirectory
 		marker = subDir
+		markerParentWalked = true
 	}
 	if cursor.isTruncated {
 		return
+	}
+
+	// Ask for the marker's own entry: an exclusive window never delivers the
+	// directory a marker names, and its children sort after the marker key.
+	// Delimited listings keep exclusive windows — a marker equal to a
+	// directory there is the resume position of an already-emitted common
+	// prefix, not a subtree to walk.
+	if marker != "" && delimiter == "" {
+		inclusiveStartFrom = true
 	}
 
 	// now marker is also a direct child of dir
@@ -1023,7 +1037,37 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			if entry.IsDirectory {
 				markerName = strings.TrimSuffix(markerName, s3_constants.VersionsFolder)
 			}
-			if !inclusiveStartFrom && marker != "" && (entry.Name == marker || markerName == marker) {
+			if marker != "" && (entry.Name == marker || markerName == marker) {
+				// The marker excludes only the key it names. A directory under
+				// that name sorts its children after the marker, so a recursive
+				// listing still walks the subtree — from the start. A directory
+				// key object lists as "<marker>/" — a different key that also
+				// sorts after — so it is emitted; a prefix object would repeat
+				// the marker itself and is not. Internal folders keep their
+				// exclusion, .versions dirs fold into the marker key, and a
+				// delimited listing keeps skipping — the same marker resumes an
+				// already-emitted common prefix there.
+				walkableMarkerDir := delimiter == "" && entry.IsDirectory && entry.Name == marker &&
+					!markerParentWalked && !strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) &&
+					entry.Name != s3_constants.MultipartUploadsFolder
+				if !walkableMarkerDir {
+					continue
+				}
+				if entry.IsDirectoryKeyObject() && !entry.IsPrefixObject() {
+					eachEntryFn(dir, entry)
+					if cursor.isTruncated {
+						return
+					}
+				}
+				subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
+				if subErr != nil {
+					err = fmt.Errorf("doListFilerEntries: %w", subErr)
+					return
+				}
+				nextMarker = entry.Name + "/" + subNextMarker
+				if cursor.isTruncated {
+					return
+				}
 				continue
 			}
 
