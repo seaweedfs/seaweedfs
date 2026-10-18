@@ -224,15 +224,19 @@ func (rub *unionBuilder) buildUnionReplica(locations []wdclient.Location, status
 }
 
 func (rub *unionBuilder) readIndexDatabase(db *needle_map.MemDb, server pb.ServerAddress) error {
+	return loadReplicaIndex(db, rub.grpcDialOption, rub.vid, rub.collection, server)
+}
+
+func loadReplicaIndex(db *needle_map.MemDb, grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, server pb.ServerAddress) error {
 	var buf bytes.Buffer
 
-	err := operation.WithVolumeServerClient(true, server, rub.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(true, server, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		copyFileClient, err := volumeServerClient.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
-			VolumeId:                 uint32(rub.vid),
+			VolumeId:                 uint32(vid),
 			Ext:                      ".idx",
 			CompactionRevision:       math.MaxUint32,
 			StopOffset:               math.MaxInt64,
-			Collection:               rub.collection,
+			Collection:               collection,
 			IsEcVolume:               false,
 			IgnoreSourceFileNotFound: false,
 		})
