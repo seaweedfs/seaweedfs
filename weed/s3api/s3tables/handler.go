@@ -57,11 +57,12 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region        string
-	accountID     string
-	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
-	trusted       bool // Trusted local tooling (shell/admin) bypasses authorization
-	iamAuthorizer IAMAuthorizer
+	region          string
+	accountID       string
+	defaultAllow    bool // Whether to allow access by default (for zero-config IAM)
+	trusted         bool // Trusted local tooling (shell/admin) bypasses authorization
+	iamAuthorizer   IAMAuthorizer
+	localAccountIDs func(string) bool
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
@@ -96,6 +97,13 @@ func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
 // console) bypass authorization. HTTP-facing callers must not set it.
 func (h *S3TablesHandler) SetTrusted(trusted bool) {
 	h.trusted = trusted
+}
+
+// SetLocalAccountChecker injects the predicate that recognizes account IDs of
+// configured local identities, so a stored owner that names one is never
+// re-anchored to an OIDC subject.
+func (h *S3TablesHandler) SetLocalAccountChecker(fn func(string) bool) {
+	h.localAccountIDs = fn
 }
 
 // FilerClient interface for filer operations

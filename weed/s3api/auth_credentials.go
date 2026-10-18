@@ -1645,6 +1645,29 @@ func (iam *IdentityAccessManagement) GetAccountIdByEmail(email string) string {
 	return ""
 }
 
+// isConfiguredAccountID reports whether id names a configured local identity
+// or account — the reserved accounts included — i.e. an owner string that was
+// never an OIDC subject.
+func (iam *IdentityAccessManagement) isConfiguredAccountID(id string) bool {
+	if id == "" || id == s3_constants.AccountAdminId || id == s3_constants.AccountAnonymousId {
+		return true
+	}
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	if _, ok := iam.nameToIdentity[id]; ok {
+		return true
+	}
+	if _, ok := iam.accounts[id]; ok {
+		return true
+	}
+	for _, identity := range iam.identities {
+		if identity.Account != nil && identity.Account.Id == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !iam.isEnabled() {
