@@ -973,7 +973,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 
 	// Ask for the marker's own entry: an exclusive window never delivers the
 	// directory a marker names, and its children sort after the marker key.
-	if marker != "" {
+	// Delimited listings keep exclusive windows — a marker equal to a
+	// directory there is the resume position of an already-emitted common
+	// prefix, not a subtree to walk.
+	if marker != "" && delimiter == "" {
 		inclusiveStartFrom = true
 	}
 
@@ -1036,14 +1039,15 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 			if marker != "" && (entry.Name == marker || markerName == marker) {
 				// The marker excludes only the key it names. A directory under
-				// that name sorts its children after the marker, so they must
-				// still be listed — under a delimiter this entry yields the
-				// directory's common prefix, otherwise the directory branch
-				// below walks the subtree from the start. A .versions dir named
-				// by the base key still folds into the marker key and skips, as
-				// does the parent the descent already walked.
-				walkableMarkerDir := entry.IsDirectory && entry.Name == marker && !markerParentWalked &&
-					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
+				// that name sorts its children after the marker, so in a
+				// recursive listing they must still be listed — the directory
+				// branch below walks the subtree from the start. Under a
+				// delimiter the same marker resumes a common prefix already
+				// emitted, so the entry keeps being skipped. A .versions dir
+				// named by the base key still folds into the marker key and
+				// skips, as does the parent the descent already walked.
+				walkableMarkerDir := delimiter == "" && entry.IsDirectory && entry.Name == marker &&
+					!markerParentWalked && !strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
 				if !walkableMarkerDir {
 					continue
 				}
