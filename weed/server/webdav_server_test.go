@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"testing"
 
 	"golang.org/x/net/webdav"
@@ -212,9 +213,12 @@ func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
 // destination is removed: removing it first would delete the source too.
 func TestCopyMoveGuardHandler(t *testing.T) {
 	called := false
-	h := copyMoveGuardHandler{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	})}
+	h := copyMoveGuardHandler{
+		fs: &stubDavFs{present: map[string]bool{"/dir": true, "/dir/sub": true, "/dirs": true, "/dir/other": true, "/anywhere": true}},
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+		}),
+	}
 
 	for _, tc := range []struct{ method, src, dst string }{
 		{"MOVE", "/dir/sub", "/dir"},
@@ -249,6 +253,33 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 		assert.True(t, called, "%s %s -> %s depth=%q", tc.method, tc.src, tc.dst, tc.depth)
 	}
+
+	// an unreadable source must not reach the handler — the destination
+	// would be deleted before the operation fails anyway
+	for _, tc := range []struct{ method, src, dst string }{
+		{"MOVE", "/missing", "/dir"},
+		{"COPY", "/missing", "/dir"},
+	} {
+		called = false
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
+		assert.False(t, called)
+	}
+}
+
+type stubDavFs struct {
+	webdav.FileSystem
+	present map[string]bool
+}
+
+func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
+	if f.present[path.Clean(name)] {
+		return &FileInfo{name: path.Base(name)}, nil
+	}
+	return nil, os.ErrNotExist
 }
 
 // A PUT onto a folder must not delete the folder to make room for the file.
