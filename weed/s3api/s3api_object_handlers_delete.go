@@ -237,6 +237,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, string(s3_constants.ACTION_WRITE), "DeleteObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	var auditLog *s3err.AccessLog
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
@@ -480,6 +485,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
+				continue
+			}
+			if errCode := s3a.recheckTagConditionedPolicyWithLookup(objectKeyPolicyRequest(r, http.MethodDelete, bucket, object.Key, object.VersionId), bucket, object.Key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler"); errCode != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(errCode, object.Key, object.VersionId))
 				continue
 			}
 
