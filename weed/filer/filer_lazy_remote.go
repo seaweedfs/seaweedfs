@@ -261,11 +261,12 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 	return true, nil
 }
 
-// maybeDeleteFromRemoteIfUnchanged deletes the remote object only when it
-// still matches the entry's stamp — the same guard the write-back daemon's
-// processDeleteEvent applies, needed wherever a delete can land long after
-// another writer replaced the object.
-func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Entry) error {
+// deleteSweptEntryRemote frees the remote objects a swept entry still owns,
+// mirroring the write-back daemon's delete guards (processDeleteEvent): the
+// source a pending rename marker still reads goes first — nothing else
+// releases it — then the object at the entry's own key, each only while it
+// is still the object the entry's stamp describes.
+func (f *Filer) deleteSweptEntryRemote(ctx context.Context, entry *Entry) error {
 	if entry == nil || f.RemoteStorage == nil || entry.Remote == nil {
 		return nil
 	}
@@ -273,13 +274,51 @@ func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Ent
 	if err != nil || client == nil {
 		return err
 	}
+	if err := f.releasePendingRenameSource(ctx, client, entry); err != nil {
+		return err
+	}
+	return deleteRemoteFileIfUnchanged(ctx, client, objectLoc, entry.Remote)
+}
+
+// releasePendingRenameSource deletes the object a pending-rename marker on
+// entry still reads: the destination copy never landed, so the source key is
+// the content's only location and dropping the entry would orphan it. The
+// source survives while a remote-only entry occupies its path — that entry's
+// content is the same object. The delete binds to entry's stamp, which is
+// the stamp of the source the marker reads. Mirrors the write-back daemon's
+// releasePendingSource.
+func (f *Filer) releasePendingRenameSource(ctx context.Context, client remote_storage.RemoteStorageClient, entry *Entry) error {
+	src := f.RemoteSourcePath(entry, entry.FullPath)
+	if src == entry.FullPath {
+		return nil
+	}
+	srcEntry, err := f.Store.FindEntry(ctx, src)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("find rename source %s: %w", src, err)
+	}
+	if srcEntry != nil && len(srcEntry.Content) == 0 && srcEntry.IsInRemoteOnly() {
+		glog.V(0).InfofCtx(ctx, "keep remote source %s of pending rename of %s: a remote-only entry holds its path", src, entry.FullPath)
+		return nil
+	}
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(src)
+	if remoteLoc == nil {
+		return nil
+	}
+	return deleteRemoteFileIfUnchanged(ctx, client, MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, src), entry.Remote)
+}
+
+// deleteRemoteFileIfUnchanged deletes the remote object only while it is
+// still the one stamp describes. Backends offering a conditional delete bind
+// the check and the delete into one preconditioned request; the rest fall
+// back to a guarded stat-then-delete.
+func deleteRemoteFileIfUnchanged(ctx context.Context, client remote_storage.RemoteStorageClient, objectLoc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) error {
 	if deleter, ok := client.(remote_storage.RemoteStorageConditionalDeleter); ok {
-		deleted, delErr := deleter.DeleteFileIfUnchanged(objectLoc, entry.Remote)
+		deleted, delErr := deleter.DeleteFileIfUnchanged(objectLoc, stamp)
 		if delErr != nil {
-			return fmt.Errorf("delete remote file %s: %w", entry.FullPath, delErr)
+			return fmt.Errorf("delete remote file %s: %w", remote_storage.FormatLocation(objectLoc), delErr)
 		}
 		if !deleted {
-			glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", entry.FullPath)
+			glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", remote_storage.FormatLocation(objectLoc))
 		}
 		return nil
 	}
@@ -288,14 +327,14 @@ func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Ent
 		if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
 			return nil
 		}
-		return fmt.Errorf("stat remote file %s: %w", entry.FullPath, statErr)
+		return fmt.Errorf("stat remote file %s: %w", remote_storage.FormatLocation(objectLoc), statErr)
 	}
-	if !remote_storage.StillCurrent(entry.Remote, live) {
-		glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", entry.FullPath)
+	if !remote_storage.StillCurrent(stamp, live) {
+		glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", remote_storage.FormatLocation(objectLoc))
 		return nil
 	}
 	if err := client.DeleteFile(objectLoc); err != nil && !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
-		return fmt.Errorf("delete remote file %s: %w", entry.FullPath, err)
+		return fmt.Errorf("delete remote file %s: %w", remote_storage.FormatLocation(objectLoc), err)
 	}
 	return nil
 }

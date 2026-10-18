@@ -1319,3 +1319,176 @@ func TestReplayDirectoryDeleteFailsOnRemoteDeleteError(t *testing.T) {
 		t.Fatalf("the child must survive for the retry, got %v", err)
 	}
 }
+
+// A swept entry deleted while its rename copy was still pending reads its
+// content from the source the marker names: removing the entry must release
+// that object too, or it is orphaned — the destination key may hold nothing.
+func TestReplayDirectoryDeleteReleasesPendingRenameSource(t *testing.T) {
+	const storageType = "stub_replay_remote_rename_src"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/src.txt": {RemoteMtime: 1700000000, RemoteSize: 10},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "srcstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "srcstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/dst.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		Extended: map[string][]byte{ExtRemoteRenameSourceKey: []byte("/buckets/mybucket/d/src.txt")},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/dst.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/src.txt" {
+		t.Fatalf("expected one remote delete of the pending rename's source /d/src.txt, got %v", stub.deleteCalls)
+	}
+}
+
+// The source survives while a remote-only entry holds its path: that entry's
+// content is the same object. The swept destination entry's own object still
+// goes while its stamp describes it.
+func TestReplayDirectoryDeleteKeepsPendingRenameSourceOwnedByRemoteOnly(t *testing.T) {
+	const storageType = "stub_replay_remote_rename_owned"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/dst.txt":     {RemoteMtime: 1700000000, RemoteSize: 10},
+		"/other/src.txt": {RemoteMtime: 1700000000, RemoteSize: 10},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "ownstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "ownstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d", "/buckets/mybucket/other"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/dst.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		Extended: map[string][]byte{ExtRemoteRenameSourceKey: []byte("/buckets/mybucket/other/src.txt")},
+	})
+	put(&Entry{
+		FullPath: "/buckets/mybucket/other/src.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/dst.txt" {
+		t.Fatalf("expected one remote delete of /d/dst.txt, got %v", stub.deleteCalls)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/other/src.txt"); err != nil {
+		t.Fatalf("the remote-only source holder must survive, got %v", err)
+	}
+}
+
+// A remote-only entry that took the path since the listing reads the object
+// at the key as its only copy — the sweep must keep both.
+func TestReplaySweepKeepsRemoteOnlyOwnerOfPath(t *testing.T) {
+	const storageType = "stub_replay_remote_owner"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/f.txt": {RemoteMtime: 1700000099, RemoteSize: 20},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "ownerstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "ownerstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	owner := &Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000099, RemoteSize: 20},
+	}
+	if err := store.InsertEntry(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := &Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	}
+	sweep := &folderSweep{chunksByPath: make(map[util.FullPath][]*filer_pb.FileChunk)}
+	message := &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true}}
+	kept, err := f.deleteSweptChild(ctx, stale, message, 0, sweep, false, true)
+	if err != nil {
+		t.Fatalf("deleteSweptChild: %v", err)
+	}
+	if !kept {
+		t.Fatal("a remote-only entry that took the path must be kept")
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); err != nil {
+		t.Fatalf("the remote-only owner must survive, got %v", err)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("the owned remote object must be kept, got %v", stub.deleteCalls)
+	}
+}

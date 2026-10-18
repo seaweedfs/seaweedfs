@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 // Replay applies the delete and the insert as separate, non-transactional
@@ -165,7 +167,6 @@ func (s *folderSweep) flush(ctx context.Context, f *Filer) {
 // It reports whether a newer descendant keeps dir alive — the caller then
 // keeps the dir entry itself.
 func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, message *filer_pb.EventNotification, tsNs int64, sweep *folderSweep) (kept bool, err error) {
-	deleteChunks := message.DeleteChunks
 	keepRemote := IsMetadataOnlyDelete(message.OldEntry)
 	deleteRemote := !keepRemote && !message.GetIsFromOtherCluster()
 	lastFileName := ""
@@ -194,30 +195,12 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, mess
 				kept = true
 				continue
 			}
-			if !keepRemote && f.RemoteStorage != nil && f.remoteTombstones != nil {
-				if _, remoteLoc := f.RemoteStorage.FindMountDirectory(sub.FullPath); remoteLoc != nil {
-					f.remoteTombstones.addFromEvent(string(sub.FullPath), sub.IsDirectory(), tsNs)
-				}
+			childKept, err = f.deleteSweptChild(ctx, sub, message, tsNs, sweep, keepRemote, deleteRemote)
+			if err != nil {
+				return false, err
 			}
-			if deleteRemote && !sub.IsDirectory() {
-				if remoteErr := f.maybeDeleteFromRemoteIfUnchanged(ctx, sub); remoteErr != nil {
-					return false, fmt.Errorf("remote delete %s: %w", sub.FullPath, remoteErr)
-				}
-			}
-			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
-				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
-			}
-			f.notePathChange(sub.FullPath, tsNs, true)
-			// chunks of a hard-linked child belong to the shared inode
-			// record; free them only once that record is gone. A directory
-			// entry can still carry chunks of its own — an S3 child promotes
-			// an existing file to a directory without dropping them — so the
-			// entry's chunks are keyed to its own path whatever it is.
-			if deleteChunks && len(sub.GetChunks()) > 0 && (len(sub.HardLinkId) == 0 || f.hardLinkIsOrphaned(ctx, sub.HardLinkId)) {
-				sweep.add(sub.FullPath, sub.GetChunks())
-				if sweep.count >= folderSweepChunkBatch {
-					sweep.flush(ctx, f)
-				}
+			if childKept {
+				kept = true
 			}
 		}
 		if len(entries) < PaginationSize {
@@ -225,6 +208,66 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, mess
 		}
 	}
 	return kept, nil
+}
+
+// deleteSweptChild removes sub under its entry lock and reports whether the
+// child was kept instead. The listing and the first commit-time check run
+// without the lock, so a local write can land in between: the check runs
+// again under the lock before anything is removed. A remote-only entry that
+// has taken the path since — one the commit record may not cover, such as a
+// lazy fetch materialized from the remote — reads the object at the key as
+// its only copy: the write-back daemon's processDeleteEvent keeps such an
+// object, and the sweep does too.
+func (f *Filer) deleteSweptChild(ctx context.Context, sub *Entry, message *filer_pb.EventNotification, tsNs int64, sweep *folderSweep, keepRemote, deleteRemote bool) (bool, error) {
+	var childLock *util.ActiveLock
+	if lt := f.EntryLockTable; lt != nil {
+		childLock = lt.AcquireLock("MetaReplay", sub.FullPath, util.ExclusiveLock)
+		defer lt.ReleaseLock(sub.FullPath, childLock)
+	}
+	if tsNs > 0 {
+		localTsNs, tsErr := f.localCommitTsNs(ctx, sub.FullPath)
+		if tsErr != nil {
+			return false, tsErr
+		}
+		if localTsNs > tsNs {
+			return true, nil
+		}
+	}
+	current, findErr := f.Store.FindEntry(ctx, sub.FullPath)
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+		return false, fmt.Errorf("find %s: %w", sub.FullPath, findErr)
+	}
+	if current != nil && len(current.Content) == 0 && current.IsInRemoteOnly() &&
+		!proto.Equal(current.ToProtoEntry(), sub.ToProtoEntry()) {
+		glog.V(0).InfofCtx(ctx, "keep %s: a remote-only entry has taken the path since the listing", sub.FullPath)
+		return true, nil
+	}
+	if !keepRemote && f.RemoteStorage != nil && f.remoteTombstones != nil {
+		if _, remoteLoc := f.RemoteStorage.FindMountDirectory(sub.FullPath); remoteLoc != nil {
+			f.remoteTombstones.addFromEvent(string(sub.FullPath), sub.IsDirectory(), tsNs)
+		}
+	}
+	if deleteRemote && !sub.IsDirectory() {
+		if remoteErr := f.deleteSweptEntryRemote(ctx, sub); remoteErr != nil {
+			return false, fmt.Errorf("remote delete %s: %w", sub.FullPath, remoteErr)
+		}
+	}
+	if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
+		return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
+	}
+	f.notePathChange(sub.FullPath, tsNs, true)
+	// chunks of a hard-linked child belong to the shared inode record; free
+	// them only once that record is gone. A directory entry can still carry
+	// chunks of its own — an S3 child promotes an existing file to a
+	// directory without dropping them — so the entry's chunks are keyed to
+	// its own path whatever it is.
+	if message.DeleteChunks && len(sub.GetChunks()) > 0 && (len(sub.HardLinkId) == 0 || f.hardLinkIsOrphaned(ctx, sub.HardLinkId)) {
+		sweep.add(sub.FullPath, sub.GetChunks())
+		if sweep.count >= folderSweepChunkBatch {
+			sweep.flush(ctx, f)
+		}
+	}
+	return false, nil
 }
 
 // replayBlockedByLocal reports whether the local store already holds a
