@@ -616,8 +616,8 @@ func TestSuspendedPutIfNoneMatchWithDeleteMarkerLatest(t *testing.T) {
 
 // A filer that predates condition_alt_key ignores the field and checks the
 // empty null slot alone, so the transaction precondition-fails even though
-// If-Match matches the served version. The gateway rechecks under the lock
-// instead of surfacing the false 412.
+// If-Match matches the served version. The gateway resends the transaction
+// against the resolved version instead of surfacing the false 412.
 func TestSuspendedPutIfMatchRecheckedWhenAltKeyIgnored(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerImpl := &ambiguousPutFiler{
@@ -656,6 +656,11 @@ func TestSuspendedPutIfMatchRecheckedWhenAltKeyIgnored(t *testing.T) {
 	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
 	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
 
+	var conditionKeys []string
+	filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		conditionKeys = append(conditionKeys, req.ConditionKey)
+	}
+
 	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
 	r.Header.Set(s3_constants.IfMatch, `"abc123"`)
 	_, code, _ := s3a.putSuspendedVersioningObject(r, "b", "k", r.Body, "")
@@ -665,7 +670,10 @@ func TestSuspendedPutIfMatchRecheckedWhenAltKeyIgnored(t *testing.T) {
 	if filerImpl.entries["/buckets/b/k"] == nil {
 		t.Fatal("null-version entry was not created")
 	}
-	if filerImpl.txnCount != 1 {
-		t.Fatalf("got %d transactions, want 1 routed attempt before the lock-path recheck", filerImpl.txnCount)
+	if filerImpl.txnCount != 2 {
+		t.Fatalf("got %d transactions, want the routed attempt plus a resend against the resolved version", filerImpl.txnCount)
+	}
+	if len(conditionKeys) != 2 || conditionKeys[0] != "" || conditionKeys[1] != "/buckets/b/k.versions/v_v1" {
+		t.Fatalf("condition keys = %v, want [\"\" \"/buckets/b/k.versions/v_v1\"]", conditionKeys)
 	}
 }

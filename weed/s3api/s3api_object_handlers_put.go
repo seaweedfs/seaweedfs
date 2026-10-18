@@ -1031,19 +1031,28 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if finalize != nil && len(finalize.mutations) > 0 {
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
-			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, "", condAltKey, finalizeMutations)
+			routeKey := s3a.objectRouteKey(bucket, object)
+			resp, err := s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, "", condAltKey, finalizeMutations)
+			if err == nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED && condAltKey != "" {
+				// A filer that ignores condition_alt_key evaluated the empty
+				// null slot alone; resend the transaction against the entry the
+				// read path serves, still under the object's path lock.
+				conditionKey := filePath
+				if resolved, resolveErr := s3a.resolveObjectEntry(bucket, object, ""); resolveErr == nil &&
+					resolved != nil &&
+					string(resolved.Extended[s3_constants.ExtDeleteMarkerKey]) != "true" &&
+					resolved.Name != path.Base(filePath) {
+					conditionKey = condAltKey + "/" + resolved.Name
+				}
+				glog.Warningf("putToFiler: routed PUT to %s precondition-failed for %s; resending against %s", owner, filePath, conditionKey)
+				resp, err = s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, conditionKey, condAltKey, finalizeMutations)
+			}
 			switch {
 			case err != nil:
 				routedAmbiguous = true
 				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)
 			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-				if condAltKey == "" {
-					createCode, routed = s3err.ErrPreconditionFailed, true
-				} else {
-					// A filer that ignores condition_alt_key checked only the empty
-					// null slot; the lock path resolves what the read path serves.
-					glog.Warningf("putToFiler: routed PUT to %s precondition-failed for %s; rechecking under the lock", owner, filePath)
-				}
+				createCode, routed = s3err.ErrPreconditionFailed, true
 			case resp.Error != "":
 				// A mutation can store the entry before a later step of the
 				// same mutation fails, so even an error from the first mutation
