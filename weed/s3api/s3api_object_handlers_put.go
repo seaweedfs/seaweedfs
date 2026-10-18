@@ -1058,7 +1058,22 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if finalize != nil && len(finalize.mutations) > 0 {
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
-			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, "", condAltKey, finalizeMutations)
+			routeKey := s3a.objectRouteKey(bucket, object)
+			resp, err := s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, "", condAltKey, finalizeMutations)
+			if err == nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED && condAltKey != "" {
+				// A filer that ignores condition_alt_key evaluated the empty
+				// null slot alone; resend the transaction against the entry the
+				// read path serves, still under the object's path lock.
+				conditionKey := filePath
+				if resolved, resolveErr := s3a.resolveObjectEntry(bucket, object, ""); resolveErr == nil &&
+					resolved != nil &&
+					string(resolved.Extended[s3_constants.ExtDeleteMarkerKey]) != "true" &&
+					resolved.Name != path.Base(filePath) {
+					conditionKey = condAltKey + "/" + resolved.Name
+				}
+				glog.Warningf("putToFiler: routed PUT to %s precondition-failed for %s; resending against %s", owner, filePath, conditionKey)
+				resp, err = s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, conditionKey, condAltKey, finalizeMutations)
+			}
 			switch {
 			case err != nil:
 				routedAmbiguous = true
