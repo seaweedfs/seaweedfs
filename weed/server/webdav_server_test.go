@@ -254,28 +254,41 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 		assert.True(t, called, "%s %s -> %s depth=%q", tc.method, tc.src, tc.dst, tc.depth)
 	}
 
-	// an unreadable source must not reach the handler — the destination
-	// would be deleted before the operation fails anyway
-	for _, tc := range []struct{ method, src, dst string }{
-		{"MOVE", "/missing", "/dir"},
-		{"COPY", "/missing", "/dir"},
+	// a source that fails to stat must not reach the handler either — the
+	// destination would be deleted before the operation fails anyway; only
+	// confirmed absence is a 404
+	errFs := copyMoveGuardHandler{
+		fs:   &stubDavFs{errPaths: map[string]bool{"/broken": true}},
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }),
+	}
+	for _, tc := range []struct {
+		method, src, dst string
+		want             int
+	}{
+		{"MOVE", "/missing", "/dir", http.StatusNotFound},
+		{"COPY", "/missing", "/dir", http.StatusNotFound},
+		{"MOVE", "/broken", "/dir", http.StatusInternalServerError},
 	} {
 		called = false
 		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
 		req.Header.Set("Destination", "http://x"+tc.dst)
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotFound, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
+		errFs.ServeHTTP(w, req)
+		assert.Equal(t, tc.want, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
 		assert.False(t, called)
 	}
 }
 
 type stubDavFs struct {
 	webdav.FileSystem
-	present map[string]bool
+	present  map[string]bool
+	errPaths map[string]bool
 }
 
 func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
+	if f.errPaths[path.Clean(name)] {
+		return nil, fmt.Errorf("filer unavailable")
+	}
 	if f.present[path.Clean(name)] {
 		return &FileInfo{name: path.Base(name)}, nil
 	}

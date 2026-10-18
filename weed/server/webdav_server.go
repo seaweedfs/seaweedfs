@@ -111,7 +111,11 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// a source that cannot be read makes the operation fail after the
 		// destination is already gone — reject it before that
 		if _, err := h.fs.Stat(r.Context(), r.URL.Path); err != nil {
-			w.WriteHeader(http.StatusNotFound)
+			if os.IsNotExist(err) {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 			return
 		}
 	}
