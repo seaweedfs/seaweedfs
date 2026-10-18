@@ -189,6 +189,8 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 		{"/dir/sub", "/dir"},
 		{"/dir/sub", "/dir/"},
 		{"/dir", "/dir"},
+		{"/dir", "/dir/sub"},
+		{"/", "/anywhere"},
 	} {
 		called = false
 		req := httptest.NewRequest("MOVE", "http://x"+tc.src, nil)
@@ -201,7 +203,6 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 
 	for _, tc := range []struct{ src, dst string }{
 		{"/dir/sub", "/dir/other"},
-		{"/dir", "/dir/sub"},
 		{"/dirs", "/dir"},
 	} {
 		called = false
