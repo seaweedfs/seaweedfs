@@ -113,7 +113,11 @@ type RemoteStorageClient interface {
 	WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error)
 	RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error)
 	WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error)
-	UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error)
+	// UpdateFileMetadata returns the stamp of the object the update produced —
+	// a backend that rewrites the object to change its metadata can give it a
+	// new ETag or mtime — or nil when the object was not rewritten. Callers
+	// restamp their entries from the result and keep the previous stamp on nil.
+	UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error)
 	DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error)
 	ListBuckets() ([]*Bucket, error)
 	CreateBucket(name string) (err error)

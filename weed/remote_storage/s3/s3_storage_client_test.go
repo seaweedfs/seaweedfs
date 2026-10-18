@@ -297,10 +297,12 @@ func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
 	plain := &filer_pb.Entry{}
 	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
 
-	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	_, err := client.UpdateFileMetadata(loc, plain, tagged)
+	require.NoError(t, err)
 	require.Empty(t, rt.requests, "adding attributes must not send PutObjectTagging")
 
-	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	_, err = client.UpdateFileMetadata(loc, tagged, plain)
+	require.NoError(t, err)
 	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
 }
 
@@ -310,13 +312,15 @@ func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
 	plain := &filer_pb.Entry{}
 	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
 
-	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	_, err := client.UpdateFileMetadata(loc, plain, tagged)
+	require.NoError(t, err)
 	require.Len(t, rt.requests, 1)
 	require.Equal(t, http.MethodPut, rt.requests[0].Method)
 	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
 
 	rt.requests = nil
-	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	_, err = client.UpdateFileMetadata(loc, tagged, plain)
+	require.NoError(t, err)
 	require.Len(t, rt.requests, 1)
 	require.Equal(t, http.MethodDelete, rt.requests[0].Method)
 	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")

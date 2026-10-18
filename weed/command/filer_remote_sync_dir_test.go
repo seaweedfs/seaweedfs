@@ -696,6 +696,9 @@ type recordingRemote struct {
 	statETag  string
 	statETags map[string]string
 	statMtime int64
+	// metadataUpdateResult is the RemoteEntry UpdateFileMetadata reports; nil
+	// means the update left the object untouched
+	metadataUpdateResult *filer_pb.RemoteEntry
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -744,9 +747,9 @@ func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error
 	return r.deleteErr
 }
 
-func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) error {
+func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
 	r.metadataUpdates = append(r.metadataUpdates, loc)
-	return nil
+	return r.metadataUpdateResult, nil
 }
 
 // TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
@@ -1753,12 +1756,13 @@ func TestCompleteRemoteOnlyRenameRetryUsesTheSourceStamp(t *testing.T) {
 	}
 }
 
-// TestMetadataUpdateRestampsTheLiveObject: a metadata-only update can rewrite
-// the remote object itself (S3 changes Content-Encoding through an in-place
-// copy), advancing its mtime while the recorded stamp keeps the old one. The
-// stamp saved back to the filer must come from the live stat, or a later
-// delete mistakes the object for a replacement and keeps it.
-func TestMetadataUpdateRestampsTheLiveObject(t *testing.T) {
+// TestMetadataUpdateRestampsTheUpdatedObject: a metadata-only update can
+// rewrite the remote object itself (S3 changes Content-Encoding through an
+// in-place copy, minting a new ETag and mtime). The stamp saved back to the
+// filer must be the one the update produced — a stat instead could fail the
+// freshness comparison on the legitimately new ETag and keep the stale
+// stamp, so a later delete would keep the object.
+func TestMetadataUpdateRestampsTheUpdatedObject(t *testing.T) {
 	const mountedDir = "/buckets"
 	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
 	stamp := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"orig"`, RemoteSize: 3, RemoteMtime: 100}
@@ -1771,7 +1775,10 @@ func TestMetadataUpdateRestampsTheLiveObject(t *testing.T) {
 				Extended: map[string][]byte{"Content-Encoding": []byte("gzip")}},
 		},
 	}
-	remote := &recordingRemote{objects: map[string][]byte{"/b/vol/f": []byte("old")}, statETag: `"orig"`, statMtime: 200}
+	remote := &recordingRemote{
+		objects:              map[string][]byte{"/b/vol/f": []byte("old")},
+		metadataUpdateResult: &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"new"`, RemoteSize: 3, RemoteMtime: 200},
+	}
 	filerClient := &stubFilerClient{}
 	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)
@@ -1779,17 +1786,15 @@ func TestMetadataUpdateRestampsTheLiveObject(t *testing.T) {
 	if len(remote.metadataUpdates) != 1 {
 		t.Fatalf("metadataUpdates = %+v, want one", remote.metadataUpdates)
 	}
-	if filerClient.updates != 1 || filerClient.updated.Entry.RemoteEntry.RemoteMtime != 200 {
-		t.Fatalf("stamped RemoteEntry = %+v, want the live object's mtime 200", filerClient.updated.Entry.RemoteEntry)
+	got := filerClient.updated.Entry.RemoteEntry
+	if filerClient.updates != 1 || got.RemoteMtime != 200 || got.RemoteETag != `"new"` {
+		t.Fatalf("stamped RemoteEntry = %+v, want the update's result (mtime 200, etag \"new\")", got)
 	}
 }
 
-// TestMetadataUpdateDoesNotRestampAReplacedObject: the live stat after a
-// metadata update can describe a different object entirely — a delayed
-// tagging update running after another writer replaced it. Saving that stamp
-// onto the entry would let a later delete pass the freshness guard on data
-// the entry never owned, so the stored stamp must stay.
-func TestMetadataUpdateDoesNotRestampAReplacedObject(t *testing.T) {
+// TestMetadataUpdateKeepsTheStoredStampOnNilResult: a backend that did not
+// rewrite the object reports no stamp; the entry keeps its own.
+func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 	const mountedDir = "/buckets"
 	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
 	stamp := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"orig"`, RemoteSize: 3, RemoteMtime: 100}
@@ -1802,7 +1807,7 @@ func TestMetadataUpdateDoesNotRestampAReplacedObject(t *testing.T) {
 				Extended: map[string][]byte{"Content-Encoding": []byte("gzip")}},
 		},
 	}
-	remote := &recordingRemote{objects: map[string][]byte{"/b/vol/f": []byte("replacement")}, statETag: `"new"`, statMtime: 200}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/vol/f": []byte("old")}}
 	filerClient := &stubFilerClient{}
 	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)

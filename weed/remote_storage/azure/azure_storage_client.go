@@ -502,26 +502,28 @@ func toMetadata(attributes map[string][]byte) map[string]*string {
 	return metadata
 }
 
-func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
 	metadata := toMetadata(newEntry.Extended)
 
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
 
+	updated := false
 	if !reflect.DeepEqual(toMetadata(oldEntry.Extended), metadata) {
 		if _, err = blobClient.SetMetadata(context.Background(), metadata, nil); err != nil {
-			return err
+			return nil, err
 		}
+		updated = true
 	}
 
 	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
 		// SetHTTPHeaders replaces the whole header set, so carry the rest over
 		props, getErr := blobClient.GetProperties(context.Background(), nil)
 		if getErr != nil {
-			return fmt.Errorf("azure get properties %s%s: %w", loc.Bucket, loc.Path, getErr)
+			return nil, fmt.Errorf("azure get properties %s%s: %w", loc.Bucket, loc.Path, getErr)
 		}
 		httpHeaders := blob.ParseHTTPHeaders(props)
 		httpHeaders.BlobContentEncoding = nil
@@ -529,11 +531,14 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 			httpHeaders.BlobContentEncoding = &encoding
 		}
 		if _, err = blobClient.SetHTTPHeaders(context.Background(), httpHeaders, nil); err != nil {
-			return fmt.Errorf("azure set http headers %s%s: %w", loc.Bucket, loc.Path, err)
+			return nil, fmt.Errorf("azure set http headers %s%s: %w", loc.Bucket, loc.Path, err)
 		}
+		updated = true
 	}
-
-	return
+	if !updated {
+		return nil, nil
+	}
+	return az.StatFile(loc)
 }
 
 func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {

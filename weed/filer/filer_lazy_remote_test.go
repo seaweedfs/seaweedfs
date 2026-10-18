@@ -259,8 +259,8 @@ func (c *stubRemoteClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation)
 func (c *stubRemoteClient) WriteFile(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, io.Reader) (*filer_pb.RemoteEntry, error) {
 	return nil, nil
 }
-func (c *stubRemoteClient) UpdateFileMetadata(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, *filer_pb.Entry) error {
-	return nil
+func (c *stubRemoteClient) UpdateFileMetadata(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
+	return nil, nil
 }
 func (c *stubRemoteClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
 	c.deleteCalls = append(c.deleteCalls, &remote_pb.RemoteStorageLocation{

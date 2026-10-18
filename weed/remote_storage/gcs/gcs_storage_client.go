@@ -375,9 +375,9 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 	return metadata
 }
 
-func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
 	attrsToUpdate := storage.ObjectAttrsToUpdate{}
 	if metadata := toMetadata(newEntry.Extended); len(metadata) > 0 {
@@ -390,11 +390,14 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStora
 	}
 
 	if attrsToUpdate.Metadata == nil && attrsToUpdate.ContentEncoding == nil {
-		return nil
+		return nil, nil
 	}
 	key := loc.Path[1:]
-	_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
-	return
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
+	if err != nil {
+		return nil, err
+	}
+	return gcs.toRemoteEntry(attr), nil
 }
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]

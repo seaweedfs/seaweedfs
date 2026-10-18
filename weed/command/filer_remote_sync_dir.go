@@ -370,16 +370,15 @@ func processUpdateEvent(
 		}
 		if remoteEntry != nil {
 			glog.V(2).Infof("update meta: %+v", resp)
-			if err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass)); err != nil {
+			updated, err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
+			if err != nil {
 				return err
 			}
 			// a metadata write can rewrite the object (S3 copies it in place
-			// for a Content-Encoding change), so restamp from the live
-			// object — only while it is still that object: a replacement's
-			// stamp would let a later delete pass the freshness guard on
-			// data the entry never owned
-			if live, statErr := client.StatFile(dest); statErr == nil && remote_storage.Describes(remoteEntry, live) {
-				remoteEntry = live
+			// for a Content-Encoding change, minting a new ETag): restamp from
+			// the object the update produced when the backend reports it
+			if updated != nil {
+				remoteEntry = updated
 			}
 			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}

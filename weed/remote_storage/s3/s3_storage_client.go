@@ -586,9 +586,9 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorage
 // the largest object a single CopyObject call accepts
 const s3CopyObjectSizeLimit = 5 * 1024 * 1024 * 1024
 
-func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
 
 	// Content-Encoding is S3 system metadata, changeable without a content
@@ -605,7 +605,7 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 				Key:    aws.String(key),
 			})
 			if headErr != nil {
-				return fmt.Errorf("stat %s/%s before metadata copy: %w", loc.Bucket, key, headErr)
+				return nil, fmt.Errorf("stat %s/%s before metadata copy: %w", loc.Bucket, key, headErr)
 			}
 			copyInput := &s3.CopyObjectInput{
 				Bucket:                  aws.String(loc.Bucket),
@@ -636,8 +636,25 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 			if s.conf.S3StorageClass != "" {
 				copyInput.StorageClass = aws.String(s.conf.S3StorageClass)
 			}
-			if _, err = s.conn.CopyObject(copyInput); err != nil {
-				return fmt.Errorf("update content encoding of %s/%s: %w", loc.Bucket, key, err)
+			copyOutput, copyErr := s.conn.CopyObject(copyInput)
+			if copyErr != nil {
+				return nil, fmt.Errorf("update content encoding of %s/%s: %w", loc.Bucket, key, copyErr)
+			}
+			// the copy rewrites the object and can mint a new ETag, so the
+			// stamp it produced is reported instead of a fresh stat — which
+			// could describe a replacement that landed in between
+			remoteEntry = &filer_pb.RemoteEntry{
+				StorageName: s.conf.Name,
+				RemoteSize:  aws.Int64Value(headOut.ContentLength),
+			}
+			if result := copyOutput.CopyObjectResult; result != nil {
+				remoteEntry.RemoteETag = aws.StringValue(result.ETag)
+				if result.LastModified != nil {
+					remoteEntry.RemoteMtime = result.LastModified.Unix()
+				}
+			}
+			if encoding != "" {
+				remoteEntry.RemoteContentEncoding = aws.String(encoding)
 			}
 		}
 	}
@@ -660,6 +677,9 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 			Bucket: aws.String(loc.Bucket),
 			Key:    aws.String(loc.Path[1:]),
 		})
+	}
+	if err != nil {
+		return nil, err
 	}
 	return
 }
