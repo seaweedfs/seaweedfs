@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -74,14 +75,35 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		Handler: listedEntriesHandler{
-			next: &webdav.Handler{
-				FileSystem: fs,
-				LockSystem: webdav.NewMemLS(),
+			next: copyMoveGuardHandler{
+				next: &webdav.Handler{
+					FileSystem: fs,
+					LockSystem: webdav.NewMemLS(),
+				},
 			},
 		},
 	}
 
 	return ws, nil
+}
+
+// an overwriting MOVE or COPY removes the destination before reading the
+// source, so a destination that contains the source would take it down too
+type copyMoveGuardHandler struct {
+	next http.Handler
+}
+
+func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "MOVE" || r.Method == "COPY" {
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
+			src, dst := path.Clean(r.URL.Path), path.Clean(u.Path)
+			if strings.HasPrefix(src+"/", dst+"/") {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
+	}
+	h.next.ServeHTTP(w, r)
 }
 
 // adapted from https://github.com/mattn/davfs/blob/master/plugin/mysql/mysql.go
@@ -247,7 +269,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			if flag&os.O_EXCL != 0 || fi.IsDir() {
 				return nil, os.ErrExist
 			}
-			fs.removeAll(ctx, fullFilePath)
+			fs.removeAll(ctx, fullFilePath, false)
 		} else if err != os.ErrNotExist {
 			return nil, err
 		}
@@ -307,7 +329,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 
 }
 
-func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) error {
+func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, recursive bool) error {
 	var err error
 	if fullFilePath, err = clearName(fullFilePath); err != nil {
 		return err
@@ -319,7 +341,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 	}
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(context.Background(), fs, dir, name, true, true, false, false, []int32{fs.signature})
+	return filer_pb.Remove(context.Background(), fs, dir, name, true, recursive, false, false, []int32{fs.signature})
 
 }
 
@@ -327,7 +349,7 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
 	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
 
-	return fs.removeAll(ctx, name)
+	return fs.removeAll(ctx, name, true)
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
@@ -487,7 +509,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 			if flushErr != nil {
 				if f.entry.Attributes.Mtime == 0 {
-					if err := f.fs.removeAll(ctx, f.name); err != nil {
+					if err := f.fs.removeAll(ctx, f.name, false); err != nil {
 						glog.Errorf("bufWriter.Flush remove file error: %+v", f.name)
 					}
 				}

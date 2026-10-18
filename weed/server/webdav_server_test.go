@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -173,6 +175,42 @@ func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
 	assert.Equal(t, os.ErrInvalid, wrapped.RemoveAll(context.Background(), "/../"))
 	assert.Equal(t, os.ErrInvalid, wrapped.Rename(context.Background(), "/", "/x"))
 	assert.Nil(t, filer.req)
+}
+
+// MOVE or COPY into an ancestor destination is refused before the
+// destination is removed: removing it first would delete the source too.
+func TestCopyMoveGuardHandler(t *testing.T) {
+	called := false
+	h := copyMoveGuardHandler{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})}
+
+	for _, tc := range []struct{ src, dst string }{
+		{"/dir/sub", "/dir"},
+		{"/dir/sub", "/dir/"},
+		{"/dir", "/dir"},
+	} {
+		called = false
+		req := httptest.NewRequest("MOVE", "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code, "MOVE %s -> %s", tc.src, tc.dst)
+		assert.False(t, called)
+	}
+
+	for _, tc := range []struct{ src, dst string }{
+		{"/dir/sub", "/dir/other"},
+		{"/dir", "/dir/sub"},
+		{"/dirs", "/dir"},
+	} {
+		called = false
+		req := httptest.NewRequest("COPY", "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		assert.True(t, called, "COPY %s -> %s", tc.src, tc.dst)
+	}
 }
 
 // A PUT onto a folder must not delete the folder to make room for the file.
