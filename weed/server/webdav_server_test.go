@@ -185,32 +185,38 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 		called = true
 	})}
 
-	for _, tc := range []struct{ src, dst string }{
-		{"/dir/sub", "/dir"},
-		{"/dir/sub", "/dir/"},
-		{"/dir", "/dir"},
-		{"/dir", "/dir/sub"},
-		{"/", "/anywhere"},
+	for _, tc := range []struct{ method, src, dst string }{
+		{"MOVE", "/dir/sub", "/dir"},
+		{"MOVE", "/dir/sub", "/dir/"},
+		{"MOVE", "/dir", "/dir"},
+		{"MOVE", "/dir", "/dir/sub"},
+		{"MOVE", "/", "/anywhere"},
+		{"COPY", "/dir/sub", "/dir"},
+		{"COPY", "/dir", "/dir/sub"},
 	} {
 		called = false
-		req := httptest.NewRequest("MOVE", "http://x"+tc.src, nil)
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
 		req.Header.Set("Destination", "http://x"+tc.dst)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusForbidden, w.Code, "MOVE %s -> %s", tc.src, tc.dst)
+		assert.Equal(t, http.StatusForbidden, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
 		assert.False(t, called)
 	}
 
-	for _, tc := range []struct{ src, dst string }{
-		{"/dir/sub", "/dir/other"},
-		{"/dirs", "/dir"},
+	for _, tc := range []struct{ method, src, dst, depth string }{
+		{"COPY", "/dir/sub", "/dir/other", ""},
+		{"COPY", "/dirs", "/dir", ""},
+		{"COPY", "/dir", "/dir/sub", "0"},
 	} {
 		called = false
-		req := httptest.NewRequest("COPY", "http://x"+tc.src, nil)
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
 		req.Header.Set("Destination", "http://x"+tc.dst)
+		if tc.depth != "" {
+			req.Header.Set("Depth", tc.depth)
+		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		assert.True(t, called, "COPY %s -> %s", tc.src, tc.dst)
+		assert.True(t, called, "%s %s -> %s depth=%q", tc.method, tc.src, tc.dst, tc.depth)
 	}
 }
 

@@ -88,8 +88,8 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 }
 
 // an overwriting MOVE or COPY removes the destination before reading the
-// source, and a destination under the source copies itself forever; neither
-// is allowed to reach the handler
+// source, so a destination that contains the source removes it too; a
+// destination under the source copies itself unless the copy is shallow
 type copyMoveGuardHandler struct {
 	next http.Handler
 }
@@ -99,7 +99,9 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
 			src := strings.Trim(path.Clean(r.URL.Path), "/")
 			dst := strings.Trim(path.Clean(u.Path), "/")
-			if src == "" || dst == "" || src == dst || strings.HasPrefix(src, dst+"/") || strings.HasPrefix(dst, src+"/") {
+			above := dst == "" || src == dst || strings.HasPrefix(src, dst+"/")
+			below := src == "" || strings.HasPrefix(dst, src+"/")
+			if above || below && (r.Method == "MOVE" || r.Header.Get("Depth") != "0") {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
