@@ -900,6 +900,13 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	// Hold the write lock so an append already past the read-only check
+	// finishes before the flag lands — a mark acked while a write is still
+	// in flight would let the encode gate read a pre-write index and then
+	// delete the volume that needle lives on. Writers re-check IsReadOnly
+	// under the same lock, so a later write is refused instead.
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	if canDelete && !v.HasRemoteFile() {
 		// deletes append tombstones to .idx, which a readonly boot opened
 		// O_RDONLY; remote volumes already delete through a RDWR idx
