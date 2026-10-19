@@ -141,6 +141,13 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 	return resourceOK || bucketOK
 }
 
+// deniedByPolicy reports whether another applicable resource policy vetoes the
+// request. The admin account is exempt, matching CheckPermissionWithContext.
+func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	return principal != s3_constants.AccountAdminId &&
+		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
+}
+
 // matchesDenyStatement reports whether the JSON policy carries a statement
 // matching this request with Effect Deny. Malformed policies return false;
 // the caller's normal evaluation still denies them.
