@@ -135,8 +135,14 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 	q := quarantinedVolume{dn.Id(), vi.Id}
 	if v, ok := t.quarantinedVolumeIds.Load(q); ok {
 		state := v.(quarantinedVolumeState)
-		state.reported = vi.ReadOnly
-		t.quarantinedVolumeIds.Store(q, state)
+		if !state.enforced {
+			state.reported = vi.ReadOnly
+			t.quarantinedVolumeIds.Store(q, state)
+		} else if !vi.ReadOnly && t.QuarantineVolumeFn != nil {
+			// The server lost the pushed mark (restart, manual unquarantine);
+			// re-push it while the conflict stands.
+			t.QuarantineVolumeFn(dn, vi.Id, true)
+		}
 	}
 	return vi
 }
@@ -698,6 +704,14 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 		t.quarantinedVolumeIds.LoadOrStore(q, quarantinedVolumeState{reported: reported})
 		if vl != nil {
 			vl.SetVolumeQuarantined(n, v.Id)
+		}
+		if t.QuarantineVolumeFn != nil {
+			t.QuarantineVolumeFn(n, v.Id, true)
+			if val, ok := t.quarantinedVolumeIds.Load(q); ok {
+				state := val.(quarantinedVolumeState)
+				state.enforced = true
+				t.quarantinedVolumeIds.Store(q, state)
+			}
 		}
 	}
 	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
