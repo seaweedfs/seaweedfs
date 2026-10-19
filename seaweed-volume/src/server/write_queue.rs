@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tracing::debug;
 
 use crate::storage::needle::needle::Needle;
@@ -33,6 +33,10 @@ pub struct WriteRequest {
     pub needle: Needle,
     pub fsync: bool,
     pub response_tx: oneshot::Sender<WriteResult>,
+    /// The global queued-slot permit, owned by the request itself: a caller
+    /// that cancels `submit` after the send must not free the slot while the
+    /// worker still holds the needle.
+    pub queue_permit: Option<OwnedSemaphorePermit>,
 }
 
 /// Maximum number of write requests to batch together.
@@ -105,9 +109,10 @@ impl WriteQueue {
                 return Err(VolumeError::NotFound);
             }
         }
-        // Held until the result arrives: counts this write against the global
-        // queued+in-flight bound the old single channel provided.
-        let _queue_permit = self
+        // The permit travels inside the request, so the global queued bound
+        // covers the request until the worker drops it — including after a
+        // canceled submit.
+        let queue_permit = self
             .queue_permits
             .clone()
             .acquire_owned()
@@ -119,6 +124,7 @@ impl WriteQueue {
             needle,
             fsync,
             response_tx,
+            queue_permit: Some(queue_permit),
         };
 
         // Send cannot fail while the map holds a sender: workers run until the
@@ -427,6 +433,7 @@ mod tests {
                     },
                     fsync: true,
                     response_tx,
+                    queue_permit: None,
                 }
             })
             .collect();
@@ -518,6 +525,7 @@ mod tests {
             },
             fsync: false,
             response_tx,
+            queue_permit: None,
         }];
         let writer = {
             let state = state.clone();
