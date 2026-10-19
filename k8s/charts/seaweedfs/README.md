@@ -347,6 +347,7 @@ admin:
   enabled: true
   port: 12535
   grpcPort: 22535  # For worker connections
+  legacyPort: 23646  # Compat: also serve http + gRPC (+10000) for pre-12535 clients
   secret:
     adminUser: "admin"
     adminPassword: "your-secure-password"  # Leave empty to disable auth
@@ -365,6 +366,8 @@ admin:
 ```
 
 The admin interface will be available at `http://<admin-service>:12535` (or via ingress). Workers connect to the admin server via gRPC on port `22535`.
+
+For backward compatibility with older clients and workers, admin also serves the previous default ports: HTTP on `23646` and gRPC on `33646` (legacyPort + 10000). The Service and NetworkPolicy expose both. Set `admin.legacyPort: 0` to disable.
 
 ### Admin Authentication
 

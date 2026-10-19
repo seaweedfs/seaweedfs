@@ -950,12 +950,6 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 			reservedPorts[calculatedGrpcPort] = true
 		}
 	}
-	// The legacy compat listeners own these ports too — keep mini's own
-	// relocation from handing them to another service.
-	if *miniAdminOptions.legacyPort > 0 && *miniAdminOptions.legacyPort != *miniAdminOptions.port {
-		reservedPorts[*miniAdminOptions.legacyPort] = true
-		reservedPorts[*miniAdminOptions.legacyPort+GrpcPortOffset] = true
-	}
 
 	// Check all HTTP ports sequentially to avoid race conditions
 	// Each port check and allocation must complete before the next one starts
@@ -976,7 +970,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// Initialize all gRPC ports before services start
 	// This ensures they won't be recalculated and cause conflicts
 	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
-	initializeGrpcPortsOnIP(bindIp)
+	allocatedPorts := initializeGrpcPortsOnIP(bindIp)
 
 	// Every other service binds within a moment of this check, but the admin
 	// waits for all of them first. The admin gRPC port sits inside the Linux
@@ -996,16 +990,30 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		miniAdminOptions.workerGrpcListener = listener
 	}
 
-	// Same early reservation for the legacy compat gRPC port. Failure is only
-	// a warning — the legacy port sits inside the ephemeral range and is a
-	// best-effort convenience, not a startup requirement.
+	// Same early reservation for the legacy compat gRPC port — but never take
+	// a port a mini service already owns: compat is a convenience, not a
+	// startup requirement. Failure is only a warning — the legacy port sits
+	// inside the ephemeral range. Without a reservation the admin's late
+	// best-effort bind simply fails harmlessly if the port is taken by then.
 	miniAdminOptions.workerGrpcLegacyListener = nil
+	miniAdminOptions.workerGrpcLegacySkip = false
+	miniAdminOptions.adminHttpLegacySkip = false
 	if *miniAdminOptions.legacyPort > 0 && *miniAdminOptions.legacyPort != *miniAdminOptions.port {
+		if allocatedPorts[*miniAdminOptions.legacyPort] {
+			glog.Warningf("Legacy Admin HTTP port %d is used by another mini service, skipping compat listener", *miniAdminOptions.legacyPort)
+			miniAdminOptions.adminHttpLegacySkip = true
+		}
 		legacyGrpcPort := *miniAdminOptions.legacyPort + GrpcPortOffset
-		if listener, err := listenMiniAdminWorker(workerGrpcBindIP, legacyGrpcPort); err != nil {
-			glog.Warningf("Could not reserve legacy Admin gRPC port %d: %v", legacyGrpcPort, err)
-		} else {
-			miniAdminOptions.workerGrpcLegacyListener = listener
+		switch {
+		case allocatedPorts[legacyGrpcPort]:
+			glog.Warningf("Legacy Admin gRPC port %d is used by another mini service, skipping compat listener", legacyGrpcPort)
+			miniAdminOptions.workerGrpcLegacySkip = true
+		default:
+			if listener, err := listenMiniAdminWorker(workerGrpcBindIP, legacyGrpcPort); err != nil {
+				glog.Warningf("Could not reserve legacy Admin gRPC port %d: %v", legacyGrpcPort, err)
+			} else {
+				miniAdminOptions.workerGrpcLegacyListener = listener
+			}
 		}
 	}
 
@@ -1039,7 +1047,9 @@ func listenMiniAdminWorker(bindIP string, port int) (net.Listener, error) {
 // initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
 // If a gRPC port is 0, it will be set to httpPort + GrpcPortOffset
 // This must be called after HTTP ports are finalized and before services start
-func initializeGrpcPortsOnIP(bindIp string) {
+// Returns the set of ports allocated to mini services, for callers that must
+// keep optional listeners from stealing them.
+func initializeGrpcPortsOnIP(bindIp string) map[int]bool {
 	// Track all ports allocated (both HTTP and gRPC) to prevent collisions.
 	// We must reserve HTTP ports so that gRPC fallback allocation never picks
 	// a port already assigned to an HTTP service (which hasn't bound yet).
@@ -1116,6 +1126,8 @@ func initializeGrpcPortsOnIP(bindIp string) {
 	if *miniAdminOptions.grpcPort >= linuxEphemeralPortFloor {
 		glog.Warningf("Admin gRPC port %d is at or above the Linux ephemeral floor %d; an outbound connection may claim it before Admin binds it. Pick a lower -admin.port.", *miniAdminOptions.grpcPort, linuxEphemeralPortFloor)
 	}
+
+	return allocatedPorts
 }
 
 // miniOptionsFilePath returns the path of the mini.options file under the

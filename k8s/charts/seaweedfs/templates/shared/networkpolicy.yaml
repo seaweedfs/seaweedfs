@@ -93,7 +93,11 @@
        ClusterRole under global.seaweedfs.createClusterRole is a leftover from a
        migration and is not exercised by any component. */}}
 {{- if .Values.admin.enabled }}
-{{-   $targets = append $targets (dict "component" "admin" "ports" (list .Values.admin.port .Values.admin.grpcPort)) }}
+{{-   $ports := list .Values.admin.port .Values.admin.grpcPort }}
+{{-   if gt (int .Values.admin.legacyPort) 0 }}
+{{-     $ports = concat $ports (list .Values.admin.legacyPort (add (int .Values.admin.legacyPort) 10000)) }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "admin" "ports" $ports) }}
 {{- end }}
 {{- if .Values.worker.enabled }}
 {{-   $ports := list }}

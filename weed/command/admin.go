@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -73,6 +74,18 @@ type AdminOptions struct {
 	// compat gRPC port. Its bind failure is tolerated: the legacy port lives
 	// in the ephemeral range, so best-effort compat must not take startup down.
 	workerGrpcLegacyListener net.Listener
+
+	// workerGrpcLegacySkip disables just the legacy gRPC listener. `weed
+	// mini` sets it when another mini service already owns the legacy gRPC
+	// port, so the compat bind can neither steal the port nor warn about a
+	// failure that is expected.
+	workerGrpcLegacySkip bool
+
+	// adminHttpLegacySkip is the same for the legacy HTTP port. Skipping
+	// matters even when the bind would succeed: a service bound on a
+	// different address family or wildcard can leave loopback free, and the
+	// compat listener would then shadow it for loopback clients.
+	adminHttpLegacySkip bool
 
 	// workerGrpcBindIp, when non-empty, is the address the worker gRPC
 	// listener binds to. It is separate from ip because the worker gRPC has
@@ -523,7 +536,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	if options.legacyPort != nil && *options.legacyPort > 0 && *options.legacyPort != *options.port {
 		legacyPort = *options.legacyPort
 	}
-	if legacyPort > 0 {
+	if legacyPort > 0 && !options.workerGrpcLegacySkip {
 		legacyGrpcPort := legacyPort + GrpcPortOffset
 		legacyGrpcListener := options.workerGrpcLegacyListener
 		if legacyGrpcListener == nil {
@@ -616,7 +629,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Serve the same handler on the legacy port so old clients keep working.
 	// Best-effort like the gRPC compat listener above.
 	var legacyServer *http.Server
-	if legacyPort > 0 {
+	if legacyPort > 0 && !options.adminHttpLegacySkip {
 		legacyAddr := util.JoinHostPort(*options.ip, legacyPort)
 		if legacyListener, listenErr := net.Listen("tcp", legacyAddr); listenErr != nil {
 			glog.Warningf("Legacy admin HTTP port %d unavailable, skipping compat listener: %v", legacyPort, listenErr)
@@ -626,6 +639,15 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 				Handler:   server.Handler,
 				TLSConfig: server.TLSConfig,
 			}
+			// Close on every exit path so a failed primary startup cannot
+			// leave the compat port held by a zombie admin. On the normal
+			// path the graceful Shutdown below runs first; this Close then
+			// no-ops. Close the raw listener too: Serve may not have
+			// registered it with legacyServer yet when this runs.
+			defer func() {
+				_ = legacyListener.Close()
+				_ = legacyServer.Close()
+			}()
 			go func() {
 				glog.Infof("Admin compat listener on %s", legacyAddr)
 				var serveErr error
@@ -634,7 +656,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 				} else {
 					serveErr = legacyServer.Serve(legacyListener)
 				}
-				if serveErr != nil && serveErr != http.ErrServerClosed {
+				if serveErr != nil && serveErr != http.ErrServerClosed && !errors.Is(serveErr, net.ErrClosed) {
 					glog.Warningf("Admin compat listener on %s stopped: %v", legacyAddr, serveErr)
 				}
 			}()
