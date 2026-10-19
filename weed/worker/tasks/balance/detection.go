@@ -385,9 +385,16 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		// sources are unaffected, so a full server can still be drained.
 		eligibleTargets := make(map[string]int, len(serverVolumeCounts))
 		for s, c := range serverVolumeCounts {
-			if !destinationFull[s] && !destinationDiskTooFull(s, 0) {
-				eligibleTargets[s] = c
+			if destinationFull[s] || destinationDiskTooFull(s, 0) {
+				continue
 			}
+			// The score-based fallback obeys the same convergence guard: a
+			// destination that ends up more utilized than the source only
+			// relocates the imbalance instead of reducing it.
+			if serverUtilization(s, effectiveCounts[s]+1) > newSrcUtil {
+				continue
+			}
+			eligibleTargets[s] = c
 		}
 		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, eligibleTargets, balanceConfig.IoBytePerSecond)
 		if task == nil {
