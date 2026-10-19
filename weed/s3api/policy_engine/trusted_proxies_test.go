@@ -49,6 +49,29 @@ func TestTrustedProxies_InvalidBareIPSkipped(t *testing.T) {
 	}
 }
 
+func TestTrustedProxies_IsTrustedPeer(t *testing.T) {
+	tp := NewTrustedProxies([]string{"10.0.0.0/24"})
+	if !tp.IsTrustedPeer(newReq("10.0.0.5:1234", "", "")) {
+		t.Error("peer in allowlist should be trusted")
+	}
+	if !tp.IsTrustedPeer(newReq("10.0.0.5:1234", "8.8.8.8", "")) {
+		t.Error("forwarded headers must not affect peer trust")
+	}
+	if tp.IsTrustedPeer(newReq("8.8.8.8:1234", "", "")) {
+		t.Error("peer outside allowlist should not be trusted")
+	}
+	if tp.IsTrustedPeer(newReq("not-an-addr", "", "")) {
+		t.Error("malformed RemoteAddr should not be trusted")
+	}
+	if tp.IsTrustedPeer(nil) {
+		t.Error("nil request should not be trusted")
+	}
+	var nilTP *TrustedProxies
+	if nilTP.IsTrustedPeer(newReq("10.0.0.5:1234", "", "")) {
+		t.Error("nil TrustedProxies should not trust any peer")
+	}
+}
+
 func TestTrustedProxies_NilNotTrusted(t *testing.T) {
 	var tp *TrustedProxies
 	if tp.IsTrusted("127.0.0.1") {
