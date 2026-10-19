@@ -426,15 +426,23 @@ impl VolumeGrpcService {
 
         // Step 2: mark local volume readonly; Go's MarkVolumeReadonly errors
         // when the volume left the store during the step-1 master round trip.
-        {
+        let vol = {
             let store = self.state.store.read().unwrap();
-            let (_, vol) = store
+            store
                 .find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_read_only_persist(can_delete, persist)
-                .map_err(|e| Status::internal(e.to_string()))?;
-            self.state.volume_state_notify.notify_one();
-        }
+                .map(|(_, v)| v)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?
+        };
+        // set_read_only_persist waits out the volume's leased readers; that
+        // wait must not hold a store guard. A detached handle fails closed.
+        vol.set_read_only_persist(can_delete, persist)
+            .map_err(|e| match e {
+                crate::storage::volume::VolumeError::NotFound => {
+                    Status::not_found(format!("volume {} not found", vid))
+                }
+                _ => Status::internal(e.to_string()),
+            })?;
+        self.state.volume_state_notify.notify_one();
 
         // Step 3: notify master again to cover heartbeat race
         self.notify_master_volume_readonly(&info, true).await?;
