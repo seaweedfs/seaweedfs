@@ -364,7 +364,15 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			pathForSignature = r.URL.Path
 		}
 	}
-	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
+	// The signature is checked against prefix+path but the request is routed
+	// and authorized on path alone, so only a trusted proxy may set the prefix.
+	iam.m.RLock()
+	trustedPeer := iam.trustedProxies.IsTrustedPeer(r)
+	iam.m.RUnlock()
+	forwardedPrefix := ""
+	if trustedPeer {
+		forwardedPrefix = r.Header.Get("X-Forwarded-Prefix")
+	}
 	var matchedHost string
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
