@@ -100,6 +100,7 @@ type Store struct {
 	maxVolumeIdSeen       atomic.Uint32
 	lastSeenTopologyId    atomic.Value // string
 	vidStampReady         atomic.Bool
+	vidStampDirty         atomic.Bool
 	vidStampLock          sync.Mutex
 }
 

@@ -32,16 +32,18 @@ func (s *Store) LastSeenTopologyId() string {
 // volume dir when it grows. Feeds: heartbeat echoes, AllocateVolume, local
 // volume and EC shard creation.
 func (s *Store) UpdateMaxVolumeIdSeen(vid needle.VolumeId) {
+	grew := false
 	for {
 		current := s.maxVolumeIdSeen.Load()
 		if current >= uint32(vid) {
-			return
+			break
 		}
 		if s.maxVolumeIdSeen.CompareAndSwap(current, uint32(vid)) {
+			grew = true
 			break
 		}
 	}
-	if s.vidStampReady.Load() {
+	if s.vidStampReady.Load() && (grew || s.vidStampDirty.Load()) {
 		s.saveVidStamps()
 	}
 }
@@ -100,11 +102,14 @@ func (s *Store) saveVidStamps() {
 	if err != nil {
 		return
 	}
+	failed := false
 	for _, location := range s.Locations {
 		if err := writeVidStamp(location.Directory, stamp); err != nil {
 			glog.Warningf("write vid stamp in %s: %v", location.Directory, err)
+			failed = true
 		}
 	}
+	s.vidStampDirty.Store(failed)
 }
 
 func readVidStamp(dir string) (*vidStamp, error) {
