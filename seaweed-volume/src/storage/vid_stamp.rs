@@ -54,7 +54,7 @@ impl Store {
         }
         {
             let mut guard = self.last_seen_topology_id.lock().unwrap();
-            if *guard == id {
+            if *guard == id && !self.vid_stamp_dirty.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
             *guard = id.to_string();
