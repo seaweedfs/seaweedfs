@@ -4633,10 +4633,16 @@ impl VolumeServer for VolumeGrpcService {
                 // before the delete only leaks the remote object; the .vif must never
                 // reference an object that has already been deleted.
                 {
-                    let store = state.store.read().unwrap();
-                    let (_, vol) = store.find_volume(vid).ok_or_else(|| {
-                        Status::not_found(format!("volume {} disappeared during tier-down", vid))
-                    })?;
+                    let vol = {
+                        let store = state.store.read().unwrap();
+                        let (_, vol) = store.find_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!(
+                                "volume {} disappeared during tier-down",
+                                vid
+                            ))
+                        })?;
+                        vol
+                    };
 
                     // The volume could have been deleted/recreated or re-tiered while the
                     // download ran. Abort rather than trim the .vif or delete a remote
@@ -4648,6 +4654,12 @@ impl VolumeServer for VolumeGrpcService {
                             vid
                         )));
                     }
+
+                    // One write lease across the reference trim, .vif save and
+                    // backend swap: between clearing the remote-only write
+                    // restriction and attaching the local .dat a write would
+                    // pass check_writable and then fail on a missing dat_file.
+                    let _lease = vol.instance().write_lock();
 
                     // Snapshot the remote reference before dropping it: the
                     // refresh it triggers can fail, and a half-applied transition
@@ -4661,7 +4673,7 @@ impl VolumeServer for VolumeGrpcService {
                     // it the first write would append to the local .dat and
                     // then fail to index.
                     let mut removed_remote = None;
-                    if let Err(e) = vol.update_remote_files(|files| {
+                    if let Err(e) = vol.update_remote_files_held(|files| {
                         if !files.is_empty() {
                             removed_remote = Some(files.remove(0));
                         }
@@ -4670,7 +4682,7 @@ impl VolumeServer for VolumeGrpcService {
                         // map back where they belong. Best effort: if even this
                         // fails the volume stays pinned read-only, which is the
                         // safe end of the transition.
-                        if let Err(restore_err) = vol.update_remote_files(|files| {
+                        if let Err(restore_err) = vol.update_remote_files_held(|files| {
                             if let Some(remote) = removed_remote {
                                 files.insert(0, remote);
                             }
@@ -4694,7 +4706,7 @@ impl VolumeServer for VolumeGrpcService {
                         )));
                     }
 
-                    if let Err(e) = vol.open_local_dat_backend() {
+                    if let Err(e) = vol.open_local_dat_backend_held() {
                         return Err(Status::internal(format!(
                             "volume {} failed to open local dat file {}: {}",
                             vid, dat_path, e

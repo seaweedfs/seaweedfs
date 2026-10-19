@@ -4160,6 +4160,16 @@ impl Volume {
         f: impl FnOnce(&mut Vec<PbRemoteFile>),
     ) -> Result<(), VolumeError> {
         let _guard = self.data_file_access_control.write_lock();
+        self.update_remote_files_held(f)
+    }
+
+    /// `update_remote_files` for callers already holding the write lease —
+    /// tier-down spans the reference trim, .vif save and backend swap under
+    /// one lease so no write can enter the transition gap.
+    pub(crate) fn update_remote_files_held(
+        &self,
+        f: impl FnOnce(&mut Vec<PbRemoteFile>),
+    ) -> Result<(), VolumeError> {
         f(&mut self.volume_info.write().unwrap().files);
         let mut io = self.io.write().unwrap();
         self.refresh_remote_write_mode(&mut io)
@@ -4189,9 +4199,10 @@ impl Volume {
     }
 
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
-    /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a tier-down.
-    pub(crate) fn open_local_dat_backend(&self) -> Result<(), VolumeError> {
-        let _guard = self.data_file_access_control.write_lock();
+    /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a
+    /// tier-down. Callers hold the write lease: the swap is the last step of a
+    /// transition that must not admit a write mid-way.
+    pub(crate) fn open_local_dat_backend_held(&self) -> Result<(), VolumeError> {
         let file = open_volume_file(OpenOptions::new().read(true).write(true), self.dat_path())?;
         let mut io = self.io.write().unwrap();
         io.remote_dat_file = None;
@@ -9604,13 +9615,17 @@ mod tests {
             Some(NeedleMap::SortedFile(_))
         ));
 
-        // The tail of the tier-down handler, once the .dat is back on disk.
-        v.update_remote_files(|files| {
-            files.remove(0);
-        })
-        .unwrap();
-        v.save_volume_info().unwrap();
-        v.open_local_dat_backend().unwrap();
+        // The tail of the tier-down handler, once the .dat is back on disk —
+        // one write lease spans the reference trim, .vif save and backend swap.
+        {
+            let _lease = v.instance().write_lock();
+            v.update_remote_files_held(|files| {
+                files.remove(0);
+            })
+            .unwrap();
+            v.save_volume_info().unwrap();
+            v.open_local_dat_backend_held().unwrap();
+        }
 
         assert!(!v.has_remote_file());
         assert!(
