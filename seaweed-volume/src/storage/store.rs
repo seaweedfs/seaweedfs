@@ -161,6 +161,10 @@ impl Store {
         self.reconcile_ec_shards_across_disks();
 
         self.fold_location_into_vid_stamp(self.locations.last().unwrap());
+        // Write the combined bound back to every dir, including ones whose
+        // own stamp or volumes sit below it — a lost disk must not restart
+        // the server below the bound its remaining dirs once reached.
+        self.save_vid_stamps();
 
         Ok(())
     }

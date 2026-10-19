@@ -84,7 +84,7 @@ impl Store {
         }
     }
 
-    fn save_vid_stamps(&self) {
+    pub(crate) fn save_vid_stamps(&self) {
         let _guard = self.vid_stamp_lock.lock().unwrap();
         let stamp = match serde_json::to_vec(&VidStamp {
             max_volume_id: self.max_volume_id_seen(),
@@ -175,6 +175,48 @@ mod tests {
         let restarted = make_store(dir);
         assert_eq!(restarted.max_volume_id_seen(), 42);
         assert_eq!(restarted.last_seen_topology_id(), "cluster-a");
+    }
+
+    #[test]
+    fn later_disk_gets_combined_stamp() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        // dir2 carries a stale stamp from an older run
+        write_vid_stamp(
+            tmp2.path(),
+            &serde_json::to_vec(&VidStamp {
+                max_volume_id: 10,
+                topology_id: String::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                tmp1.path().to_str().unwrap(),
+                tmp1.path().to_str().unwrap(),
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store.update_max_volume_id_seen(100);
+        store
+            .add_location(
+                tmp2.path().to_str().unwrap(),
+                tmp2.path().to_str().unwrap(),
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let stamp2 = read_vid_stamp(tmp2.path()).unwrap();
+        assert_eq!(stamp2.max_volume_id, 100);
     }
 
     #[test]
