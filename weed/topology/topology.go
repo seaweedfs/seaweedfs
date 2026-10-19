@@ -87,6 +87,7 @@ type Topology struct {
 	maxVolumeIdFile          string
 	maxVolumeIdFileLock      sync.Mutex
 	lastPersistedMaxVolumeId atomic.Uint32
+	lastPersistedTopologyId  atomic.Value
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -964,6 +965,7 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 		return
 	}
 	t.lastPersistedMaxVolumeId.Store(uint32(cmd.MaxVolumeId))
+	t.lastPersistedTopologyId.Store(cmd.TopologyId)
 	t.UpAdjustMaxVolumeId(cmd.MaxVolumeId)
 	if cmd.TopologyId != "" {
 		t.SetTopologyId(cmd.TopologyId)
@@ -974,19 +976,24 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 // leader before a raft apply and by both raft implementations on apply and
 // recovery, so follower mirrors stay current too.
 func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
-	if t.lastPersistedMaxVolumeId.Load() >= uint32(vid) {
+	topoId := t.GetTopologyId()
+	mirrored := func() bool {
+		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId
+	}
+	if mirrored() {
 		return nil
 	}
 	t.maxVolumeIdFileLock.Lock()
 	defer t.maxVolumeIdFileLock.Unlock()
-	if t.lastPersistedMaxVolumeId.Load() >= uint32(vid) {
+	if mirrored() {
 		return nil
 	}
 	if t.maxVolumeIdFile == "" {
 		t.lastPersistedMaxVolumeId.Store(uint32(vid))
+		t.lastPersistedTopologyId.Store(topoId)
 		return nil
 	}
-	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, t.GetTopologyId()))
+	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, topoId))
 	if err != nil {
 		return err
 	}
@@ -1013,5 +1020,6 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 		return err
 	}
 	t.lastPersistedMaxVolumeId.Store(uint32(vid))
+	t.lastPersistedTopologyId.Store(topoId)
 	return nil
 }

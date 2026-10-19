@@ -43,6 +43,27 @@ func TestMaxVolumeIdFileRestoresTopologyId(t *testing.T) {
 	}
 }
 
+func TestMaxVolumeIdFileRewritesOnTopologyIdChange(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "max_volume_id")
+
+	topo := NewTopology("topo", nil, 0, 5, false)
+	topo.SetMaxVolumeIdFile(file)
+	if err := topo.PersistMaxVolumeId(needle.VolumeId(7)); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	topo.SetTopologyId("cluster-b")
+	if err := topo.PersistMaxVolumeId(needle.VolumeId(7)); err != nil {
+		t.Fatalf("persist same bound with new topology id: %v", err)
+	}
+
+	restarted := NewTopology("topo", nil, 0, 5, false)
+	restarted.SetMaxVolumeIdFile(file)
+	if got := restarted.GetTopologyId(); got != "cluster-b" {
+		t.Fatalf("restored topology id = %q, want cluster-b", got)
+	}
+}
+
 func TestMaxVolumeIdFileMonotonic(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "max_volume_id")
