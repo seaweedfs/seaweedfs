@@ -2,9 +2,11 @@ package topology
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,11 @@ type fakeEtcdKV struct {
 	mu   sync.Mutex
 	rev  int64
 	data map[string]*mvccpb.KeyValue
+	// beforeCmp runs inside Commit before the compares are evaluated, to
+	// model a competing writer landing between the read and the CAS.
+	beforeCmp func()
+	getErr    error
+	commitErr error
 }
 
 func newFakeEtcdKV() *fakeEtcdKV {
@@ -30,6 +37,9 @@ func newFakeEtcdKV() *fakeEtcdKV {
 func (kv *fakeEtcdKV) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	if kv.getErr != nil {
+		return nil, kv.getErr
+	}
 	if v, ok := kv.data[key]; ok {
 		cp := *v
 		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{&cp}}, nil
@@ -100,6 +110,9 @@ func (t *fakeEtcdTxn) Else(ops ...clientv3.Op) clientv3.Txn {
 func (t *fakeEtcdTxn) Commit() (*clientv3.TxnResponse, error) {
 	t.kv.mu.Lock()
 	defer t.kv.mu.Unlock()
+	if t.kv.beforeCmp != nil {
+		t.kv.beforeCmp()
+	}
 	for _, cmp := range t.cmps {
 		if !t.kv.evalCmp(cmp) {
 			return &clientv3.TxnResponse{Succeeded: false}, nil
@@ -109,6 +122,9 @@ func (t *fakeEtcdTxn) Commit() (*clientv3.TxnResponse, error) {
 		if op.IsPut() {
 			t.kv.applyPut(string(op.KeyBytes()), string(op.ValueBytes()))
 		}
+	}
+	if t.kv.commitErr != nil {
+		return nil, t.kv.commitErr
 	}
 	return &clientv3.TxnResponse{Succeeded: true}, nil
 }
@@ -183,10 +199,12 @@ func TestEtcdAllocatorResumesFromStoredKey(t *testing.T) {
 
 func TestEtcdAllocatorRetriesOnCasConflict(t *testing.T) {
 	kv := newFakeEtcdKV()
-	// the seed runs after the empty read and a competing writer lands the key
-	// before the allocator's create-CAS, forcing a retry
+	// a competing writer lands the key once, between the read and the CAS
+	kv.beforeCmp = func() {
+		kv.applyPut("seaweedfs/max_volume_id", "55")
+		kv.beforeCmp = nil
+	}
 	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
-		kv.Put(context.Background(), "seaweedfs/max_volume_id", "55")
 		return 5
 	})
 	got, err := alloc.NextVolumeId()
@@ -195,6 +213,66 @@ func TestEtcdAllocatorRetriesOnCasConflict(t *testing.T) {
 	}
 	if got != 56 {
 		t.Fatalf("CAS retry should allocate 56, got %d", got)
+	}
+}
+
+func TestEtcdAllocatorSkipsIdBelowFreshBound(t *testing.T) {
+	kv := newFakeEtcdKV()
+	var bound atomic.Uint32
+	bound.Store(5)
+	// a heartbeat raises the local bound while the CAS is in flight; the
+	// committed 6 must not be handed out
+	kv.beforeCmp = func() {
+		bound.Store(43)
+		kv.beforeCmp = nil
+	}
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+		return needle.VolumeId(bound.Load())
+	})
+	got, err := alloc.NextVolumeId()
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	if got != 44 {
+		t.Fatalf("an id at or below the fresher bound must be skipped, got %d", got)
+	}
+}
+
+func TestEtcdAllocatorReadError(t *testing.T) {
+	kv := newFakeEtcdKV()
+	kv.getErr = errors.New("etcd read failed")
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+		return 41
+	})
+	if _, err := alloc.NextVolumeId(); err == nil {
+		t.Fatal("a failed read must return an error, not an id")
+	}
+	kv.getErr = nil
+	got, err := alloc.NextVolumeId()
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("got %d, want 42", got)
+	}
+}
+
+func TestEtcdAllocatorCommitError(t *testing.T) {
+	kv := newFakeEtcdKV()
+	kv.commitErr = errors.New("etcd commit failed")
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+		return 41
+	})
+	if _, err := alloc.NextVolumeId(); err == nil {
+		t.Fatal("a failed commit must return an error, not an id")
+	}
+	kv.commitErr = nil
+	got, err := alloc.NextVolumeId()
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	if got != 43 {
+		t.Fatalf("the id written by the failed commit must be skipped, got %d", got)
 	}
 }
 
