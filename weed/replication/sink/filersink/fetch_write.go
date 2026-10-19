@@ -50,12 +50,15 @@ func isSourceChunkMissing(err error) bool {
 
 // missingSourceChunkGate decides when to stop retrying a chunk the source cannot
 // produce, so a lookup race or a restarting volume server is waited out while a
-// vacuumed one is written off instead of retried forever. The wait is kept per
-// volume on the sink: a volume that is gone took every file it held with it, and
-// waiting it out once per file would stall the sync for as long as it holds files.
+// vacuumed one is written off instead of retried forever. A volume that is gone
+// took every file it held with it, so its wait is kept per volume on the sink;
+// a 404 is one needle's answer, so its wait is kept per file id instead — a
+// sibling needle succeeding must not restart it, and a different needle must get
+// its own full wait.
 type missingSourceChunkGate struct {
 	sink     *FilerSink
 	volumeId string
+	fileId   string
 	gaveUp   bool
 }
 
@@ -65,7 +68,7 @@ func (g *missingSourceChunkGate) isPermanent(err error) bool {
 	case errors.Is(err, source.ErrVolumeNotFound):
 		since = g.sink.sourceVolumeMissingSince(g.volumeId)
 	case errors.Is(err, util_http.ErrNotFound):
-		since = g.sink.sourceNeedleMissingSince(g.volumeId)
+		since = g.sink.sourceNeedleMissingSince(g.fileId)
 	default:
 		return false
 	}
@@ -577,7 +580,7 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 }
 
 func (fs *FilerSink) newMissingSourceChunkGate(fileId string) *missingSourceChunkGate {
-	return &missingSourceChunkGate{sink: fs, volumeId: filer.VolumeId(fileId)}
+	return &missingSourceChunkGate{sink: fs, volumeId: filer.VolumeId(fileId), fileId: fileId}
 }
 
 // sourceVolumeMissingSince returns when the sink first found volumeId
@@ -587,18 +590,20 @@ func (fs *FilerSink) sourceVolumeMissingSince(volumeId string) time.Time {
 	return since.(time.Time)
 }
 
-// sourceNeedleMissingSince returns when a volume first answered needle
-// not-found, recording now on the first sighting.
-func (fs *FilerSink) sourceNeedleMissingSince(volumeId string) time.Time {
-	since, _ := fs.missingNeedleVolumes.LoadOrStore(volumeId, time.Now())
+// sourceNeedleMissingSince returns when fileId first came back not-found from
+// an answering volume, recording now on the first sighting.
+func (fs *FilerSink) sourceNeedleMissingSince(fileId string) time.Time {
+	since, _ := fs.missingNeedles.LoadOrStore(fileId, time.Now())
 	return since.(time.Time)
 }
 
 // sourceServed records a chunk the source did serve: the probe
-// sourceStillServesChunks re-checks, and proof its volume is locatable again.
+// sourceStillServesChunks re-checks, proof its volume is locatable again, and
+// proof the needle itself is back if it had been reported missing.
 func (fs *FilerSink) sourceServed(fileId string) {
 	fs.lastServedFileId.Store(&fileId)
 	fs.missingVolumes.Delete(filer.VolumeId(fileId))
+	fs.missingNeedles.Delete(fileId)
 }
 
 // sourceStillServesChunks reports whether the source cluster can still produce the

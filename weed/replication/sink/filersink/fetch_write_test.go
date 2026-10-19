@@ -610,11 +610,23 @@ func TestMissingSourceChunkGate(t *testing.T) {
 
 	// a needle not-found answer keeps its own clock: the volume staying alive
 	// for other needles must not restart the wait for the one that is gone
-	fs.missingNeedleVolumes.Store("5619", time.Now().Add(-2*missingSourceChunkGrace))
+	fs.missingNeedles.Store("5619,01abc", time.Now().Add(-2*missingSourceChunkGrace))
 	needleGate := fs.newMissingSourceChunkGate("5619,01abc")
 	fs.sourceServed("5619,02def")
 	if !needleGate.isPermanent(needleGone) {
 		t.Fatal("a needle 404 must keep aging while its volume serves other needles")
+	}
+
+	// one needle's elapsed wait must not cut short a different needle's
+	fresh := fs.newMissingSourceChunkGate("5619,03ghi")
+	if fresh.isPermanent(needleGone) {
+		t.Fatal("a different needle on the same volume must get its own wait")
+	}
+
+	// the needle itself serving again is the only thing that restarts its wait
+	fs.sourceServed("5619,01abc")
+	if needleGate.isPermanent(needleGone) {
+		t.Fatal("a needle that serves again must restart its wait")
 	}
 }
 
