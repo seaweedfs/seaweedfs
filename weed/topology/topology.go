@@ -94,6 +94,7 @@ type Topology struct {
 	freezeOnMismatch      atomic.Bool
 	stateLossRecoveryWait atomic.Int64
 	allocationNotBefore   atomic.Int64
+	topologyInitPending   atomic.Bool
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -399,6 +400,12 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	if !t.IsLeaderAndCanRead() {
 		return 0, fmt.Errorf("as leader can not read yet")
 
+	}
+	for t.topologyInitPending.Load() {
+		if !t.IsLeaderAndCanRead() {
+			return 0, fmt.Errorf("as leader can not read yet")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if t.IsGrowthFrozen() {
 		return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
@@ -1052,6 +1059,12 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 	} else {
 		t.SetGrowthFrozen(frozen)
 	}
+}
+
+// SetTopologyInitPending gates allocation while a topology id is being
+// minted, so growth cannot slip in before the warmup window is installed.
+func (t *Topology) SetTopologyInitPending(pending bool) {
+	t.topologyInitPending.Store(pending)
 }
 
 // DeferAllocation holds off new id allocation for d. Called when the leader
