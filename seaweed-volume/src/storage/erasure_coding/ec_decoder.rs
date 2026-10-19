@@ -502,7 +502,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         // Create volume with data
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),

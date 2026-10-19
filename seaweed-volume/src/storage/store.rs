@@ -6,8 +6,8 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
@@ -43,12 +43,12 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
 
     if dir_idx.is_empty() || dir_idx == dir {
         check(dir, data_bytes + index_bytes)
-    } else if !same_filesystem(dir, dir_idx) {
+    } else if !same_filesystem(dir, &dir_idx) {
         check(dir, data_bytes)?;
-        check(dir_idx, index_bytes)
+        check(&dir_idx, index_bytes)
     } else {
         check(dir, data_bytes + index_bytes)?;
-        check(dir_idx, index_bytes)
+        check(&dir_idx, index_bytes)
     }
 }
 
@@ -170,23 +170,15 @@ impl Store {
 
     // ---- Volume lookup ----
 
-    /// Find which location contains a volume.
-    pub fn find_volume(&self, vid: VolumeId) -> Option<(usize, &crate::storage::volume::Volume)> {
+    /// Find which location contains a volume, returning a shared handle.
+    /// Mirroring Go's findVolume: the lookup only borrows the volume map,
+    /// so callers can run volume I/O after releasing the store guard.
+    pub fn find_volume(
+        &self,
+        vid: VolumeId,
+    ) -> Option<(usize, Arc<crate::storage::volume::Volume>)> {
         for (i, loc) in self.locations.iter().enumerate() {
             if let Some(v) = loc.find_volume(vid) {
-                return Some((i, v));
-            }
-        }
-        None
-    }
-
-    /// Find which location contains a volume (mutable).
-    pub fn find_volume_mut(
-        &mut self,
-        vid: VolumeId,
-    ) -> Option<(usize, &mut crate::storage::volume::Volume)> {
-        for (i, loc) in self.locations.iter_mut().enumerate() {
-            if let Some(v) = loc.find_volume_mut(vid) {
                 return Some((i, v));
             }
         }
@@ -202,10 +194,10 @@ impl Store {
     /// the volume in place. A no-op when the location has no separate index
     /// directory. Mirrors Go's `Store::ConsolidateVolumeIndex`.
     pub fn consolidate_volume_index(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
-        for loc in self.locations.iter_mut() {
+        for loc in self.locations.iter() {
             let idx_dir = loc.idx_directory.clone();
             let data_dir = loc.directory.clone();
-            if let Some(v) = loc.find_volume_mut(vid) {
+            if let Some(v) = loc.find_volume(vid) {
                 if idx_dir == data_dir {
                     return Ok(());
                 }
@@ -775,22 +767,22 @@ impl Store {
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
     /// before returning, so the caller can ack a durable write.
     pub fn write_volume_needle(
-        &mut self,
+        &self,
         vid: VolumeId,
         n: &mut Needle,
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
-        self.writable_volume_mut(vid)?.write_needle(n, true, fsync)
+        self.writable_volume(vid)?.write_needle(n, true, fsync)
     }
 
     /// Write a batch of needles to one volume, sharing the syncs of its
     /// durable writes. See `Volume::write_needles_grouped`.
     pub fn write_volume_needles(
-        &mut self,
+        &self,
         vid: VolumeId,
         writes: &mut [(Needle, bool)],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
-        match self.writable_volume_mut(vid) {
+        match self.writable_volume(vid) {
             Ok(vol) => vol.write_needles_grouped(writes),
             // The lookup fails only with NotFound or the disk-space ReadOnly.
             Err(e) => writes
@@ -803,9 +795,12 @@ impl Store {
         }
     }
 
-    fn writable_volume_mut(&mut self, vid: VolumeId) -> Result<&mut Volume, VolumeError> {
+    /// Resolve a mounted volume handle for writing, checking disk space like
+    /// Go's writableVolume. The returned Arc stays valid for I/O after the
+    /// store guard is released; if the volume is unmounted meanwhile the I/O
+    /// fails on the volume's closed state, not on a stale pointer.
+    pub(crate) fn writable_volume(&self, vid: VolumeId) -> Result<Arc<Volume>, VolumeError> {
         // Check disk space on the location containing this volume.
-        // We do this before the mutable borrow to avoid borrow conflicts.
         let loc_idx = self
             .find_volume(vid)
             .map(|(i, _)| i)
@@ -817,13 +812,13 @@ impl Store {
             return Err(VolumeError::ReadOnly(vid));
         }
 
-        let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
+        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         Ok(vol)
     }
 
     /// Delete a needle from a volume.
     pub fn delete_volume_needle(
-        &mut self,
+        &self,
         vid: VolumeId,
         n: &mut Needle,
     ) -> Result<Size, VolumeError> {
@@ -832,8 +827,6 @@ impl Store {
         if vol.is_no_write_or_delete() {
             return Err(VolumeError::ReadOnly(vid));
         }
-
-        let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
         vol.delete_needle(n)
     }
 
@@ -1604,10 +1597,10 @@ impl Store {
         let (_, v) = self
             .find_volume(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
-        ensure_compact_volume_space(v, preallocate)?;
+        ensure_compact_volume_space(&v, preallocate)?;
 
         let (_, v) = self
-            .find_volume_mut(vid)
+            .find_volume(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
         v.begin_compact_by_index()
     }
@@ -1625,8 +1618,8 @@ impl Store {
             collection,
             ..VolumeSpec::default()
         };
-        let mut v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
-        let mut compact = || -> Result<(), VolumeError> {
+        let v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
+        let compact = || -> Result<(), VolumeError> {
             ensure_compact_volume_space(&v, 0)?;
             v.compact_by_index(0, 0, |_| true)?;
             v.commit_compact()
@@ -1646,7 +1639,7 @@ impl Store {
     /// Commit a completed compaction: swap files and reload.
     pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<(bool, u64), VolumeError> {
         let (_, v) = self
-            .find_volume_mut(vid)
+            .find_volume(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
         let is_read_only = v.is_read_only();
         v.commit_compact()?;
@@ -1657,7 +1650,7 @@ impl Store {
     /// Clean up leftover compaction files.
     pub fn cleanup_compact_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         let (_, v) = self
-            .find_volume_mut(vid)
+            .find_volume(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
         v.cleanup_compact()
     }
@@ -2790,7 +2783,7 @@ mod tests {
         }
         let revision = {
             let (_, v) = store.find_volume(vid).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
 
         let job = store
@@ -2803,20 +2796,20 @@ mod tests {
         assert!(store.delete_volume(vid, false, false, false).is_err());
         store.delete_collection("").unwrap();
         assert!(store.cleanup_compact_volume(vid).is_err());
-        let (_, v) = store.find_volume_mut(vid).unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
         assert!(v.relocate_index_to(other.path().to_str().unwrap()).is_err());
         // Go parity: a commit that finds the volume compacting is a no-op.
         store.commit_compact_volume(vid).unwrap();
 
         let (_, v) = store.find_volume(vid).expect("still mounted");
         assert!(v.is_compacting());
-        assert_eq!(v.super_block.compaction_revision, revision);
+        assert_eq!(v.super_block().compaction_revision, revision);
 
         job.run(|_| true).unwrap();
         assert!(!store.find_volume(vid).unwrap().1.is_compacting());
         store.commit_compact_volume(vid).unwrap();
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert_eq!(v.super_block().compaction_revision, revision + 1);
         assert!(store.unmount_volume(vid).unwrap());
     }
 
@@ -2856,7 +2849,7 @@ mod tests {
         store.delete_volume_needle(vid, &mut del).unwrap();
         let revision = {
             let (_, v) = store.find_volume(vid).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
 
         let job = store.begin_compact_volume(vid, 0).unwrap().unwrap();
@@ -2885,7 +2878,7 @@ mod tests {
         store.commit_compact_volume(vid).unwrap();
 
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert_eq!(v.super_block().compaction_revision, revision + 1);
         assert_eq!(read_test_needle(&store, vid, 99).unwrap(), b"late-write");
         assert_eq!(read_test_needle(&store, vid, 3).unwrap(), b"overwritten");
         assert!(read_test_needle(&store, vid, 4).is_err());

@@ -848,7 +848,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         // Create a volume with some data
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -895,7 +895,7 @@ mod tests {
     fn make_volume_with_needles(n: u64) -> TempDir {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -970,7 +970,7 @@ mod tests {
     // the dir path so a test can drop/truncate shards and rebuild.
     fn encode_sample_volume(tmp: &TempDir) -> String {
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(1),
@@ -1167,7 +1167,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(2),
@@ -1216,7 +1216,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(3),
@@ -1316,7 +1316,7 @@ mod tests {
         let idx_dir = idx_tmp.path().to_str().unwrap();
 
         // Create a volume with separate data and index directories
-        let mut v = Volume::new(
+        let v = Volume::new(
             dat_dir,
             idx_dir,
             VolumeId(1),
@@ -1396,7 +1396,7 @@ mod tests {
         let idx_dir = idx_tmp.path().to_str().unwrap();
         let wrong_dir = wrong_tmp.path().to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dat_dir,
             idx_dir,
             VolumeId(1),
@@ -1430,7 +1430,7 @@ mod tests {
     /// a caller-chosen directory, which is what a split-disk test needs: the
     /// shards have to be scattered out of the directory they were encoded into.
     fn seed_encoded_volume(dir: &str, vid: VolumeId) {
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             vid,

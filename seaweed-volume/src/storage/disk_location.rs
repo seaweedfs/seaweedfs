@@ -37,7 +37,7 @@ pub struct DiskLocation {
     pub tags: Vec<String>,
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
-    volumes: HashMap<VolumeId, Volume>,
+    volumes: HashMap<VolumeId, Arc<Volume>>,
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
@@ -237,6 +237,7 @@ impl DiskLocation {
         }
 
         for (collection, vid, v) in self.open_volumes(to_load, needle_map_kind) {
+            let v = Arc::new(v);
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&collection, "volume"])
                 .inc();
@@ -549,20 +550,23 @@ impl DiskLocation {
         None
     }
 
-    /// Find a volume by ID.
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
-        self.volumes.get(&vid)
-    }
-
-    /// Find a volume by ID (mutable).
-    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
-        self.volumes.get_mut(&vid)
+    /// Find a volume by ID. Returns a shared handle like Go's findVolume:
+    /// the lookup borrows the map briefly and I/O runs on the handle after.
+    pub fn find_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
+        self.volumes.get(&vid).cloned()
     }
 
     /// Add a volume to this location.
     pub fn set_volume(&mut self, vid: VolumeId, volume: Volume) {
         let collection = volume.collection.clone();
-        self.volumes.insert(vid, volume);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(volume)) {
+            // A held handle would keep writing the same files against a stale
+            // in-memory index; close it so the stale handle fails closed.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[&collection, "volume"])
             .inc();
@@ -586,13 +590,20 @@ impl DiskLocation {
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[spec.collection, "volume"])
             .inc();
-        self.volumes.insert(vid, v);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(v)) {
+            // Same fail-closed rule as set_volume: a stale handle must not
+            // keep writing the files the replacement just reopened.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         Ok(())
     }
 
     /// Remove and close a volume.
-    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Volume> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
+    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Arc<Volume>> {
+        if let Some(v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
@@ -619,7 +630,7 @@ impl DiskLocation {
         {
             return Err(v.compacting_error());
         }
-        if let Some(mut v) = self.volumes.remove(&vid) {
+        if let Some(v) = self.volumes.remove(&vid) {
             match v.destroy(only_empty, only_garbage, keep_remote_data) {
                 Ok(()) => {
                     crate::metrics::VOLUME_GAUGE
@@ -649,7 +660,7 @@ impl DiskLocation {
             .collect();
 
         for vid in vids {
-            if let Some(mut v) = self.volumes.remove(&vid) {
+            if let Some(v) = self.volumes.remove(&vid) {
                 if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
                     self.volumes.insert(vid, v);
@@ -697,7 +708,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn iter_volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Number of free volume slots.
@@ -718,12 +729,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
-    }
-
-    /// Iterate over all volumes (mutable).
-    pub fn volumes_mut(&mut self) -> impl Iterator<Item = (&VolumeId, &mut Volume)> {
-        self.volumes.iter_mut()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Sum of unused space in writable volumes (volumeSizeLimit - actual size per volume).

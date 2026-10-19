@@ -683,9 +683,9 @@ async fn do_replicated_request(
 
     let copy_count = {
         let store = state.store.read().unwrap();
-        store
-            .find_volume(VolumeId(vid))
-            .map_or(1, |(_, v)| v.super_block.replica_placement.get_copy_count())
+        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
+            v.super_block().replica_placement.get_copy_count()
+        })
     };
     let allow_delete = method == axum::http::Method::DELETE;
     let eligible_locations: Vec<_> = locations
@@ -1286,7 +1286,7 @@ async fn check_download_limit(
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
-                    .is_some_and(|(_, vol)| vol.super_block.replica_placement.has_replication())
+                    .is_some_and(|(_, vol)| vol.super_block().replica_placement.has_replication())
             };
         if should_try_replica
             && let Some(info) = build_proxy_request_info(path, request_headers, &query_string)
@@ -2956,8 +2956,11 @@ pub async fn post_handler(
     let write_result = if let Some(wq) = state.write_queue.get() {
         wq.submit(vid, n, fsync).await
     } else {
-        let mut store = state.store.write().unwrap();
-        store.write_volume_needle(vid, &mut n, fsync)
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.writable_volume(vid)
+        };
+        vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
     };
 
     // Replicate to remote volume servers if this volume has replicas.
@@ -2967,7 +2970,7 @@ pub async fn post_handler(
             let store = state.store.read().unwrap();
             store
                 .find_volume(vid)
-                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
+                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
         };
         if needs_replication {
             let state_clone = state.clone();
@@ -3242,8 +3245,14 @@ pub async fn delete_handler(
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
     {
-        let store = state.store.read().unwrap();
-        match store.read_volume_needle_with_option(vid, &mut n, &mut delete_read_option()) {
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.find_volume(vid).map(|(_, vol)| vol)
+        };
+        match vol
+            .ok_or(crate::storage::volume::VolumeError::NotFound)
+            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()))
+        {
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
@@ -3314,8 +3323,21 @@ pub async fn delete_handler(
     }
 
     let delete_result = {
-        let mut store = state.store.write().unwrap();
-        store.delete_volume_needle(vid, &mut n)
+        let vol = {
+            let store = state.store.read().unwrap();
+            store
+                .find_volume(vid)
+                .map(|(_, vol)| vol)
+                .ok_or(crate::storage::volume::VolumeError::NotFound)
+        };
+        match vol {
+            Err(e) => Err(e),
+            // Matches Store::delete_volume_needle: noWriteOrDelete rejects first.
+            Ok(vol) if vol.is_no_write_or_delete() => {
+                Err(crate::storage::volume::VolumeError::ReadOnly(vid))
+            }
+            Ok(vol) => vol.delete_needle(&mut n),
+        }
     };
 
     let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
@@ -3324,7 +3346,7 @@ pub async fn delete_handler(
             let store = state.store.read().unwrap();
             store
                 .find_volume(vid)
-                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
+                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
         };
         if needs_replication
             && let Err(e) = do_replicated_request(
@@ -3411,7 +3433,7 @@ pub async fn status_handler(
             );
             vol_info.insert(
                 "CompactRevision".to_string(),
-                serde_json::Value::from(vol.super_block.compaction_revision),
+                serde_json::Value::from(vol.super_block().compaction_revision),
             );
             vol_info.insert(
                 "ModifiedAtSecond".to_string(),
@@ -3422,7 +3444,7 @@ pub async fn status_handler(
                 serde_json::Value::from(loc.disk_type.to_string()),
             );
 
-            let replica = &vol.super_block.replica_placement;
+            let replica = &vol.super_block().replica_placement;
             let mut replica_value = serde_json::Map::new();
             if replica.diff_data_center_count > 0 {
                 replica_value.insert(
@@ -3447,7 +3469,7 @@ pub async fn status_handler(
                 serde_json::Value::Object(replica_value),
             );
 
-            let ttl = vol.super_block.ttl;
+            let ttl = vol.super_block().ttl;
             let mut ttl_value = serde_json::Map::new();
             if ttl.count > 0 {
                 ttl_value.insert("Count".to_string(), serde_json::Value::from(ttl.count));
@@ -4114,20 +4136,12 @@ async fn read_chunk_needle(
     enum Placement {
         Ec,
         Remote,
+        Local(std::sync::Arc<crate::storage::volume::Volume>),
     }
     let placement = {
         let store = state.store.read().unwrap();
-        if store.find_volume(vid).is_some() {
-            let mut n = Needle {
-                id: nid,
-                cookie,
-                ..Needle::default()
-            };
-            return store
-                .read_volume_needle(vid, &mut n)
-                .map_err(|e| format!("{}", e))
-                .and_then(|_| cookie_checked_chunk(n, cookie))
-                .map(|data| ChunkBytes { origin: 0, data });
+        if let Some((_, vol)) = store.find_volume(vid) {
+            Placement::Local(vol)
         } else if store.find_ec_volume(vid).is_some() {
             Placement::Ec
         } else {
@@ -4136,6 +4150,17 @@ async fn read_chunk_needle(
     };
 
     match placement {
+        Placement::Local(vol) => {
+            let mut n = Needle {
+                id: nid,
+                cookie,
+                ..Needle::default()
+            };
+            vol.read_needle(&mut n)
+                .map_err(|e| format!("{}", e))
+                .and_then(|_| cookie_checked_chunk(n, cookie))
+                .map(|data| ChunkBytes { origin: 0, data })
+        }
         Placement::Ec => {
             match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
                 Ok(Some(n)) => {
@@ -5476,7 +5501,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
 
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2),
@@ -5782,7 +5807,7 @@ mod tests {
         let state = volume_test_state(&tmp);
         let dir = tmp.path().to_str().unwrap();
         let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2),
@@ -7059,8 +7084,8 @@ mod tests {
         );
 
         {
-            let mut store = state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.fail_next_fsync_for_test(true);
             vol.fail_next_truncate_for_test(true);
             let mut n = Needle {
@@ -7073,7 +7098,7 @@ mod tests {
             store
                 .write_volume_needle(VolumeId(1), &mut n, true)
                 .unwrap_err();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.fail_next_fsync_for_test(false);
             vol.fail_next_truncate_for_test(false);
             assert!(vol.unavailable_error().is_some());
@@ -7091,8 +7116,9 @@ mod tests {
         }
     }
 
-    /// A vacuum committed mid-stream must not change the bytes served: the
-    /// stream's handle pins the inode its offset was resolved against.
+    /// A leased stream blocks the compaction commit instead of racing the
+    /// file swap, and still delivers the needle's bytes; the commit goes
+    /// through once the stream releases its read lease.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_streaming_body_survives_a_vacuum_that_moves_the_needle() {
@@ -7138,13 +7164,28 @@ mod tests {
         {
             let mut store = state.store.write().unwrap();
             store.compact_volume(VolumeId(1), 0, 0, |_| true).unwrap();
-            store.commit_compact_volume(VolumeId(1)).unwrap();
+            let err = store.commit_compact_volume(VolumeId(1)).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(crate::storage::volume::COMMIT_WAITS_FOR_READS),
+                "the leased stream must hold the commit back: {err}"
+            );
         }
-        assert_ne!(data_offset(), before, "the vacuum must move the needle");
 
         while let Some(chunk) = stream.next().await {
             got.extend_from_slice(&chunk.expect("the stream failed across a vacuum"));
         }
         assert_eq!(got, data);
+        drop(stream);
+
+        {
+            let mut store = state.store.write().unwrap();
+            store.commit_compact_volume(VolumeId(1)).unwrap();
+        }
+        assert_ne!(
+            data_offset(),
+            before,
+            "the vacuum moves the needle once the stream drains"
+        );
     }
 }

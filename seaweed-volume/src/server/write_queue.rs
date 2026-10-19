@@ -1,14 +1,18 @@
 //! Async batched write processing for the volume server.
 //!
 //! Instead of each upload handler directly calling `write_needle`, writes are
-//! submitted to a queue. A background worker drains the queue in batches (up to
-//! 128 entries), groups them by volume ID, and processes them together under a
-//! single store lock. Durable writes to a volume share their .dat and .idx
-//! flushes (see `Volume::write_needles_grouped`).
+//! submitted to a queue. Each volume gets its own FIFO worker (Go's
+//! volume_write.go keeps one batching worker per volume), which drains its
+//! channel in batches of up to 128 entries or 4 MiB and shares the .dat/.idx
+//! flushes across durable writes (see `Volume::write_needles_grouped`).
+//! Writes to different volumes proceed in parallel; a volume's ordering and
+//! exclusion still come from its data-file write lease.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tracing::debug;
 
 use crate::storage::needle::needle::Needle;
@@ -29,6 +33,10 @@ pub struct WriteRequest {
     pub needle: Needle,
     pub fsync: bool,
     pub response_tx: oneshot::Sender<WriteResult>,
+    /// The global queued-slot permit, owned by the request itself: a caller
+    /// that cancels `submit` after the send must not free the slot while the
+    /// worker still holds the needle.
+    pub queue_permit: Option<OwnedSemaphorePermit>,
 }
 
 /// Maximum number of write requests to batch together.
@@ -38,101 +46,204 @@ const MAX_BATCH_SIZE: usize = 128;
 /// This prevents large writes from accumulating unbounded latency.
 const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 
-/// Handle for submitting write requests to the background worker.
+/// Cap on volumes doing grouped I/O at once, so many writers cannot crowd
+/// readers off a slow disk the way unlimited parallel fsyncs would.
+const MAX_CONCURRENT_VOLUME_WRITES: usize = 8;
+
+/// How often an idle worker re-checks that its volume is still mounted.
+/// Workers live for their volume's queue lifetime (Go parity), so the only
+/// retirement is the volume leaving the store.
+const IDLE_WORKER_POLL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Handle for submitting write requests to the per-volume workers.
 #[derive(Clone)]
 pub struct WriteQueue {
-    tx: mpsc::Sender<WriteRequest>,
+    state: Arc<VolumeServerState>,
+    /// Per-volume channel capacity; backpressure kicks in when full.
+    capacity: usize,
+    io_permits: Arc<Semaphore>,
+    /// Bounds queued+in-flight writes across all volumes — per-volume channels
+    /// alone would multiply the old single queue's capacity by volume count.
+    queue_permits: Arc<Semaphore>,
+    workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
 }
 
 impl WriteQueue {
-    /// Create a new write queue and spawn the background worker.
-    ///
-    /// `capacity` controls the channel buffer size (backpressure kicks in when full).
-    /// The worker holds a reference to `state` for accessing the store.
+    /// Create a new write queue. Per-volume workers are spawned lazily on the
+    /// first submission for that volume.
     pub fn new(state: Arc<VolumeServerState>, capacity: usize) -> Self {
-        let (tx, rx) = mpsc::channel(capacity);
-        let worker = WriteQueueWorker { rx, state };
-        tokio::spawn(worker.run());
-        WriteQueue { tx }
+        WriteQueue {
+            state,
+            capacity,
+            io_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_VOLUME_WRITES)),
+            queue_permits: Arc::new(Semaphore::new(capacity)),
+            workers: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Sender for the volume's worker, spawning one on first use.
+    fn worker_for(&self, volume_id: VolumeId) -> mpsc::Sender<WriteRequest> {
+        let mut workers = self.workers.lock().unwrap();
+        match workers.entry(volume_id) {
+            Entry::Occupied(e) => e.get().clone(),
+            Entry::Vacant(e) => {
+                let (tx, rx) = mpsc::channel(self.capacity);
+                tokio::spawn(
+                    VolumeWriteWorker {
+                        rx,
+                        vid: volume_id,
+                        state: self.state.clone(),
+                        io_permits: self.io_permits.clone(),
+                        workers: self.workers.clone(),
+                    }
+                    .run(),
+                );
+                e.insert(tx.clone());
+                tx
+            }
+        }
     }
 
     /// Submit a write request and wait for the result.
     ///
     /// Returns `Err` if the worker has shut down or the response channel was dropped.
     pub async fn submit(&self, volume_id: VolumeId, needle: Needle, fsync: bool) -> WriteResult {
+        // Workers spawn only for mounted volumes — a bogus id never creates
+        // a channel, so volume-id sprays can't grow the worker map.
+        {
+            let store = self.state.store.read().unwrap();
+            if store.find_volume(volume_id).is_none() {
+                return Err(VolumeError::NotFound);
+            }
+        }
+        // The permit travels inside the request, so the global queued bound
+        // covers the request until the worker drops it — including after a
+        // canceled submit.
+        let queue_permit = self
+            .queue_permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| broken_pipe("write queue shut down"))?;
         let (response_tx, response_rx) = oneshot::channel();
-        let request = WriteRequest {
+        let mut request = WriteRequest {
             volume_id,
             needle,
             fsync,
             response_tx,
+            queue_permit: Some(queue_permit),
         };
 
-        // Send to queue; this awaits if the channel is full (backpressure).
-        if self.tx.send(request).await.is_err() {
-            return Err(VolumeError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "write queue worker has shut down",
-            )));
+        // A send fails only against a retiring worker's closed channel; the
+        // request was never accepted, so retrying it behind a fresh worker
+        // keeps same-volume order. The volume recheck bounds the spin.
+        loop {
+            let tx = self.worker_for(volume_id);
+            match tx.send(request).await {
+                Ok(()) => break,
+                Err(mpsc::error::SendError(returned)) => {
+                    request = returned;
+                    {
+                        let store = self.state.store.read().unwrap();
+                        if store.find_volume(volume_id).is_none() {
+                            return Err(VolumeError::NotFound);
+                        }
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
         }
 
         // Wait for the worker to process our request.
         match response_rx.await {
             Ok(result) => result,
-            Err(_) => Err(VolumeError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "write queue worker dropped response channel",
-            ))),
+            Err(_) => Err(broken_pipe("write queue worker dropped response channel")),
         }
     }
 }
 
-/// Background worker that drains write requests and processes them in batches.
-struct WriteQueueWorker {
-    rx: mpsc::Receiver<WriteRequest>,
-    state: Arc<VolumeServerState>,
+fn broken_pipe(msg: &'static str) -> VolumeError {
+    VolumeError::Io(std::io::Error::new(std::io::ErrorKind::BrokenPipe, msg))
 }
 
-impl WriteQueueWorker {
-    async fn run(mut self) {
-        debug!("write queue worker started");
+/// FIFO worker draining one volume's write channel in batches. Like Go's
+/// per-volume async writer it runs for the volume's queue lifetime — exiting
+/// only when the channel closes or its volume leaves the store — so no
+/// handoff can ever split one volume's write order across two workers.
+struct VolumeWriteWorker {
+    rx: mpsc::Receiver<WriteRequest>,
+    vid: VolumeId,
+    state: Arc<VolumeServerState>,
+    io_permits: Arc<Semaphore>,
+    workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
+}
 
+impl VolumeWriteWorker {
+    async fn run(mut self) {
         loop {
-            // Wait for the first request (blocks until one arrives or channel closes).
-            let first = match self.rx.recv().await {
-                Some(req) => req,
-                None => {
-                    debug!("write queue channel closed, worker exiting");
+            let first = match tokio::time::timeout(IDLE_WORKER_POLL, self.rx.recv()).await {
+                Ok(Some(req)) => req,
+                // recv() yields None only once every sender is gone — the map
+                // holds a sender per volume, so that is exactly queue shutdown.
+                Ok(None) => return,
+                Err(_) if self.volume_gone() => {
+                    self.retire().await;
                     return;
                 }
+                Err(_) => continue,
             };
-
-            // Drain as many additional requests as available, up to MAX_BATCH_SIZE
-            // or MAX_BATCH_BYTES (matches Go: 128 requests or 4MB, whichever comes first).
-            let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
-            let mut batch_bytes: usize = first.needle.data.len();
-            batch.push(first);
-
-            while batch.len() < MAX_BATCH_SIZE && batch_bytes < MAX_BATCH_BYTES {
-                match self.rx.try_recv() {
-                    Ok(req) => {
-                        batch_bytes += req.needle.data.len();
-                        batch.push(req);
-                    }
-                    Err(_) => break,
-                }
-            }
-
-            let batch_size = batch.len();
-            debug!("processing write batch of {} requests", batch_size);
-
-            // Process the batch in spawn_blocking since write_needle does file I/O.
-            let state = self.state.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                process_batch(state, batch);
-            })
-            .await;
+            self.process_from(first).await;
         }
+    }
+
+    /// The volume's handle left the store, so the worker can go too; an idle
+    /// worker for a mounted volume stays (Go keeps the writer for the mount).
+    fn volume_gone(&self) -> bool {
+        let store = self.state.store.read().unwrap();
+        store.find_volume(self.vid).is_none()
+    }
+
+    /// Retire in a fixed order that keeps same-volume FIFO: close the channel
+    /// so racing senders fail fast (they retry and wait for a fresh worker),
+    /// drain what was already accepted, and only then give up the map slot —
+    /// a replacement worker can never start while this one still holds queued
+    /// writes.
+    async fn retire(&mut self) {
+        self.rx.close();
+        while let Some(first) = self.rx.recv().await {
+            self.process_from(first).await;
+        }
+        self.workers.lock().unwrap().remove(&self.vid);
+    }
+
+    /// Collect a batch around `first` and process it under the I/O bound.
+    async fn process_from(&mut self, first: WriteRequest) {
+        // Drain as many additional requests as available, up to MAX_BATCH_SIZE
+        // or MAX_BATCH_BYTES (matches Go: 128 requests or 4MB, whichever comes first).
+        let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
+        let mut batch_bytes: usize = first.needle.data.len();
+        batch.push(first);
+        while batch.len() < MAX_BATCH_SIZE && batch_bytes < MAX_BATCH_BYTES {
+            match self.rx.try_recv() {
+                Ok(req) => {
+                    batch_bytes += req.needle.data.len();
+                    batch.push(req);
+                }
+                Err(_) => break,
+            }
+        }
+        debug!("processing write batch of {} requests", batch.len());
+
+        // Bound the number of volumes doing grouped I/O at once, then run
+        // the batch in spawn_blocking since write_needle does file I/O.
+        let Ok(_permit) = self.io_permits.clone().acquire_owned().await else {
+            return;
+        };
+        let state = self.state.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            process_batch(state, batch);
+        })
+        .await;
     }
 }
 
@@ -155,15 +266,28 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
         }
     }
 
-    // Process each volume group under a single store lock.
-    let mut store = state.store.write().unwrap();
-
+    // Resolve each group's volume handle under a brief store read, then run
+    // the group's I/O with the guard released — one volume's write must not
+    // block admission on another volume's.
     for (vid, entries) in groups {
         let (mut writes, senders): (Vec<_>, Vec<_>) = entries
             .into_iter()
             .map(|(needle, fsync, response_tx)| ((needle, fsync), response_tx))
             .unzip();
-        let results = store.write_volume_needles(vid, &mut writes);
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.writable_volume(vid)
+        };
+        let results = match vol {
+            Ok(vol) => vol.write_needles_grouped(&mut writes),
+            Err(e) => writes
+                .iter()
+                .map(|_| match e {
+                    VolumeError::ReadOnly(vid) => Err(VolumeError::ReadOnly(vid)),
+                    _ => Err(VolumeError::NotFound),
+                })
+                .collect(),
+        };
         for (response_tx, result) in senders.into_iter().zip(results) {
             // Send result back; ignore error if receiver dropped.
             let _ = response_tx.send(result);
@@ -365,6 +489,7 @@ mod tests {
                     },
                     fsync: true,
                     response_tx,
+                    queue_permit: None,
                 }
             })
             .collect();
@@ -398,5 +523,200 @@ mod tests {
         };
         let result = queue2.submit(VolumeId(1), needle, false).await;
         assert!(result.is_err()); // NotFound is fine -- the point is it doesn't panic
+    }
+
+    /// Issue #791: a write parked inside its .dat append must not hold the
+    /// store guard, so another volume still resolves and writes. The hook
+    /// runs under the volume's data-file lease, so the assertion is that the
+    /// store — not the per-volume serialization — stays open.
+    #[test]
+    fn test_process_batch_does_not_block_other_volumes() {
+        use crate::config::MinFreeSpace;
+        use crate::storage::types::{DiskType, NeedleId};
+        use crate::storage::volume::{VolumeSpec, needle_write_hook};
+        use std::sync::Barrier;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let state = make_test_state();
+        {
+            let mut store = state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for vid in [VolumeId(1), VolumeId(2)] {
+                store
+                    .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+                    .unwrap();
+            }
+        }
+
+        let in_append = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let _reg = needle_write_hook::register(NeedleId(101), {
+            let in_append = in_append.clone();
+            let release = release.clone();
+            move |_| {
+                in_append.wait();
+                release.wait();
+            }
+        });
+
+        let (response_tx, mut response_rx) = oneshot::channel();
+        let batch = vec![WriteRequest {
+            volume_id: VolumeId(1),
+            needle: Needle {
+                id: NeedleId(101),
+                cookie: 0x1111.into(),
+                data: vec![7u8; 8],
+                data_size: 8,
+                ..Needle::default()
+            },
+            fsync: false,
+            response_tx,
+            queue_permit: None,
+        }];
+        let writer = {
+            let state = state.clone();
+            std::thread::spawn(move || process_batch(state, batch))
+        };
+
+        in_append.wait(); // volume 1's write is inside its .dat append.
+
+        // The store still admits a lifecycle writer and a volume-2 write.
+        drop(state.store.try_write().unwrap());
+        let vol2 = state
+            .store
+            .read()
+            .unwrap()
+            .writable_volume(VolumeId(2))
+            .unwrap();
+        let mut n2 = Needle {
+            id: NeedleId(9),
+            cookie: 0x2222.into(),
+            data: vec![9u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+        vol2.write_needle(&mut n2, true, false).unwrap();
+
+        // Same-volume exclusion is intact: volume 1's data-file lease is held.
+        let (_, vol1) = state.store.read().unwrap().find_volume(VolumeId(1)).unwrap();
+        assert!(vol1.instance().try_write_lock().is_none());
+
+        release.wait();
+        writer.join().unwrap();
+        assert!(response_rx.try_recv().unwrap().is_ok());
+        assert!(vol1.instance().try_write_lock().is_some());
+    }
+
+    /// A write parked inside volume 1's .dat append must not keep later
+    /// batches for other volumes queued behind it: each volume drains through
+    /// its own FIFO worker, while same-volume writes still serialize.
+    /// NeedleId(102) is reserved for this test — hooks are keyed by needle id
+    /// process-wide and parallel tests must not share one.
+    #[tokio::test]
+    async fn test_write_queue_does_not_block_other_volumes() {
+        use crate::config::MinFreeSpace;
+        use crate::storage::types::{DiskType, NeedleId};
+        use crate::storage::volume::{VolumeSpec, needle_write_hook};
+        use std::sync::Barrier;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let state = make_test_state();
+        {
+            let mut store = state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for vid in [VolumeId(1), VolumeId(2)] {
+                store
+                    .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+                    .unwrap();
+            }
+        }
+        let queue = WriteQueue::new(state, MAX_BATCH_SIZE);
+
+        let in_append = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let _reg = needle_write_hook::register(NeedleId(102), {
+            let in_append = in_append.clone();
+            let release = release.clone();
+            move |_| {
+                in_append.wait();
+                release.wait();
+            }
+        });
+
+        let needle_a = Needle {
+            id: NeedleId(102),
+            cookie: 0x1111.into(),
+            data: vec![7u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+        let a1 = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.submit(VolumeId(1), needle_a, false).await }
+        });
+        // The hook parks on a blocking thread, so wait on the barrier off the
+        // runtime worker.
+        let parked = {
+            let in_append = in_append.clone();
+            tokio::task::spawn_blocking(move || in_append.wait())
+        };
+        parked.await.unwrap(); // volume 1's write is inside its .dat append.
+
+        // Volume 2's worker is independent: its submit completes now.
+        let needle_b = Needle {
+            id: NeedleId(9),
+            cookie: 0x2222.into(),
+            data: vec![9u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+        queue.submit(VolumeId(2), needle_b, true).await.unwrap();
+
+        // Same-volume FIFO is preserved: a second volume-1 write stays queued.
+        let needle_a2 = Needle {
+            id: NeedleId(2),
+            cookie: 0x3333.into(),
+            data: vec![8u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+        let mut a2 = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.submit(VolumeId(1), needle_a2, false).await }
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut a2)
+                .await
+                .is_err(),
+            "a same-volume write must queue behind the stalled one"
+        );
+
+        let released = {
+            let release = release.clone();
+            tokio::task::spawn_blocking(move || release.wait())
+        };
+        released.await.unwrap();
+        assert!(a1.await.unwrap().is_ok());
+        assert!(a2.await.unwrap().is_ok());
     }
 }

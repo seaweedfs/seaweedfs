@@ -302,12 +302,6 @@ impl VolumeGrpcService {
             e.into_inner()
         })
     }
-    fn store_write(&self) -> std::sync::RwLockWriteGuard<'_, crate::storage::store::Store> {
-        self.state.store.write().unwrap_or_else(|e| {
-            tracing::warn!("recovering poisoned store write lock");
-            e.into_inner()
-        })
-    }
     /// Verifies the gRPC caller is allowed to invoke a destructive admin
     /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
     /// whitelist accepts everyone (insecure-by-default for tests and
@@ -419,8 +413,8 @@ impl VolumeGrpcService {
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
-                replica_placement: vol.super_block.replica_placement.to_byte(),
-                ttl: vol.super_block.ttl.to_u32(),
+                replica_placement: vol.super_block().replica_placement.to_byte(),
+                ttl: vol.super_block().ttl.to_u32(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 ip: store.ip.clone(),
                 port: store.port,
@@ -432,15 +426,23 @@ impl VolumeGrpcService {
 
         // Step 2: mark local volume readonly; Go's MarkVolumeReadonly errors
         // when the volume left the store during the step-1 master round trip.
-        {
-            let mut store = self.state.store.write().unwrap();
-            let (_, vol) = store
-                .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_read_only_persist(can_delete, persist)
-                .map_err(|e| Status::internal(e.to_string()))?;
-            self.state.volume_state_notify.notify_one();
-        }
+        let vol = {
+            let store = self.state.store.read().unwrap();
+            store
+                .find_volume(vid)
+                .map(|(_, v)| v)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?
+        };
+        // set_read_only_persist waits out the volume's leased readers; that
+        // wait must not hold a store guard. A detached handle fails closed.
+        vol.set_read_only_persist(can_delete, persist)
+            .map_err(|e| match e {
+                crate::storage::volume::VolumeError::NotFound => {
+                    Status::not_found(format!("volume {} not found", vid))
+                }
+                _ => Status::internal(e.to_string()),
+            })?;
+        self.state.volume_state_notify.notify_one();
 
         // Step 3: notify master again to cover heartbeat race
         self.notify_master_volume_readonly(&info, true).await?;
@@ -1008,13 +1010,15 @@ impl VolumeServer for VolumeGrpcService {
             if !req.skip_cookie_check || is_ec_volume {
                 let original_cookie = n.cookie;
                 if !is_ec_volume {
-                    let store = self.state.store.read().unwrap();
                     let mut read_option = crate::server::handlers::delete_read_option();
-                    match store.read_volume_needle_with_option(
-                        file_id.volume_id,
-                        &mut n,
-                        &mut read_option,
-                    ) {
+                    let vol = {
+                        let store = self.state.store.read().unwrap();
+                        store.find_volume(file_id.volume_id).map(|(_, v)| v)
+                    };
+                    match vol
+                        .ok_or(crate::storage::volume::VolumeError::NotFound)
+                        .and_then(|vol| vol.read_needle_with_option(&mut n, &mut read_option))
+                    {
                         Ok(_) => {}
                         Err(e) => {
                             results.push(volume_server_pb::DeleteResult {
@@ -1101,30 +1105,67 @@ impl VolumeServer for VolumeGrpcService {
             n.last_modified = now;
 
             if !is_ec_volume {
-                let mut store = self.state.store.write().unwrap();
-                // Recheck EC state under the write lock before mutating the .dat. The
-                // is_ec_volume snapshot was taken earlier under a separate read lock;
-                // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
-                // originals, so the vid can be EC now while the .dat still exists. A
-                // delete_volume_needle here would tombstone that .dat, which the encode
-                // then removes — the delete is lost and the needle resurrected from the
-                // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
-                // the filer requeues the delete onto the EC path.
-                if store.has_ec_volume(file_id.volume_id) {
-                    results.push(volume_server_pb::DeleteResult {
-                        file_id: fid_str.clone(),
-                        status: 503,
-                        error: format!(
-                            "volume {} became ec during delete, try again",
-                            file_id.volume_id
-                        ),
-                        size: 0,
-                        version: 0,
-                    });
-                    continue;
-                }
-                match store.delete_volume_needle(file_id.volume_id, &mut n) {
+                let vol = {
+                    let store = self.state.store.read().unwrap();
+                    // Recheck EC state under the store lock before mutating the .dat. The
+                    // is_ec_volume snapshot was taken earlier under a separate read lock;
+                    // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
+                    // originals, so the vid can be EC now while the .dat still exists. A
+                    // delete_volume_needle here would tombstone that .dat, which the encode
+                    // then removes — the delete is lost and the needle resurrected from the
+                    // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
+                    // the filer requeues the delete onto the EC path.
+                    if store.has_ec_volume(file_id.volume_id) {
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: 503,
+                            error: format!(
+                                "volume {} became ec during delete, try again",
+                                file_id.volume_id
+                            ),
+                            size: 0,
+                            version: 0,
+                        });
+                        continue;
+                    }
+                    store.find_volume(file_id.volume_id).map(|(_, v)| v)
+                };
+                // Matches Store::delete_volume_needle: noWriteOrDelete rejects
+                // first, and the tombstone I/O runs after the store guard drops.
+                let delete_result = match vol {
+                    None => Err(crate::storage::volume::VolumeError::NotFound),
+                    Some(vol) if vol.is_no_write_or_delete() => {
+                        Err(crate::storage::volume::VolumeError::ReadOnly(file_id.volume_id))
+                    }
+                    Some(vol) => vol.delete_needle(&mut n),
+                };
+                match delete_result {
                     Ok(size) => {
+                        // The guard dropped before delete_needle, so ec.encode
+                        // could have mounted EC shards between the recheck and
+                        // the tombstone: the encode would then remove the .dat
+                        // this delete touched and resurrect the needle from
+                        // pre-tombstone shards. If the vid is EC now, return
+                        // the retriable 503 so the filer requeues onto the EC
+                        // path — the same check a delete under the old store
+                        // lock could not race.
+                        let now_ec = {
+                            let store = self.state.store.read().unwrap();
+                            store.has_ec_volume(file_id.volume_id)
+                        };
+                        if now_ec {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 503,
+                                error: format!(
+                                    "volume {} became ec during delete, try again",
+                                    file_id.volume_id
+                                ),
+                                size: 0,
+                                version: 0,
+                            });
+                            continue;
+                        }
                         if size.0 == 0 {
                             results.push(volume_server_pb::DeleteResult {
                                 file_id: fid_str.clone(),
@@ -1151,9 +1192,10 @@ impl VolumeServer for VolumeGrpcService {
                         // "try again" token so the filer requeues it and the retry hits
                         // the EC path. A bare exact "not found" would be dropped
                         // permanently by the filer chunk-GC.
-                        if matches!(e, crate::storage::volume::VolumeError::NotFound)
-                            && store.has_ec_volume(file_id.volume_id)
-                        {
+                        if matches!(e, crate::storage::volume::VolumeError::NotFound) && {
+                            let store = self.state.store.read().unwrap();
+                            store.has_ec_volume(file_id.volume_id)
+                        } {
                             results.push(volume_server_pb::DeleteResult {
                                 file_id: fid_str.clone(),
                                 status: 503,
@@ -1300,8 +1342,24 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         let commit_start = std::time::Instant::now();
-        let mut store = self.state.store.write().unwrap();
-        let result = store.commit_compact_volume(vid);
+        let result = {
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(vid).map(|(_, vol)| vol)
+            };
+            match vol {
+                None => Err(crate::storage::volume::VolumeError::VolumeNotFound(vid)),
+                Some(vol) => {
+                    // Go's CommitCompact waits out leased readers under
+                    // dataFileAccessLock — do it without holding the store
+                    // guard, so a slow download stalls only this vacuum.
+                    let _lease = vol.instance().write_lock();
+                    let is_read_only = vol.is_read_only();
+                    vol.commit_compact_held()
+                        .map(|_| (is_read_only, vol.dat_file_size().unwrap_or(0)))
+                }
+            }
+        };
         crate::metrics::VACUUMING_HISTOGRAM
             .with_label_values(&["commit"])
             .observe(commit_start.elapsed().as_secs_f64());
@@ -1419,10 +1477,10 @@ impl VolumeServer for VolumeGrpcService {
         Ok(Response::new(volume_server_pb::VolumeSyncStatusResponse {
             volume_id: vid.0,
             collection: vol.collection.clone(),
-            replication: vol.super_block.replica_placement.to_string(),
-            ttl: vol.super_block.ttl.to_string(),
+            replication: vol.super_block().replica_placement.to_string(),
+            ttl: vol.super_block().ttl.to_string(),
             tail_offset: vol.dat_file_size().unwrap_or(0),
-            compact_revision: vol.super_block.compaction_revision as u32,
+            compact_revision: vol.super_block().compaction_revision as u32,
             idx_file_size: vol.idx_file_size(),
             version: vol.version().0 as u32,
         }))
@@ -1438,8 +1496,8 @@ impl VolumeServer for VolumeGrpcService {
 
         // A quarantined volume is rejected before the sync does disk I/O for it.
         {
-            let mut store = self.state.store.write().unwrap();
-            let Some((_, v)) = store.find_volume_mut(vid) else {
+            let store = self.state.store.read().unwrap();
+            let Some((_, v)) = store.find_volume(vid) else {
                 return Err(Status::not_found(format!("not found volume id {}", vid)));
             };
             if let Some(e) = v.unavailable_error() {
@@ -1457,7 +1515,7 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         let dat_size = v.dat_file_size().unwrap_or(0);
-        let super_block_size = v.super_block.block_size() as u64;
+        let super_block_size = v.super_block().block_size() as u64;
 
         // If since_ns is very large (after all data), return empty
         if req.since_ns == u64::MAX || dat_size <= super_block_size {
@@ -1757,8 +1815,8 @@ impl VolumeServer for VolumeGrpcService {
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
-                replica_placement: vol.super_block.replica_placement.to_byte(),
-                ttl: vol.super_block.ttl.to_u32(),
+                replica_placement: vol.super_block().replica_placement.to_byte(),
+                ttl: vol.super_block().ttl.to_u32(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 ip: store.ip.clone(),
                 port: store.port,
@@ -1769,9 +1827,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Step 1: mark local volume as writable (save result; Go continues on error)
         let mark_result = {
-            let mut store = self.state.store.write().unwrap();
+            let store = self.state.store.read().unwrap();
             let res = store
-                .find_volume_mut(vid)
+                .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))
                 .and_then(|(_, vol)| {
                     vol.set_writable()
@@ -2027,7 +2085,7 @@ impl VolumeServer for VolumeGrpcService {
                 dat_file_timestamp_seconds: mod_time,
                 dat_file_size: vol.dat_file_size().unwrap_or(0),
                 file_count: vol.file_count() as u64,
-                compaction_revision: vol.super_block.compaction_revision as u32,
+                compaction_revision: vol.super_block().compaction_revision as u32,
                 collection: vol.collection.clone(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 volume_info: Some(vol.volume_info().clone()),
@@ -2052,8 +2110,8 @@ impl VolumeServer for VolumeGrpcService {
         if !req.is_ec_volume {
             // Sync volume to disk before copying (matching Go's v.SyncToDisk())
             {
-                let mut store = self.state.store.write().unwrap();
-                if let Some((_, v)) = store.find_volume_mut(vid) {
+                let store = self.state.store.read().unwrap();
+                if let Some((_, v)) = store.find_volume(vid) {
                     let _ = v.sync_to_disk();
                 }
             }
@@ -2072,7 +2130,7 @@ impl VolumeServer for VolumeGrpcService {
             // must not be used here, or this check spuriously fails on every volume
             // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && u32::from(v.super_block.compaction_revision) != req.compaction_revision
+                && u32::from(v.super_block().compaction_revision) != req.compaction_revision
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
@@ -2558,10 +2616,13 @@ impl VolumeServer for VolumeGrpcService {
             return Err(Status::invalid_argument(msg));
         }
 
-        let mut store = self.store_write();
-        let (_, vol) = store
-            .find_volume_mut(vid)
-            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+        let vol = {
+            let store = self.store_read();
+            let (_, vol) = store
+                .find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+            vol
+        };
 
         vol.write_needle_blob_and_index(needle_id, &req.needle_blob, size)
             .map_err(|e| {
@@ -2615,7 +2676,10 @@ impl VolumeServer for VolumeGrpcService {
             let (_, vol) = store
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
-            (vol.version().0 as u32, vol.super_block.block_size() as u64)
+            (
+                vol.version().0 as u32,
+                vol.super_block().block_size() as u64,
+            )
         };
 
         let state = self.state.clone();
@@ -2832,9 +2896,11 @@ impl VolumeServer for VolumeGrpcService {
             }
 
             // Write needle to local volume
-            let mut store = state.store.write().unwrap();
-            store
-                .write_volume_needle(vid, &mut n, false)
+            let vol = {
+                let store = state.store.read().unwrap();
+                store.writable_volume(vid)
+            };
+            vol.and_then(|vol| vol.write_needle(&mut n, true, false))
                 .map_err(|e| Status::internal(format!("write needle: {}", e)))?;
         }
 
@@ -4245,7 +4311,7 @@ impl VolumeServer for VolumeGrpcService {
             (
                 dat_path,
                 vol.instance(),
-                vol.super_block.compaction_revision,
+                vol.super_block().compaction_revision,
             )
         };
 
@@ -4348,12 +4414,12 @@ impl VolumeServer for VolumeGrpcService {
                 // volume was compacted, replaced or removed mid-upload: the
                 // object would not match what now holds this id.
                 let abort = {
-                    let mut store = state.store.write().unwrap();
+                    let store = state.store.read().unwrap();
                     let abort = match store.find_volume(vid) {
                         None => Some(Status::not_found(format!("volume {} not found", vid))),
                         Some((_, v))
                             if !v.is_instance(&instance)
-                                || v.super_block.compaction_revision != compaction_revision =>
+                                || v.super_block().compaction_revision != compaction_revision =>
                         {
                             Some(Status::failed_precondition(format!(
                                 "volume {} was compacted or replaced during tier move to remote",
@@ -4363,7 +4429,7 @@ impl VolumeServer for VolumeGrpcService {
                         Some(_) => None,
                     };
                     if abort.is_none()
-                        && let Some((_, vol)) = store.find_volume_mut(vid)
+                        && let Some((_, vol)) = store.find_volume(vid)
                     {
                         vol.update_remote_files(|files| {
                             files.push(volume_server_pb::RemoteFile {
@@ -4631,10 +4697,16 @@ impl VolumeServer for VolumeGrpcService {
                 // before the delete only leaks the remote object; the .vif must never
                 // reference an object that has already been deleted.
                 {
-                    let mut store = state.store.write().unwrap();
-                    let (_, vol) = store.find_volume_mut(vid).ok_or_else(|| {
-                        Status::not_found(format!("volume {} disappeared during tier-down", vid))
-                    })?;
+                    let vol = {
+                        let store = state.store.read().unwrap();
+                        let (_, vol) = store.find_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!(
+                                "volume {} disappeared during tier-down",
+                                vid
+                            ))
+                        })?;
+                        vol
+                    };
 
                     // The volume could have been deleted/recreated or re-tiered while the
                     // download ran. Abort rather than trim the .vif or delete a remote
@@ -4643,6 +4715,24 @@ impl VolumeServer for VolumeGrpcService {
                     if current_name != storage_name || current_key != storage_key {
                         return Err(Status::failed_precondition(format!(
                             "volume {} remote reference changed during tier-down",
+                            vid
+                        )));
+                    }
+
+                    // One write lease across the reference trim, .vif save and
+                    // backend swap: between clearing the remote-only write
+                    // restriction and attaching the local .dat a write would
+                    // pass check_writable and then fail on a missing dat_file.
+                    let _lease = vol.instance().write_lock();
+
+                    // The store guard dropped before the lease was taken, so an
+                    // unmount could have detached this handle in the gap. A
+                    // closed handle still passes the remote-reference check,
+                    // and proceeding would delete an object its remounted
+                    // replacement still reads.
+                    if vol.is_closed() {
+                        return Err(Status::not_found(format!(
+                            "volume {} was unmounted during tier-down",
                             vid
                         )));
                     }
@@ -4659,7 +4749,7 @@ impl VolumeServer for VolumeGrpcService {
                     // it the first write would append to the local .dat and
                     // then fail to index.
                     let mut removed_remote = None;
-                    if let Err(e) = vol.update_remote_files(|files| {
+                    if let Err(e) = vol.update_remote_files_held(|files| {
                         if !files.is_empty() {
                             removed_remote = Some(files.remove(0));
                         }
@@ -4668,7 +4758,7 @@ impl VolumeServer for VolumeGrpcService {
                         // map back where they belong. Best effort: if even this
                         // fails the volume stays pinned read-only, which is the
                         // safe end of the transition.
-                        if let Err(restore_err) = vol.update_remote_files(|files| {
+                        if let Err(restore_err) = vol.update_remote_files_held(|files| {
                             if let Some(remote) = removed_remote {
                                 files.insert(0, remote);
                             }
@@ -4692,7 +4782,7 @@ impl VolumeServer for VolumeGrpcService {
                         )));
                     }
 
-                    if let Err(e) = vol.open_local_dat_backend() {
+                    if let Err(e) = vol.open_local_dat_backend_held() {
                         return Err(Status::internal(format!(
                             "volume {} failed to open local dat file {}: {}",
                             vid, dat_path, e
@@ -4914,9 +5004,11 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = req.needle_id;
         let size = req.size;
         let local_handle = tokio::task::spawn_blocking(move || {
-            let mut store = state_clone.store.write().unwrap();
-            store
-                .write_volume_needle(vid, &mut n_clone, false)
+            let vol = {
+                let store = state_clone.store.read().unwrap();
+                store.writable_volume(vid)
+            };
+            vol.and_then(|vol| vol.write_needle(&mut n_clone, true, false))
                 .map(|_| ())
                 .map_err(|e| format!("local write needle {} size {}: {}", needle_id, size, e))
         });
@@ -5079,11 +5171,13 @@ impl VolumeServer for VolumeGrpcService {
             };
             let original_cookie = n.cookie;
 
-            let store = self.state.store.read().unwrap();
-            store
-                .read_volume_needle(file_id.volume_id, &mut n)
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(file_id.volume_id).map(|(_, v)| v)
+            };
+            vol.ok_or(crate::storage::volume::VolumeError::NotFound)
+                .and_then(|vol| vol.read_needle(&mut n))
                 .map_err(|e| Status::internal(e.to_string()))?;
-            drop(store);
 
             // Cookie mismatch: log and return empty stream (matching Go behavior where err is nil)
             if n.cookie != original_cookie {
@@ -5224,15 +5318,17 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = NeedleId(req.needle_id);
 
         {
-            let store = self.state.store.read().unwrap();
-
             // Try normal volume first
-            if store.find_volume(vid).is_some() {
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(vid).map(|(_, v)| v)
+            };
+            if let Some(vol) = vol {
                 let mut n = Needle {
                     id: needle_id,
                     ..Needle::default()
                 };
-                match store.read_volume_needle(vid, &mut n) {
+                match vol.read_needle(&mut n) {
                     Ok(_) => {
                         let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
                         return Ok(Response::new(
@@ -6636,7 +6732,7 @@ fn read_all_needles_of_volume(
     let mut plan = {
         let store = state.store.read().unwrap();
         let (_, v) = store.find_volume(vid).ok_or_else(not_found)?;
-        v.dat_scan_plan(v.super_block.block_size() as u64)
+        v.dat_scan_plan(v.super_block().block_size() as u64)
             .map_err(internal)?
     };
     loop {
@@ -7271,7 +7367,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let (dat_bytes, super_block_size) = {
-            let mut volume = crate::storage::volume::Volume::new(
+            let volume = crate::storage::volume::Volume::new(
                 dir,
                 dir,
                 VolumeId(1),
@@ -7290,7 +7386,7 @@ mod tests {
             volume.sync_to_disk().unwrap();
             (
                 std::fs::read(volume.file_name(".dat")).unwrap(),
-                volume.super_block.block_size() as u64,
+                volume.super_block().block_size() as u64,
             )
         };
 
@@ -7455,7 +7551,7 @@ mod tests {
             )
             .unwrap();
         {
-            let (_, volume) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let (_, volume) = store.find_volume(VolumeId(1)).unwrap();
             let mut needle = Needle {
                 id: NeedleId(11),
                 cookie: Cookie(0x3344),
@@ -7813,7 +7909,7 @@ mod tests {
         let revision_before = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
         let state = service.state.clone();
         let held = state
@@ -7852,7 +7948,7 @@ mod tests {
         let revision_after = {
             let store = state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
         assert_eq!(
             revision_before, revision_after,
@@ -8275,7 +8371,7 @@ mod tests {
 
     /// Writes needles 1 and 2 and deletes 1, so a compaction moves needle 2.
     fn seed_compactable_volume(service: &VolumeGrpcService) {
-        let mut store = service.state.store.write().unwrap();
+        let store = service.state.store.read().unwrap();
         for id in [1u64, 2] {
             let data = format!("needle-{id}").into_bytes();
             let mut n = Needle {
@@ -8509,7 +8605,7 @@ mod tests {
                 .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
                 .unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            assert_eq!(vol.super_block.compaction_revision, 0);
+            assert_eq!(vol.super_block().compaction_revision, 0);
         }
         s3.release.add_permits(1);
 
@@ -8597,8 +8693,8 @@ mod tests {
         let (endpoint, shutdown_tx, _deletes) = spawn_fake_s3_server(dat_bytes.clone());
         register_tier_backend("s3.tier_up_then_commit", endpoint);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.update_remote_files(|files| {
                 files.push(volume_server_pb::RemoteFile {
                     backend_type: "s3".to_string(),
@@ -8646,8 +8742,8 @@ mod tests {
         let (endpoint, shutdown_tx, _deletes) = spawn_fake_s3_server(dat_bytes.clone());
         register_tier_backend("s3.tiered_then_compact", endpoint);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.update_remote_files(|files| {
                 files.push(volume_server_pb::RemoteFile {
                     backend_type: "s3".to_string(),
@@ -8704,8 +8800,8 @@ mod tests {
     fn make_local_service_with_large_volume() -> (VolumeGrpcService, TempDir, Vec<u8>) {
         let (service, tmp) = make_local_service_with_volume("", None);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
             // Non-uniform payload so reassembly catches duplicated or reordered
             // chunks that a repeated byte would hide.
             let payload: Vec<u8> = (0..5 * 1024 * 1024usize)
@@ -9483,7 +9579,7 @@ mod tests {
         let sb_size = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.block_size()
+            v.super_block().block_size()
         };
 
         let response = service
@@ -9542,8 +9638,8 @@ mod tests {
     }
 
     fn write_volume_needle(service: &VolumeGrpcService, id: u64, data: &[u8]) {
-        let mut store = service.state.store.write().unwrap();
-        let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+        let store = service.state.store.read().unwrap();
+        let (_, v) = store.find_volume(VolumeId(1)).unwrap();
         let mut n = Needle {
             id: NeedleId(id),
             cookie: Cookie(0x1234),
@@ -9688,7 +9784,7 @@ mod tests {
     async fn park_read_all_then_write(
         service: &VolumeGrpcService,
         ids: &[u64],
-        f: impl FnOnce(&mut crate::storage::volume::Volume),
+        f: impl FnOnce(&crate::storage::volume::Volume),
     ) -> (
         volume_server_pb::ReadAllNeedlesResponse,
         BoxStream<volume_server_pb::ReadAllNeedlesResponse>,
@@ -9701,9 +9797,9 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             // The scan takes a read guard briefly per record, so retry.
-            if let Ok(mut store) = service.state.store.try_write() {
-                let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
-                f(v);
+            if let Ok(store) = service.state.store.try_write() {
+                let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+                f(&v);
                 return (first, stream);
             }
             if std::time::Instant::now() > deadline {
@@ -9847,7 +9943,7 @@ mod tests {
         let super_block_size = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.block_size() as u64
+            v.super_block().block_size() as u64
         };
 
         let response = service
@@ -10205,7 +10301,7 @@ mod tests {
         let (service, _tmp) = make_local_service_with_volume("", None);
         let vid = VolumeId(1);
         let cpd = {
-            let mut store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             for i in 100..110u64 {
                 let data = format!("data-{i}");
                 let mut n = Needle {
@@ -10261,7 +10357,7 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(vid).expect("still mounted");
-            assert_eq!(v.super_block.replica_placement.to_string(), "000");
+            assert_eq!(v.super_block().replica_placement.to_string(), "000");
         }
 
         job.run(|_| true).unwrap();
@@ -10276,7 +10372,7 @@ mod tests {
         assert_eq!(resp.error, "");
         let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.replica_placement.to_string(), "001");
+        assert_eq!(v.super_block().replica_placement.to_string(), "001");
     }
 
     // Regression test for comparing the wrong compaction-revision field.
@@ -10295,16 +10391,16 @@ mod tests {
         // actually diverge the way they do in production, rather than poking
         // the struct fields directly.
         let (revision_before, revision_after, last_compact_revision_after) = {
-            let mut store = service.state.store.write().unwrap();
-            let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
-            let before = v.super_block.compaction_revision;
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            let before = v.super_block().compaction_revision;
 
             v.compact_by_index(0, 0, |_| true).unwrap();
             v.commit_compact().unwrap();
 
             (
                 before,
-                v.super_block.compaction_revision,
+                v.super_block().compaction_revision,
                 v.last_compact_revision(),
             )
         };
@@ -10429,7 +10525,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .find_volume_mut(VolumeId(1))
+            .find_volume(VolumeId(1))
             .unwrap()
             .1
             .set_last_modified_ts_for_test(last_write);
@@ -10438,7 +10534,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .find_volume_mut(VolumeId(1))
+            .find_volume(VolumeId(1))
             .unwrap()
             .1
             .set_read_only_persist(false, true)
@@ -11261,7 +11357,7 @@ mod tests {
 
         generate_and_mount_ec_1(&service, (0..14).collect()).await;
         {
-            let mut store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let mut n = Needle {
                 id: NeedleId(11),
                 cookie: Cookie(0x3344),
@@ -11306,8 +11402,8 @@ mod tests {
     async fn ec_1_with_a_manifest_needle() -> (VolumeGrpcService, TempDir) {
         let (service, tmp) = make_local_service_with_volume("", None);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, volume) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, volume) = store.find_volume(VolumeId(1)).unwrap();
             let mut manifest = Needle {
                 id: NeedleId(12),
                 cookie: Cookie(0x5566),
@@ -12169,7 +12265,7 @@ mod tests {
         // A real volume, really encoded: a parity check needs genuine
         // Reed-Solomon parity to agree with, or "no corruption" means nothing.
         {
-            let mut v = crate::storage::volume::Volume::new(
+            let v = crate::storage::volume::Volume::new(
                 src_s,
                 src_s,
                 vid,
@@ -12386,8 +12482,8 @@ mod tests {
     async fn volume_delete_only_garbage_deletes_a_fully_deleted_volume() {
         let (service, _tmp) = make_local_service_with_volume("", None);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.delete_needle(&mut Needle {
                 id: NeedleId(11),
                 cookie: Cookie(0x3344),
@@ -12449,8 +12545,8 @@ mod tests {
         // though the empty check would not.
         let (service, _tmp) = make_local_service_with_volume("", None);
         {
-            let mut store = service.state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.delete_needle(&mut Needle {
                 id: NeedleId(11),
                 cookie: Cookie(0x3344),
@@ -12636,7 +12732,7 @@ mod tests {
             .unwrap();
         let mut size_before_needle_3 = 0;
         {
-            let (_, volume) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let (_, volume) = store.find_volume(VolumeId(1)).unwrap();
             for id in 1..=3u64 {
                 if id == 3 {
                     size_before_needle_3 = volume.dat_file_size().unwrap();
@@ -13243,7 +13339,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .find_volume_mut(VolumeId(1))
+            .find_volume(VolumeId(1))
             .unwrap()
             .1
             .set_no_write_or_delete(true);
@@ -13263,7 +13359,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .find_volume_mut(VolumeId(1))
+            .find_volume(VolumeId(1))
             .unwrap()
             .1
             .set_read_only_persist(true, false)
@@ -13291,5 +13387,4 @@ mod tests {
             assert_eq!(resp.results[0].error, "not found");
         }
     }
-
 }
