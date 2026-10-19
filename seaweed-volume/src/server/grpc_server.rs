@@ -4692,6 +4692,18 @@ impl VolumeServer for VolumeGrpcService {
                     // pass check_writable and then fail on a missing dat_file.
                     let _lease = vol.instance().write_lock();
 
+                    // The store guard dropped before the lease was taken, so an
+                    // unmount could have detached this handle in the gap. A
+                    // closed handle still passes the remote-reference check,
+                    // and proceeding would delete an object its remounted
+                    // replacement still reads.
+                    if vol.is_closed() {
+                        return Err(Status::not_found(format!(
+                            "volume {} was unmounted during tier-down",
+                            vid
+                        )));
+                    }
+
                     // Snapshot the remote reference before dropping it: the
                     // refresh it triggers can fail, and a half-applied transition
                     // leaves the volume claiming local while the remote backend

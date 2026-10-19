@@ -1271,6 +1271,12 @@ pub struct Volume {
     /// Shared with an in-flight `CompactionJob`, which runs off the store lock.
     is_compacting: Arc<AtomicBool>,
 
+    /// Set by `close` under the write lease: the handle is detached from the
+    /// store. An `Arc<Volume>` outliving its mount (unmount, delete, or a
+    /// remount that published a replacement) must fail closed instead of
+    /// touching files the new instance owns.
+    closed: AtomicBool,
+
     /// Compaction speed limit in bytes per second (0 = unlimited).
     pub compaction_byte_per_second: AtomicI64,
 
@@ -1375,6 +1381,7 @@ impl Volume {
             last_modified_ts_seconds: AtomicU64::new(0),
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             is_compacting: Arc::new(AtomicBool::new(false)),
+            closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
             volume_info: RwLock::new(PbVolumeInfo::default()),
@@ -1426,6 +1433,7 @@ impl Volume {
             last_modified_ts_seconds: AtomicU64::new(0),
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             is_compacting: Arc::new(AtomicBool::new(false)),
+            closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
             volume_info: RwLock::new(PbVolumeInfo::default()),
@@ -1445,6 +1453,13 @@ impl Volume {
     /// Returns true if the volume is currently being compacted.
     pub fn is_compacting(&self) -> bool {
         self.is_compacting.load(Ordering::Acquire)
+    }
+
+    /// True once `close` ran: this handle is detached and any operation that
+    /// would change files must refuse it. A remounted volume is a different
+    /// `Volume`, so a stale `Arc` sees this set.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
     /// Go's noWriteLock pair as one atomic snapshot, so a reader never sees
@@ -2649,6 +2664,9 @@ impl Volume {
     }
 
     fn check_writable(&self) -> Result<(), VolumeError> {
+        if self.is_closed() {
+            return Err(VolumeError::NotFound);
+        }
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
@@ -3066,6 +3084,12 @@ impl Volume {
     pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
+        if self.is_closed() {
+            // A detached handle has no index; without this check the tombstone
+            // would silently no-op as Ok(0) while the needle lives on the
+            // remounted volume.
+            return Err(VolumeError::NotFound);
+        }
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
@@ -3992,6 +4016,10 @@ impl Volume {
         can_delete: bool,
         persist: bool,
     ) -> Result<(), VolumeError> {
+        if self.is_closed() {
+            // A detached handle must not write .vif for its replacement.
+            return Err(VolumeError::NotFound);
+        }
         if can_delete && !self.has_remote_file() {
             // deletes append tombstones to .idx; a read-only boot attached no writer
             // Go's reopenIdxForWrite holds dataFileAccessLock: the idx swap must
@@ -4170,6 +4198,11 @@ impl Volume {
         &self,
         f: impl FnOnce(&mut Vec<PbRemoteFile>),
     ) -> Result<(), VolumeError> {
+        if self.is_closed() {
+            // A detached handle must not rewrite .vif state its remounted
+            // replacement owns.
+            return Err(VolumeError::NotFound);
+        }
         f(&mut self.volume_info.write().unwrap().files);
         let mut io = self.io.write().unwrap();
         self.refresh_remote_write_mode(&mut io)
@@ -4934,6 +4967,11 @@ impl Volume {
 
     /// `commit_compact` for callers already holding the write lease.
     pub(crate) fn commit_compact_held(&self) -> Result<(), VolumeError> {
+        // A handle detached between lookup and lease must not swap compacted
+        // files over the ones its remounted replacement now owns.
+        if self.is_closed() {
+            return Err(VolumeError::NotFound);
+        }
         let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Ok(()); // already compacting, silently skip (matches Go)
         };
@@ -5319,6 +5357,7 @@ impl Volume {
     /// shared handle, `&mut self` no longer provides that exclusion.
     pub fn close(&self) {
         let _guard = self.data_file_access_control.write_lock();
+        self.closed.store(true, Ordering::Release);
         self.close_locked();
     }
 
