@@ -842,10 +842,15 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 // A missing needle that lives inside a manifest is judged by whether the live
 // entry still lists the manifest, not the child: the manifest id is the
 // identity of its contents, so a live entry that kept it still needs the child.
+// The child must keep retrying under the gate — its error must come back marked
+// permanent by the clock, not returned raw by the dropped-chunk check.
 func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
-	prevRetryWaitTime := util.RetryWaitTime
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
 	util.RetryWaitTime = 100 * time.Millisecond
-	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+	missingSourceChunkGrace = 500 * time.Millisecond
+	t.Cleanup(func() {
+		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+	})
 
 	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -874,7 +879,10 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 
 	select {
 	case fetchErr := <-done:
-		t.Fatalf("a child of a still-listed manifest must not be treated as dropped: %v", fetchErr)
-	case <-time.After(2 * time.Second):
+		if !errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("a child of a still-listed manifest must expire via the gate, got %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a still-listed manifest's missing child must not retry past the gate")
 	}
 }
