@@ -101,6 +101,14 @@ var (
 			Help:      "admin lock",
 		}, []string{"client"})
 
+	MasterVolumeGrowthFrozen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "volume_growth_frozen",
+			Help:      "1 while volume growth is frozen after detected master state loss",
+		})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -991,6 +999,7 @@ func init() {
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
+	Gather.MustRegister(MasterVolumeGrowthFrozen)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)

@@ -88,6 +88,12 @@ type Topology struct {
 	maxVolumeIdFileLock      sync.Mutex
 	lastPersistedMaxVolumeId atomic.Uint32
 	lastPersistedTopologyId  atomic.Value
+
+	growthFrozen          atomic.Bool
+	growthFrozenAt        atomic.Int64
+	freezeOnMismatch      atomic.Bool
+	stateLossRecoveryWait atomic.Int64
+	allocationNotBefore   atomic.Int64
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -393,6 +399,13 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	if !t.IsLeaderAndCanRead() {
 		return 0, fmt.Errorf("as leader can not read yet")
 
+	}
+	if t.IsGrowthFrozen() {
+		return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+	}
+	if wait := t.allocationDelay(); wait > 0 {
+		glog.V(0).Infof("deferring volume id allocation for %v", wait)
+		time.Sleep(wait)
 	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
@@ -948,6 +961,66 @@ func (t *Topology) SetTopologyId(topologyId string) {
 	if t.topologyId != topologyId {
 		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
 	}
+}
+
+func (t *Topology) SetGrowthFreezeConfig(freezeOnMismatch bool, recoveryWait time.Duration) {
+	t.freezeOnMismatch.Store(freezeOnMismatch)
+	t.stateLossRecoveryWait.Store(int64(recoveryWait))
+}
+
+// CheckReportedTopologyId freezes growth when a volume server reports a
+// topology id different from this cluster's: the topology id survives raft
+// state cleanup, so a mismatch means the master's state was rebuilt (or a
+// foreign disk was cloned in).
+func (t *Topology) CheckReportedTopologyId(reported string) {
+	if reported == "" || !t.freezeOnMismatch.Load() {
+		return
+	}
+	own := t.GetTopologyId()
+	if own == "" || reported == own {
+		return
+	}
+	if t.growthFrozen.CompareAndSwap(false, true) {
+		t.growthFrozenAt.Store(time.Now().UnixNano())
+		stats.MasterVolumeGrowthFrozen.Set(1)
+		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
+	}
+}
+
+func (t *Topology) IsGrowthFrozen() bool {
+	if !t.growthFrozen.Load() {
+		return false
+	}
+	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
+		if time.Duration(time.Now().UnixNano()-t.growthFrozenAt.Load()) > time.Duration(wait) {
+			if t.growthFrozen.CompareAndSwap(true, false) {
+				stats.MasterVolumeGrowthFrozen.Set(0)
+				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (t *Topology) ResumeVolumeGrowth() bool {
+	if t.growthFrozen.CompareAndSwap(true, false) {
+		stats.MasterVolumeGrowthFrozen.Set(0)
+		glog.V(0).Infof("volume growth resumed by operator")
+		return true
+	}
+	return false
+}
+
+// DeferAllocation holds off new id allocation for d. Called when the leader
+// mints a fresh topology id: on a rebuilt master that window gives veteran
+// servers a pulse to raise the bound or trip the freeze.
+func (t *Topology) DeferAllocation(d time.Duration) {
+	t.allocationNotBefore.Store(time.Now().Add(d).UnixNano())
+}
+
+func (t *Topology) allocationDelay() time.Duration {
+	return time.Until(time.Unix(0, t.allocationNotBefore.Load()))
 }
 
 // SetMaxVolumeIdFile mirrors the allocation bound to a file outside raft, so

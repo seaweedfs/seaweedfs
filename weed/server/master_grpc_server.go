@@ -184,6 +184,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
+		ms.Topo.CheckReportedTopologyId(heartbeat.LastSeenTopologyId)
 		if dn == nil {
 			// Skip delta heartbeat for volume server versions  better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
 			if heartbeat.Ip == "" {
