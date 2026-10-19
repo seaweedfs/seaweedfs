@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	grpc "google.golang.org/grpc"
@@ -1310,4 +1311,130 @@ func TestDoListFilerEntries_PrefixObjectKeepsNamePosition(t *testing.T) {
 	// the marker is the object "a" itself: excluded, but "a.txt" and the
 	// "a/" block still follow
 	assert.Equal(t, []string{"/buckets/b/a.txt", "/buckets/b/a/b"}, collect("a"))
+}
+
+// A marker that lands inside a directory's "<name>/" block — the continuation
+// token a delimited page returns for it — must not re-list the block's folded
+// contents under delimiter "/".
+func TestDoListFilerEntries_DelimiterSkipsResumedDirBlock(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dir("a"), file("b")},
+			"/buckets/b/a": {file("x")},
+		},
+	}
+
+	collect := func(marker string) []string {
+		cursor := &ListingCursor{maxKeys: 1000}
+		var seen []string
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: marker, delimiter: "/", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+			cursor.maxKeys--
+		})
+		assert.NoError(t, err)
+		return seen
+	}
+
+	// The "a/" block already collapsed into a common prefix on the earlier
+	// page, so neither "a/" nor anything under it is emitted again.
+	assert.Equal(t, []string{"/b"}, collect("a/"))
+	assert.Equal(t, []string{"/b"}, collect("a/x"))
+}
+
+// A prefix object's "<name>/" common prefix belongs to the block position, not
+// the name position: it must not outrank "a.txt" on a full page nor repeat on
+// the next one.
+func TestDoListFilerEntries_PrefixObjectDefersCommonPrefix(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dirObj := func(name string) *filer_pb.Entry {
+		e := &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0644)}}
+		e.MarkPrefixObject()
+		return e
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dirObj("a"), file("a.txt")},
+			"/buckets/b/a": {file("b")},
+		},
+	}
+
+	// Page one holds the plain key "a" and "a.txt"; the "a/" block sort after
+	// both, so the page truncates at "a.txt" without touching it.
+	cursor := &ListingCursor{maxKeys: 2}
+	var seen []string
+	var sawPrefixObject bool
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", delimiter: "/", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		sawPrefixObject = sawPrefixObject || entry.IsPrefixObject()
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a", "a.txt"}, seen)
+	assert.True(t, sawPrefixObject, "the name-position emission is the plain object")
+	assert.True(t, cursor.isTruncated)
+	assert.Equal(t, "a.txt", nextMarker)
+
+	// Page two emits the deferred block once, as a plain directory fold.
+	cursor = &ListingCursor{maxKeys: 2}
+	seen = nil
+	sawPrefixObject = false
+	_, err = s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: nextMarker, delimiter: "/", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		sawPrefixObject = sawPrefixObject || entry.IsPrefixObject()
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a"}, seen)
+	assert.False(t, sawPrefixObject, "the block emission is the \"<name>/\" fold, not the plain key again")
+	assert.False(t, cursor.isTruncated)
+}
+
+// A directory key object that spends the page's last slot still reports
+// truncation so the next page re-enters its subtree.
+func TestDoListFilerEntries_DirKeyObjectBoundaryTruncates(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dirKeyObj := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: s3_constants.FolderMimeType}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dirKeyObj("a")},
+			"/buckets/b/a": {file("x")},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a"}, seen)
+	assert.True(t, cursor.isTruncated, "the subtree may still hold unlisted keys")
+	assert.Equal(t, "a/", nextMarker)
+
+	// The next page resumes inside the "a/" block and lists the child.
+	cursor = &ListingCursor{maxKeys: 1000}
+	seen = nil
+	_, err = s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: nextMarker, bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/a/x"}, seen)
+	assert.False(t, cursor.isTruncated)
 }

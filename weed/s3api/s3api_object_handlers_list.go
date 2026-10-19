@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type OptionalString struct {
@@ -565,6 +566,8 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 					// plain key. The traversal never descends into it under a delimiter,
 					// so the CommonPrefix its nested keys fold into is added here too.
 					if entry.IsPrefixObject() {
+						keyOnly := cursor.prefixObjectKeyOnly
+						cursor.prefixObjectKeyOnly = false
 						key := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
 						if strings.HasPrefix(key, originalPrefix) {
 							if folded := prefixForKey(dir, entry.Name); folded != "" {
@@ -579,8 +582,10 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 						// whole, so a page ending between them cannot resume at the prefix:
 						// a marker of "<key>/" means the subtree is done, not that it is
 						// next. The page runs one item over maxKeys instead of dropping it.
-						if childPrefix := prefixForKey(dir, entry.Name+"/"); childPrefix != "" && s3a.hasChildren(ctx, bucket, key) {
-							addCommonPrefix(childPrefix)
+						if !keyOnly {
+							if childPrefix := prefixForKey(dir, entry.Name+"/"); childPrefix != "" && s3a.hasChildren(ctx, bucket, key) {
+								addCommonPrefix(childPrefix)
+							}
 						}
 						return
 					}
@@ -804,6 +809,10 @@ type ListingCursor struct {
 	// emitDirAsCommonPrefix marks the next directory entry passed to the entry
 	// callback for reporting as a CommonPrefix rather than a Contents key.
 	emitDirAsCommonPrefix bool
+	// prefixObjectKeyOnly limits the next prefix-object entry passed to the entry
+	// callback to its plain key; its "<name>/" CommonPrefix is deferred to the
+	// directory's own block position.
+	prefixObjectKeyOnly bool
 }
 
 // excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
@@ -978,11 +987,20 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	type pendingDir struct {
 		e                *filer_pb.Entry
 		matchedPrefixDir bool
-		ownKeyEmitted    bool
 	}
 	var pendingDirs []pendingDir
 	stopped := false
-	emitDir := func(e *filer_pb.Entry, matchedPrefixDir, ownKeyEmitted bool) error {
+	// hasEntries reports whether the filer directory holds at least one entry,
+	// probed on the request's own client; errors answer conservatively as true.
+	hasEntries := func(path string) bool {
+		stream, lerr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{Directory: path, Limit: 1})
+		if lerr != nil {
+			return true
+		}
+		_, recvErr := stream.Recv()
+		return recvErr == nil
+	}
+	emitDir := func(e *filer_pb.Entry, matchedPrefixDir bool) error {
 		blockKey := e.Name + "/"
 		var subMarker string
 		if strings.HasPrefix(marker, blockKey) {
@@ -996,20 +1014,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		}
 		// A prefix object's plain key is emitted at the name position or not at
 		// all; the block emits only its "<name>/" fold, so the callback sees a
-		// plain directory when the key itself is past the marker.
+		// plain directory.
 		emitEntry := e
-		if e.IsPrefixObject() && e.Name <= marker {
-			emitEntry = &filer_pb.Entry{}
-			*emitEntry = *e
-			emitEntry.Extended = nil
-			for k, v := range e.Extended {
-				if k != s3_constants.SeaweedFSPrefixObject {
-					if emitEntry.Extended == nil {
-						emitEntry.Extended = map[string][]byte{}
-					}
-					emitEntry.Extended[k] = v
-				}
-			}
+		if e.IsPrefixObject() {
+			emitEntry = proto.Clone(e).(*filer_pb.Entry)
+			delete(emitEntry.Extended, s3_constants.SeaweedFSPrefixObject)
 		}
 		isKeyObject := e.IsDirectoryKeyObject() && !e.IsPrefixObject()
 		if delimiter != "/" || cursor.prefixEndsOnDelimiter {
@@ -1035,6 +1044,12 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			if subErr != nil {
 				return fmt.Errorf("doListFilerEntries2: %w", subErr)
 			}
+			nextMarker = e.Name + "/" + subNextMarker
+			if cursor.maxKeys <= 0 && subNextMarker == "" && hasEntries(dir+"/"+e.Name) {
+				// The recursion starved on quota before listing the subtree;
+				// keep a resume position that re-enters it.
+				cursor.isTruncated = true
+			}
 			// A real but empty directory (created out of band via mount, mkdir or
 			// the filer API, so it carries no MIME) is otherwise invisible to S3
 			// clients that detect directories by listing it under its own "<dir>/"
@@ -1051,18 +1066,29 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				if delimiter == "/" {
 					cursor.emitDirAsCommonPrefix = true
 				} else {
-					e.Attributes.Mime = s3_constants.FolderMimeType
+					emitEntry.Attributes.Mime = s3_constants.FolderMimeType
 				}
 				eachEntryFn(dir, emitEntry)
 			}
 			// println("doListFilerEntries2 dir", dir+"/"+e.Name, "subNextMarker", subNextMarker)
-			nextMarker = e.Name + "/" + subNextMarker
 			if cursor.isTruncated || matchedPrefixDir {
 				stopped = true
 			}
 			// println("doListFilerEntries2 nextMarker", nextMarker)
-		} else if !ownKeyEmitted && ((isKeyObject && blockKey > marker) || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor)) {
-			eachEntryFn(dir, emitEntry)
+		} else {
+			switch {
+			case isKeyObject && blockKey > marker:
+				eachEntryFn(dir, emitEntry)
+			case e.IsPrefixObject():
+				// The plain key already listed at the name position; the
+				// deferred block emits the "<name>/" common prefix only when
+				// children fold under it.
+				if hasEntries(dir + "/" + e.Name) {
+					eachEntryFn(dir, emitEntry)
+				}
+			case !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor):
+				eachEntryFn(dir, emitEntry)
+			}
 		}
 		return nil
 	}
@@ -1076,7 +1102,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 			d := pendingDirs[0]
 			pendingDirs = pendingDirs[1:]
-			if err := emitDir(d.e, d.matchedPrefixDir, d.ownKeyEmitted); err != nil {
+			if err := emitDir(d.e, d.matchedPrefixDir); err != nil {
 				return err
 			}
 			if stopped || cursor.isTruncated {
@@ -1190,6 +1216,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				// A marker inside a skipped subtree still descends — the
 				// internal folder is not listed, its contents may be.
 				if strings.HasPrefix(marker, entry.Name+"/") {
+					if delimiter == "/" {
+						// The whole block already collapsed into its common
+						// prefix; nothing under it is listed again.
+						continue
+					}
 					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, marker: marker[len(entry.Name)+1:], delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
 					if subErr != nil {
 						err = fmt.Errorf("doListFilerEntries: %w", subErr)
@@ -1257,10 +1288,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 
 				pd := pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir}
 				// A prefix object lists as the plain key "<name>", which sorts
-				// at the name, not at the "<name>/" block its children occupy.
+				// at the name, not at the "<name>/" block its children occupy; the
+				// deferred block emits the common prefix at its own position.
 				if entry.IsPrefixObject() && entry.Name > marker {
+					cursor.prefixObjectKeyOnly = true
 					eachEntryFn(dir, entry)
-					pd.ownKeyEmitted = true
 				}
 				queueDir(pd)
 				continue
