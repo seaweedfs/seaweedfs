@@ -170,6 +170,9 @@ spec:
               -ip={{ .Values.admin.ip | default "0.0.0.0" }} \
               -port={{ .Values.admin.port }} \
               -port.grpc={{ .Values.admin.grpcPort }} \
+              {{- if ne (int .Values.admin.legacyPort) 23646 }}
+              -port.legacy={{ .Values.admin.legacyPort }} \
+              {{- end }}
               {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}
               -dataDir=/data \
               {{- else if .Values.admin.dataDir }}
@@ -233,6 +236,12 @@ spec:
               name: http
             - containerPort: {{ .Values.admin.grpcPort }}
               name: grpc
+            {{- if gt (int .Values.admin.legacyPort) 0 }}
+            - containerPort: {{ .Values.admin.legacyPort }}
+              name: legacy-http
+            - containerPort: {{ add (int .Values.admin.legacyPort) 10000 }}
+              name: legacy-grpc
+            {{- end }}
           {{- if .Values.admin.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

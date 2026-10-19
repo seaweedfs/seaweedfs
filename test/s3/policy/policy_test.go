@@ -705,10 +705,10 @@ func uniqueName(prefix string) string {
 
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	// Allocate two extra ports for admin HTTP + gRPC. Without explicit
-	// values mini falls back to 23646/33646, which collide across the
+	// values mini falls back to 12535/22535, which collide across the
 	// sequential subtests in this package: each subtest spins up a fresh
 	// mini in a goroutine, but the previous mini's admin goroutine is
-	// still binding 23646 — so the next test's admin can never become
+	// still binding 12535 — so the next test's admin can never become
 	// ready and mini.go fatals on its readiness check.
 	ports := testutil.MustAllocatePorts(t, 10)
 	masterPort, masterGrpcPort := ports[0], ports[1]

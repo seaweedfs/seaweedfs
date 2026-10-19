@@ -1511,8 +1511,14 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  port: 23646  # Default admin port
-  grpcPort: 33646  # Default gRPC port for worker connections
+  port: 12535  # Default admin port
+  grpcPort: 22535  # Default gRPC port for worker connections
+  # Legacy compat port: admin also serves HTTP and worker gRPC (legacyPort +
+  # 10000) on this port so workers and clients from before the 23646 -> 12535
+  # default change keep connecting during migration. 0 disables. The flag is
+  # only passed to the binary when the value differs from its 23646 default,
+  # so the chart keeps installing on releases that predate -port.legacy.
+  legacyPort: 23646
   # IP address the admin server listens on. Since `weed admin` 4.46 defaults to
   # loopback (127.0.0.1), the chart must bind a non-loopback address for the
   # kubelet's httpGet readiness/liveness probes (which dial the pod IP) to ever

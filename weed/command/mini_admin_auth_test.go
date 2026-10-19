@@ -2,6 +2,7 @@ package command
 
 import (
 	"net"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -252,5 +253,34 @@ func TestMiniAdminAdvertisedIP(t *testing.T) {
 				t.Fatalf("miniAdminAdvertisedIP() = %q, want %q", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDefaultAdminGrpcPortBelowEphemeralFloor(t *testing.T) {
+	if grpcPort := defaultAdminHTTPPort + GrpcPortOffset; grpcPort >= linuxEphemeralPortFloor {
+		t.Fatalf("default admin HTTP port %d derives gRPC port %d, which must stay below ephemeral floor %d",
+			defaultAdminHTTPPort, grpcPort, linuxEphemeralPortFloor)
+	}
+	for _, f := range []struct {
+		name     string
+		flagName string
+		def      string
+	}{
+		{"mini", "admin.port", strconv.Itoa(defaultAdminHTTPPort)},
+		{"mini", "admin.port.legacy", strconv.Itoa(defaultAdminHTTPLegacyPort)},
+		{"admin", "port", strconv.Itoa(defaultAdminHTTPPort)},
+		{"admin", "port.legacy", strconv.Itoa(defaultAdminHTTPLegacyPort)},
+	} {
+		cmd := cmdMini
+		if f.name == "admin" {
+			cmd = cmdAdmin
+		}
+		flag := cmd.Flag.Lookup(f.flagName)
+		if flag == nil {
+			t.Fatalf("%s: flag %s not registered", f.name, f.flagName)
+		}
+		if flag.DefValue != f.def {
+			t.Fatalf("%s -%s default = %s, want %s so its gRPC port stays below the ephemeral floor", f.name, f.flagName, flag.DefValue, f.def)
+		}
 	}
 }

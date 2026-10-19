@@ -26,7 +26,7 @@ build-and-restart: build ## Build with latest changes and restart services
 	@echo "2️⃣ Recreating workers to reconnect..."
 	@docker-compose -f $(COMPOSE_FILE) up -d worker1 worker2 worker3
 	@echo "✅ All services recreated with latest changes!"
-	@echo "🌐 Admin UI: http://localhost:23646/"
+	@echo "🌐 Admin UI: http://localhost:12535/"
 	@echo "💡 Workers will reconnect to the new admin server"
 
 restart-workers: ## Restart all workers to reconnect to admin server
@@ -64,7 +64,7 @@ start: ## Start the complete SeaweedFS cluster with admin and workers
 	@echo "✅ Cluster started!"
 	@echo ""
 	@echo "📊 Access points:"
-	@echo "  • Admin UI:      http://localhost:23646/"
+	@echo "  • Admin UI:      http://localhost:12535/"
 	@echo "  • Master UI:     http://localhost:9333/"
 	@echo "  • Filer:         http://localhost:8888/"
 	@echo ""
@@ -107,7 +107,7 @@ start-staged: ## Start services in proper order with delays
 	@echo "✅ All services started!"
 	@echo ""
 	@echo "📊 Access points:"
-	@echo "  • Admin UI:      http://localhost:23646/"
+	@echo "  • Admin UI:      http://localhost:12535/"
 	@echo "  • Master UI:     http://localhost:9333/"
 	@echo "  • Filer:         http://localhost:8888/"
 	@echo ""
@@ -136,7 +136,7 @@ status: ## Check the status of all services
 	@echo "Master:"
 	@curl -s http://localhost:9333/cluster/status | jq '.IsLeader' 2>/dev/null || echo "  ❌ Master not ready"
 	@echo "Admin:"
-	@curl -s http://localhost:23646/ | grep -q "Admin" && echo "  ✅ Admin ready" || echo "  ❌ Admin not ready"
+	@curl -s http://localhost:12535/ | grep -q "Admin" && echo "  ✅ Admin ready" || echo "  ❌ Admin not ready"
 
 logs: ## Show logs from all services
 	@echo "📜 Following logs from all services..."
@@ -157,7 +157,7 @@ master-logs: ## Show logs from master server
 
 admin-ui: ## Open admin UI in browser (macOS)
 	@echo "🌐 Opening admin UI in browser..."
-	@open http://localhost:23646/ || echo "💡 Manually open: http://localhost:23646/"
+	@open http://localhost:12535/ || echo "💡 Manually open: http://localhost:12535/"
 
 test: ## Run integration test to verify task assignment and completion
 	@echo "🧪 Running Admin-Worker Integration Test"
@@ -166,11 +166,11 @@ test: ## Run integration test to verify task assignment and completion
 	@echo "1️⃣ Checking cluster health..."
 	@sleep 5
 	@curl -s http://localhost:9333/cluster/status | jq '.IsLeader' > /dev/null && echo "✅ Master healthy" || echo "❌ Master not ready"
-	@curl -s http://localhost:23646/ | grep -q "Admin" && echo "✅ Admin healthy" || echo "❌ Admin not ready"
+	@curl -s http://localhost:12535/ | grep -q "Admin" && echo "✅ Admin healthy" || echo "❌ Admin not ready"
 	@echo ""
 	@echo "2️⃣ Checking worker registration..."
 	@sleep 10
-	@echo "💡 Check admin UI for connected workers: http://localhost:23646/"
+	@echo "💡 Check admin UI for connected workers: http://localhost:12535/"
 	@echo ""
 	@echo "3️⃣ Generating load to trigger EC tasks..."
 	@echo "📝 Creating test files to fill volumes..."
@@ -193,13 +193,13 @@ test: ## Run integration test to verify task assignment and completion
 	@echo "   • EC shards being distributed"
 	@echo ""
 	@echo "✅ Integration test setup complete!"
-	@echo "📊 Monitor progress at: http://localhost:23646/"
+	@echo "📊 Monitor progress at: http://localhost:12535/"
 
 quick-test: ## Quick verification that core services are running
 	@echo "⚡ Quick Health Check"
 	@echo "===================="
 	@echo "Master:  $$(curl -s http://localhost:9333/cluster/status | jq -r '.IsLeader // "not ready"')"
-	@echo "Admin:   $$(curl -s http://localhost:23646/ | grep -q "Admin" && echo "ready" || echo "not ready")"
+	@echo "Admin:   $$(curl -s http://localhost:12535/ | grep -q "Admin" && echo "ready" || echo "not ready")"
 	@echo "Workers: $$(docker-compose -f $(COMPOSE_FILE) ps worker1 worker2 worker3 | grep -c Up) running"
 
 validate: ## Validate integration test configuration
@@ -223,7 +223,7 @@ demo: start ## Start cluster and run demonstration
 	@echo "  • Load generator (creates files continuously)"
 	@echo ""
 	@echo "📊 Watch the process:"
-	@echo "  1. Visit: http://localhost:23646/"
+	@echo "  1. Visit: http://localhost:12535/"
 	@echo "  2. Observe workers connecting"
 	@echo "  3. Watch tasks being created and assigned"
 	@echo "  4. See tasks progress from pending → completed"
@@ -244,13 +244,13 @@ vacuum-test: ## Create test data with garbage and verify vacuum detection
 	@echo ""
 	@echo "1️⃣ Checking cluster health..."
 	@curl -s http://localhost:9333/cluster/status | jq '.IsLeader' > /dev/null && echo "✅ Master ready" || (echo "❌ Master not ready. Run 'make start' first." && exit 1)
-	@curl -s http://localhost:23646/ | grep -q "Admin" && echo "✅ Admin ready" || (echo "❌ Admin not ready. Run 'make start' first." && exit 1)
+	@curl -s http://localhost:12535/ | grep -q "Admin" && echo "✅ Admin ready" || (echo "❌ Admin not ready. Run 'make start' first." && exit 1)
 	@echo ""
 	@echo "2️⃣ Creating test data with garbage..."
 	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -files=25 -delete=0.5 -size=200
 	@echo ""
 	@echo "3️⃣ Configuration Instructions:"
-	@echo "   Visit: http://localhost:23646/maintenance/config/vacuum"
+	@echo "   Visit: http://localhost:12535/maintenance/config/vacuum"
 	@echo "   Set for testing:"
 	@echo "     • Enable Vacuum Tasks: ✅ Checked"
 	@echo "     • Garbage Threshold: 0.20 (20%)"
@@ -258,7 +258,7 @@ vacuum-test: ## Create test data with garbage and verify vacuum detection
 	@echo "     • Min Volume Age: [0] [Minutes]"
 	@echo "     • Max Concurrent: 2"
 	@echo ""
-	@echo "4️⃣ Monitor vacuum tasks at: http://localhost:23646/maintenance"
+	@echo "4️⃣ Monitor vacuum tasks at: http://localhost:12535/maintenance"
 	@echo ""
 	@echo "💡 Use 'make vacuum-status' to check volume garbage ratios"
 
@@ -335,8 +335,8 @@ vacuum-help: ## Show vacuum testing help and examples
 	@echo "  make vacuum-demo           # Full guided demonstration"
 	@echo ""
 	@echo "Configuration:"
-	@echo "  Visit: http://localhost:23646/maintenance/config/vacuum"
-	@echo "  Monitor: http://localhost:23646/maintenance"
+	@echo "  Visit: http://localhost:12535/maintenance/config/vacuum"
+	@echo "  Monitor: http://localhost:12535/maintenance"
 	@echo ""
 	@echo "Custom Parameters:"
 	@echo "  make vacuum-data FILES=50 DELETE=0.8 SIZE=200"

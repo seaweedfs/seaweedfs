@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -42,6 +43,7 @@ var (
 type AdminOptions struct {
 	port             *int
 	grpcPort         *int
+	legacyPort       *int
 	ip               *string
 	master           *string
 	masters          *string // deprecated, for backward compatibility
@@ -68,6 +70,23 @@ type AdminOptions struct {
 	// binds it only after every other service is up.
 	workerGrpcListener net.Listener
 
+	// workerGrpcLegacyListener is the same reservation for the legacy
+	// compat gRPC port. Its bind failure is tolerated: the legacy port lives
+	// in the ephemeral range, so best-effort compat must not take startup down.
+	workerGrpcLegacyListener net.Listener
+
+	// workerGrpcLegacySkip disables just the legacy gRPC listener. `weed
+	// mini` sets it when another mini service already owns the legacy gRPC
+	// port, so the compat bind can neither steal the port nor warn about a
+	// failure that is expected.
+	workerGrpcLegacySkip bool
+
+	// adminHttpLegacySkip is the same for the legacy HTTP port. Skipping
+	// matters even when the bind would succeed: a service bound on a
+	// different address family or wildcard can leave loopback free, and the
+	// compat listener would then shadow it for loopback clients.
+	adminHttpLegacySkip bool
+
 	// workerGrpcBindIp, when non-empty, is the address the worker gRPC
 	// listener binds to. It is separate from ip because the worker gRPC has
 	// no password auth (its mTLS comes from grpc.admin, not https.admin), so
@@ -83,8 +102,9 @@ type AdminOptions struct {
 
 func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
-	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
+	a.port = cmdAdmin.Flag.Int("port", defaultAdminHTTPPort, "admin server port")
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
+	a.legacyPort = cmdAdmin.Flag.Int("port.legacy", defaultAdminHTTPLegacyPort, "also serve admin http and gRPC (port + 10000) on this port for backward compatibility (0 to disable)")
 	a.ip = cmdAdmin.Flag.String("ip", "127.0.0.1", "ip address to listen on. Defaults to loopback when auth is disabled, or 0.0.0.0 when -adminPassword or [https.admin] mTLS is configured. Set explicitly to override.")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
@@ -108,7 +128,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -master=localhost:9333 [-filerGroup=group] [-port.grpc=33646] [-dataDir=/path/to/data]",
+	UsageLine: "admin -port=12535 -master=localhost:9333 [-filerGroup=group] [-port.grpc=22535] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -124,12 +144,12 @@ var cmdAdmin = &Command{
   A gRPC server for worker connections runs on the configured gRPC port (default: HTTP port + 10000).
 
   Example Usage:
-    weed admin -port=23646 -master="master1:9333,master2:9333"
-    weed admin -port=23646 -master="localhost:9333" -filerGroup="tenant-a"
-    weed admin -port=23646 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
-    weed admin -port=23646 -port.grpc=33646 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
+    weed admin -port=12535 -master="master1:9333,master2:9333"
+    weed admin -port=12535 -master="localhost:9333" -filerGroup="tenant-a"
+    weed admin -port=12535 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
+    weed admin -port=12535 -port.grpc=22535 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
     weed admin -port=9900 -port.grpc=19900 -master="localhost:9333"
-    weed admin -port=23646 -master="localhost:9333" -urlPrefix="/seaweedfs"
+    weed admin -port=12535 -master="localhost:9333" -urlPrefix="/seaweedfs"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -294,6 +314,9 @@ func runAdmin(cmd *Command, args []string) bool {
 	// Set default gRPC port if not specified
 	if *a.grpcPort == 0 {
 		*a.grpcPort = *a.port + 10000
+	}
+	if *a.grpcPort >= linuxEphemeralPortFloor {
+		glog.Warningf("Admin gRPC port %d is at or above the Linux ephemeral floor %d; an outbound connection may claim it before Admin binds it. Pick a lower -port.", *a.grpcPort, linuxEphemeralPortFloor)
 	}
 
 	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
@@ -504,6 +527,31 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 	warnInsecureWorkerGrpcBind(workerGrpcIp, *options.grpcPort, adminServer.WorkerGrpcMTLSEnabled())
 
+	// Legacy compat listeners keep the previous default admin port reachable
+	// for old workers, bookmarks and scripts while the deployment moves to the
+	// new default. Best-effort only: the legacy gRPC port sits inside the
+	// Linux ephemeral range, so it may already be taken and must never fail
+	// startup.
+	legacyPort := 0
+	if options.legacyPort != nil && *options.legacyPort > 0 && *options.legacyPort != *options.port {
+		legacyPort = *options.legacyPort
+	}
+	if legacyPort > 0 && !options.workerGrpcLegacySkip {
+		legacyGrpcPort := legacyPort + GrpcPortOffset
+		legacyGrpcListener := options.workerGrpcLegacyListener
+		if legacyGrpcListener == nil {
+			if l, listenErr := net.Listen("tcp", util.JoinHostPort(workerGrpcIp, legacyGrpcPort)); listenErr == nil {
+				legacyGrpcListener = l
+			} else {
+				glog.Warningf("Legacy admin gRPC port %d unavailable, skipping compat listener: %v", legacyGrpcPort, listenErr)
+			}
+		}
+		if legacyGrpcListener != nil {
+			adminServer.ServeWorkerGrpcOn(legacyGrpcListener)
+			glog.Infof("Worker gRPC compat listener on %s", legacyGrpcListener.Addr())
+		}
+	}
+
 	// Set up cleanup for gRPC server
 	defer func() {
 		if stopErr := adminServer.StopWorkerGrpcServer(); stopErr != nil {
@@ -578,6 +626,43 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		server.TLSConfig.GetCertificate = getCert
 	}
 
+	// Serve the same handler on the legacy port so old clients keep working.
+	// Best-effort like the gRPC compat listener above.
+	var legacyServer *http.Server
+	if legacyPort > 0 && !options.adminHttpLegacySkip {
+		legacyAddr := util.JoinHostPort(*options.ip, legacyPort)
+		if legacyListener, listenErr := net.Listen("tcp", legacyAddr); listenErr != nil {
+			glog.Warningf("Legacy admin HTTP port %d unavailable, skipping compat listener: %v", legacyPort, listenErr)
+		} else {
+			legacyServer = &http.Server{
+				Addr:      legacyAddr,
+				Handler:   server.Handler,
+				TLSConfig: server.TLSConfig,
+			}
+			// Close on every exit path so a failed primary startup cannot
+			// leave the compat port held by a zombie admin. On the normal
+			// path the graceful Shutdown below runs first; this Close then
+			// no-ops. Close the raw listener too: Serve may not have
+			// registered it with legacyServer yet when this runs.
+			defer func() {
+				_ = legacyListener.Close()
+				_ = legacyServer.Close()
+			}()
+			go func() {
+				glog.Infof("Admin compat listener on %s", legacyAddr)
+				var serveErr error
+				if useTLS {
+					serveErr = legacyServer.ServeTLS(legacyListener, "", "")
+				} else {
+					serveErr = legacyServer.Serve(legacyListener)
+				}
+				if serveErr != nil && serveErr != http.ErrServerClosed && !errors.Is(serveErr, net.ErrClosed) {
+					glog.Warningf("Admin compat listener on %s stopped: %v", legacyAddr, serveErr)
+				}
+			}()
+		}
+	}
+
 	// Start server. Surface immediate failures (e.g. bind error) via
 	// serveErrCh so the caller doesn't block on ctx.Done() while no server
 	// is actually listening. http.ErrServerClosed after Shutdown is normal
@@ -611,6 +696,9 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("admin server forced to shutdown: %w", err)
+	}
+	if legacyServer != nil {
+		_ = legacyServer.Shutdown(shutdownCtx)
 	}
 
 	adminServer.Shutdown()

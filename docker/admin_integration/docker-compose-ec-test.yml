@@ -114,9 +114,9 @@ services:
   admin:
     image: chrislusf/seaweedfs:local
     ports:
-      - "23646:23646"      # HTTP admin interface (default port)
-      - "33646:33646"      # gRPC worker communication (23646 + 10000)
-    command: "-v=2 admin -port=23646 -masters=master:9333 -dataDir=/data"
+      - "12535:12535"      # HTTP admin interface (default port)
+      - "22535:22535"      # gRPC worker communication (12535 + 10000)
+    command: "-v=2 admin -port=12535 -masters=master:9333 -dataDir=/data"
     depends_on:
       - master
       - filer
@@ -127,7 +127,7 @@ services:
 
   worker1:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:12535 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -139,7 +139,7 @@ services:
 
   worker2:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:12535 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -151,7 +151,7 @@ services:
 
   worker3:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:12535 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -199,7 +199,7 @@ services:
         curl -s http://master:9333/cluster/status | jq '.IsLeader, .Peers' || echo 'Master not ready';
         echo;
         echo 'Admin status:';
-        curl -s http://admin:23646/ | grep -o 'Admin.*Interface' || echo 'Admin not ready';
+        curl -s http://admin:12535/ | grep -o 'Admin.*Interface' || echo 'Admin not ready';
         echo;
         echo 'Volume count by server:';
         curl -s http://master:9333/vol/status | jq '.Volumes | length' || echo 'Volumes not ready';
@@ -237,4 +237,4 @@ services:
       - seaweed_net
     environment:
       - MASTER_HOST=master:9333
-      - ADMIN_HOST=admin:23646 
+      - ADMIN_HOST=admin:12535 

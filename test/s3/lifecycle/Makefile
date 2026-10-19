@@ -12,7 +12,7 @@ FILER_PORT := 8888
 # Pin the filer gRPC port off the FILER_PORT+10000 convention so any
 # code path that assumes the offset breaks here, not in production.
 FILER_GRPC_PORT := 18890
-ADMIN_PORT := 23646
+ADMIN_PORT := 12535
 ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
 TEST_TIMEOUT := 10m
