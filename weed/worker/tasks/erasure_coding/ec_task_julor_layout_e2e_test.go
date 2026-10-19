@@ -2,10 +2,7 @@ package erasure_coding
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,20 +16,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Reproduces the issue-9478 volume-13 layout end to end on a multi-server,
-// multi-disk cluster and asserts the cluster converges to exactly one valid EC
-// layout. Before the encode the volume is in the stuck state: a real .dat
-// source, a 0-byte stub replica left by an interrupted encode, and partial
-// stale EC shards from that attempt. After the worker runs (sweep stubs ->
-// clear stale shards -> distribute -> mount -> verify -> delete originals):
-//
-//   - every assigned shard is present on its target disk, with .ecx/.vif
-//     alongside it (the EC volume's info file survives even when shards land on
-//     the source's own disk);
-//   - no regular .dat/.idx remains anywhere — the source is deleted after
-//     verify, the stub was swept before distribute;
-//   - the stale shards that aren't part of the new assignment are gone.
-func TestEcEncodeJulorLayoutConverges(t *testing.T) {
+// A real .dat source plus a 0-byte stub replica left by an interrupted encode
+// and partial stale EC shards: empty live-idx vs non-empty must refuse encode
+// (no union, no skip).
+func TestEcEncodeJulorLayoutRefuses(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -122,52 +109,8 @@ func TestEcEncodeJulorLayoutConverges(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, task.Execute(ctx, params))
-
-	base := fmt.Sprintf("%s_%d", collection, volumeID)
-
-	// Shards are distributed per-server; the disk within a server is auto-selected
-	// when DiskId is 0, and on a multi-disk server shards can spread to a sibling
-	// disk while the .ecx/.vif index lives on one of them (the cross-disk EC
-	// layout). So assert per server (aggregate across its disks): each server
-	// holds exactly its assigned shards, its .ecx/.vif survive on at least one
-	// disk (the info file is not stripped, even on the source's own disk), and no
-	// regular .dat/.idx remains. Stale shards 11-13 mounted on the source must be
-	// gone — they are not in S0's assignment.
-	serverShards := map[int][]uint32{
-		0: shardRange(0, 5),   // S0 (source): 0..4
-		1: shardRange(5, 10),  // S1 (stub):   5..9
-		2: shardRange(10, 14), // S2 (target): 10..13
-	}
-	allShards := map[uint32]bool{}
-	for server, want := range serverShards {
-		found := map[uint32]bool{}
-		hasEcx, hasVif := false, false
-		for d := 0; d < disksPerServer; d++ {
-			dir := cluster.VolumeDiskDir(server, d)
-			requireAbsent(t, dir, base+".dat")
-			requireAbsent(t, dir, base+".idx")
-			for id := 0; id < erasure_coding.TotalShardsCount; id++ {
-				if ecFileExists(dir, fmt.Sprintf("%s.ec%02d", base, id)) {
-					found[uint32(id)] = true
-					allShards[uint32(id)] = true
-				}
-			}
-			hasEcx = hasEcx || ecFileExists(dir, base+".ecx")
-			hasVif = hasVif || ecFileExists(dir, base+".vif")
-		}
-		gotIDs := make([]uint32, 0, len(found))
-		for id := range found {
-			gotIDs = append(gotIDs, id)
-		}
-		require.ElementsMatch(t, want, gotIDs, "server %d should hold exactly its assigned shards", server)
-		require.True(t, hasEcx, "server %d must keep its .ecx", server)
-		require.True(t, hasVif, "server %d must keep its .vif (not stripped by the original-volume delete)", server)
-	}
-	require.Len(t, allShards, erasure_coding.TotalShardsCount, "the full shard set must be present across the cluster")
-}
-
-func ecFileExists(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
+	err = task.Execute(ctx, params)
+	require.Error(t, err, "empty live-idx vs non-empty must refuse encode")
+	require.Contains(t, err.Error(), "no union")
+	require.NotEqual(t, addr(stubServer), task.server, "after gate t.server is not a stub URL")
 }

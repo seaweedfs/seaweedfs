@@ -181,11 +181,9 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("EC preflight failed for volume %d: %w", t.volumeID, err)
 	}
 
-	// Step 1: Mark all replicas readonly, then reconcile them and select the most
-	// complete replica as the encode source. Encoding a stale replica and then
-	// deleting the originals would silently lose entries that exist only on another
-	// replica; SyncAndSelectBestReplica builds the union onto the best replica first
-	// (mirrors the shell ec.encode best-replica selection).
+	// Step 1: Mark all replicas readonly, then compare live .idx NeedleId
+	// sets. A mismatch or idx read error aborts encode and does not build a union.
+	// The encode source is late-bound only when the sets match.
 	t.ReportProgressWithStage(10.0, "Marking volume readonly")
 	t.GetLogger().Info("Marking volume readonly")
 	if err := t.markReplicasReadonly(ctx); err != nil {
@@ -391,90 +389,43 @@ func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
 	return nil
 }
 
-// syncAndSelectSourceReplica reconciles the volume's replicas (building the union
-// of all live entries onto the most complete one) and switches the encode source
-// to that replica, so a stale replica is never the basis of the encode.
+// syncAndSelectSourceReplica compares live .idx sets after every replica is
+// readonly. Matching sets late-bind the encode source; a mismatch or idx RPC
+// error aborts without unioning replicas.
 func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 	locs := t.replicaLocations()
-	if len(locs) <= 1 {
-		return nil // single replica: nothing to reconcile
+	workerAddr := strings.TrimSpace(t.workerAddress)
+	if workerAddr == "" {
+		workerAddr, _ = os.Hostname()
 	}
+	prefer := lateBindSourceToWorkerHost(t.server, workerAddr, locs)
 	var buf bytes.Buffer
-	best, err := volume_replica.SyncAndSelectBestReplica(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, "", &buf)
+	best, err := volume_replica.SelectSourceIfIndexesMatch(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, prefer, &buf)
 	if out := strings.TrimSpace(buf.String()); out != "" {
-		glog.Infof("EC encode replica sync for volume %d:\n%s", t.volumeID, out)
+		glog.Infof("EC encode replica idx compare for volume %d:\n%s", t.volumeID, out)
 	}
 	if err != nil {
 		return err
 	}
 	if best.Url != "" && best.Url != t.server {
-		glog.Infof("EC encode: using best replica %s as source for volume %d (was %s)", best.Url, t.volumeID, t.server)
+		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", best.Url, t.volumeID, t.server)
 		t.server = best.Url
-	}
-	// Late-bind from after consistency: worker -address hostname, not Sources[0]
-	// and not AddressIsLocal (replica URLs are hostnames like full-02:8081).
-	workerAddr := strings.TrimSpace(t.workerAddress)
-	if workerAddr == "" {
-		workerAddr, _ = os.Hostname()
-	}
-	if local := preferWorkerHostReplicaIfComplete(t.grpcDialOption, needle.VolumeId(t.volumeID), locs, t.server, workerAddr); local != "" && local != t.server {
-		glog.Infof("EC encode: preferring worker-host replica %s as source for volume %d (was %s)", local, t.volumeID, t.server)
-		t.server = local
 	}
 	return nil
 }
 
-type replicaFileCount struct {
-	url       string
-	fileCount uint64
-	err       error
-}
-
-// preferWorkerHostReplicaIfComplete rebinds from to a same-hostname replica
-// only when live FileCounts are equal. Diverged counts keep current (max).
-func preferWorkerHostReplicaIfComplete(dial grpc.DialOption, vid needle.VolumeId, locs []wdclient.Location, current, workerAddress string) string {
-	statuses := volume_replica.GetReplicaStatuses(dial, vid, locs)
-	replicas := make([]replicaFileCount, 0, len(statuses))
-	for _, s := range statuses {
-		replicas = append(replicas, replicaFileCount{url: s.Location.Url, fileCount: s.FileCount, err: s.Error})
-	}
-	return lateBindSourceToWorkerHost(current, workerAddress, replicas)
-}
-
-// lateBindSourceToWorkerHost: equal FileCount → replica on worker -address host
-// (any port). Diverge → keep current (already max FileCount). Worker address
-// is not a volume URL.
-func lateBindSourceToWorkerHost(current, workerAddress string, replicas []replicaFileCount) string {
+// lateBindSourceToWorkerHost returns the replica on the worker -address host
+// (any port), keeping current when no replica shares that host. Worker address
+// is not a volume URL. Safe to prefer after the idx gate: matching live sets
+// make every listed replica an equivalent source.
+func lateBindSourceToWorkerHost(current, workerAddress string, locs []wdclient.Location) string {
 	workerHost := util.HostKey(workerAddress)
 	if workerHost == "" {
 		return current
 	}
-	var live []replicaFileCount
-	for _, r := range replicas {
-		if r.err != nil || r.url == "" {
-			continue
-		}
-		live = append(live, r)
-	}
-	if len(live) == 0 {
-		return current
-	}
-	maxCount := live[0].fileCount
-	allSame := true
-	for _, r := range live[1:] {
-		if r.fileCount != live[0].fileCount {
-			allSame = false
-		}
-		if r.fileCount > maxCount {
-			maxCount = r.fileCount
-		}
-	}
-	if !allSame {
-		return current
-	}
-	for _, r := range live {
-		if util.HostKey(r.url) == workerHost {
-			return r.url
+	for _, l := range locs {
+		if util.HostKey(l.Url) == workerHost {
+			return l.Url
 		}
 	}
 	return current

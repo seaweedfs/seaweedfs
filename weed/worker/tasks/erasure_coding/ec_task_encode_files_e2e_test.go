@@ -19,15 +19,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// End-to-end on two servers: a volume with a real replica on server A and a
-// 0-byte stub replica of the same id on server B (an interrupted-encode
-// leftover). After a full EC encode the cluster must end in exactly one valid
-// layout — the complete shard set split across A and B, each with .ecx/.vif —
-// and every wrong file must be gone: both regular .dat files (source deleted
-// after verify, stub swept before distribute), no shard on the wrong server,
-// and B's shared <collection>_<vid>.vif intact rather than clobbered by the
-// stub's delete.
-func TestEcEncodeLeavesRightFilesAndRemovesStubAndSource(t *testing.T) {
+// End-to-end on two servers: a real replica on A and a 0-byte stub on B
+// (interrupted-encode leftover). Empty live-idx vs non-empty must refuse
+// encode; originals stay, t.server is not rebound to the stub.
+func TestEcEncodeRefusesOnEmptyStubReplica(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -93,39 +88,16 @@ func TestEcEncodeLeavesRightFilesAndRemovesStubAndSource(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	require.NoError(t, task.Execute(ctx, params))
+	err := task.Execute(ctx, params)
+	require.Error(t, err, "empty live-idx vs non-empty must refuse encode")
+	require.Contains(t, err.Error(), "no union")
+	require.NotEqual(t, addrB, task.server, "after gate t.server is not a stub URL")
 
 	dirA := filepath.Join(cluster.BaseDir(), "volume0")
 	dirB := filepath.Join(cluster.BaseDir(), "volume1")
 	base := fmt.Sprintf("%s_%d", collection, volumeID)
-
-	// Both original regular volumes are gone: A's source deleted after verify,
-	// B's stub swept before distribute.
-	requireAbsent(t, dirA, base+".dat")
-	requireAbsent(t, dirA, base+".idx")
-	requireAbsent(t, dirB, base+".dat")
-	requireAbsent(t, dirB, base+".idx")
-
-	// Each server holds exactly its assigned shards, plus index/info sidecars.
-	for _, id := range aShards {
-		requirePresent(t, dirA, fmt.Sprintf("%s.ec%02d", base, id))
-	}
-	for _, id := range bShards {
-		requireAbsent(t, dirA, fmt.Sprintf("%s.ec%02d", base, id))
-	}
-	requirePresent(t, dirA, base+".ecx")
-	requirePresent(t, dirA, base+".vif")
-
-	for _, id := range bShards {
-		requirePresent(t, dirB, fmt.Sprintf("%s.ec%02d", base, id))
-	}
-	for _, id := range aShards {
-		requireAbsent(t, dirB, fmt.Sprintf("%s.ec%02d", base, id))
-	}
-	requirePresent(t, dirB, base+".ecx")
-	// The shared .vif must survive on B: the stub was deleted before the EC
-	// files landed, so deleteOriginalVolume never ran removeVolumeFiles there.
-	requirePresent(t, dirB, base+".vif")
+	requirePresent(t, dirA, base+".dat")
+	requirePresent(t, dirB, base+".dat")
 }
 
 // serverAddress builds the SeaweedFS ip:httpPort.grpcPort address the worker's

@@ -380,6 +380,11 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 
 func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	// Re-check under the write lock: the outer checks run before the needle
+	// is assembled, and VolumeMarkReadonly can land in between.
+	if v.IsReadOnly() {
+		return 0, 0, false, fmt.Errorf("volume %d is read only", v.Id)
+	}
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
 		isUnchanged = true
@@ -714,6 +719,9 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 				return nil
 			}
 		}
+	}
+	if v.IsReadOnly() {
+		return fmt.Errorf("volume %d is read only", v.Id)
 	}
 	appendAtNs := needle.GetAppendAtNs(v.lastAppendAtNs)
 	offset, err := needle.WriteNeedleBlob(v.DataBackend, needleBlob, size, appendAtNs, v.Version())

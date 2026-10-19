@@ -447,3 +447,53 @@ func TestWriteNeedleBlobRoundTrip(t *testing.T) {
 		t.Error("needle 4 read back with different data")
 	}
 }
+
+// A write that already assembled the needle and holds the volume write lock
+// must still refuse append once the volume is readonly — no 201/204, nothing
+// in .dat/.idx.
+func TestDoWriteRequestRefusesReadOnlyBeforeAppend(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 21, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	seed := newRandomNeedle(1)
+	if _, _, _, err = v.writeNeedle2(seed, true, false, false); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	datBefore, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat dat: %v", err)
+	}
+	idxBefore := v.nm.IndexFileSize()
+
+	n := newRandomNeedle(99)
+	v.dataFileAccessLock.Lock()
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = true
+	v.noWriteLock.Unlock()
+	_, _, isUnchanged, writeErr := v.doWriteRequest(n, true, false)
+	v.dataFileAccessLock.Unlock()
+
+	if writeErr == nil {
+		t.Fatal("expected read-only error")
+	}
+	if isUnchanged {
+		t.Fatal("read-only write must not report unchanged (HTTP 204)")
+	}
+	if _, found := v.nm.Get(n.Id); found {
+		t.Fatal("needle must not land in .idx")
+	}
+	datAfter, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat dat after: %v", err)
+	}
+	if datAfter != datBefore {
+		t.Fatalf("dat size %d -> %d; needle must not append", datBefore, datAfter)
+	}
+	if v.nm.IndexFileSize() != idxBefore {
+		t.Fatalf("idx size changed; needle must not index")
+	}
+}

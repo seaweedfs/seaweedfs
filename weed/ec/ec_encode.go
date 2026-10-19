@@ -327,17 +327,21 @@ func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.Volu
 		return nil, err
 	}
 
-	// Sync replicas and select the best one for each volume (with highest file count)
-	// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
-	// by syncing missing entries between replicas before encoding
+	// Compare live .idx sets across all replicas, not only the capacity
+	// subset — a filtered-out replica with a divergent live set still gets
+	// deleted below, so it must refuse encode here. The generation host
+	// must come from filteredLocations.
 	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]
-
-		// Sync missing entries between replicas, then select the best one
-		bestLoc, selectErr := volume_replica.SyncAndSelectBestReplica(env.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
+		prefer := filteredLocations[vid][0].Url
+		bestLoc, selectErr := volume_replica.SelectSourceIfIndexesMatch(env.GrpcDialOption, vid, collection, locations[vid], prefer, writer)
 		if selectErr != nil {
-			return nil, fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
+			return nil, fmt.Errorf("failed to compare replica indexes for volume %d: %v", vid, selectErr)
+		}
+		bestLoc, capErr := volume_replica.RequireCapacitySource(vid, bestLoc, filteredLocations[vid])
+		if capErr != nil {
+			return nil, capErr
 		}
 		bestReplicas[vid] = bestLoc
 	}
