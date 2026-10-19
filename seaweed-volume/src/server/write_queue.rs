@@ -157,31 +157,43 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
 
     // Resolve each group's volume handle under a brief store read, then run
     // the group's I/O with the guard released — one volume's write must not
-    // block admission on another volume's.
-    for (vid, entries) in groups {
-        let (mut writes, senders): (Vec<_>, Vec<_>) = entries
+    // block admission on another volume's. Groups also run on separate scoped
+    // threads: a stalled volume must not hold up the batch's other volumes.
+    std::thread::scope(|s| {
+        let handles: Vec<_> = groups
             .into_iter()
-            .map(|(needle, fsync, response_tx)| ((needle, fsync), response_tx))
-            .unzip();
-        let vol = {
-            let store = state.store.read().unwrap();
-            store.writable_volume(vid)
-        };
-        let results = match vol {
-            Ok(vol) => vol.write_needles_grouped(&mut writes),
-            Err(e) => writes
-                .iter()
-                .map(|_| match e {
-                    VolumeError::ReadOnly(vid) => Err(VolumeError::ReadOnly(vid)),
-                    _ => Err(VolumeError::NotFound),
+            .map(|(vid, entries)| {
+                let state = &state;
+                s.spawn(move || {
+                    let (mut writes, senders): (Vec<_>, Vec<_>) = entries
+                        .into_iter()
+                        .map(|(needle, fsync, response_tx)| ((needle, fsync), response_tx))
+                        .unzip();
+                    let vol = {
+                        let store = state.store.read().unwrap();
+                        store.writable_volume(vid)
+                    };
+                    let results = match vol {
+                        Ok(vol) => vol.write_needles_grouped(&mut writes),
+                        Err(e) => writes
+                            .iter()
+                            .map(|_| match e {
+                                VolumeError::ReadOnly(vid) => Err(VolumeError::ReadOnly(vid)),
+                                _ => Err(VolumeError::NotFound),
+                            })
+                            .collect(),
+                    };
+                    for (response_tx, result) in senders.into_iter().zip(results) {
+                        // Send result back; ignore error if receiver dropped.
+                        let _ = response_tx.send(result);
+                    }
                 })
-                .collect(),
-        };
-        for (response_tx, result) in senders.into_iter().zip(results) {
-            // Send result back; ignore error if receiver dropped.
-            let _ = response_tx.send(result);
+            })
+            .collect();
+        for h in handles {
+            let _ = h.join();
         }
-    }
+    });
 }
 
 #[cfg(test)]
