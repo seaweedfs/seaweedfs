@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // ChunkTransferSnapshot is a lock-free, copyable view of a chunk transfer's
@@ -495,7 +496,7 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
 		return nil
 	}
-	if errors.Is(err, errSourceChunkMissing) && fs.sourceStillServesChunks() {
+	if errors.Is(err, errSourceChunkMissing) && (errors.Is(err, util_http.ErrNotFound) || fs.sourceStillServesChunks()) {
 		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
 		return nil
 	}

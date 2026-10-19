@@ -610,6 +610,15 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 		}
 	})
 
+	t.Run("needle 404 needs no probe", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, ""), dir: "/dst"}
+		notFound := fmt.Errorf("copy 5617,02def: %w: %w", errSourceChunkMissing, util_http.ErrNotFound)
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, notFound); err != nil {
+			t.Fatalf("a 404 answered by the source is itself proof of liveness, got %v", err)
+		}
+	})
+
 	t.Run("source locating nothing", func(t *testing.T) {
 		fs := &FilerSink{filerSource: startSourceFiler(t, 5, ""), dir: "/dst"}
 		served := probe
