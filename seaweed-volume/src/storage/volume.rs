@@ -1291,25 +1291,6 @@ pub struct Volume {
 const NO_WRITE_OR_DELETE: u8 = 1;
 const NO_WRITE_CAN_DELETE: u8 = 2;
 
-/// Windows helper: loop seek_read until buffer is fully filled.
-#[cfg(windows)]
-fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
-    use std::os::windows::fs::FileExt;
-    let mut filled = 0;
-    while filled < buf.len() {
-        let n = file.seek_read(&mut buf[filled..], offset)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected EOF in seek_read",
-            ));
-        }
-        filled += n;
-        offset += n as u64;
-    }
-    Ok(())
-}
-
 /// What a volume is created with beyond its id, directories and index kind:
 /// the tail of Go's `NewVolume` argument list. The default is an empty
 /// collection with no replication, no TTL and no preallocation at the
