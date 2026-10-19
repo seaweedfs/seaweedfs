@@ -612,10 +612,60 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		if vl.RegisterVolume(&v, dn) {
 			vl.EnsureCorrectWritables(&v)
+			go t.flagDuplicateVolumeId(v, dn)
 			return
 		}
 		// Dropped with its collection; the next lookup creates a fresh one.
 	}
+}
+
+// flagDuplicateVolumeId reports and quarantines v.Id when another data node
+// already serves it under a different layout key. It runs after registration
+// so a legitimate same-node move (disk type or collection change) settles
+// first and does not trip it.
+func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
+	dupCollection, nodes := t.findDuplicateVolumeLayout(v, dn)
+	if len(nodes) == 0 {
+		return
+	}
+	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
+	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking %s's copy read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection, dn.Id())
+	if vl := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)); vl != nil {
+		vl.SetVolumeReadOnly(dn, v.Id)
+	}
+}
+
+// findDuplicateVolumeLayout reports the collection and the other data nodes
+// already holding v.Id under a different layout key. Volume ids are global,
+// so the same id held by two nodes under two layouts means the allocator
+// reused an id.
+func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode) (string, []*DataNode) {
+	if v.ReplicaPlacement == nil {
+		return "", nil
+	}
+	diskType := types.ToDiskType(v.DiskType)
+	for _, item := range t.collectionMap.Items() {
+		c := item.(*Collection)
+		var same *VolumeLayout
+		if c.Name == v.Collection {
+			same, _ = c.GetVolumeLayout(v.ReplicaPlacement, v.Ttl, diskType)
+		}
+		for _, vl := range c.GetAllVolumeLayouts() {
+			if vl == same {
+				continue
+			}
+			var others []*DataNode
+			for _, n := range vl.Lookup(v.Id) {
+				if n != dn {
+					others = append(others, n)
+				}
+			}
+			if len(others) > 0 {
+				return c.Name, others
+			}
+		}
+	}
+	return "", nil
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
