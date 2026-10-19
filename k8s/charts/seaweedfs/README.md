@@ -345,8 +345,8 @@ To enable the admin interface, add the following to your values.yaml:
 ```yaml
 admin:
   enabled: true
-  port: 23646
-  grpcPort: 33646  # For worker connections
+  port: 12535
+  grpcPort: 22535  # For worker connections
   secret:
     adminUser: "admin"
     adminPassword: "your-secure-password"  # Leave empty to disable auth
@@ -364,7 +364,7 @@ admin:
     className: "nginx"
 ```
 
-The admin interface will be available at `http://<admin-service>:23646` (or via ingress). Workers connect to the admin server via gRPC on port `33646`.
+The admin interface will be available at `http://<admin-service>:12535` (or via ingress). Workers connect to the admin server via gRPC on port `22535`.
 
 ### Admin Authentication
 
@@ -436,7 +436,7 @@ worker:
   # Auto-discovery only works if the admin is in the same namespace and same Helm release.
   # For cross-namespace or separate release scenarios, explicitly set this value.
   # Example: If main SeaweedFS is deployed in "production" namespace:
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
   adminServer: ""
   
   # Workers need storage for task execution
@@ -502,8 +502,8 @@ worker:
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 **values-worker-balance.yaml** (for balance operations):
@@ -528,8 +528,8 @@ worker:
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 Deploy the specialized workers as separate releases:

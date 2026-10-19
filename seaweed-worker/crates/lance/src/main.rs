@@ -15,7 +15,7 @@ use weed_lance_worker::metrics::LanceMetrics;
 #[command(name = "weed-worker", about = "SeaweedFS maintenance worker")]
 struct Args {
     /// Admin server gRPC address.
-    #[arg(long, default_value = "localhost:23646", env = "WEED_ADMIN")]
+    #[arg(long, default_value = "localhost:12535", env = "WEED_ADMIN")]
     admin: String,
 
     /// Worker identity reported to admin.

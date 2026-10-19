@@ -543,7 +543,7 @@ a language-agnostic gRPC stream that external maintenance workers connect on: th
 opens `WorkerStream`, sends `WorkerHello` with the job types it can `detect` and `execute`,
 answers `RequestConfigSchema` with a `JobTypeDescriptor`, replies to `RunDetectionRequest`
 with `JobProposal`s and to `ExecuteJobRequest` with `JobProgressUpdate`s and `JobCompleted`.
-`weed worker -admin=host:23646` is the Go reference implementation of exactly that contract,
+`weed worker -admin=host:12535` is the Go reference implementation of exactly that contract,
 from outside the admin process.
 
 Nothing in it is Go-specific, and the Rust toolchain is already in the tree.

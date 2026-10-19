@@ -40,7 +40,7 @@ var miniDefaultPorts = []int{
 	8181,  // s3.port.iceberg
 	9101,  // s3.port.lance
 	7333,  // webdav.port
-	23646, // admin.port
+	12535, // admin.port
 }
 
 func reservedMiniPorts() map[int]bool {

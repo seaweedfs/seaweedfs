@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	AdminUrl  = "http://localhost:23646"
+	AdminUrl  = "http://localhost:12535"
 	MasterUrl = "http://localhost:9333"
 	FilerUrl  = "http://localhost:8888"
 )
@@ -147,13 +147,13 @@ func ensureEnvironment(t *testing.T) {
 		debugPort := 6060 + i
 		dir, _ := filepath.Abs(filepath.Join("tmp", workerName))
 		os.MkdirAll(dir, 0755)
-		startWeed(t, workerName, "worker", "-admin=localhost:23646", "-workingDir="+dir, fmt.Sprintf("-metricsPort=%d", metricsPort), fmt.Sprintf("-debug.port=%d", debugPort))
+		startWeed(t, workerName, "worker", "-admin=localhost:12535", "-workingDir="+dir, fmt.Sprintf("-metricsPort=%d", metricsPort), fmt.Sprintf("-debug.port=%d", debugPort))
 	}
 
 	// 6. Start Admin
 	os.RemoveAll(filepath.Join("tmp", "admin"))
 	os.MkdirAll(filepath.Join("tmp", "admin"), 0755)
-	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin")
+	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=12535", "-dataDir=./tmp/admin")
 	// Admin is started after master, 14 volume servers, filer and 2 workers,
 	// so under cold CI conditions the wait here has to absorb the tail of
 	// every earlier subprocess coming up. 60s is too tight and has flaked;

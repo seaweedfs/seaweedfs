@@ -1511,8 +1511,8 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  port: 23646  # Default admin port
-  grpcPort: 33646  # Default gRPC port for worker connections
+  port: 12535  # Default admin port
+  grpcPort: 22535  # Default gRPC port for worker connections
   # IP address the admin server listens on. Since `weed admin` 4.46 defaults to
   # loopback (127.0.0.1), the chart must bind a non-loopback address for the
   # kubelet's httpGet readiness/liveness probes (which dial the pod IP) to ever

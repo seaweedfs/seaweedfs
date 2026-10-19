@@ -45,7 +45,7 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 
 	options.AdminServer = strings.TrimSpace(options.AdminServer)
 	if options.AdminServer == "" {
-		options.AdminServer = "localhost:23646"
+		options.AdminServer = fmt.Sprintf("localhost:%d", defaultAdminHTTPPort)
 	}
 
 	options.JobTypes = strings.TrimSpace(options.JobTypes)

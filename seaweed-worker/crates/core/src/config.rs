@@ -3,7 +3,7 @@ use std::time::Duration;
 /// How one worker process connects and how much work it will take on.
 #[derive(Clone, Debug)]
 pub struct WorkerOptions {
-    /// Admin gRPC address, e.g. "localhost:23646".
+    /// Admin gRPC address, e.g. "localhost:12535".
     pub admin_address: String,
     pub worker_id: String,
     pub worker_version: String,
@@ -44,7 +44,7 @@ pub struct TlsOptions {
 impl Default for WorkerOptions {
     fn default() -> Self {
         Self {
-            admin_address: "localhost:23646".to_string(),
+            admin_address: "localhost:12535".to_string(),
             worker_id: String::new(),
             worker_version: env!("CARGO_PKG_VERSION").to_string(),
             worker_address: String::new(),

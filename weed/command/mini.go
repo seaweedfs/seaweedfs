@@ -49,13 +49,16 @@ type MiniOptions struct {
 }
 
 const (
-	bytesPerMB                = 1024 * 1024 // Bytes per MB
-	miniVolumeMinFreeSpace    = "1"         // 1% minimum free space
-	minVolumeSizeMB           = 64          // Minimum volume size in MB
-	defaultMiniVolumeSizeMB   = 128         // Default volume size for mini mode
-	maxVolumeSizeMB           = 1024        // Maximum volume size in MB (1GB)
-	GrpcPortOffset            = 10000       // Offset used to calculate gRPC port from HTTP port
-	defaultMiniPluginJobTypes = "all"
+	bytesPerMB                 = 1024 * 1024 // Bytes per MB
+	miniVolumeMinFreeSpace     = "1"         // 1% minimum free space
+	minVolumeSizeMB            = 64          // Minimum volume size in MB
+	defaultMiniVolumeSizeMB    = 128         // Default volume size for mini mode
+	maxVolumeSizeMB            = 1024        // Maximum volume size in MB (1GB)
+	GrpcPortOffset             = 10000       // Offset used to calculate gRPC port from HTTP port
+	linuxEphemeralPortFloor    = 32768       // Default net.ipv4.ip_local_port_range floor on Linux
+	defaultAdminHTTPPort       = 12535       // Keeps the derived admin gRPC port (port+GrpcPortOffset) below linuxEphemeralPortFloor
+	defaultAdminHTTPLegacyPort = 23646       // Pre-12535 default; served alongside the new port for backward compatibility
+	defaultMiniPluginJobTypes  = "all"
 )
 
 var (
@@ -371,12 +374,12 @@ After starting, you can access:
 - S3 Endpoint:     http://localhost:8333
 - Iceberg Catalog: http://localhost:8181
 - WebDAV:          http://localhost:7333
-- Admin UI:        http://localhost:23646
+- Admin UI:        http://localhost:12535
 
 S3 Access:
 The S3 endpoint is available at http://localhost:8333. For client
 configuration and IAM setup, see the project documentation or use the
-Admin UI (http://localhost:23646) to manage users and policies.
+Admin UI (http://localhost:12535) to manage users and policies.
 
 Notes:
 - Values mini computes itself (currently master.volumeSizeLimitMB) are
@@ -574,8 +577,9 @@ func initMiniWebDAVFlags() {
 
 // initMiniAdminFlags initializes Admin server flag options
 func initMiniAdminFlags() {
-	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
+	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", defaultAdminHTTPPort, "admin server http listen port")
 	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
+	miniAdminOptions.legacyPort = cmdMini.Flag.Int("admin.port.legacy", defaultAdminHTTPLegacyPort, "also serve admin http and grpc (port + GrpcPortOffset) on this port for backward compatibility (0 to disable)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
 	// admin discovery must query the same group the co-located filer registers under
 	miniAdminOptions.filerGroup = miniFilerOptions.filerGroup
@@ -946,6 +950,12 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 			reservedPorts[calculatedGrpcPort] = true
 		}
 	}
+	// The legacy compat listeners own these ports too — keep mini's own
+	// relocation from handing them to another service.
+	if *miniAdminOptions.legacyPort > 0 && *miniAdminOptions.legacyPort != *miniAdminOptions.port {
+		reservedPorts[*miniAdminOptions.legacyPort] = true
+		reservedPorts[*miniAdminOptions.legacyPort+GrpcPortOffset] = true
+	}
 
 	// Check all HTTP ports sequentially to avoid race conditions
 	// Each port check and allocation must complete before the next one starts
@@ -984,6 +994,19 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
 	} else {
 		miniAdminOptions.workerGrpcListener = listener
+	}
+
+	// Same early reservation for the legacy compat gRPC port. Failure is only
+	// a warning — the legacy port sits inside the ephemeral range and is a
+	// best-effort convenience, not a startup requirement.
+	miniAdminOptions.workerGrpcLegacyListener = nil
+	if *miniAdminOptions.legacyPort > 0 && *miniAdminOptions.legacyPort != *miniAdminOptions.port {
+		legacyGrpcPort := *miniAdminOptions.legacyPort + GrpcPortOffset
+		if listener, err := listenMiniAdminWorker(workerGrpcBindIP, legacyGrpcPort); err != nil {
+			glog.Warningf("Could not reserve legacy Admin gRPC port %d: %v", legacyGrpcPort, err)
+		} else {
+			miniAdminOptions.workerGrpcLegacyListener = listener
+		}
 	}
 
 	// Log the final port configuration
@@ -1085,6 +1108,13 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		}
 		allocatedPorts[*config.grpcPort] = true
 		glog.V(1).Infof("%s gRPC port set to %d", config.name, *config.grpcPort)
+	}
+
+	// The Linux kernel draws outbound source ports from the ephemeral range.
+	// A gRPC port inside it can be claimed by one of mini's own startup dials
+	// before the service binds it.
+	if *miniAdminOptions.grpcPort >= linuxEphemeralPortFloor {
+		glog.Warningf("Admin gRPC port %d is at or above the Linux ephemeral floor %d; an outbound connection may claim it before Admin binds it. Pick a lower -admin.port.", *miniAdminOptions.grpcPort, linuxEphemeralPortFloor)
 	}
 }
 
@@ -1879,6 +1909,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		// startAdminServer bailed out before that.
 		if adminOptions.workerGrpcListener != nil {
 			adminOptions.workerGrpcListener.Close()
+		}
+		if adminOptions.workerGrpcLegacyListener != nil {
+			adminOptions.workerGrpcLegacyListener.Close()
 		}
 	}()
 

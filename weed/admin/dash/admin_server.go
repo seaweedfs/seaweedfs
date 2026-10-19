@@ -1642,6 +1642,14 @@ func (s *AdminServer) WorkerGrpcMTLSEnabled() bool {
 	return s.workerGrpcServer != nil && s.workerGrpcServer.mtlsEnabled
 }
 
+// ServeWorkerGrpcOn serves the worker gRPC API on an additional already-bound
+// listener, e.g. a legacy compat port kept for backward compatibility.
+func (s *AdminServer) ServeWorkerGrpcOn(listener net.Listener) {
+	if s.workerGrpcServer != nil {
+		s.workerGrpcServer.ServeOn(listener)
+	}
+}
+
 // StopWorkerGrpcServer stops the worker gRPC server
 func (s *AdminServer) StopWorkerGrpcServer() error {
 	if s.workerGrpcServer != nil {
