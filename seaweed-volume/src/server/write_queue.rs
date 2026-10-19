@@ -156,7 +156,7 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     }
 
     // Process each volume group under a single store lock.
-    let mut store = state.store.write().unwrap();
+    let store = state.store.write().unwrap();
 
     for (vid, entries) in groups {
         let (mut writes, senders): (Vec<_>, Vec<_>) = entries

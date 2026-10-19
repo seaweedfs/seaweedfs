@@ -2956,7 +2956,7 @@ pub async fn post_handler(
     let write_result = if let Some(wq) = state.write_queue.get() {
         wq.submit(vid, n, fsync).await
     } else {
-        let mut store = state.store.write().unwrap();
+        let store = state.store.write().unwrap();
         store.write_volume_needle(vid, &mut n, fsync)
     };
 
@@ -3314,7 +3314,7 @@ pub async fn delete_handler(
     }
 
     let delete_result = {
-        let mut store = state.store.write().unwrap();
+        let store = state.store.write().unwrap();
         store.delete_volume_needle(vid, &mut n)
     };
 
@@ -7059,8 +7059,8 @@ mod tests {
         );
 
         {
-            let mut store = state.store.write().unwrap();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let store = state.store.write().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.fail_next_fsync_for_test(true);
             vol.fail_next_truncate_for_test(true);
             let mut n = Needle {
@@ -7073,7 +7073,7 @@ mod tests {
             store
                 .write_volume_needle(VolumeId(1), &mut n, true)
                 .unwrap_err();
-            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.fail_next_fsync_for_test(false);
             vol.fail_next_truncate_for_test(false);
             assert!(vol.unavailable_error().is_some());

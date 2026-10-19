@@ -511,7 +511,7 @@ async fn write_and_delete_on_read_only_volume_say_is_read_only() {
         .store
         .write()
         .unwrap()
-        .find_volume_mut(VolumeId(1))
+        .find_volume(VolumeId(1))
         .unwrap()
         .1
         .set_no_write_or_delete(true);
@@ -539,7 +539,7 @@ async fn write_and_delete_on_read_only_volume_say_is_read_only() {
         .store
         .write()
         .unwrap()
-        .find_volume_mut(VolumeId(1))
+        .find_volume(VolumeId(1))
         .unwrap()
         .1
         .set_no_write_or_delete(false);
@@ -1084,7 +1084,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     let manifest_nid = NeedleId(0x7);
     let manifest_cookie = Cookie(0x55667788);
     {
-        let mut store = state.store.write().unwrap();
+        let store = state.store.write().unwrap();
         let mut n = Needle {
             id: manifest_nid,
             cookie: manifest_cookie,
