@@ -2956,7 +2956,7 @@ pub async fn post_handler(
     let write_result = if let Some(wq) = state.write_queue.get() {
         wq.submit(vid, n, fsync).await
     } else {
-        let store = state.store.write().unwrap();
+        let store = state.store.read().unwrap();
         store.write_volume_needle(vid, &mut n, fsync)
     };
 
@@ -3314,7 +3314,7 @@ pub async fn delete_handler(
     }
 
     let delete_result = {
-        let store = state.store.write().unwrap();
+        let store = state.store.read().unwrap();
         store.delete_volume_needle(vid, &mut n)
     };
 

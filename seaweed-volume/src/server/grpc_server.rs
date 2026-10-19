@@ -302,12 +302,6 @@ impl VolumeGrpcService {
             e.into_inner()
         })
     }
-    fn store_write(&self) -> std::sync::RwLockWriteGuard<'_, crate::storage::store::Store> {
-        self.state.store.write().unwrap_or_else(|e| {
-            tracing::warn!("recovering poisoned store write lock");
-            e.into_inner()
-        })
-    }
     /// Verifies the gRPC caller is allowed to invoke a destructive admin
     /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
     /// whitelist accepts everyone (insecure-by-default for tests and
@@ -433,7 +427,7 @@ impl VolumeGrpcService {
         // Step 2: mark local volume readonly; Go's MarkVolumeReadonly errors
         // when the volume left the store during the step-1 master round trip.
         {
-            let store = self.state.store.write().unwrap();
+            let store = self.state.store.read().unwrap();
             let (_, vol) = store
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
@@ -1101,7 +1095,7 @@ impl VolumeServer for VolumeGrpcService {
             n.last_modified = now;
 
             if !is_ec_volume {
-                let store = self.state.store.write().unwrap();
+                let store = self.state.store.read().unwrap();
                 // Recheck EC state under the write lock before mutating the .dat. The
                 // is_ec_volume snapshot was taken earlier under a separate read lock;
                 // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
@@ -1438,7 +1432,7 @@ impl VolumeServer for VolumeGrpcService {
 
         // A quarantined volume is rejected before the sync does disk I/O for it.
         {
-            let store = self.state.store.write().unwrap();
+            let store = self.state.store.read().unwrap();
             let Some((_, v)) = store.find_volume(vid) else {
                 return Err(Status::not_found(format!("not found volume id {}", vid)));
             };
@@ -1769,7 +1763,7 @@ impl VolumeServer for VolumeGrpcService {
 
         // Step 1: mark local volume as writable (save result; Go continues on error)
         let mark_result = {
-            let store = self.state.store.write().unwrap();
+            let store = self.state.store.read().unwrap();
             let res = store
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))
@@ -2052,7 +2046,7 @@ impl VolumeServer for VolumeGrpcService {
         if !req.is_ec_volume {
             // Sync volume to disk before copying (matching Go's v.SyncToDisk())
             {
-                let store = self.state.store.write().unwrap();
+                let store = self.state.store.read().unwrap();
                 if let Some((_, v)) = store.find_volume(vid) {
                     let _ = v.sync_to_disk();
                 }
@@ -2558,7 +2552,7 @@ impl VolumeServer for VolumeGrpcService {
             return Err(Status::invalid_argument(msg));
         }
 
-        let store = self.store_write();
+        let store = self.store_read();
         let (_, vol) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
@@ -2835,7 +2829,7 @@ impl VolumeServer for VolumeGrpcService {
             }
 
             // Write needle to local volume
-            let store = state.store.write().unwrap();
+            let store = state.store.read().unwrap();
             store
                 .write_volume_needle(vid, &mut n, false)
                 .map_err(|e| Status::internal(format!("write needle: {}", e)))?;
@@ -4351,7 +4345,7 @@ impl VolumeServer for VolumeGrpcService {
                 // volume was compacted, replaced or removed mid-upload: the
                 // object would not match what now holds this id.
                 let abort = {
-                    let store = state.store.write().unwrap();
+                    let store = state.store.read().unwrap();
                     let abort = match store.find_volume(vid) {
                         None => Some(Status::not_found(format!("volume {} not found", vid))),
                         Some((_, v))
@@ -4634,7 +4628,7 @@ impl VolumeServer for VolumeGrpcService {
                 // before the delete only leaks the remote object; the .vif must never
                 // reference an object that has already been deleted.
                 {
-                    let store = state.store.write().unwrap();
+                    let store = state.store.read().unwrap();
                     let (_, vol) = store.find_volume(vid).ok_or_else(|| {
                         Status::not_found(format!("volume {} disappeared during tier-down", vid))
                     })?;
@@ -4917,7 +4911,7 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = req.needle_id;
         let size = req.size;
         let local_handle = tokio::task::spawn_blocking(move || {
-            let store = state_clone.store.write().unwrap();
+            let store = state_clone.store.read().unwrap();
             store
                 .write_volume_needle(vid, &mut n_clone, false)
                 .map(|_| ())
