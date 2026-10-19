@@ -49,7 +49,7 @@ func (s *Store) UpdateMaxVolumeIdSeen(vid needle.VolumeId) {
 }
 
 func (s *Store) UpdateLastSeenTopologyId(id string) {
-	if id == "" || s.LastSeenTopologyId() == id {
+	if id == "" || (s.LastSeenTopologyId() == id && !s.vidStampDirty.Load()) {
 		return
 	}
 	s.lastSeenTopologyId.Store(id)
