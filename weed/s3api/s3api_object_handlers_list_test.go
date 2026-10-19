@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1170,7 +1171,7 @@ func TestDoListFilerEntries_MarkerBetweenDirAndSlash(t *testing.T) {
 	}
 	client := &testFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/buckets/b/o":      {dir("a"), file("a-c"), file("a.txt"), file("a0"), file("ab")},
+			"/buckets/b/o":     {dir("a"), file("a-c"), file("a.txt"), file("a0"), file("ab")},
 			"/buckets/b/o/a":   {file("b"), dir("c")},
 			"/buckets/b/o/a/c": {file("d")},
 		},
@@ -1208,4 +1209,105 @@ func TestDoListFilerEntries_MarkerBetweenDirAndSlash(t *testing.T) {
 	assert.Equal(t, []string{
 		"o/a.txt", "o/a/b", "o/a/c/d", "o/a0", "o/ab",
 	}, collect("a-c"))
+}
+
+// Directory blocks order by "<name>/", not by name: "a-/" sorts before "a/".
+func TestDoListFilerEntries_DirBlocksSortBySlashName(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":    {dir("a"), dir("a-"), file("a.txt")},
+			"/buckets/b/a":  {file("b")},
+			"/buckets/b/a-": {file("x")},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/a-/x", "/a.txt", "/a/b"}, seen)
+}
+
+// A full page must report truncation while deferred directories still hold keys.
+func TestDoListFilerEntries_FullPageTruncatesWithPendingDir(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dir("a"), file("a-c")},
+			"/buckets/b/a": {file("x")},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a-c"}, seen)
+	assert.True(t, cursor.isTruncated, "deferred directory still holds a key")
+	assert.Equal(t, "a-c", nextMarker)
+
+	// the next page re-enters the deferred block through the marker band
+	cursor = &ListingCursor{maxKeys: 1000}
+	seen = nil
+	_, err = s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: nextMarker, bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, dir+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/buckets/b/a/x"}, seen)
+}
+
+// A directory that is also a plain object lists "a" at the name position and
+// does not repeat it when the marker is the object itself.
+func TestDoListFilerEntries_PrefixObjectKeepsNamePosition(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dirObj := func(name string) *filer_pb.Entry {
+		e := &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0644)}}
+		e.MarkPrefixObject()
+		return e
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dirObj("a"), file("a.txt")},
+			"/buckets/b/a": {file("b")},
+		},
+	}
+
+	collect := func(marker string) []string {
+		cursor := &ListingCursor{maxKeys: 1000}
+		var seen []string
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: marker, bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, dir+"/"+entry.Name)
+			cursor.maxKeys--
+		})
+		assert.NoError(t, err)
+		return seen
+	}
+
+	assert.Equal(t, []string{"/buckets/b/a", "/buckets/b/a.txt", "/buckets/b/a/b"}, collect(""))
+	// the marker is the object "a" itself: excluded, but "a.txt" and the
+	// "a/" block still follow
+	assert.Equal(t, []string{"/buckets/b/a.txt", "/buckets/b/a/b"}, collect("a"))
 }

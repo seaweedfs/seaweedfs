@@ -978,10 +978,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	type pendingDir struct {
 		e                *filer_pb.Entry
 		matchedPrefixDir bool
+		ownKeyEmitted    bool
 	}
 	var pendingDirs []pendingDir
 	stopped := false
-	emitDir := func(e *filer_pb.Entry, matchedPrefixDir bool) error {
+	emitDir := func(e *filer_pb.Entry, matchedPrefixDir, ownKeyEmitted bool) error {
 		blockKey := e.Name + "/"
 		var subMarker string
 		if strings.HasPrefix(marker, blockKey) {
@@ -993,7 +994,24 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		} else if blockKey <= marker {
 			return nil
 		}
-		isKeyObject := e.IsDirectoryKeyObject()
+		// A prefix object's plain key is emitted at the name position or not at
+		// all; the block emits only its "<name>/" fold, so the callback sees a
+		// plain directory when the key itself is past the marker.
+		emitEntry := e
+		if e.IsPrefixObject() && e.Name <= marker {
+			emitEntry = &filer_pb.Entry{}
+			*emitEntry = *e
+			emitEntry.Extended = nil
+			for k, v := range e.Extended {
+				if k != s3_constants.SeaweedFSPrefixObject {
+					if emitEntry.Extended == nil {
+						emitEntry.Extended = map[string][]byte{}
+					}
+					emitEntry.Extended[k] = v
+				}
+			}
+		}
+		isKeyObject := e.IsDirectoryKeyObject() && !e.IsPrefixObject()
 		if delimiter != "/" || cursor.prefixEndsOnDelimiter {
 			// A trailing-slash prefix (e.g. "logs/") names one directory and asks
 			// whether it exists, so a real but empty directory must be reported for
@@ -1005,7 +1023,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			if isKeyObject && blockKey > marker {
 				// Directory key objects (created via PutObject with trailing "/")
 				// appear as regular keys in recursive listing mode.
-				eachEntryFn(dir, e)
+				eachEntryFn(dir, emitEntry)
 			}
 			// Recurse into subdirectory to list any children, noting whether the
 			// subtree produced any entries.
@@ -1035,7 +1053,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				} else {
 					e.Attributes.Mime = s3_constants.FolderMimeType
 				}
-				eachEntryFn(dir, e)
+				eachEntryFn(dir, emitEntry)
 			}
 			// println("doListFilerEntries2 dir", dir+"/"+e.Name, "subNextMarker", subNextMarker)
 			nextMarker = e.Name + "/" + subNextMarker
@@ -1043,16 +1061,22 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				stopped = true
 			}
 			// println("doListFilerEntries2 nextMarker", nextMarker)
-		} else if (isKeyObject && blockKey > marker) || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor) {
-			eachEntryFn(dir, e)
+		} else if !ownKeyEmitted && ((isKeyObject && blockKey > marker) || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor)) {
+			eachEntryFn(dir, emitEntry)
 		}
 		return nil
 	}
+	// pendingDirs is kept ordered by "<name>/" rather than by name: "a-c/" and
+	// "a./" sort before "a/" even though "a" is the smaller name.
 	flushDirs := func(upTo string) error {
 		for len(pendingDirs) > 0 && (upTo == "" || pendingDirs[0].e.Name+"/" < upTo) {
+			if cursor.maxKeys <= 0 {
+				cursor.isTruncated = true
+				return nil
+			}
 			d := pendingDirs[0]
 			pendingDirs = pendingDirs[1:]
-			if err := emitDir(d.e, d.matchedPrefixDir); err != nil {
+			if err := emitDir(d.e, d.matchedPrefixDir, d.ownKeyEmitted); err != nil {
 				return err
 			}
 			if stopped || cursor.isTruncated {
@@ -1060,6 +1084,16 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 		}
 		return nil
+	}
+	queueDir := func(pd pendingDir) {
+		blockKey := pd.e.Name + "/"
+		i := 0
+		for i < len(pendingDirs) && pendingDirs[i].e.Name+"/" < blockKey {
+			i++
+		}
+		pendingDirs = append(pendingDirs, pendingDir{})
+		copy(pendingDirs[i+1:], pendingDirs[i:])
+		pendingDirs[i] = pd
 	}
 
 	// Entries that emit nothing (empty directories, the .uploads folder, the marker
@@ -1221,7 +1255,14 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					continue
 				}
 
-				pendingDirs = append(pendingDirs, pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir})
+				pd := pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir}
+				// A prefix object lists as the plain key "<name>", which sorts
+				// at the name, not at the "<name>/" block its children occupy.
+				if entry.IsPrefixObject() && entry.Name > marker {
+					eachEntryFn(dir, entry)
+					pd.ownKeyEmitted = true
+				}
+				queueDir(pd)
 				continue
 			}
 			eachEntryFn(dir, entry)
