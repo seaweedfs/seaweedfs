@@ -1485,3 +1485,125 @@ func TestResolveBalanceDestination_UsesEffectiveCapacity(t *testing.T) {
 		t.Errorf("unexpected target node: got %q want %q", plan.TargetNode, "dst-node")
 	}
 }
+
+// TestDetection_SkipsVolumeWhenTargetHoldsReplica reproduces issue #11839.
+// The emptiest server (node-d) already holds a replica of the lowest-ID
+// volumes on the fuller servers, so those volumes cannot legally move to it.
+// Detection must skip them and move on to volumes that can, instead of
+// redirecting the move to a third, equally full server — which ping-pongs
+// the same volumes back and forth on every detection cycle.
+func TestDetection_SkipsVolumeWhenTargetHoldsReplica(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-d", diskType: "hdd", diskID: 4, dc: "dc1", rack: "rack1", maxVolumes: 100},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	replicaMap := make(map[uint32][]types.ReplicaLocation)
+	addReplica := func(id uint32, node string) {
+		replicaMap[id] = append(replicaMap[id], types.ReplicaLocation{
+			DataCenter: "dc1", Rack: "rack1", NodeID: node,
+		})
+	}
+	// place registers a replica of volume id on server (a metric); the first
+	// placement of a volume also records its second replica on peer.
+	place := func(server, peer string, lo, hi uint32) {
+		for id := lo; id <= hi; id++ {
+			metrics = append(metrics, &types.VolumeHealthMetrics{
+				VolumeID: id, Server: server, ServerAddress: server + ":8080",
+				DiskType: "hdd", Collection: "c1", Size: 1024,
+				DataCenter: "dc1", Rack: "rack1", ExpectedReplicas: 1, // rp=001
+			})
+			if _, seen := replicaMap[id]; !seen {
+				addReplica(id, server)
+				addReplica(id, peer)
+			}
+		}
+	}
+
+	// The lowest-ID volumes on each full server already have their second
+	// replica on node-d, so node-d is never a legal target for them.
+	place("node-a", "node-d", 1, 10)
+	place("node-b", "node-d", 11, 20)
+	place("node-c", "node-d", 21, 30)
+
+	// Higher-ID volumes replicate within {a,b,c} and can move to node-d.
+	place("node-a", "node-b", 31, 55)
+	place("node-b", "node-c", 56, 70)
+	place("node-c", "node-a", 81, 105)
+	place("node-c", "node-b", 106, 120)
+	place("node-b", "node-a", 31, 55)   // second copies
+	place("node-c", "node-b", 56, 70)   // second copies
+	place("node-a", "node-c", 81, 105)  // second copies
+	place("node-b", "node-c", 106, 120) // second copies
+
+	// Per-server counts: a=60, b=65, c=65 of cap 100. node-d has no metrics of
+	// its own (it only holds the replica-map copies), so it is the clear min.
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at, VolumeReplicaMap: replicaMap}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("expected balance tasks: 60/65/65 vs 0 is far above the imbalance threshold")
+	}
+
+	addrToNode := map[string]string{
+		"node-a:8080": "node-a", "node-b:8080": "node-b",
+		"node-c:8080": "node-c", "node-d:8080": "node-d",
+	}
+	srcOf := make(map[uint32]string)
+	dstOf := make(map[uint32]string)
+	for _, task := range tasks {
+		for _, tgt := range task.TypedParams.Targets {
+			dst := addrToNode[tgt.Node]
+			if dst != "node-d" {
+				t.Errorf("volume %d moved %s -> %s: only node-d is under-utilized", task.VolumeID, task.Server, tgt.Node)
+			}
+			dstOf[task.VolumeID] = dst
+		}
+		srcOf[task.VolumeID] = task.Server
+	}
+	assertNoDuplicateVolumes(t, tasks)
+
+	// Apply the planned moves and re-run detection: a volume already moved
+	// must never be picked again (the reported oscillation).
+	for _, m := range metrics {
+		if m.Server == srcOf[m.VolumeID] {
+			m.Server = dstOf[m.VolumeID]
+			m.ServerAddress = m.Server + ":8080"
+		}
+	}
+	for id, dst := range dstOf {
+		for i, loc := range replicaMap[id] {
+			if loc.NodeID == srcOf[id] {
+				replicaMap[id][i].NodeID = dst
+			}
+		}
+	}
+	for id, locs := range replicaMap {
+		seen := make(map[string]bool)
+		for _, loc := range locs {
+			if seen[loc.NodeID] {
+				t.Fatalf("volume %d ended with two replicas on %s", id, loc.NodeID)
+			}
+			seen[loc.NodeID] = true
+		}
+	}
+
+	at2 := buildTopology(servers, metrics)
+	clusterInfo2 := &types.ClusterInfo{ActiveTopology: at2, VolumeReplicaMap: replicaMap}
+	tasks2, _, err := Detection(metrics, clusterInfo2, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("second Detection failed: %v", err)
+	}
+	for _, task := range tasks2 {
+		if dstOf[task.VolumeID] != "" {
+			t.Errorf("volume %d moved again in the next detection cycle (%s)", task.VolumeID, task.Server)
+		}
+	}
+}
