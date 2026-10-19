@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,6 +104,11 @@ type Topology struct {
 	// vid collided across layouts. Kept separate from the reported flag so
 	// later heartbeats from the same server cannot quietly undo it.
 	quarantinedVolumeIds sync.Map
+
+	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
+	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
+	// layout level only.
+	QuarantineVolumeFn func(dn *DataNode, vid needle.VolumeId, readOnly bool)
 }
 
 type quarantinedVolume struct {
@@ -110,19 +116,27 @@ type quarantinedVolume struct {
 	vid  needle.VolumeId
 }
 
+type quarantinedVolumeState struct {
+	reported bool
+	enforced bool
+}
+
 func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 	_, ok := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
 	return ok
 }
 
-// enforceQuarantine keeps a quarantined copy read-only even when the server's
-// own reports claim it writable again. The entry also tracks the latest
-// reported flag so a later release restores the server's true state.
+// enforceQuarantine keeps the latest reported read-only flag for a quarantined
+// copy so a later release restores the server's true state. The stored report
+// keeps the server's flag: quarantine lives at the layout level, and folding
+// it into the record here would make the master's volume digest permanently
+// disagree with the server's and force a full volume list on every heartbeat.
 func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storage.VolumeInfo {
 	q := quarantinedVolume{dn.Id(), vi.Id}
-	if _, ok := t.quarantinedVolumeIds.Load(q); ok {
-		t.quarantinedVolumeIds.Store(q, vi.ReadOnly)
-		vi.ReadOnly = true
+	if v, ok := t.quarantinedVolumeIds.Load(q); ok {
+		state := v.(quarantinedVolumeState)
+		state.reported = vi.ReadOnly
+		t.quarantinedVolumeIds.Store(q, state)
 	}
 	return vi
 }
@@ -644,6 +658,9 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	for {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		if vl.RegisterVolume(&v, dn) {
+			if t.isQuarantined(dn, v.Id) {
+				vl.SetVolumeQuarantined(dn, v.Id)
+			}
 			vl.EnsureCorrectWritables(&v)
 			go t.flagDuplicateVolumeId(v, dn)
 			return
@@ -659,25 +676,35 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 // quarantined: either could be the impostor, and arrival order must not
 // decide which copy stays writable.
 func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
-	dupCollection, dupLayout, nodes := t.findDuplicateVolumeLayout(v, dn)
-	if len(nodes) == 0 {
+	hits := t.findDuplicateVolumeLayouts(v, dn)
+	if len(hits) == 0 {
 		return
 	}
+	// A conflict could resolve between the scan above and the marks below;
+	// re-run the release so a stale quarantine is cleared instead of kept.
+	defer t.releaseResolvedQuarantine(v.Id)
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
-	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking all copies read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection)
+	var otherKeys []string
+	for _, h := range hits {
+		otherKeys = append(otherKeys, h.layoutKey())
+	}
+	glog.Errorf("duplicate volume id %d: %s reports it under %s but other data nodes also serve it under %s; marking all copies read-only", v.Id, dn.Id(), volumeLayoutKey(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)), strings.Join(otherKeys, ", "))
 	quarantine := func(n *DataNode, vl *VolumeLayout) {
+		q := quarantinedVolume{n.Id(), v.Id}
 		reported := false
 		if vi, err := n.GetVolumesById(v.Id); err == nil {
 			reported = vi.ReadOnly
 		}
-		t.quarantinedVolumeIds.LoadOrStore(quarantinedVolume{n.Id(), v.Id}, reported)
+		t.quarantinedVolumeIds.LoadOrStore(q, quarantinedVolumeState{reported: reported})
 		if vl != nil {
-			vl.SetVolumeReadOnly(n, v.Id)
+			vl.SetVolumeQuarantined(n, v.Id)
 		}
 	}
 	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
-	for _, n := range nodes {
-		quarantine(n, dupLayout)
+	for _, h := range hits {
+		for _, n := range h.nodes {
+			quarantine(n, h.vl)
+		}
 	}
 }
 
@@ -694,11 +721,11 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 			t.quarantinedVolumeIds.Delete(key)
 			return true
 		}
-		if _, _, nodes := t.findDuplicateVolumeLayout(vi, dn); len(nodes) > 0 {
+		if hits := t.findDuplicateVolumeLayouts(vi, dn); len(hits) > 0 {
 			return true
 		}
-		reported, _ := val.(bool)
-		if reported {
+		state, _ := val.(quarantinedVolumeState)
+		if state.reported {
 			dn.SetVolumeReadOnly(vid, true)
 			vl.SetReplicaReadOnlyFlag(dn, vid, true)
 		} else {
@@ -723,15 +750,31 @@ func (t *Topology) findQuarantinedVolume(dnId NodeId, vid needle.VolumeId) (*Dat
 	return nil, nil, storage.VolumeInfo{}
 }
 
-// findDuplicateVolumeLayout reports the layout and the other data nodes
-// already holding v.Id under a different layout key. Volume ids are global,
-// so the same id held by two nodes under two layouts means the allocator
-// reused an id.
-func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode) (string, *VolumeLayout, []*DataNode) {
+// duplicateHit is one layout that holds v.Id on data nodes other than the
+// reporter's.
+type duplicateHit struct {
+	collection string
+	vl         *VolumeLayout
+	nodes      []*DataNode
+}
+
+func (h duplicateHit) layoutKey() string {
+	return volumeLayoutKey(h.collection, h.vl.rp, h.vl.ttl, h.vl.diskType)
+}
+
+func volumeLayoutKey(collection string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) string {
+	return fmt.Sprintf("collection=%q rp=%s ttl=%s disk=%s", collection, rp, ttl, diskType)
+}
+
+// findDuplicateVolumeLayouts reports every layout that already holds v.Id on
+// data nodes other than dn. Volume ids are global, so the same id held by two
+// nodes under two layouts means the allocator reused an id.
+func (t *Topology) findDuplicateVolumeLayouts(v storage.VolumeInfo, dn *DataNode) []duplicateHit {
 	if v.ReplicaPlacement == nil {
-		return "", nil, nil
+		return nil
 	}
 	diskType := types.ToDiskType(v.DiskType)
+	var hits []duplicateHit
 	for _, item := range t.collectionMap.Items() {
 		c := item.(*Collection)
 		var same *VolumeLayout
@@ -749,16 +792,15 @@ func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode)
 				}
 			}
 			if len(others) > 0 {
-				return c.Name, vl, others
+				hits = append(hits, duplicateHit{collection: c.Name, vl: vl, nodes: others})
 			}
 		}
 	}
-	return "", nil, nil
+	return hits
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
-	t.quarantinedVolumeIds.Delete(quarantinedVolume{dn.Id(), v.Id})
 	defer t.releaseResolvedQuarantine(v.Id)
 	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
