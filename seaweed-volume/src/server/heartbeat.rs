@@ -1207,10 +1207,10 @@ fn build_heartbeat_with_ec_status(
                     deleted_byte_count: vol.deleted_size(),
                     read_only: vol.is_read_only(),
                     read_only_can_delete: vol.is_no_write_can_delete(),
-                    replica_placement: vol.super_block.replica_placement.to_byte() as u32,
-                    version: vol.super_block.version.0 as u32,
-                    ttl: vol.super_block.ttl.to_u32(),
-                    compact_revision: vol.super_block.compaction_revision as u32,
+                    replica_placement: vol.super_block().replica_placement.to_byte() as u32,
+                    version: vol.super_block().version.0 as u32,
+                    ttl: vol.super_block().ttl.to_u32(),
+                    compact_revision: vol.super_block().compaction_revision as u32,
                     // The .dat mtime, as Go reports: the shell's quiet-period
                     // gates read this as "last touched", which a delete has to
                     // count towards even though the TTL clock ignores it.

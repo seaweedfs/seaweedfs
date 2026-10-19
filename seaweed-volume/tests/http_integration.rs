@@ -1044,7 +1044,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     // Build regular volume 2 holding the chunk, then EC-encode it and mount all
     // 14 shards locally so reconstruct-on-read is a pure local read.
     {
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2),
@@ -1148,7 +1148,7 @@ async fn delete_on_ec_volume_succeeds_when_the_needles_shard_is_not_mounted() {
     // Build regular volume 4, then EC-encode it. The volume is standalone and
     // never registered in the store, so afterwards it exists only as shards.
     {
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(4),

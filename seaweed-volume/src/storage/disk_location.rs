@@ -592,7 +592,7 @@ impl DiskLocation {
 
     /// Remove and close a volume.
     pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Volume> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
+        if let Some(v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
@@ -619,7 +619,7 @@ impl DiskLocation {
         {
             return Err(v.compacting_error());
         }
-        if let Some(mut v) = self.volumes.remove(&vid) {
+        if let Some(v) = self.volumes.remove(&vid) {
             match v.destroy(only_empty, only_garbage, keep_remote_data) {
                 Ok(()) => {
                     crate::metrics::VOLUME_GAUGE
@@ -649,7 +649,7 @@ impl DiskLocation {
             .collect();
 
         for vid in vids {
-            if let Some(mut v) = self.volumes.remove(&vid) {
+            if let Some(v) = self.volumes.remove(&vid) {
                 if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
                     self.volumes.insert(vid, v);

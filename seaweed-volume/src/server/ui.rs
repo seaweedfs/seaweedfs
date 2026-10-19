@@ -400,7 +400,7 @@ fn collect_ui_data(
                 file_count: volume.file_count(),
                 delete_count: volume.deleted_count(),
                 deleted_byte_count: volume.deleted_size(),
-                ttl: volume.super_block.ttl.to_string(),
+                ttl: volume.super_block().ttl.to_string(),
                 read_only: volume.is_read_only(),
                 version: volume.version().0 as u32,
                 remote_storage_name,

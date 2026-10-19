@@ -683,9 +683,9 @@ async fn do_replicated_request(
 
     let copy_count = {
         let store = state.store.read().unwrap();
-        store
-            .find_volume(VolumeId(vid))
-            .map_or(1, |(_, v)| v.super_block.replica_placement.get_copy_count())
+        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
+            v.super_block().replica_placement.get_copy_count()
+        })
     };
     let allow_delete = method == axum::http::Method::DELETE;
     let eligible_locations: Vec<_> = locations
@@ -1286,7 +1286,7 @@ async fn check_download_limit(
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
-                    .is_some_and(|(_, vol)| vol.super_block.replica_placement.has_replication())
+                    .is_some_and(|(_, vol)| vol.super_block().replica_placement.has_replication())
             };
         if should_try_replica
             && let Some(info) = build_proxy_request_info(path, request_headers, &query_string)
@@ -2967,7 +2967,7 @@ pub async fn post_handler(
             let store = state.store.read().unwrap();
             store
                 .find_volume(vid)
-                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
+                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
         };
         if needs_replication {
             let state_clone = state.clone();
@@ -3324,7 +3324,7 @@ pub async fn delete_handler(
             let store = state.store.read().unwrap();
             store
                 .find_volume(vid)
-                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
+                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
         };
         if needs_replication
             && let Err(e) = do_replicated_request(
@@ -3411,7 +3411,7 @@ pub async fn status_handler(
             );
             vol_info.insert(
                 "CompactRevision".to_string(),
-                serde_json::Value::from(vol.super_block.compaction_revision),
+                serde_json::Value::from(vol.super_block().compaction_revision),
             );
             vol_info.insert(
                 "ModifiedAtSecond".to_string(),
@@ -3422,7 +3422,7 @@ pub async fn status_handler(
                 serde_json::Value::from(loc.disk_type.to_string()),
             );
 
-            let replica = &vol.super_block.replica_placement;
+            let replica = &vol.super_block().replica_placement;
             let mut replica_value = serde_json::Map::new();
             if replica.diff_data_center_count > 0 {
                 replica_value.insert(
@@ -3447,7 +3447,7 @@ pub async fn status_handler(
                 serde_json::Value::Object(replica_value),
             );
 
-            let ttl = vol.super_block.ttl;
+            let ttl = vol.super_block().ttl;
             let mut ttl_value = serde_json::Map::new();
             if ttl.count > 0 {
                 ttl_value.insert("Count".to_string(), serde_json::Value::from(ttl.count));
@@ -5476,7 +5476,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
 
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2),
@@ -5782,7 +5782,7 @@ mod tests {
         let state = volume_test_state(&tmp);
         let dir = tmp.path().to_str().unwrap();
         let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2),
@@ -7091,8 +7091,9 @@ mod tests {
         }
     }
 
-    /// A vacuum committed mid-stream must not change the bytes served: the
-    /// stream's handle pins the inode its offset was resolved against.
+    /// A leased stream blocks the compaction commit instead of racing the
+    /// file swap, and still delivers the needle's bytes; the commit goes
+    /// through once the stream releases its read lease.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_streaming_body_survives_a_vacuum_that_moves_the_needle() {
@@ -7138,13 +7139,28 @@ mod tests {
         {
             let mut store = state.store.write().unwrap();
             store.compact_volume(VolumeId(1), 0, 0, |_| true).unwrap();
-            store.commit_compact_volume(VolumeId(1)).unwrap();
+            let err = store.commit_compact_volume(VolumeId(1)).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(crate::storage::volume::COMMIT_WAITS_FOR_READS),
+                "the leased stream must hold the commit back: {err}"
+            );
         }
-        assert_ne!(data_offset(), before, "the vacuum must move the needle");
 
         while let Some(chunk) = stream.next().await {
             got.extend_from_slice(&chunk.expect("the stream failed across a vacuum"));
         }
         assert_eq!(got, data);
+        drop(stream);
+
+        {
+            let mut store = state.store.write().unwrap();
+            store.commit_compact_volume(VolumeId(1)).unwrap();
+        }
+        assert_ne!(
+            data_offset(),
+            before,
+            "the vacuum moves the needle once the stream drains"
+        );
     }
 }

@@ -2382,7 +2382,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(2074),
@@ -2457,7 +2457,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -2511,7 +2511,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -2600,7 +2600,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -2688,7 +2688,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -2783,7 +2783,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -4201,7 +4201,7 @@ mod tests {
         use crate::storage::needle_map::NeedleMapKind;
         use crate::storage::volume::{Volume, VolumeSpec};
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             vid,
@@ -5014,7 +5014,7 @@ mod uniform_layout_tests {
             let dir = tmp.path().to_str().unwrap();
             let vid = VolumeId(8);
 
-            let mut v = Volume::new(
+            let v = Volume::new(
                 dir,
                 dir,
                 vid,

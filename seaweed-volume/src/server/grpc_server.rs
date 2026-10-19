@@ -419,8 +419,8 @@ impl VolumeGrpcService {
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
-                replica_placement: vol.super_block.replica_placement.to_byte(),
-                ttl: vol.super_block.ttl.to_u32(),
+                replica_placement: vol.super_block().replica_placement.to_byte(),
+                ttl: vol.super_block().ttl.to_u32(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 ip: store.ip.clone(),
                 port: store.port,
@@ -1419,10 +1419,10 @@ impl VolumeServer for VolumeGrpcService {
         Ok(Response::new(volume_server_pb::VolumeSyncStatusResponse {
             volume_id: vid.0,
             collection: vol.collection.clone(),
-            replication: vol.super_block.replica_placement.to_string(),
-            ttl: vol.super_block.ttl.to_string(),
+            replication: vol.super_block().replica_placement.to_string(),
+            ttl: vol.super_block().ttl.to_string(),
             tail_offset: vol.dat_file_size().unwrap_or(0),
-            compact_revision: vol.super_block.compaction_revision as u32,
+            compact_revision: vol.super_block().compaction_revision as u32,
             idx_file_size: vol.idx_file_size(),
             version: vol.version().0 as u32,
         }))
@@ -1457,7 +1457,7 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         let dat_size = v.dat_file_size().unwrap_or(0);
-        let super_block_size = v.super_block.block_size() as u64;
+        let super_block_size = v.super_block().block_size() as u64;
 
         // If since_ns is very large (after all data), return empty
         if req.since_ns == u64::MAX || dat_size <= super_block_size {
@@ -1757,8 +1757,8 @@ impl VolumeServer for VolumeGrpcService {
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
-                replica_placement: vol.super_block.replica_placement.to_byte(),
-                ttl: vol.super_block.ttl.to_u32(),
+                replica_placement: vol.super_block().replica_placement.to_byte(),
+                ttl: vol.super_block().ttl.to_u32(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 ip: store.ip.clone(),
                 port: store.port,
@@ -2027,7 +2027,7 @@ impl VolumeServer for VolumeGrpcService {
                 dat_file_timestamp_seconds: mod_time,
                 dat_file_size: vol.dat_file_size().unwrap_or(0),
                 file_count: vol.file_count() as u64,
-                compaction_revision: vol.super_block.compaction_revision as u32,
+                compaction_revision: vol.super_block().compaction_revision as u32,
                 collection: vol.collection.clone(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 volume_info: Some(vol.volume_info().clone()),
@@ -2072,7 +2072,7 @@ impl VolumeServer for VolumeGrpcService {
             // must not be used here, or this check spuriously fails on every volume
             // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && u32::from(v.super_block.compaction_revision) != req.compaction_revision
+                && u32::from(v.super_block().compaction_revision) != req.compaction_revision
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
@@ -2615,7 +2615,10 @@ impl VolumeServer for VolumeGrpcService {
             let (_, vol) = store
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
-            (vol.version().0 as u32, vol.super_block.block_size() as u64)
+            (
+                vol.version().0 as u32,
+                vol.super_block().block_size() as u64,
+            )
         };
 
         let state = self.state.clone();
@@ -4245,7 +4248,7 @@ impl VolumeServer for VolumeGrpcService {
             (
                 dat_path,
                 vol.instance(),
-                vol.super_block.compaction_revision,
+                vol.super_block().compaction_revision,
             )
         };
 
@@ -4353,7 +4356,7 @@ impl VolumeServer for VolumeGrpcService {
                         None => Some(Status::not_found(format!("volume {} not found", vid))),
                         Some((_, v))
                             if !v.is_instance(&instance)
-                                || v.super_block.compaction_revision != compaction_revision =>
+                                || v.super_block().compaction_revision != compaction_revision =>
                         {
                             Some(Status::failed_precondition(format!(
                                 "volume {} was compacted or replaced during tier move to remote",
@@ -6636,7 +6639,7 @@ fn read_all_needles_of_volume(
     let mut plan = {
         let store = state.store.read().unwrap();
         let (_, v) = store.find_volume(vid).ok_or_else(not_found)?;
-        v.dat_scan_plan(v.super_block.block_size() as u64)
+        v.dat_scan_plan(v.super_block().block_size() as u64)
             .map_err(internal)?
     };
     loop {
@@ -7271,7 +7274,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let (dat_bytes, super_block_size) = {
-            let mut volume = crate::storage::volume::Volume::new(
+            let volume = crate::storage::volume::Volume::new(
                 dir,
                 dir,
                 VolumeId(1),
@@ -7290,7 +7293,7 @@ mod tests {
             volume.sync_to_disk().unwrap();
             (
                 std::fs::read(volume.file_name(".dat")).unwrap(),
-                volume.super_block.block_size() as u64,
+                volume.super_block().block_size() as u64,
             )
         };
 
@@ -7813,7 +7816,7 @@ mod tests {
         let revision_before = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
         let state = service.state.clone();
         let held = state
@@ -7852,7 +7855,7 @@ mod tests {
         let revision_after = {
             let store = state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
         assert_eq!(
             revision_before, revision_after,
@@ -8509,7 +8512,7 @@ mod tests {
                 .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
                 .unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            assert_eq!(vol.super_block.compaction_revision, 0);
+            assert_eq!(vol.super_block().compaction_revision, 0);
         }
         s3.release.add_permits(1);
 
@@ -9483,7 +9486,7 @@ mod tests {
         let sb_size = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.block_size()
+            v.super_block().block_size()
         };
 
         let response = service
@@ -9847,7 +9850,7 @@ mod tests {
         let super_block_size = {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-            v.super_block.block_size() as u64
+            v.super_block().block_size() as u64
         };
 
         let response = service
@@ -10261,7 +10264,7 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(vid).expect("still mounted");
-            assert_eq!(v.super_block.replica_placement.to_string(), "000");
+            assert_eq!(v.super_block().replica_placement.to_string(), "000");
         }
 
         job.run(|_| true).unwrap();
@@ -10276,7 +10279,7 @@ mod tests {
         assert_eq!(resp.error, "");
         let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.replica_placement.to_string(), "001");
+        assert_eq!(v.super_block().replica_placement.to_string(), "001");
     }
 
     // Regression test for comparing the wrong compaction-revision field.
@@ -10297,14 +10300,14 @@ mod tests {
         let (revision_before, revision_after, last_compact_revision_after) = {
             let mut store = service.state.store.write().unwrap();
             let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
-            let before = v.super_block.compaction_revision;
+            let before = v.super_block().compaction_revision;
 
             v.compact_by_index(0, 0, |_| true).unwrap();
             v.commit_compact().unwrap();
 
             (
                 before,
-                v.super_block.compaction_revision,
+                v.super_block().compaction_revision,
                 v.last_compact_revision(),
             )
         };
@@ -12169,7 +12172,7 @@ mod tests {
         // A real volume, really encoded: a parity check needs genuine
         // Reed-Solomon parity to agree with, or "no corruption" means nothing.
         {
-            let mut v = crate::storage::volume::Volume::new(
+            let v = crate::storage::volume::Volume::new(
                 src_s,
                 src_s,
                 vid,
@@ -13291,5 +13294,4 @@ mod tests {
             assert_eq!(resp.results[0].error, "not found");
         }
     }
-
 }

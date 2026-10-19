@@ -43,12 +43,12 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
 
     if dir_idx.is_empty() || dir_idx == dir {
         check(dir, data_bytes + index_bytes)
-    } else if !same_filesystem(dir, dir_idx) {
+    } else if !same_filesystem(dir, &dir_idx) {
         check(dir, data_bytes)?;
-        check(dir_idx, index_bytes)
+        check(&dir_idx, index_bytes)
     } else {
         check(dir, data_bytes + index_bytes)?;
-        check(dir_idx, index_bytes)
+        check(&dir_idx, index_bytes)
     }
 }
 
@@ -1625,8 +1625,8 @@ impl Store {
             collection,
             ..VolumeSpec::default()
         };
-        let mut v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
-        let mut compact = || -> Result<(), VolumeError> {
+        let v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
+        let compact = || -> Result<(), VolumeError> {
             ensure_compact_volume_space(&v, 0)?;
             v.compact_by_index(0, 0, |_| true)?;
             v.commit_compact()
@@ -2790,7 +2790,7 @@ mod tests {
         }
         let revision = {
             let (_, v) = store.find_volume(vid).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
 
         let job = store
@@ -2810,13 +2810,13 @@ mod tests {
 
         let (_, v) = store.find_volume(vid).expect("still mounted");
         assert!(v.is_compacting());
-        assert_eq!(v.super_block.compaction_revision, revision);
+        assert_eq!(v.super_block().compaction_revision, revision);
 
         job.run(|_| true).unwrap();
         assert!(!store.find_volume(vid).unwrap().1.is_compacting());
         store.commit_compact_volume(vid).unwrap();
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert_eq!(v.super_block().compaction_revision, revision + 1);
         assert!(store.unmount_volume(vid).unwrap());
     }
 
@@ -2856,7 +2856,7 @@ mod tests {
         store.delete_volume_needle(vid, &mut del).unwrap();
         let revision = {
             let (_, v) = store.find_volume(vid).unwrap();
-            v.super_block.compaction_revision
+            v.super_block().compaction_revision
         };
 
         let job = store.begin_compact_volume(vid, 0).unwrap().unwrap();
@@ -2885,7 +2885,7 @@ mod tests {
         store.commit_compact_volume(vid).unwrap();
 
         let (_, v) = store.find_volume(vid).unwrap();
-        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert_eq!(v.super_block().compaction_revision, revision + 1);
         assert_eq!(read_test_needle(&store, vid, 99).unwrap(), b"late-write");
         assert_eq!(read_test_needle(&store, vid, 3).unwrap(), b"overwritten");
         assert!(read_test_needle(&store, vid, 4).is_err());

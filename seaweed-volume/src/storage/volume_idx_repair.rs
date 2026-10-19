@@ -12,7 +12,7 @@ use crate::storage::idx;
 use crate::storage::needle::Needle;
 use crate::storage::needle::needle::needle_body_length;
 use crate::storage::types::*;
-use crate::storage::volume::{Volume, VolumeError, fsync_dir};
+use crate::storage::volume::{Volume, VolumeError, VolumeIo, fsync_dir};
 
 /// Needles found in the head of .dat, keyed by id, plus the ids in .dat order.
 type DatHeadNeedles = (HashMap<NeedleId, (Offset, Size)>, Vec<NeedleId>);
@@ -45,15 +45,15 @@ impl Volume {
     /// restores .idx to .dat append order, which several readers lean on: the
     /// fingerprint is gone so a later load stops after one row, and the last row
     /// is the .dat-tail needle again.
-    pub(crate) fn repair_idx_head_tombstones(&self) -> Result<usize, VolumeError> {
-        if !self.has_data_backend() {
+    pub(crate) fn repair_idx_head_tombstones(&self, io: &VolumeIo) -> Result<usize, VolumeError> {
+        if !self.has_data_backend_io(io) {
             return Ok(0);
         }
         let version = self.version();
         if !version.is_supported() {
             return Ok(0);
         }
-        let first_needle_offset = self.super_block.block_size() as i64;
+        let first_needle_offset = self.super_block().block_size() as i64;
         let idx_path = self.file_name(".idx");
 
         let clobbered = idx_head_tombstone_count(&idx_path)?;
@@ -68,7 +68,7 @@ impl Volume {
             "idx starts with offset-0 tombstones, recovering the rows they overwrote from .dat"
         );
 
-        let (mut lost, order) = self.scan_dat_head(version, first_needle_offset, clobbered)?;
+        let (mut lost, order) = self.scan_dat_head(io, version, first_needle_offset, clobbered)?;
         drop_indexed_keys(&idx_path, &mut lost)?;
         if lost.is_empty() {
             return Ok(0);
@@ -93,6 +93,7 @@ impl Volume {
     /// being resurrected.
     fn scan_dat_head(
         &self,
+        io: &VolumeIo,
         version: Version,
         first_needle_offset: i64,
         limit: usize,
@@ -103,7 +104,7 @@ impl Volume {
 
         for _ in 0..limit {
             let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header, offset as u64) {
+            match self.read_exact_at_backend(io, &mut header, offset as u64) {
                 Ok(()) => {}
                 Err(VolumeError::Io(ref e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
                 Err(e) => return Err(e),
@@ -245,7 +246,7 @@ mod tests {
     }
 
     fn write_test_volume(dir: &str, needle_count: u64) -> Vec<Vec<u8>> {
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         let mut written = Vec::new();
         for i in 1..=needle_count {
             let data = format!("needle-{}-payload", i).into_bytes();
@@ -355,7 +356,7 @@ mod tests {
         let rows = idx_rows(&idx_path);
         assert_eq!(
             rows[0].1,
-            v.super_block.block_size() as i64,
+            v.super_block().block_size() as i64,
             "first row does not index the first needle in .dat"
         );
         for i in 1..4 {
@@ -380,7 +381,7 @@ mod tests {
         let idx_path = format!("{}/1.idx", dir);
 
         write_test_volume(dir, 6);
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         v.delete_needle(&mut Needle {
             id: NeedleId(3),
             ..Needle::default()
@@ -415,7 +416,7 @@ mod tests {
         let idx_path = format!("{}/1.idx", dir);
 
         write_test_volume(dir, 8);
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         v.delete_needle(&mut Needle {
             id: NeedleId(2),
             ..Needle::default()
@@ -456,8 +457,10 @@ mod tests {
         drop(dat);
 
         let v = open_volume(dir);
-        let first = v.super_block.block_size() as i64;
-        let err = v.scan_dat_head(v.version(), first, 10).unwrap_err();
+        let first = v.super_block().block_size() as i64;
+        let err = v
+            .scan_dat_head(&v.io_read_for_test(), v.version(), first, 10)
+            .unwrap_err();
         assert!(
             matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
             "expected a corrupt-data error, got {err:?}"
