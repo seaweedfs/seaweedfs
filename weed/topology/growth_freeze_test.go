@@ -68,6 +68,49 @@ func TestCheckReportedTopologyIdBeforeTopologyIdKnown(t *testing.T) {
 	}
 }
 
+func TestGrowthFreezeSurvivesMirrorRestore(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/max_volume_id"
+
+	frozen := NewTopology("topo", nil, 128, 3, false)
+	frozen.SetGrowthFreezeConfig(true, 0)
+	frozen.SetMaxVolumeIdFile(file)
+	frozen.SetTopologyId("cluster-a")
+	frozen.CheckReportedTopologyId("cluster-b")
+	if !frozen.IsGrowthFrozen() {
+		t.Fatal("expected frozen growth")
+	}
+	if err := frozen.PersistMaxVolumeId(42); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+
+	restarted := NewTopology("topo", nil, 128, 3, false)
+	restarted.SetGrowthFreezeConfig(true, 0)
+	restarted.SetMaxVolumeIdFile(file)
+	if !restarted.IsGrowthFrozen() {
+		t.Fatal("freeze flag should survive a mirror restore")
+	}
+	if !restarted.ResumeVolumeGrowth() {
+		t.Fatal("restored freeze should be resumable")
+	}
+}
+
+func TestGrowthFreezeCommandApply(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+
+	frozen := true
+	topo.SetGrowthFrozen(frozen)
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("replicated freeze should set the flag")
+	}
+	unfrozen := false
+	topo.SetGrowthFrozen(unfrozen)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("replicated unfreeze should clear the flag")
+	}
+}
+
 func TestAllocationDelay(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 
