@@ -4917,18 +4917,25 @@ impl Volume {
     /// Commit a previously completed compaction: swap .cpd/.cpx to .dat/.idx and reload.
     /// Matches Go's isCompactionInProgress CompareAndSwap guard.
     pub fn commit_compact(&self) -> Result<(), VolumeError> {
-        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
-            return Ok(()); // already compacting, silently skip (matches Go)
-        };
         // Go parity: CommitCompact holds dataFileAccessLock, so the swap waits
         // out leased readers (a fast-read stream leases for its whole body).
-        // Try-lock because the caller holds the store write lock; blocking here
-        // would stall every volume behind one slow client.
+        // Try-lock for callers that hold the store write lock; blocking there
+        // would stall every volume behind one slow client. The vacuum-commit
+        // RPC uses the lease-holding path instead — it waits with no store
+        // guard held, matching Go's blocking commit.
         let Some(_lease) = self.data_file_access_control.try_write_lock() else {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 COMMIT_WAITS_FOR_READS,
             )));
+        };
+        self.commit_compact_held()
+    }
+
+    /// `commit_compact` for callers already holding the write lease.
+    pub(crate) fn commit_compact_held(&self) -> Result<(), VolumeError> {
+        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
+            return Ok(()); // already compacting, silently skip (matches Go)
         };
         // The reload would read the remote object through the compacted .idx.
         if self.has_remote_file() {

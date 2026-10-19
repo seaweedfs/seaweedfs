@@ -1294,8 +1294,24 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         let commit_start = std::time::Instant::now();
-        let mut store = self.state.store.write().unwrap();
-        let result = store.commit_compact_volume(vid);
+        let result = {
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(vid).map(|(_, vol)| vol)
+            };
+            match vol {
+                None => Err(crate::storage::volume::VolumeError::VolumeNotFound(vid)),
+                Some(vol) => {
+                    // Go's CommitCompact waits out leased readers under
+                    // dataFileAccessLock — do it without holding the store
+                    // guard, so a slow download stalls only this vacuum.
+                    let _lease = vol.instance().write_lock();
+                    let is_read_only = vol.is_read_only();
+                    vol.commit_compact_held()
+                        .map(|_| (is_read_only, vol.dat_file_size().unwrap_or(0)))
+                }
+            }
+        };
         crate::metrics::VACUUMING_HISTOGRAM
             .with_label_values(&["commit"])
             .observe(commit_start.elapsed().as_secs_f64());
