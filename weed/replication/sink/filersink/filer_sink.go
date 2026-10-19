@@ -508,17 +508,19 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 
 // sourceMovedOn reports whether the live source entry moved past the replayed
 // version: gone, strictly newer, or rewritten in place so it no longer
-// references the same chunks — the last is invisible to the mtime check.
+// references the same chunks — the last is invisible to the mtime check. A live
+// entry older than the replayed version proves nothing about it.
 func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return false
 	}
+	replayedMtimeNs := getEntryMtimeNs(entry)
 	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
-	if sourceSupersedes(sourcePath, live, lookupErr, getEntryMtimeNs(entry)) {
+	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
 		return true
 	}
-	if lookupErr != nil || live == nil {
+	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
 		return false
 	}
 	liveIds, err := fs.resolvedChunkFileIds(live.GetChunks())

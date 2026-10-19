@@ -752,11 +752,15 @@ func TestSourceDroppedChunk(t *testing.T) {
 	}
 	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
 
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
 		t.Fatal("live entry no longer referencing the chunk must count as dropped")
 	}
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def") {
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", 5*int64(time.Second)) {
 		t.Fatal("a chunk the live entry still lists must not count as dropped")
+	}
+	live.Attributes.Mtime = 4
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
+		t.Fatal("a live entry older than the replayed version cannot prove the chunk dropped")
 	}
 }
 
@@ -781,6 +785,11 @@ func TestSourceMovedOn(t *testing.T) {
 	live.Attributes.Mtime = 6
 	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
 		t.Fatal("newer mtime is still moved on")
+	}
+	live.Attributes.Mtime = 4
+	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("an older live entry cannot supersede the replayed version")
 	}
 }
 
