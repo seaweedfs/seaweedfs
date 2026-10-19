@@ -460,7 +460,7 @@ mod tests {
 
         let in_append = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
-        let _reg = needle_write_hook::register(NeedleId(1), {
+        let _reg = needle_write_hook::register(NeedleId(101), {
             let in_append = in_append.clone();
             let release = release.clone();
             move |_| {
@@ -473,7 +473,7 @@ mod tests {
         let batch = vec![WriteRequest {
             volume_id: VolumeId(1),
             needle: Needle {
-                id: NeedleId(1),
+                id: NeedleId(101),
                 cookie: 0x1111.into(),
                 data: vec![7u8; 8],
                 data_size: 8,
