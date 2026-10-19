@@ -406,6 +406,9 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	if wait := t.allocationDelay(); wait > 0 {
 		glog.V(0).Infof("deferring volume id allocation for %v", wait)
 		time.Sleep(wait)
+		if t.IsGrowthFrozen() {
+			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+		}
 	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
@@ -980,10 +983,11 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 	if own == "" || reported == own {
 		return
 	}
+	t.growthFrozenAt.Store(time.Now().UnixNano())
 	if t.growthFrozen.CompareAndSwap(false, true) {
-		t.growthFrozenAt.Store(time.Now().UnixNano())
 		stats.MasterVolumeGrowthFrozen.Set(1)
 		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
+		t.applyGrowthFreeze(true)
 	}
 }
 
@@ -1004,12 +1008,50 @@ func (t *Topology) IsGrowthFrozen() bool {
 }
 
 func (t *Topology) ResumeVolumeGrowth() bool {
+	if !t.growthFrozen.CompareAndSwap(true, false) {
+		return false
+	}
+	stats.MasterVolumeGrowthFrozen.Set(0)
+	glog.V(0).Infof("volume growth resumed by operator")
+	t.applyGrowthFreeze(false)
+	return true
+}
+
+// SetGrowthFrozen applies a replicated freeze state on every master. The
+// timestamp lands before the flag so a reader can never see frozen with a
+// zero time and misjudge the auto-resume window.
+func (t *Topology) SetGrowthFrozen(frozen bool) {
+	if frozen {
+		t.growthFrozenAt.Store(time.Now().UnixNano())
+		if t.growthFrozen.CompareAndSwap(false, true) {
+			stats.MasterVolumeGrowthFrozen.Set(1)
+			glog.V(0).Infof("volume growth freeze applied from raft")
+		}
+		return
+	}
 	if t.growthFrozen.CompareAndSwap(true, false) {
 		stats.MasterVolumeGrowthFrozen.Set(0)
-		glog.V(0).Infof("volume growth resumed by operator")
-		return true
 	}
-	return false
+}
+
+// applyGrowthFreeze replicates the freeze flag so followers keep it across a
+// leader change. No raft server (single-master test topologies) just sets it.
+func (t *Topology) applyGrowthFreeze(frozen bool) {
+	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
+	cmd.GrowthFrozen = &frozen
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+	if t.RaftServer != nil {
+		if _, err := t.RaftServer.Do(cmd); err != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, err)
+		}
+	} else if t.HashicorpRaft != nil {
+		if b, err := json.Marshal(cmd); err == nil {
+			t.HashicorpRaft.Apply(b, time.Second)
+		}
+	} else {
+		t.SetGrowthFrozen(frozen)
+	}
 }
 
 // DeferAllocation holds off new id allocation for d. Called when the leader
@@ -1043,6 +1085,9 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 	if cmd.TopologyId != "" {
 		t.SetTopologyId(cmd.TopologyId)
 	}
+	if cmd.GrowthFrozen != nil {
+		t.SetGrowthFrozen(*cmd.GrowthFrozen)
+	}
 }
 
 // PersistMaxVolumeId writes the bound to the mirror file. Called by the
@@ -1066,7 +1111,12 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 		t.lastPersistedTopologyId.Store(topoId)
 		return nil
 	}
-	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, topoId))
+	cmd := NewMaxVolumeIdCommand(vid, topoId)
+	if t.growthFrozen.Load() {
+		cmd.GrowthFrozen = new(bool)
+		*cmd.GrowthFrozen = true
+	}
+	b, err := json.Marshal(cmd)
 	if err != nil {
 		return err
 	}
