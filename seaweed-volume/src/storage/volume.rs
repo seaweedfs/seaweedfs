@@ -3220,7 +3220,7 @@ impl Volume {
                 "failed to persist unavailable marker"
             );
         }
-        if let Err(e) = self.set_read_only_persist(false, true) {
+        if let Err(e) = self.set_read_only_persist_held(false, true) {
             warn!(
                 volume_id = self.id.0,
                 error = %e,
@@ -3978,12 +3978,24 @@ impl Volume {
         can_delete: bool,
         persist: bool,
     ) -> Result<(), VolumeError> {
+        // The flag flip and the .vif save are one critical section with the idx
+        // attach: Go's markVolumeReadonly runs under dataFileAccessLock, so a
+        // racing mark-writable cannot interleave a save of half-applied state.
+        let _guard = self.data_file_access_control.write_lock();
+        self.set_read_only_persist_held(can_delete, persist)
+    }
+
+    /// `set_read_only_persist` for callers already holding the write lease —
+    /// mark_io_unavailable reaches this from append paths that hold it.
+    fn set_read_only_persist_held(
+        &self,
+        can_delete: bool,
+        persist: bool,
+    ) -> Result<(), VolumeError> {
         if can_delete && !self.has_remote_file() {
             // deletes append tombstones to .idx; a read-only boot attached no writer
             // Go's reopenIdxForWrite holds dataFileAccessLock: the idx swap must
-            // exclude compaction. Lease-scoped because mark_io_unavailable reaches
-            // this under an already-held lease (always can_delete=false).
-            let _guard = self.data_file_access_control.write_lock();
+            // exclude compaction.
             let mut io = self.io.write().unwrap();
             self.attach_idx_writer_if_missing(&mut io)?;
         }
