@@ -521,7 +521,7 @@ impl Store {
                         vid
                     ))));
                 }
-                return loc.create_volume(
+                let result = loc.create_volume(
                     vid,
                     self.needle_map_kind,
                     &VolumeSpec {
@@ -529,6 +529,10 @@ impl Store {
                         ..Default::default()
                     },
                 );
+                if result.is_ok() {
+                    self.stamp_allocated_vid(vid);
+                }
+                return result;
             }
         }
         Err(VolumeError::Io(io::Error::new(
@@ -618,7 +622,10 @@ impl Store {
                                 ..Default::default()
                             },
                         ) {
-                            Ok(()) => return Ok(()),
+                            Ok(()) => {
+                                self.stamp_allocated_vid(vid);
+                                return Ok(());
+                            }
                             Err(e) => {
                                 last_err = Some(e);
                                 continue;
@@ -674,7 +681,10 @@ impl Store {
                         ..Default::default()
                     },
                 ) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        self.stamp_allocated_vid(vid);
+                        return Ok(());
+                    }
                     Err(e) => {
                         last_err = Some(e);
                         continue;
