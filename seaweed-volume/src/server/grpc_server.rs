@@ -1002,13 +1002,15 @@ impl VolumeServer for VolumeGrpcService {
             if !req.skip_cookie_check || is_ec_volume {
                 let original_cookie = n.cookie;
                 if !is_ec_volume {
-                    let store = self.state.store.read().unwrap();
                     let mut read_option = crate::server::handlers::delete_read_option();
-                    match store.read_volume_needle_with_option(
-                        file_id.volume_id,
-                        &mut n,
-                        &mut read_option,
-                    ) {
+                    let vol = {
+                        let store = self.state.store.read().unwrap();
+                        store.find_volume(file_id.volume_id).map(|(_, v)| v)
+                    };
+                    match vol
+                        .ok_or(crate::storage::volume::VolumeError::NotFound)
+                        .and_then(|vol| vol.read_needle_with_option(&mut n, &mut read_option))
+                    {
                         Ok(_) => {}
                         Err(e) => {
                             results.push(volume_server_pb::DeleteResult {
@@ -1095,29 +1097,41 @@ impl VolumeServer for VolumeGrpcService {
             n.last_modified = now;
 
             if !is_ec_volume {
-                let store = self.state.store.read().unwrap();
-                // Recheck EC state under the write lock before mutating the .dat. The
-                // is_ec_volume snapshot was taken earlier under a separate read lock;
-                // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
-                // originals, so the vid can be EC now while the .dat still exists. A
-                // delete_volume_needle here would tombstone that .dat, which the encode
-                // then removes — the delete is lost and the needle resurrected from the
-                // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
-                // the filer requeues the delete onto the EC path.
-                if store.has_ec_volume(file_id.volume_id) {
-                    results.push(volume_server_pb::DeleteResult {
-                        file_id: fid_str.clone(),
-                        status: 503,
-                        error: format!(
-                            "volume {} became ec during delete, try again",
-                            file_id.volume_id
-                        ),
-                        size: 0,
-                        version: 0,
-                    });
-                    continue;
-                }
-                match store.delete_volume_needle(file_id.volume_id, &mut n) {
+                let vol = {
+                    let store = self.state.store.read().unwrap();
+                    // Recheck EC state under the store lock before mutating the .dat. The
+                    // is_ec_volume snapshot was taken earlier under a separate read lock;
+                    // ec.encode mounts EC shards (copied from the .dat) BEFORE deleting the
+                    // originals, so the vid can be EC now while the .dat still exists. A
+                    // delete_volume_needle here would tombstone that .dat, which the encode
+                    // then removes — the delete is lost and the needle resurrected from the
+                    // pre-tombstone shards. If the vid is now EC, return a retriable 503 so
+                    // the filer requeues the delete onto the EC path.
+                    if store.has_ec_volume(file_id.volume_id) {
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: 503,
+                            error: format!(
+                                "volume {} became ec during delete, try again",
+                                file_id.volume_id
+                            ),
+                            size: 0,
+                            version: 0,
+                        });
+                        continue;
+                    }
+                    store.find_volume(file_id.volume_id).map(|(_, v)| v)
+                };
+                // Matches Store::delete_volume_needle: noWriteOrDelete rejects
+                // first, and the tombstone I/O runs after the store guard drops.
+                let delete_result = match vol {
+                    None => Err(crate::storage::volume::VolumeError::NotFound),
+                    Some(vol) if vol.is_no_write_or_delete() => {
+                        Err(crate::storage::volume::VolumeError::ReadOnly(file_id.volume_id))
+                    }
+                    Some(vol) => vol.delete_needle(&mut n),
+                };
+                match delete_result {
                     Ok(size) => {
                         if size.0 == 0 {
                             results.push(volume_server_pb::DeleteResult {
@@ -1145,9 +1159,10 @@ impl VolumeServer for VolumeGrpcService {
                         // "try again" token so the filer requeues it and the retry hits
                         // the EC path. A bare exact "not found" would be dropped
                         // permanently by the filer chunk-GC.
-                        if matches!(e, crate::storage::volume::VolumeError::NotFound)
-                            && store.has_ec_volume(file_id.volume_id)
-                        {
+                        if matches!(e, crate::storage::volume::VolumeError::NotFound) && {
+                            let store = self.state.store.read().unwrap();
+                            store.has_ec_volume(file_id.volume_id)
+                        } {
                             results.push(volume_server_pb::DeleteResult {
                                 file_id: fid_str.clone(),
                                 status: 503,
@@ -5111,11 +5126,13 @@ impl VolumeServer for VolumeGrpcService {
             };
             let original_cookie = n.cookie;
 
-            let store = self.state.store.read().unwrap();
-            store
-                .read_volume_needle(file_id.volume_id, &mut n)
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(file_id.volume_id).map(|(_, v)| v)
+            };
+            vol.ok_or(crate::storage::volume::VolumeError::NotFound)
+                .and_then(|vol| vol.read_needle(&mut n))
                 .map_err(|e| Status::internal(e.to_string()))?;
-            drop(store);
 
             // Cookie mismatch: log and return empty stream (matching Go behavior where err is nil)
             if n.cookie != original_cookie {
@@ -5256,15 +5273,17 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = NeedleId(req.needle_id);
 
         {
-            let store = self.state.store.read().unwrap();
-
             // Try normal volume first
-            if store.find_volume(vid).is_some() {
+            let vol = {
+                let store = self.state.store.read().unwrap();
+                store.find_volume(vid).map(|(_, v)| v)
+            };
+            if let Some(vol) = vol {
                 let mut n = Needle {
                     id: needle_id,
                     ..Needle::default()
                 };
-                match store.read_volume_needle(vid, &mut n) {
+                match vol.read_needle(&mut n) {
                     Ok(_) => {
                         let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
                         return Ok(Response::new(

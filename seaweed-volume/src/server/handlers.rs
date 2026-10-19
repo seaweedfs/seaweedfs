@@ -3245,8 +3245,14 @@ pub async fn delete_handler(
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
     {
-        let store = state.store.read().unwrap();
-        match store.read_volume_needle_with_option(vid, &mut n, &mut delete_read_option()) {
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.find_volume(vid).map(|(_, vol)| vol)
+        };
+        match vol
+            .ok_or(crate::storage::volume::VolumeError::NotFound)
+            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()))
+        {
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
@@ -4130,20 +4136,12 @@ async fn read_chunk_needle(
     enum Placement {
         Ec,
         Remote,
+        Local(std::sync::Arc<crate::storage::volume::Volume>),
     }
     let placement = {
         let store = state.store.read().unwrap();
-        if store.find_volume(vid).is_some() {
-            let mut n = Needle {
-                id: nid,
-                cookie,
-                ..Needle::default()
-            };
-            return store
-                .read_volume_needle(vid, &mut n)
-                .map_err(|e| format!("{}", e))
-                .and_then(|_| cookie_checked_chunk(n, cookie))
-                .map(|data| ChunkBytes { origin: 0, data });
+        if let Some((_, vol)) = store.find_volume(vid) {
+            Placement::Local(vol)
         } else if store.find_ec_volume(vid).is_some() {
             Placement::Ec
         } else {
@@ -4152,6 +4150,17 @@ async fn read_chunk_needle(
     };
 
     match placement {
+        Placement::Local(vol) => {
+            let mut n = Needle {
+                id: nid,
+                cookie,
+                ..Needle::default()
+            };
+            vol.read_needle(&mut n)
+                .map_err(|e| format!("{}", e))
+                .and_then(|_| cookie_checked_chunk(n, cookie))
+                .map(|data| ChunkBytes { origin: 0, data })
+        }
         Placement::Ec => {
             match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
                 Ok(Some(n)) => {
