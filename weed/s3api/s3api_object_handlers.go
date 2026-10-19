@@ -688,11 +688,16 @@ func newListEntry(s3a *S3ApiServer, entry *filer_pb.Entry, key string, dir strin
 	// Determine ETag: prioritize ExtETagKey for versioned objects (supports multipart ETags),
 	// then fall back to filer.ETag() which uses Md5 attribute or calculates from chunks
 	etag := s3a.getObjectETag(entry)
+	size := int64(filer.FileSize(entry))
+	if isDirectory && size == 0 {
+		// A trailing-slash key keeps its body inline in the directory entry, with no FileSize.
+		size = int64(len(entry.Content))
+	}
 	listEntry = ListEntry{
 		Key:          key,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
 		ETag:         etag,
-		Size:         int64(filer.FileSize(entry)),
+		Size:         size,
 		StorageClass: StorageClass(storageClass),
 	}
 	if fetchOwner {
