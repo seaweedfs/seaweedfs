@@ -56,17 +56,10 @@ func (a *EtcdVolumeIdAllocator) Close() error {
 func (a *EtcdVolumeIdAllocator) NextVolumeId() (needle.VolumeId, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
 	defer cancel()
-	var seedBound uint64
-	seeded := false
 	for {
 		resp, err := a.kv.Get(ctx, a.key)
 		if err != nil {
 			return 0, fmt.Errorf("volume id allocator read: %w", err)
-		}
-		if !seeded {
-			// A stale etcd counter (restored backup, re-enabled allocator) must
-			// never go below the bound this master already knows.
-			seedBound, seeded = uint64(a.seed()), true
 		}
 		var cur uint64
 		cmp := clientv3.Compare(clientv3.CreateRevision(a.key), "=", 0)
@@ -76,7 +69,10 @@ func (a *EtcdVolumeIdAllocator) NextVolumeId() (needle.VolumeId, error) {
 			}
 			cmp = clientv3.Compare(clientv3.ModRevision(a.key), "=", resp.Kvs[0].ModRevision)
 		}
-		if seedBound > cur {
+		// A stale etcd counter (restored backup, re-enabled allocator) must
+		// never go below the bound this master already knows. Resampled per
+		// attempt because a heartbeat can raise it while the CAS retries.
+		if seedBound := uint64(a.seed()); seedBound > cur {
 			cur = seedBound
 		}
 		if cur >= math.MaxUint32 {
@@ -86,8 +82,15 @@ func (a *EtcdVolumeIdAllocator) NextVolumeId() (needle.VolumeId, error) {
 		if err != nil {
 			return 0, fmt.Errorf("volume id allocator commit: %w", err)
 		}
-		if committed.Succeeded {
-			return needle.VolumeId(cur + 1), nil
+		if !committed.Succeeded {
+			continue
 		}
+		// The bound may have moved past the committed id while the CAS was in
+		// flight. That id could name an existing volume, so skip it; wasting a
+		// number is safe, reusing one is not.
+		if latest := uint64(a.seed()); latest > cur {
+			continue
+		}
+		return needle.VolumeId(cur + 1), nil
 	}
 }
