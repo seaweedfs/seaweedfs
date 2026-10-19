@@ -495,7 +495,11 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
 		return nil
 	}
-	if errors.Is(err, errSourceChunkMissing) && (errors.Is(err, util_http.ErrNotFound) || fs.sourceStillServesChunks()) {
+	// A volume server's own 404 names this needle, so a direct-read 404 needs no
+	// liveness probe; a filer-proxied 404 also covers "no volume locations" and
+	// could be an outage, so it still must pass the probe.
+	direct404 := errors.Is(err, util_http.ErrNotFound) && fs.filerSource != nil && !fs.filerSource.ProxyByFiler()
+	if errors.Is(err, errSourceChunkMissing) && (direct404 || fs.sourceStillServesChunks()) {
 		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
 		return nil
 	}

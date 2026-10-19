@@ -74,6 +74,13 @@ func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 
 // FilerJwt returns the side-specific filer API credential, or nil when the
 // process-wide jwt.filer_signing configuration applies.
+// ProxyByFiler reports whether chunk reads are proxied through the source
+// filer. A proxied 404 can also mean the filer found no volume locations, so it
+// does not isolate a missing needle the way a direct volume read's 404 does.
+func (fs *FilerSource) ProxyByFiler() bool {
+	return fs.proxyByFiler
+}
+
 func (fs *FilerSource) FilerJwt() security.FilerJwtProvider {
 	return fs.jwtForFiler
 }

@@ -659,6 +659,19 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 		}
 	})
 
+	t.Run("proxied 404 still needs the probe", func(t *testing.T) {
+		proxied := &source.FilerSource{}
+		if err := proxied.DoInitialize("127.0.0.1:1", "127.0.0.1:1", "/src", true); err != nil {
+			t.Fatalf("DoInitialize: %v", err)
+		}
+		fs := &FilerSink{filerSource: proxied, dir: "/dst"}
+		notFound := fmt.Errorf("copy 5617,02def: %w: %w", errSourceChunkMissing, util_http.ErrNotFound)
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, notFound); !errors.Is(err, errSourceChunkMissing) {
+			t.Fatalf("a filer-proxied 404 also covers missing locations, so it must not skip without the probe, got %v", err)
+		}
+	})
+
 	t.Run("source locating nothing", func(t *testing.T) {
 		fs := &FilerSink{filerSource: startSourceFiler(t, 5, ""), dir: "/dst"}
 		served := probe
