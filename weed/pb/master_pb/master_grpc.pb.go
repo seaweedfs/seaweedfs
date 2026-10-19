@@ -44,6 +44,7 @@ const (
 	Seaweed_RaftAddServer_FullMethodName          = "/master_pb.Seaweed/RaftAddServer"
 	Seaweed_RaftRemoveServer_FullMethodName       = "/master_pb.Seaweed/RaftRemoveServer"
 	Seaweed_RaftLeadershipTransfer_FullMethodName = "/master_pb.Seaweed/RaftLeadershipTransfer"
+	Seaweed_ResumeVolumeGrowth_FullMethodName     = "/master_pb.Seaweed/ResumeVolumeGrowth"
 	Seaweed_VolumeGrow_FullMethodName             = "/master_pb.Seaweed/VolumeGrow"
 	Seaweed_CollectionStatistics_FullMethodName   = "/master_pb.Seaweed/CollectionStatistics"
 )
@@ -77,6 +78,7 @@ type SeaweedClient interface {
 	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
 	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
 	RaftLeadershipTransfer(ctx context.Context, in *RaftLeadershipTransferRequest, opts ...grpc.CallOption) (*RaftLeadershipTransferResponse, error)
+	ResumeVolumeGrowth(ctx context.Context, in *ResumeVolumeGrowthRequest, opts ...grpc.CallOption) (*ResumeVolumeGrowthResponse, error)
 	VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error)
 	CollectionStatistics(ctx context.Context, in *CollectionStatisticsRequest, opts ...grpc.CallOption) (*CollectionStatisticsResponse, error)
 }
@@ -357,6 +359,16 @@ func (c *seaweedClient) RaftLeadershipTransfer(ctx context.Context, in *RaftLead
 	return out, nil
 }
 
+func (c *seaweedClient) ResumeVolumeGrowth(ctx context.Context, in *ResumeVolumeGrowthRequest, opts ...grpc.CallOption) (*ResumeVolumeGrowthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeVolumeGrowthResponse)
+	err := c.cc.Invoke(ctx, Seaweed_ResumeVolumeGrowth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedClient) VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeGrowResponse)
@@ -406,6 +418,7 @@ type SeaweedServer interface {
 	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
 	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
 	RaftLeadershipTransfer(context.Context, *RaftLeadershipTransferRequest) (*RaftLeadershipTransferResponse, error)
+	ResumeVolumeGrowth(context.Context, *ResumeVolumeGrowthRequest) (*ResumeVolumeGrowthResponse, error)
 	VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error)
 	CollectionStatistics(context.Context, *CollectionStatisticsRequest) (*CollectionStatisticsResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
@@ -492,6 +505,9 @@ func (UnimplementedSeaweedServer) RaftRemoveServer(context.Context, *RaftRemoveS
 }
 func (UnimplementedSeaweedServer) RaftLeadershipTransfer(context.Context, *RaftLeadershipTransferRequest) (*RaftLeadershipTransferResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RaftLeadershipTransfer not implemented")
+}
+func (UnimplementedSeaweedServer) ResumeVolumeGrowth(context.Context, *ResumeVolumeGrowthRequest) (*ResumeVolumeGrowthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeVolumeGrowth not implemented")
 }
 func (UnimplementedSeaweedServer) VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VolumeGrow not implemented")
@@ -930,6 +946,24 @@ func _Seaweed_RaftLeadershipTransfer_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_ResumeVolumeGrowth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeVolumeGrowthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).ResumeVolumeGrowth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_ResumeVolumeGrowth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).ResumeVolumeGrowth(ctx, req.(*ResumeVolumeGrowthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Seaweed_VolumeGrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeGrowRequest)
 	if err := dec(in); err != nil {
@@ -1056,6 +1090,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RaftLeadershipTransfer",
 			Handler:    _Seaweed_RaftLeadershipTransfer_Handler,
+		},
+		{
+			MethodName: "ResumeVolumeGrowth",
+			Handler:    _Seaweed_ResumeVolumeGrowth_Handler,
 		},
 		{
 			MethodName: "VolumeGrow",
