@@ -211,7 +211,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
-			echoedVid, echoedTopoId = ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId()
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
 			dn.Counter++
 		}
@@ -348,18 +348,19 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
-			echoedVid, echoedTopoId = ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId()
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 		}
 
 		// Every connected server keeps a durable copy of the bound. Echo it
 		// whenever it moved so one veteran can restore it after state loss,
 		// even while the offline server that held the high ids never rejoins.
 		if vid, topoId := ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId(); vid != echoedVid || topoId != echoedTopoId {
-			if err := stream.Send(ms.heartbeatResponse()); err != nil {
+			response := ms.heartbeatResponse()
+			if err := stream.Send(response); err != nil {
 				glog.Warningf("SendHeartbeat.Send bound echo %v", err)
 				return err
 			}
-			echoedVid, echoedTopoId = vid, topoId
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 		}
 	}
 }
