@@ -50,6 +50,11 @@ const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 /// readers off a slow disk the way unlimited parallel fsyncs would.
 const MAX_CONCURRENT_VOLUME_WRITES: usize = 8;
 
+/// How often an idle worker re-checks that its volume is still mounted.
+/// Workers live for their volume's queue lifetime (Go parity), so the only
+/// retirement is the volume leaving the store.
+const IDLE_WORKER_POLL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Handle for submitting write requests to the per-volume workers.
 #[derive(Clone)]
 pub struct WriteQueue {
@@ -86,8 +91,10 @@ impl WriteQueue {
                 tokio::spawn(
                     VolumeWriteWorker {
                         rx,
+                        vid: volume_id,
                         state: self.state.clone(),
                         io_permits: self.io_permits.clone(),
+                        workers: self.workers.clone(),
                     }
                     .run(),
                 );
@@ -119,7 +126,7 @@ impl WriteQueue {
             .await
             .map_err(|_| broken_pipe("write queue shut down"))?;
         let (response_tx, response_rx) = oneshot::channel();
-        let request = WriteRequest {
+        let mut request = WriteRequest {
             volume_id,
             needle,
             fsync,
@@ -127,11 +134,24 @@ impl WriteQueue {
             queue_permit: Some(queue_permit),
         };
 
-        // Send cannot fail while the map holds a sender: workers run until the
-        // queue drops the map and closes their channel.
-        let tx = self.worker_for(volume_id);
-        if tx.send(request).await.is_err() {
-            return Err(broken_pipe("write queue worker has shut down"));
+        // A send fails only against a retiring worker's closed channel; the
+        // request was never accepted, so retrying it behind a fresh worker
+        // keeps same-volume order. The volume recheck bounds the spin.
+        loop {
+            let tx = self.worker_for(volume_id);
+            match tx.send(request).await {
+                Ok(()) => break,
+                Err(mpsc::error::SendError(returned)) => {
+                    request = returned;
+                    {
+                        let store = self.state.store.read().unwrap();
+                        if store.find_volume(volume_id).is_none() {
+                            return Err(VolumeError::NotFound);
+                        }
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
         }
 
         // Wait for the worker to process our request.
@@ -148,46 +168,82 @@ fn broken_pipe(msg: &'static str) -> VolumeError {
 
 /// FIFO worker draining one volume's write channel in batches. Like Go's
 /// per-volume async writer it runs for the volume's queue lifetime — exiting
-/// only when the channel closes — so a handoff can never split one volume's
-/// write order across two workers.
+/// only when the channel closes or its volume leaves the store — so no
+/// handoff can ever split one volume's write order across two workers.
 struct VolumeWriteWorker {
     rx: mpsc::Receiver<WriteRequest>,
+    vid: VolumeId,
     state: Arc<VolumeServerState>,
     io_permits: Arc<Semaphore>,
+    workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
 }
 
 impl VolumeWriteWorker {
     async fn run(mut self) {
-        // recv() yields None only once every sender is gone — the map holds a
-        // sender per volume, so that is exactly queue shutdown.
-        while let Some(first) = self.rx.recv().await {
-            // Drain as many additional requests as available, up to MAX_BATCH_SIZE
-            // or MAX_BATCH_BYTES (matches Go: 128 requests or 4MB, whichever comes first).
-            let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
-            let mut batch_bytes: usize = first.needle.data.len();
-            batch.push(first);
-            while batch.len() < MAX_BATCH_SIZE && batch_bytes < MAX_BATCH_BYTES {
-                match self.rx.try_recv() {
-                    Ok(req) => {
-                        batch_bytes += req.needle.data.len();
-                        batch.push(req);
-                    }
-                    Err(_) => break,
+        loop {
+            let first = match tokio::time::timeout(IDLE_WORKER_POLL, self.rx.recv()).await {
+                Ok(Some(req)) => req,
+                // recv() yields None only once every sender is gone — the map
+                // holds a sender per volume, so that is exactly queue shutdown.
+                Ok(None) => return,
+                Err(_) if self.volume_gone() => {
+                    self.retire().await;
+                    return;
                 }
-            }
-            debug!("processing write batch of {} requests", batch.len());
-
-            // Bound the number of volumes doing grouped I/O at once, then run
-            // the batch in spawn_blocking since write_needle does file I/O.
-            let Ok(_permit) = self.io_permits.clone().acquire_owned().await else {
-                return;
+                Err(_) => continue,
             };
-            let state = self.state.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                process_batch(state, batch);
-            })
-            .await;
+            self.process_from(first).await;
         }
+    }
+
+    /// The volume's handle left the store, so the worker can go too; an idle
+    /// worker for a mounted volume stays (Go keeps the writer for the mount).
+    fn volume_gone(&self) -> bool {
+        let store = self.state.store.read().unwrap();
+        store.find_volume(self.vid).is_none()
+    }
+
+    /// Retire in a fixed order that keeps same-volume FIFO: close the channel
+    /// so racing senders fail fast (they retry and wait for a fresh worker),
+    /// drain what was already accepted, and only then give up the map slot —
+    /// a replacement worker can never start while this one still holds queued
+    /// writes.
+    async fn retire(&mut self) {
+        self.rx.close();
+        while let Some(first) = self.rx.recv().await {
+            self.process_from(first).await;
+        }
+        self.workers.lock().unwrap().remove(&self.vid);
+    }
+
+    /// Collect a batch around `first` and process it under the I/O bound.
+    async fn process_from(&mut self, first: WriteRequest) {
+        // Drain as many additional requests as available, up to MAX_BATCH_SIZE
+        // or MAX_BATCH_BYTES (matches Go: 128 requests or 4MB, whichever comes first).
+        let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
+        let mut batch_bytes: usize = first.needle.data.len();
+        batch.push(first);
+        while batch.len() < MAX_BATCH_SIZE && batch_bytes < MAX_BATCH_BYTES {
+            match self.rx.try_recv() {
+                Ok(req) => {
+                    batch_bytes += req.needle.data.len();
+                    batch.push(req);
+                }
+                Err(_) => break,
+            }
+        }
+        debug!("processing write batch of {} requests", batch.len());
+
+        // Bound the number of volumes doing grouped I/O at once, then run
+        // the batch in spawn_blocking since write_needle does file I/O.
+        let Ok(_permit) = self.io_permits.clone().acquire_owned().await else {
+            return;
+        };
+        let state = self.state.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            process_batch(state, batch);
+        })
+        .await;
     }
 }
 
