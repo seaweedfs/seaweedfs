@@ -83,6 +83,7 @@ impl Store {
     }
 
     fn save_vid_stamps(&self) {
+        let _guard = self.vid_stamp_lock.lock().unwrap();
         let stamp = match serde_json::to_vec(&VidStamp {
             max_volume_id: self.max_volume_id_seen(),
             topology_id: self.last_seen_topology_id(),
@@ -111,7 +112,11 @@ fn write_vid_stamp(dir: &Path, stamp: &[u8]) -> io::Result<()> {
         f.write_all(stamp)?;
         f.sync_all()?;
     }
-    fs::rename(&tmp, dir.join(VID_STAMP_FILE_NAME))
+    fs::rename(&tmp, dir.join(VID_STAMP_FILE_NAME))?;
+    if cfg!(unix) {
+        fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// Stamps the volume id of a newly created volume or EC shard set. Called

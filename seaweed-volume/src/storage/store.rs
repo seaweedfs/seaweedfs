@@ -74,6 +74,7 @@ pub struct Store {
     pub reported_ec_collections: Mutex<HashSet<String>>,
     pub max_volume_id_seen: AtomicU32,
     pub last_seen_topology_id: Mutex<String>,
+    pub vid_stamp_lock: Mutex<()>,
 }
 
 impl Store {
@@ -95,6 +96,7 @@ impl Store {
             reported_ec_collections: Mutex::new(HashSet::new()),
             max_volume_id_seen: AtomicU32::new(0),
             last_seen_topology_id: Mutex::new(String::new()),
+            vid_stamp_lock: Mutex::new(()),
         }
     }
 
