@@ -90,6 +90,9 @@ func TestIcebergLayoutValidator_AcceptsRealWorldDataFiles(t *testing.T) {
 		"data/part-00000.parquet",
 		"data/some-file.orc",
 		"data/year=2026/month=05/00000-0-uuid.parquet",
+		"data/00000-2-c56b1e21-828c-40ad-8f7b-739c6cb82dcf-00001-deletes.puffin",
+		"data/82e3eec4-3aee-414f-a444-94c03c641d20-deletes.puffin",
+		"data/year=2026/month=05/00000-2-c56b1e21-828c-40ad-8f7b-739c6cb82dcf-00001-deletes.puffin",
 	}
 	v := NewIcebergLayoutValidator()
 	for _, p := range cases {
