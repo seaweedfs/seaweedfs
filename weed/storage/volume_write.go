@@ -380,9 +380,8 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 
 func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	// Re-check under the write lock after the needle is in RAM and before
-	// append (or a 204 unchanged return). VolumeMarkReadonly uses a different
-	// lock, so the outer WriteVolumeNeedle/syncWrite checks can race.
+	// Re-check under the write lock: the outer checks run before the needle
+	// is assembled, and VolumeMarkReadonly can land in between.
 	if v.IsReadOnly() {
 		return 0, 0, false, fmt.Errorf("volume %d is read only", v.Id)
 	}

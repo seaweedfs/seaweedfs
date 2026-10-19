@@ -22,7 +22,7 @@ import (
 // End-to-end on two servers: a real replica on A and a 0-byte stub on B
 // (interrupted-encode leftover). Empty live-idx vs non-empty must refuse
 // encode; originals stay, t.server is not rebound to the stub.
-func TestEcEncodeLeavesRightFilesAndRemovesStubAndSource(t *testing.T) {
+func TestEcEncodeRefusesOnEmptyStubReplica(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}

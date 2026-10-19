@@ -327,12 +327,10 @@ func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.Volu
 		return nil, err
 	}
 
-	// Compare live .idx NeedleId sets after readonly on ALL replicas, not
-	// only the FreeVolumeCount>=2 subset. A fat replica with a different
-	// live set must refuse encode. The generation host is then required to
-	// be in filteredLocations; no intersection → refuse, do not encode
-	// from the first fat replica. Originals are deleted only if this gate
-	// passed (generate/mount run below).
+	// Compare live .idx sets across all replicas, not only the capacity
+	// subset — a filtered-out replica with a divergent live set still gets
+	// deleted below, so it must refuse encode here. The generation host
+	// must come from filteredLocations.
 	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]

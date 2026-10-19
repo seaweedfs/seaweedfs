@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Reproduces the issue-9478 volume-13 stuck state: a real .dat source, a
-// 0-byte stub replica left by an interrupted encode, and partial stale EC
-// shards. Empty live-idx vs non-empty must refuse encode (no union, no skip).
-func TestEcEncodeJulorLayoutConverges(t *testing.T) {
+// A real .dat source plus a 0-byte stub replica left by an interrupted encode
+// and partial stale EC shards: empty live-idx vs non-empty must refuse encode
+// (no union, no skip).
+func TestEcEncodeJulorLayoutRefuses(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}

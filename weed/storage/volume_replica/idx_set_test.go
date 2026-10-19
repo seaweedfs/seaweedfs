@@ -97,7 +97,7 @@ func TestLiveNeedlesFromIndex_SkipsDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(live) != 1 || live[0].Id != 1 {
+	if len(live) != 1 || live[0] != 1 {
 		t.Fatalf("live=%v, want only id=1", live)
 	}
 }
@@ -123,11 +123,11 @@ func TestSelectSourceIfIndexesMatch_NoReplicas(t *testing.T) {
 func TestChooseSourceFromLiveNeedles_SuccessContainsConsistent(t *testing.T) {
 	a := wdclient.Location{Url: "127.0.0.1:8080"}
 	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	live := []LiveNeedle{{Id: 1}, {Id: 2}}
+	live := []types.NeedleId{1, 2}
 	var buf bytes.Buffer
 	got, err := chooseSourceFromLiveNeedles(7, []replicaLiveIdx{
 		{loc: a, live: live},
-		{loc: b, live: append([]LiveNeedle(nil), live...)},
+		{loc: b, live: append([]types.NeedleId(nil), live...)},
 	}, "", &buf)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestChooseSourceFromLiveNeedles_EmptyVsLiveRefuses(t *testing.T) {
 	a := wdclient.Location{Url: "127.0.0.1:8080"}
 	b := wdclient.Location{Url: "127.0.0.1:8081"}
 	_, err := chooseSourceFromLiveNeedles(7, []replicaLiveIdx{
-		{loc: a, live: []LiveNeedle{{Id: 1}}},
+		{loc: a, live: []types.NeedleId{1}},
 		{loc: b, live: nil}, // empty / superblock stub
 	}, "", io.Discard)
 	if err == nil {

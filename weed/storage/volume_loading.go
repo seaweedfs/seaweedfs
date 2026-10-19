@@ -65,7 +65,12 @@ func loadVolumeWithoutWorker(dirname string, dirIdx string, collection string, i
 func (v *Volume) reopenIdxForWrite() error {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	return v.reopenIdxForWriteLocked()
+}
 
+// reopenIdxForWriteLocked is reopenIdxForWrite for callers already holding
+// dataFileAccessLock (MarkVolumeReadonly).
+func (v *Volume) reopenIdxForWriteLocked() error {
 	oldNm, isSorted := v.nm.(*SortedFileNeedleMap)
 	if !isSorted {
 		return nil

@@ -394,81 +394,38 @@ func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
 // error aborts without unioning replicas.
 func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 	locs := t.replicaLocations()
+	workerAddr := strings.TrimSpace(t.workerAddress)
+	if workerAddr == "" {
+		workerAddr, _ = os.Hostname()
+	}
+	prefer := lateBindSourceToWorkerHost(t.server, workerAddr, locs)
 	var buf bytes.Buffer
-	best, err := volume_replica.SelectSourceIfIndexesMatch(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, t.server, &buf)
+	best, err := volume_replica.SelectSourceIfIndexesMatch(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, prefer, &buf)
 	if out := strings.TrimSpace(buf.String()); out != "" {
 		glog.Infof("EC encode replica idx compare for volume %d:\n%s", t.volumeID, out)
 	}
 	if err != nil {
 		return err
 	}
-	if bound := bindSourceAfterIdxGate(t.server, best); bound != t.server {
-		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", bound, t.volumeID, t.server)
-		t.server = bound
+	if best.Url != "" && best.Url != t.server {
+		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", best.Url, t.volumeID, t.server)
+		t.server = best.Url
 	}
 	return nil
 }
 
-// bindSourceAfterIdxGate takes the gate's source. The idx gate already received
-// prefer (t.server); do not rebind by FileCount afterwards.
-func bindSourceAfterIdxGate(current string, best wdclient.Location) string {
-	if best.Url != "" {
-		return best.Url
-	}
-	return current
-}
-
-type replicaFileCount struct {
-	url       string
-	fileCount uint64
-	err       error
-}
-
-// preferWorkerHostReplicaIfComplete rebinds from to a same-hostname replica
-// only when live FileCounts are equal. Diverged counts keep current (max).
-func preferWorkerHostReplicaIfComplete(dial grpc.DialOption, vid needle.VolumeId, locs []wdclient.Location, current, workerAddress string) string {
-	statuses := volume_replica.GetReplicaStatuses(dial, vid, locs)
-	replicas := make([]replicaFileCount, 0, len(statuses))
-	for _, s := range statuses {
-		replicas = append(replicas, replicaFileCount{url: s.Location.Url, fileCount: s.FileCount, err: s.Error})
-	}
-	return lateBindSourceToWorkerHost(current, workerAddress, replicas)
-}
-
-// lateBindSourceToWorkerHost: equal FileCount → replica on worker -address host
-// (any port). Diverge → keep current (already max FileCount). Worker address
-// is not a volume URL.
-func lateBindSourceToWorkerHost(current, workerAddress string, replicas []replicaFileCount) string {
+// lateBindSourceToWorkerHost returns the replica on the worker -address host
+// (any port), keeping current when no replica shares that host. Worker address
+// is not a volume URL. Safe to prefer after the idx gate: matching live sets
+// make every listed replica an equivalent source.
+func lateBindSourceToWorkerHost(current, workerAddress string, locs []wdclient.Location) string {
 	workerHost := util.HostKey(workerAddress)
 	if workerHost == "" {
 		return current
 	}
-	var live []replicaFileCount
-	for _, r := range replicas {
-		if r.err != nil || r.url == "" {
-			continue
-		}
-		live = append(live, r)
-	}
-	if len(live) == 0 {
-		return current
-	}
-	maxCount := live[0].fileCount
-	allSame := true
-	for _, r := range live[1:] {
-		if r.fileCount != live[0].fileCount {
-			allSame = false
-		}
-		if r.fileCount > maxCount {
-			maxCount = r.fileCount
-		}
-	}
-	if !allSame {
-		return current
-	}
-	for _, r := range live {
-		if util.HostKey(r.url) == workerHost {
-			return r.url
+	for _, l := range locs {
+		if util.HostKey(l.Url) == workerHost {
+			return l.Url
 		}
 	}
 	return current
