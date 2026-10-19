@@ -41,9 +41,11 @@ impl Store {
     }
 
     pub fn update_max_volume_id_seen(&self, vid: u32) {
-        self.max_volume_id_seen
-            .fetch_max(vid, std::sync::atomic::Ordering::Relaxed);
-        self.save_vid_stamps();
+        use std::sync::atomic::Ordering::Relaxed;
+        let prev = self.max_volume_id_seen.fetch_max(vid, Relaxed);
+        if vid > prev || self.vid_stamp_dirty.load(Relaxed) {
+            self.save_vid_stamps();
+        }
     }
 
     pub fn update_last_seen_topology_id(&self, id: &str) {
@@ -91,11 +93,15 @@ impl Store {
             Ok(s) => s,
             Err(_) => return,
         };
+        let mut failed = false;
         for loc in &self.locations {
             if let Err(e) = write_vid_stamp(Path::new(&loc.directory), &stamp) {
                 tracing::warn!("write vid stamp in {}: {}", loc.directory, e);
+                failed = true;
             }
         }
+        self.vid_stamp_dirty
+            .store(failed, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

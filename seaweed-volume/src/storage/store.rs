@@ -75,6 +75,7 @@ pub struct Store {
     pub max_volume_id_seen: AtomicU32,
     pub last_seen_topology_id: Mutex<String>,
     pub vid_stamp_lock: Mutex<()>,
+    pub vid_stamp_dirty: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
@@ -97,6 +98,7 @@ impl Store {
             max_volume_id_seen: AtomicU32::new(0),
             last_seen_topology_id: Mutex::new(String::new()),
             vid_stamp_lock: Mutex::new(()),
+            vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
