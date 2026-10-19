@@ -116,9 +116,12 @@ func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 }
 
 // enforceQuarantine keeps a quarantined copy read-only even when the server's
-// own reports claim it writable again.
+// own reports claim it writable again. The entry also tracks the latest
+// reported flag so a later release restores the server's true state.
 func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storage.VolumeInfo {
-	if t.isQuarantined(dn, vi.Id) {
+	q := quarantinedVolume{dn.Id(), vi.Id}
+	if _, ok := t.quarantinedVolumeIds.Load(q); ok {
+		t.quarantinedVolumeIds.Store(q, vi.ReadOnly)
 		vi.ReadOnly = true
 	}
 	return vi
@@ -614,8 +617,14 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	if !found {
 		return
 	}
+	var vids []needle.VolumeId
 	for _, vl := range collection.(*Collection).GetAllVolumeLayouts() {
+		vids = append(vids, vl.ListVids()...)
 		vl.releaseLookupOwnership()
+	}
+	// a vid colliding with a copy in this collection is no longer a duplicate
+	for _, vid := range vids {
+		t.releaseResolvedQuarantine(vid)
 	}
 }
 
