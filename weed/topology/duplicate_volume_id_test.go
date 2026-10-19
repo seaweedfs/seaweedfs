@@ -7,7 +7,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+func isWritable(t *testing.T, topo *Topology, v storage.VolumeInfo) bool {
+	t.Helper()
+	vl := topo.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType))
+	for _, id := range vl.CloneWritableVolumes() {
+		if id == v.Id {
+			return true
+		}
+	}
+	return false
+}
 
 func TestDuplicateVolumeIdAcrossCollections(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
@@ -25,20 +37,11 @@ func TestDuplicateVolumeIdAcrossCollections(t *testing.T) {
 	topo.RegisterVolumeLayout(v2, dn2)
 	topo.flagDuplicateVolumeId(v2, dn2)
 
-	vi, err := dn2.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn2: %v", err)
+	if isWritable(t, topo, v2) {
+		t.Fatal("duplicate newcomer should be quarantined out of the writable list")
 	}
-	if !vi.ReadOnly {
-		t.Fatal("duplicate newcomer should be marked read-only")
-	}
-
-	vi, err = dn1.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn1: %v", err)
-	}
-	if !vi.ReadOnly {
-		t.Fatal("either copy could be the impostor; the earlier copy must go read-only too")
+	if isWritable(t, topo, v1) {
+		t.Fatal("either copy could be the impostor; the earlier copy must be quarantined too")
 	}
 }
 
@@ -47,7 +50,11 @@ func TestSameLayoutReplicaIsNotDuplicate(t *testing.T) {
 	rp, _ := super_block.NewReplicaPlacementFromString("001")
 
 	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
 	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
 
 	v := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
 	dn1.UpdateVolumes([]storage.VolumeInfo{v})
@@ -56,11 +63,7 @@ func TestSameLayoutReplicaIsNotDuplicate(t *testing.T) {
 	topo.RegisterVolumeLayout(v, dn2)
 	topo.flagDuplicateVolumeId(v, dn2)
 
-	vi, err := dn2.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn2: %v", err)
-	}
-	if vi.ReadOnly {
+	if !isWritable(t, topo, v) {
 		t.Fatal("a same-layout replica is a legitimate copy, not a duplicate")
 	}
 }
@@ -80,11 +83,7 @@ func TestSameNodeVolumeMoveIsNotDuplicate(t *testing.T) {
 	topo.RegisterVolumeLayout(moved, dn)
 	topo.flagDuplicateVolumeId(moved, dn)
 
-	vi, err := dn.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn: %v", err)
-	}
-	if vi.ReadOnly {
+	if !isWritable(t, topo, moved) {
 		t.Fatal("a same-node disk move is not a duplicate")
 	}
 }
@@ -105,11 +104,7 @@ func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
 
 	topo.UnRegisterVolumeLayout(v2, dn2)
 
-	vi, err := dn1.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn1: %v", err)
-	}
-	if vi.ReadOnly {
+	if !isWritable(t, topo, v1) {
 		t.Fatal("the surviving copy must be released once the conflict is gone")
 	}
 }
@@ -129,16 +124,12 @@ func TestQuarantineSurvivesResync(t *testing.T) {
 	topo.flagDuplicateVolumeId(v2, dn2)
 
 	// a resync from the same server re-reports the volume as writable;
-	// the quarantine must keep it read-only
+	// the quarantine must keep it out of the writable list
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
 		Id: 7, Collection: "b", ReplicaPlacement: 0, Version: 3,
 	}}, dn2)
 
-	vi, err := dn2.GetVolumesById(7)
-	if err != nil {
-		t.Fatalf("volume info not stored on dn2: %v", err)
-	}
-	if !vi.ReadOnly {
-		t.Fatal("resync must not clear the quarantine's read-only mark")
+	if isWritable(t, topo, v2) {
+		t.Fatal("resync must not clear the quarantine")
 	}
 }
