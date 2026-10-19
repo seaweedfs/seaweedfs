@@ -36,6 +36,8 @@ func TestSelectMultipartUploads(t *testing.T) {
 		uploadEntry("3", "b", 10),
 		uploadEntry("4", "a", 20),
 		uploadEntry("5", "up/x", 10),
+		// a folder with Extended set but no object key is not an upload
+		{Name: "6", IsDirectory: true, Extended: map[string][]byte{}},
 	}
 
 	tests := []struct {

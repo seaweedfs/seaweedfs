@@ -1341,7 +1341,7 @@ func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, upload
 	}
 	var candidates []candidate
 	for _, entry := range entries {
-		if entry.Extended == nil {
+		if !isMultipartUploadEntry(entry) {
 			continue
 		}
 		key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
