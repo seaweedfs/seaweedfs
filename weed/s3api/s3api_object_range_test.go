@@ -40,3 +40,33 @@ func TestParseAndValidateRangeRejectsMalformedNumericOffsets(t *testing.T) {
 		})
 	}
 }
+
+func TestHeadObjectRange(t *testing.T) {
+	s3a, f := newAnonymousReadTestServer(t)
+	f.entries["/buckets/b/o"] = anonymousReadEntry(anonymousReadGrant("READ"))
+	for _, tc := range []struct {
+		rangeHeader, contentRange, contentLength string
+		code                                     int
+	}{
+		{"", "", "11", http.StatusOK},
+		{"bytes=1-4", "bytes 1-4/11", "4", http.StatusPartialContent},
+		{"bytes=-3", "bytes 8-10/11", "3", http.StatusPartialContent},
+		{"bytes=5-", "bytes 5-10/11", "6", http.StatusPartialContent},
+		{"bytes=20-", "bytes */11", "", http.StatusRequestedRangeNotSatisfiable},
+	} {
+		headers := map[string]string{}
+		if tc.rangeHeader != "" {
+			headers["Range"] = tc.rangeHeader
+		}
+		rr := serveAnonymousRead(s3a, http.MethodHead, "o", "", headers)
+		if rr.Code != tc.code {
+			t.Errorf("Range %q: status %d, want %d", tc.rangeHeader, rr.Code, tc.code)
+		}
+		if got := rr.Header().Get("Content-Range"); got != tc.contentRange {
+			t.Errorf("Range %q: Content-Range %q, want %q", tc.rangeHeader, got, tc.contentRange)
+		}
+		if got := rr.Header().Get("Content-Length"); tc.contentLength != "" && got != tc.contentLength {
+			t.Errorf("Range %q: Content-Length %q, want %q", tc.rangeHeader, got, tc.contentLength)
+		}
+	}
+}
