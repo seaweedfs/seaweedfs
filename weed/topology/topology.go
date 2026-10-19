@@ -98,6 +98,30 @@ type Topology struct {
 
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
+
+	// quarantinedVolumeIds are (node, vid) pairs force-read-only because the
+	// vid collided across layouts. Kept separate from the reported flag so
+	// later heartbeats from the same server cannot quietly undo it.
+	quarantinedVolumeIds sync.Map
+}
+
+type quarantinedVolume struct {
+	dnId NodeId
+	vid  needle.VolumeId
+}
+
+func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
+	_, ok := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
+	return ok
+}
+
+// enforceQuarantine keeps a quarantined copy read-only even when the server's
+// own reports claim it writable again.
+func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storage.VolumeInfo {
+	if t.isQuarantined(dn, vi.Id) {
+		vi.ReadOnly = true
+	}
+	return vi
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -630,6 +654,7 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 	}
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
 	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking %s's copy read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection, dn.Id())
+	t.quarantinedVolumeIds.Store(quarantinedVolume{dn.Id(), v.Id}, struct{}{})
 	if vl := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)); vl != nil {
 		vl.SetVolumeReadOnly(dn, v.Id)
 	}
@@ -670,6 +695,7 @@ func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode)
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
+	t.quarantinedVolumeIds.Delete(quarantinedVolume{dn.Id(), v.Id})
 	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)
@@ -794,6 +820,9 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			glog.V(0).Infof("Fail to convert joined volume information: %v", err)
 		}
 	}
+	for i := range volumeInfos {
+		volumeInfos[i] = t.enforceQuarantine(dn, volumeInfos[i])
+	}
 	// find out the delta volumes
 	newVolumes, deletedVolumes, changedVolumes = dn.UpdateVolumes(volumeInfos)
 	for _, v := range newVolumes {
@@ -806,7 +835,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		if v.ReplicaPlacement == nil {
 			continue
 		}
-		t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)).SetReplicaReadOnlyFlag(dn, v.Id, v.ReadOnly)
+		t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)).SetReplicaReadOnlyFlag(dn, v.Id, v.ReadOnly || t.isQuarantined(dn, v.Id))
 	}
 	// Update effective sizes for all reported volumes (decay pending estimates).
 	// If decay brings a volume eagerly removed by RecordAssign back under the
@@ -830,6 +859,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 				// one, which the calls below must use too.
 				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 			}
+			go t.flagDuplicateVolumeId(v, dn)
 			// Volumes new to the disk map were registered above, so reaching
 			// here means only the lookup index had lost it. Clients were told
 			// it went when the node dropped out, so the repair has to tell them
@@ -853,7 +883,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
-		newVis = append(newVis, vi)
+		newVis = append(newVis, t.enforceQuarantine(dn, vi))
 	}
 	for _, v := range deletedVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
@@ -914,7 +944,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			glog.V(0).Infof("Fail to convert changed volume information: %v", err)
 			continue
 		}
-		volumeInfos = append(volumeInfos, vi)
+		volumeInfos = append(volumeInfos, t.enforceQuarantine(dn, vi))
 	}
 
 	for _, vi := range volumeInfos {
@@ -934,11 +964,14 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
+		if becameServable {
+			go t.flagDuplicateVolumeId(vi, dn)
+		}
 		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)
 		}
 		if isChanged {
-			vl.SetReplicaReadOnlyFlag(dn, vi.Id, vi.ReadOnly)
+			vl.SetReplicaReadOnlyFlag(dn, vi.Id, vi.ReadOnly || t.isQuarantined(dn, vi.Id))
 		}
 		vl.UpdateOversizedState(&vi, dn)
 		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {

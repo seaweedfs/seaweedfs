@@ -3,6 +3,7 @@ package topology
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -77,5 +78,34 @@ func TestSameNodeVolumeMoveIsNotDuplicate(t *testing.T) {
 	}
 	if vi.ReadOnly {
 		t.Fatal("a same-node disk move is not a duplicate")
+	}
+}
+
+func TestQuarantineSurvivesResync(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// a resync from the same server re-reports the volume as writable;
+	// the quarantine must keep it read-only
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 7, Collection: "b", ReplicaPlacement: 0, Version: 3,
+	}}, dn2)
+
+	vi, err := dn2.GetVolumesById(7)
+	if err != nil {
+		t.Fatalf("volume info not stored on dn2: %v", err)
+	}
+	if !vi.ReadOnly {
+		t.Fatal("resync must not clear the quarantine's read-only mark")
 	}
 }
