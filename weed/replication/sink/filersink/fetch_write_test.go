@@ -579,6 +579,15 @@ func TestMissingSourceChunkGate(t *testing.T) {
 	if _, found := fs.missingVolumes.Load("5617"); found {
 		t.Fatal("a served chunk must clear its volume's wait")
 	}
+
+	// a needle not-found answer keeps its own clock: the volume staying alive
+	// for other needles must not restart the wait for the one that is gone
+	fs.missingNeedleVolumes.Store("5619", time.Now().Add(-2*missingSourceChunkGrace))
+	needleGate := fs.newMissingSourceChunkGate("5619,01abc")
+	fs.sourceServed("5619,02def")
+	if !needleGate.isPermanent(needleGone) {
+		t.Fatal("a needle 404 must keep aging while its volume serves other needles")
+	}
 }
 
 // Once the source has lost a chunk for good, holding the sync offset for its

@@ -67,6 +67,11 @@ type FilerSink struct {
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
 	missingVolumes   sync.Map // source volume id -> time.Time first found unlocatable
+	// missingNeedleVolumes records when a volume first answered a needle
+	// not-found. A live volume keeps serving its other needles, so unlike
+	// missingVolumes this clock is not cleared by sourceServed — the one needle
+	// that is gone stays gone.
+	missingNeedleVolumes sync.Map
 }
 
 func init() {

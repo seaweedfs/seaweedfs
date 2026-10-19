@@ -59,10 +59,16 @@ type missingSourceChunkGate struct {
 }
 
 func (g *missingSourceChunkGate) isPermanent(err error) bool {
-	if !isSourceChunkMissing(err) {
+	var since time.Time
+	switch {
+	case errors.Is(err, source.ErrVolumeNotFound):
+		since = g.sink.sourceVolumeMissingSince(g.volumeId)
+	case errors.Is(err, util_http.ErrNotFound):
+		since = g.sink.sourceNeedleMissingSince(g.volumeId)
+	default:
 		return false
 	}
-	if time.Since(g.sink.sourceVolumeMissingSince(g.volumeId)) < missingSourceChunkGrace {
+	if time.Since(since) < missingSourceChunkGrace {
 		return false
 	}
 	g.gaveUp = true
@@ -565,6 +571,13 @@ func (fs *FilerSink) newMissingSourceChunkGate(fileId string) *missingSourceChun
 // unlocatable, recording now on the first sighting.
 func (fs *FilerSink) sourceVolumeMissingSince(volumeId string) time.Time {
 	since, _ := fs.missingVolumes.LoadOrStore(volumeId, time.Now())
+	return since.(time.Time)
+}
+
+// sourceNeedleMissingSince returns when a volume first answered needle
+// not-found, recording now on the first sighting.
+func (fs *FilerSink) sourceNeedleMissingSince(volumeId string) time.Time {
+	since, _ := fs.missingNeedleVolumes.LoadOrStore(volumeId, time.Now())
 	return since.(time.Time)
 }
 
