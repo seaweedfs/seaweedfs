@@ -646,27 +646,33 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 // flagDuplicateVolumeId reports and quarantines v.Id when another data node
 // already serves it under a different layout key. It runs after registration
 // so a legitimate same-node move (disk type or collection change) settles
-// first and does not trip it.
+// first and does not trip it. Every copy across the conflicting layouts is
+// quarantined: either could be the impostor, and arrival order must not
+// decide which copy stays writable.
 func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
-	dupCollection, nodes := t.findDuplicateVolumeLayout(v, dn)
+	dupCollection, dupLayout, nodes := t.findDuplicateVolumeLayout(v, dn)
 	if len(nodes) == 0 {
 		return
 	}
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
-	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking %s's copy read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection, dn.Id())
+	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking all copies read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection)
 	t.quarantinedVolumeIds.Store(quarantinedVolume{dn.Id(), v.Id}, struct{}{})
 	if vl := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)); vl != nil {
 		vl.SetVolumeReadOnly(dn, v.Id)
 	}
+	for _, n := range nodes {
+		t.quarantinedVolumeIds.Store(quarantinedVolume{n.Id(), v.Id}, struct{}{})
+		dupLayout.SetVolumeReadOnly(n, v.Id)
+	}
 }
 
-// findDuplicateVolumeLayout reports the collection and the other data nodes
+// findDuplicateVolumeLayout reports the layout and the other data nodes
 // already holding v.Id under a different layout key. Volume ids are global,
 // so the same id held by two nodes under two layouts means the allocator
 // reused an id.
-func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode) (string, []*DataNode) {
+func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode) (string, *VolumeLayout, []*DataNode) {
 	if v.ReplicaPlacement == nil {
-		return "", nil
+		return "", nil, nil
 	}
 	diskType := types.ToDiskType(v.DiskType)
 	for _, item := range t.collectionMap.Items() {
@@ -686,11 +692,11 @@ func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode)
 				}
 			}
 			if len(others) > 0 {
-				return c.Name, others
+				return c.Name, vl, others
 			}
 		}
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
