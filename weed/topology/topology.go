@@ -453,6 +453,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 		if err := t.PersistMaxVolumeId(vid); err != nil {
 			return 0, fmt.Errorf("can not assign next volume id %d: %w", vid, err)
 		}
+		// Still record through raft so followers' boundaries and mirrors track
+		// allocations made against the external allocator.
+		if err := t.raftApply(NewMaxVolumeIdCommand(vid, t.GetTopologyId())); err != nil {
+			return 0, err
+		}
 		t.UpAdjustMaxVolumeId(vid)
 		return vid, nil
 	}
@@ -463,23 +468,27 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 		return 0, fmt.Errorf("persist max volume id %d: %w", next, err)
 	}
 
-	t.RaftServerAccessLock.RLock()
-	defer t.RaftServerAccessLock.RUnlock()
-
-	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetTopologyId())); err != nil {
-			return 0, err
-		}
-	} else if t.HashicorpRaft != nil {
-		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetTopologyId()))
-		if err != nil {
-			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
-		}
-		if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
-			return 0, future.Error()
-		}
+	if err := t.raftApply(NewMaxVolumeIdCommand(next, t.GetTopologyId())); err != nil {
+		return 0, err
 	}
 	return next, nil
+}
+
+func (t *Topology) raftApply(cmd *MaxVolumeIdCommand) error {
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+	if t.RaftServer != nil {
+		_, err := t.RaftServer.Do(cmd)
+		return err
+	}
+	if t.HashicorpRaft != nil {
+		b, err := json.Marshal(cmd)
+		if err != nil {
+			return fmt.Errorf("failed marshal %s: %+v", cmd.CommandName(), err)
+		}
+		return t.HashicorpRaft.Apply(b, time.Second).Error()
+	}
+	return nil
 }
 
 // DefaultNeedleSizeEstimate is the fallback per-file-ID size estimate when
@@ -1209,19 +1218,13 @@ func (t *Topology) SetGrowthFrozen(frozen bool) {
 func (t *Topology) applyGrowthFreeze(frozen bool) {
 	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
 	cmd.GrowthFrozen = &frozen
-	t.RaftServerAccessLock.RLock()
-	defer t.RaftServerAccessLock.RUnlock()
-	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(cmd); err != nil {
+	if t.RaftServer != nil || t.HashicorpRaft != nil {
+		if err := t.raftApply(cmd); err != nil {
 			glog.Warningf("apply growth freeze %v: %v", frozen, err)
 		}
-	} else if t.HashicorpRaft != nil {
-		if b, err := json.Marshal(cmd); err == nil {
-			t.HashicorpRaft.Apply(b, time.Second)
-		}
-	} else {
-		t.SetGrowthFrozen(frozen)
+		return
 	}
+	t.SetGrowthFrozen(frozen)
 }
 
 // SetTopologyInitPending gates allocation while a topology id is being
