@@ -591,7 +591,7 @@ func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	defer vl.accessLock.RUnlock()
 
 	if location := vl.vid2location[vid]; location != nil {
-		return location.list
+		return append([]*DataNode(nil), location.list...)
 	}
 	return nil
 }
