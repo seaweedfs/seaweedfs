@@ -119,6 +119,12 @@ message Heartbeat {
   // place of `volumes`. A master that does not understand this never sets
   // volume_digest_supported, so it keeps being sent the whole list.
   repeated VolumeInformationMessage changed_volumes = 28;
+
+  // Highest volume id this server has ever observed, persisted locally. Fed
+  // by HeartbeatResponse.max_volume_id echoes and by AllocateVolume requests.
+  uint32 max_volume_id_seen = 29;
+  // Topology id of the master cluster this server last heartbeated to.
+  string last_seen_topology_id = 30;
 }
 
 message HeartbeatResponse {
@@ -135,6 +141,12 @@ message HeartbeatResponse {
   // The master compares volume digests, so a server that reports one may send
   // changed_volumes in place of its whole list.
   bool volume_digest_supported = 9;
+  // The leader's current allocation bound; servers persist it and report it
+  // back as max_volume_id_seen so the bound survives master state loss.
+  uint32 max_volume_id = 10;
+  // The leader's cluster identity; a different value reported back later
+  // means the master's state was rebuilt.
+  string topology_id = 11;
 }
 
 message VolumeInformationMessage {
