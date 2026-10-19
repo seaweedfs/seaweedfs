@@ -559,7 +559,14 @@ impl DiskLocation {
     /// Add a volume to this location.
     pub fn set_volume(&mut self, vid: VolumeId, volume: Volume) {
         let collection = volume.collection.clone();
-        self.volumes.insert(vid, Arc::new(volume));
+        if let Some(old) = self.volumes.insert(vid, Arc::new(volume)) {
+            // A held handle would keep writing the same files against a stale
+            // in-memory index; close it so the stale handle fails closed.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[&collection, "volume"])
             .inc();
@@ -583,7 +590,14 @@ impl DiskLocation {
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[spec.collection, "volume"])
             .inc();
-        self.volumes.insert(vid, Arc::new(v));
+        if let Some(old) = self.volumes.insert(vid, Arc::new(v)) {
+            // Same fail-closed rule as set_volume: a stale handle must not
+            // keep writing the files the replacement just reopened.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         Ok(())
     }
 
