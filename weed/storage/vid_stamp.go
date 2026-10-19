@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const vidStampFileName = ".vid_stamp"
@@ -90,6 +91,8 @@ func (s *Store) bootstrapMaxVolumeIdSeen() {
 }
 
 func (s *Store) saveVidStamps() {
+	s.vidStampLock.Lock()
+	defer s.vidStampLock.Unlock()
 	stamp, err := json.Marshal(vidStamp{
 		MaxVolumeId: s.maxVolumeIdSeen.Load(),
 		TopologyId:  s.LastSeenTopologyId(),
@@ -133,5 +136,8 @@ func writeVidStamp(dir string, stamp []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, vidStampFileName))
+	if err := os.Rename(tmp, filepath.Join(dir, vidStampFileName)); err != nil {
+		return err
+	}
+	return util.FsyncDir(dir)
 }
