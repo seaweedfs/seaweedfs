@@ -412,4 +412,95 @@ mod tests {
         let result = queue2.submit(VolumeId(1), needle, false).await;
         assert!(result.is_err()); // NotFound is fine -- the point is it doesn't panic
     }
+
+    /// Issue #791: a write parked inside its .dat append must not hold the
+    /// store guard, so another volume still resolves and writes. The hook
+    /// runs under the volume's data-file lease, so the assertion is that the
+    /// store — not the per-volume serialization — stays open.
+    #[test]
+    fn test_process_batch_does_not_block_other_volumes() {
+        use crate::config::MinFreeSpace;
+        use crate::storage::types::{DiskType, NeedleId};
+        use crate::storage::volume::{VolumeSpec, needle_write_hook};
+        use std::sync::Barrier;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let state = make_test_state();
+        {
+            let mut store = state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for vid in [VolumeId(1), VolumeId(2)] {
+                store
+                    .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+                    .unwrap();
+            }
+        }
+
+        let in_append = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let _reg = needle_write_hook::register(NeedleId(1), {
+            let in_append = in_append.clone();
+            let release = release.clone();
+            move |_| {
+                in_append.wait();
+                release.wait();
+            }
+        });
+
+        let (response_tx, mut response_rx) = oneshot::channel();
+        let batch = vec![WriteRequest {
+            volume_id: VolumeId(1),
+            needle: Needle {
+                id: NeedleId(1),
+                cookie: 0x1111.into(),
+                data: vec![7u8; 8],
+                data_size: 8,
+                ..Needle::default()
+            },
+            fsync: false,
+            response_tx,
+        }];
+        let writer = {
+            let state = state.clone();
+            std::thread::spawn(move || process_batch(state, batch))
+        };
+
+        in_append.wait(); // volume 1's write is inside its .dat append.
+
+        // The store still admits a lifecycle writer and a volume-2 write.
+        drop(state.store.try_write().unwrap());
+        let vol2 = state
+            .store
+            .read()
+            .unwrap()
+            .writable_volume(VolumeId(2))
+            .unwrap();
+        let mut n2 = Needle {
+            id: NeedleId(9),
+            cookie: 0x2222.into(),
+            data: vec![9u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+        vol2.write_needle(&mut n2, true, false).unwrap();
+
+        // Same-volume exclusion is intact: volume 1's data-file lease is held.
+        let (_, vol1) = state.store.read().unwrap().find_volume(VolumeId(1)).unwrap();
+        assert!(vol1.instance().try_write_lock().is_none());
+
+        release.wait();
+        writer.join().unwrap();
+        assert!(response_rx.try_recv().unwrap().is_ok());
+        assert!(vol1.instance().try_write_lock().is_some());
+    }
 }

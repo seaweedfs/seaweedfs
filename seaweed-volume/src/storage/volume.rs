@@ -547,6 +547,44 @@ pub(crate) mod needle_read_hook {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod needle_write_hook {
+    use super::NeedleId;
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn(usize) + Send + Sync>;
+    static HOOKS: Mutex<Vec<(NeedleId, Hook)>> = Mutex::new(Vec::new());
+
+    pub(crate) struct Registration(NeedleId);
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            HOOKS.lock().unwrap().retain(|(id, _)| *id != self.0);
+        }
+    }
+
+    /// Needle ids are the key, so tests running in parallel must use distinct ones.
+    pub(crate) fn register(
+        id: NeedleId,
+        hook: impl Fn(usize) + Send + Sync + 'static,
+    ) -> Registration {
+        HOOKS.lock().unwrap().push((id, Arc::new(hook)));
+        Registration(id)
+    }
+
+    pub(crate) fn fire(id: NeedleId, len: usize) {
+        let hook = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(hook_id, _)| *hook_id == id)
+            .map(|(_, hook)| hook.clone());
+        if let Some(hook) = hook {
+            hook(len);
+        }
+    }
+}
+
 /// Information needed to stream needle data directly from the dat file
 /// without loading the entire payload into memory.
 pub(crate) enum NeedleStreamSource {
@@ -3030,6 +3068,8 @@ impl Volume {
         } else {
             written
         };
+        #[cfg(test)]
+        needle_write_hook::fire(n.id, actual_size as usize);
         if let Err(e) = written {
             self.undo_unsynced_append(io, offset);
             self.check_read_write_error(Some(&e));
