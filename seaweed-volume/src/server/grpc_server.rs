@@ -2552,10 +2552,13 @@ impl VolumeServer for VolumeGrpcService {
             return Err(Status::invalid_argument(msg));
         }
 
-        let store = self.store_read();
-        let (_, vol) = store
-            .find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+        let vol = {
+            let store = self.store_read();
+            let (_, vol) = store
+                .find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+            vol
+        };
 
         vol.write_needle_blob_and_index(needle_id, &req.needle_blob, size)
             .map_err(|e| {
@@ -2829,9 +2832,11 @@ impl VolumeServer for VolumeGrpcService {
             }
 
             // Write needle to local volume
-            let store = state.store.read().unwrap();
-            store
-                .write_volume_needle(vid, &mut n, false)
+            let vol = {
+                let store = state.store.read().unwrap();
+                store.writable_volume(vid)
+            };
+            vol.and_then(|vol| vol.write_needle(&mut n, true, false))
                 .map_err(|e| Status::internal(format!("write needle: {}", e)))?;
         }
 
@@ -4911,9 +4916,11 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = req.needle_id;
         let size = req.size;
         let local_handle = tokio::task::spawn_blocking(move || {
-            let store = state_clone.store.read().unwrap();
-            store
-                .write_volume_needle(vid, &mut n_clone, false)
+            let vol = {
+                let store = state_clone.store.read().unwrap();
+                store.writable_volume(vid)
+            };
+            vol.and_then(|vol| vol.write_needle(&mut n_clone, true, false))
                 .map(|_| ())
                 .map_err(|e| format!("local write needle {} size {}: {}", needle_id, size, e))
         });

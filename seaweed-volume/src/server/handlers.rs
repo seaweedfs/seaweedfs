@@ -2956,8 +2956,11 @@ pub async fn post_handler(
     let write_result = if let Some(wq) = state.write_queue.get() {
         wq.submit(vid, n, fsync).await
     } else {
-        let store = state.store.read().unwrap();
-        store.write_volume_needle(vid, &mut n, fsync)
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.writable_volume(vid)
+        };
+        vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
     };
 
     // Replicate to remote volume servers if this volume has replicas.
@@ -3314,8 +3317,21 @@ pub async fn delete_handler(
     }
 
     let delete_result = {
-        let store = state.store.read().unwrap();
-        store.delete_volume_needle(vid, &mut n)
+        let vol = {
+            let store = state.store.read().unwrap();
+            store
+                .find_volume(vid)
+                .map(|(_, vol)| vol)
+                .ok_or(crate::storage::volume::VolumeError::NotFound)
+        };
+        match vol {
+            Err(e) => Err(e),
+            // Matches Store::delete_volume_needle: noWriteOrDelete rejects first.
+            Ok(vol) if vol.is_no_write_or_delete() => {
+                Err(crate::storage::volume::VolumeError::ReadOnly(vid))
+            }
+            Ok(vol) => vol.delete_needle(&mut n),
+        }
     };
 
     let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
