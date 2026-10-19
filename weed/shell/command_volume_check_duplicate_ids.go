@@ -96,9 +96,11 @@ func (c *commandVolumeCheckDuplicateIds) Do(args []string, commandEnv *CommandEn
 		layouts := seen[vid]
 		shardLayouts := ecSeen[vid]
 		ecForeign := false
-		for collection := range ecCollections[vid] {
-			if !collections[vid][collection] {
-				ecForeign = true
+		if len(collections[vid]) > 0 {
+			for collection := range ecCollections[vid] {
+				if !collections[vid][collection] {
+					ecForeign = true
+				}
 			}
 		}
 		if len(layouts) < 2 && len(shardLayouts) < 2 && !ecForeign {
