@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,9 @@ type Topology struct {
 	// the same node whether or not the grpc port suffix is present.
 	dataNodeIndex     map[string]*DataNode
 	dataNodeIndexLock sync.RWMutex
+
+	maxVolumeIdFile          string
+	lastPersistedMaxVolumeId atomic.Uint32
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -389,6 +393,10 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
+
+	if err := t.PersistMaxVolumeId(next); err != nil {
+		return 0, fmt.Errorf("persist max volume id %d: %w", next, err)
+	}
 
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
@@ -937,4 +945,64 @@ func (t *Topology) SetTopologyId(topologyId string) {
 	if t.topologyId != topologyId {
 		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
 	}
+}
+
+// SetMaxVolumeIdFile mirrors the allocation bound to a file outside raft, so
+// a master whose raft state is gone still restores a safe boundary. An
+// existing file seeds both the bound and the topology id.
+func (t *Topology) SetMaxVolumeIdFile(file string) {
+	t.maxVolumeIdFile = file
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return
+	}
+	cmd := &MaxVolumeIdCommand{}
+	if err := json.Unmarshal(data, cmd); err != nil {
+		glog.Warningf("corrupt max volume id file %s: %v", file, err)
+		return
+	}
+	t.lastPersistedMaxVolumeId.Store(uint32(cmd.MaxVolumeId))
+	t.UpAdjustMaxVolumeId(cmd.MaxVolumeId)
+	if cmd.TopologyId != "" {
+		t.SetTopologyId(cmd.TopologyId)
+	}
+}
+
+// PersistMaxVolumeId writes the bound to the mirror file. Called by the
+// leader before a raft apply and by both raft implementations on apply and
+// recovery, so follower mirrors stay current too.
+func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
+	for {
+		current := t.lastPersistedMaxVolumeId.Load()
+		if current >= uint32(vid) {
+			return nil
+		}
+		if t.lastPersistedMaxVolumeId.CompareAndSwap(current, uint32(vid)) {
+			break
+		}
+	}
+	if t.maxVolumeIdFile == "" {
+		return nil
+	}
+	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, t.GetTopologyId()))
+	if err != nil {
+		return err
+	}
+	tmp := t.maxVolumeIdFile + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, t.maxVolumeIdFile)
 }
