@@ -25,10 +25,13 @@ func newVolumeIdAllocator(v *util.ViperProxy, topo *topology.Topology) (topology
 	}
 
 	var tlsConfig *tls.Config
-	if caFile := v.GetString("master.volume_id_etcd.tls_ca_file"); caFile != "" {
+	caFile := v.GetString("master.volume_id_etcd.tls_ca_file")
+	certFile := v.GetString("master.volume_id_etcd.tls_client_crt_file")
+	keyFile := v.GetString("master.volume_id_etcd.tls_client_key_file")
+	if caFile != "" || certFile != "" || keyFile != "" {
 		tlsInfo := transport.TLSInfo{
-			CertFile:      v.GetString("master.volume_id_etcd.tls_client_crt_file"),
-			KeyFile:       v.GetString("master.volume_id_etcd.tls_client_key_file"),
+			CertFile:      certFile,
+			KeyFile:       keyFile,
 			TrustedCAFile: caFile,
 		}
 		if tlsConfig, err = tlsInfo.ClientConfig(); err != nil {
