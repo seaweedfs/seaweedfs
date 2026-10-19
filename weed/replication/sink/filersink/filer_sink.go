@@ -476,7 +476,7 @@ func EntryMtimeNs(entry *filer_pb.Entry) int64 {
 // meta events are full snapshots, so a later event re-carries the current chunks).
 // Otherwise the live version is corrupt, so return the error and halt loudly.
 func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
 		return nil
 	}
@@ -492,7 +492,7 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 // later event from ever being checkpointed. Otherwise propagate so the offset
 // stays put and the event is retried; returning nil would silently drop the file.
 func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
 		return nil
 	}
@@ -501,6 +501,42 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 		return nil
 	}
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
+}
+
+// sourceMovedOn reports whether the live source entry moved past the replayed
+// version: gone, strictly newer, or rewritten in place so it no longer
+// references the same chunks — the last is invisible to the mtime check.
+func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
+	if !ok {
+		return false
+	}
+	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	if sourceSupersedes(sourcePath, live, lookupErr, getEntryMtimeNs(entry)) {
+		return true
+	}
+	if lookupErr != nil || live == nil {
+		return false
+	}
+	liveIds, err := fs.resolvedChunkFileIds(live.GetChunks())
+	if err != nil {
+		glog.V(1).Infof("resolve live chunks of %s: %v", sourcePath, err)
+		return false
+	}
+	replayedIds, err := fs.resolvedChunkFileIds(entry.GetChunks())
+	if err != nil {
+		glog.V(1).Infof("resolve replayed chunks of %s: %v", sourcePath, err)
+		return false
+	}
+	if len(liveIds) != len(replayedIds) {
+		return true
+	}
+	for id := range replayedIds {
+		if !liveIds[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with

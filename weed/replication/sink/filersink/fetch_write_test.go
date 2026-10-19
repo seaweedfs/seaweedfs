@@ -441,6 +441,7 @@ type sourceFilerServer struct {
 	mtime      int64
 	volumeUrl  string
 	resolvable []string
+	entry      *filer_pb.Entry
 }
 
 func (s *sourceFilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
@@ -456,6 +457,9 @@ func (s *sourceFilerServer) LookupVolume(ctx context.Context, req *filer_pb.Look
 }
 
 func (s *sourceFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.entry != nil {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: s.entry}, nil
+	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
 		Name:       req.Name,
 		Attributes: &filer_pb.FuseAttributes{Mtime: s.mtime},
@@ -493,6 +497,26 @@ func startSourceFiler(t *testing.T, mtime int64, volumeUrl string, resolvable ..
 	return filerSrc
 }
 
+func startSourceFilerWithEntry(t *testing.T, entry *filer_pb.Entry, volumeUrl string, resolvable ...string) *source.FilerSource {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(server, &sourceFilerServer{volumeUrl: volumeUrl, resolvable: resolvable, entry: entry})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	address := listener.Addr().String()
+	filerSrc := &source.FilerSource{}
+	if err := filerSrc.DoInitialize(address, address, "/src", false); err != nil {
+		t.Fatalf("filerSource.DoInitialize: %v", err)
+	}
+	filerSrc.SetGrpcDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return filerSrc
+}
+
 // A chunk the source cluster cannot produce must stop being retried once the
 // grace period is up. Before, the retry loop ran forever: the sync job never
 // completed, so it held its slot and pinned the offset watermark at the event
@@ -505,7 +529,11 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
 	})
 
-	filerSrc := startSourceFiler(t, 5, "")
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, "")
 
 	fs := &FilerSink{
 		filerSource: filerSrc,
@@ -689,5 +717,90 @@ func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("fetchAndWrite waited out the grace period with supersession unverifiable")
+	}
+}
+
+func TestSourceDroppedChunk(t *testing.T) {
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+		t.Fatal("live entry no longer referencing the chunk must count as dropped")
+	}
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def") {
+		t.Fatal("a chunk the live entry still lists must not count as dropped")
+	}
+}
+
+func TestSourceMovedOn(t *testing.T) {
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	replayed := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+
+	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("same-mtime entry with different chunks is moved on")
+	}
+	replayed.Chunks = live.Chunks
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("identical chunks at equal mtime is the same version")
+	}
+	live.Attributes.Mtime = 6
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("newer mtime is still moved on")
+	}
+}
+
+// A replayed version the source rewrote in place must not wait out the
+// missing-chunk grace period: the live entry no longer lists the chunk, so the
+// loop stops on the first 404.
+func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/dst/x.bin", 5*int64(time.Second))
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, util_http.ErrNotFound) {
+			t.Fatalf("expected the 404 to propagate, got %v", fetchErr)
+		}
+		if errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("an obsolete version must not wait for the give-up gate: %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a chunk the live entry no longer lists")
 	}
 }

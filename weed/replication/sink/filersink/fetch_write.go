@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -272,6 +273,11 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, 
 				chunkName, path, missingSourceChunkGrace, resolveErr)
 			return false
 		}
+		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName) {
+			glog.V(0).Infof("source no longer lists manifest %s for %s, skipping the obsolete version: %v",
+				chunkName, path, resolveErr)
+			return false
+		}
 		if !isTransientResolveError(resolveErr) {
 			glog.V(0).Infof("resolve manifest %s for %s: non-transient error, propagating: %v", chunkName, path, resolveErr)
 			return false
@@ -484,10 +490,17 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		transferStatus.mu.Lock()
 		transferStatus.LastErr = retryErr.Error()
 		transferStatus.mu.Unlock()
-		if isSourceChunkMissing(retryErr) && !canCheckSupersession {
-			glog.V(0).Infof("source does not have %s for %s, supersession unverifiable, propagating: %v",
-				sourceChunk.GetFileIdString(), path, retryErr)
-			return false
+		if isSourceChunkMissing(retryErr) {
+			if !canCheckSupersession {
+				glog.V(0).Infof("source does not have %s for %s, supersession unverifiable, propagating: %v",
+					sourceChunk.GetFileIdString(), path, retryErr)
+				return false
+			}
+			if fs.sourceDroppedChunk(path, sourceChunk.GetFileIdString()) {
+				glog.V(0).Infof("source no longer lists %s for %s, skipping the obsolete version: %v",
+					sourceChunk.GetFileIdString(), path, retryErr)
+				return false
+			}
 		}
 		if missingGate.isPermanent(retryErr) {
 			glog.Errorf("source has not had %s for %s in %v, giving up on it: %v",
@@ -622,6 +635,42 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int6
 		return false
 	}
 	return SourceSupersedes(context.Background(), fs.filerSource, sourcePath, sourceMtimeNs)
+}
+
+// sourceDroppedChunk reports whether the live source entry still exists but no
+// longer references fileId — a version rewritten in place, which the mtime
+// supersession check cannot see.
+func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string) bool {
+	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
+	if !ok {
+		return false
+	}
+	live, _, _, err := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	if err != nil || live == nil {
+		return false
+	}
+	ids, err := fs.resolvedChunkFileIds(live.GetChunks())
+	if err != nil {
+		glog.V(1).Infof("resolve live chunks of %s: %v", sourcePath, err)
+		return false
+	}
+	return !ids[fileId]
+}
+
+func (fs *FilerSink) resolvedChunkFileIds(chunks []*filer_pb.FileChunk) (map[string]bool, error) {
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifestWithFilerJwt(context.Background(),
+		fs.filerSource.LookupFileId, fs.filerSource.FilerJwt(), chunks, 0, math.MaxInt64, nil)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(dataChunks)+len(manifestChunks))
+	for _, c := range dataChunks {
+		ids[c.GetFileIdString()] = true
+	}
+	for _, c := range manifestChunks {
+		ids[c.GetFileIdString()] = true
+	}
+	return ids, nil
 }
 
 // SourceSupersedes reports whether the live source's entry at sourcePath has
