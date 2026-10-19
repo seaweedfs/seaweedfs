@@ -1292,16 +1292,17 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 	glog.V(2).Infof("listMultipartUploads input %v", input)
 
 	output = &ListMultipartUploadsResult{
-		Bucket:       input.Bucket,
-		Delimiter:    input.Delimiter,
-		EncodingType: input.EncodingType,
-		KeyMarker:    input.KeyMarker,
-		MaxUploads:   input.MaxUploads,
-		Prefix:       input.Prefix,
-		IsTruncated:  aws.Bool(false),
+		Bucket:         input.Bucket,
+		Delimiter:      input.Delimiter,
+		EncodingType:   input.EncodingType,
+		KeyMarker:      input.KeyMarker,
+		MaxUploads:     input.MaxUploads,
+		Prefix:         input.Prefix,
+		UploadIdMarker: input.UploadIdMarker,
+		IsTruncated:    aws.Bool(false),
 	}
 
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
@@ -1313,34 +1314,63 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		return output, s3err.ErrInternalError
 	}
 
-	uploadsCount := int64(0)
-	for _, entry := range entries {
-		if entry.Extended != nil {
-			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
-			if *input.KeyMarker != "" && *input.KeyMarker != key {
-				continue
-			}
-			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
-				continue
-			}
-			upload := &s3.MultipartUpload{
-				Key:      objectKey(aws.String(key)),
-				UploadId: aws.String(entry.Name),
-			}
-			if entry.Attributes != nil {
-				upload.Initiated = aws.Time(time.Unix(entry.Attributes.Crtime, int64(entry.Attributes.CrtimeNs)))
-			}
-			output.Upload = append(output.Upload, upload)
-			uploadsCount += 1
-		}
-		if uploadsCount >= *input.MaxUploads {
-			output.IsTruncated = aws.Bool(true)
-			output.NextUploadIdMarker = aws.String(entry.Name)
-			break
-		}
+	uploads, truncated := selectMultipartUploads(entries, *input.Prefix, *input.KeyMarker, *input.UploadIdMarker, *input.MaxUploads)
+	output.Upload = uploads
+	output.IsTruncated = aws.Bool(truncated)
+	if truncated && len(uploads) > 0 {
+		last := uploads[len(uploads)-1]
+		output.NextKeyMarker = last.Key
+		output.NextUploadIdMarker = last.UploadId
 	}
 
 	return
+}
+
+// selectMultipartUploads orders uploads by key, then by upload id, and applies
+// the key-marker and upload-id-marker rules of ListMultipartUploads: without an
+// upload-id-marker the listing starts after every upload of key-marker; with
+// one it also includes the uploads of key-marker whose ids sort after it, so a
+// marker upload aborted between pages does not hide the rest of its key.
+func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, uploadIdMarker string, maxUploads int64) (uploads []*s3.MultipartUpload, truncated bool) {
+	if maxUploads <= 0 {
+		return nil, false
+	}
+	type candidate struct {
+		key   string
+		entry *filer_pb.Entry
+	}
+	var candidates []candidate
+	for _, entry := range entries {
+		if entry.Extended == nil {
+			continue
+		}
+		key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if keyMarker != "" && (key < keyMarker || key == keyMarker && (uploadIdMarker == "" || entry.Name <= uploadIdMarker)) {
+			continue
+		}
+		candidates = append(candidates, candidate{key: key, entry: entry})
+	}
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
+	})
+
+	for _, c := range candidates {
+		if int64(len(uploads)) >= maxUploads {
+			return uploads, true
+		}
+		upload := &s3.MultipartUpload{
+			Key:      aws.String(c.key),
+			UploadId: aws.String(c.entry.Name),
+		}
+		if c.entry.Attributes != nil {
+			upload.Initiated = aws.Time(time.Unix(c.entry.Attributes.Crtime, int64(c.entry.Attributes.CrtimeNs)))
+		}
+		uploads = append(uploads, upload)
+	}
+	return uploads, false
 }
 
 type ListPartsResult struct {
