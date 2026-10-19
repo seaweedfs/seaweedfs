@@ -233,7 +233,7 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", 0)
+		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", 0, "")
 		done <- struct {
 			fileId string
 			err    error
@@ -331,7 +331,7 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 
 	sourceChunks := []*filer_pb.FileChunk{{FileId: fid, Size: expectedSize}}
 
-	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", 0)
+	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", 0, "")
 	if err == nil {
 		t.Fatal("expected error from replicateChunks, got nil")
 	}
@@ -544,7 +544,7 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", 5*int64(time.Second))
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", 5*int64(time.Second), "")
 		done <- fetchErr
 	}()
 
@@ -728,7 +728,7 @@ func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/backup/2026-07-10/x.bin", 5*int64(time.Second))
+			"/backup/2026-07-10/x.bin", 5*int64(time.Second), "")
 		done <- fetchErr
 	}()
 
@@ -822,7 +822,7 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second))
+			"/dst/x.bin", 5*int64(time.Second), "")
 		done <- fetchErr
 	}()
 
@@ -836,5 +836,45 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("fetchAndWrite kept retrying a chunk the live entry no longer lists")
+	}
+}
+
+// A missing needle that lives inside a manifest is judged by whether the live
+// entry still lists the manifest, not the child: the manifest id is the
+// identity of its contents, so a live entry that kept it still needs the child.
+func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,09fed", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/dst/x.bin", 5*int64(time.Second), "5617,09fed")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		t.Fatalf("a child of a still-listed manifest must not be treated as dropped: %v", fetchErr)
+	case <-time.After(2 * time.Second):
 	}
 }

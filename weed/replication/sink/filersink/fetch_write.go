@@ -87,7 +87,10 @@ func (g *missingSourceChunkGate) wrap(err error) error {
 	return fmt.Errorf("%w: %w", errSourceChunkMissing, err)
 }
 
-func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, path string, sourceMtimeNs int64) (replicatedChunks []*filer_pb.FileChunk, err error) {
+// topLevelId anchors nested chunks to the entry-level chunk that contains them:
+// supersession is judged by whether the live entry still lists that chunk, since
+// a manifest's id is the identity of its contents.
+func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, path string, sourceMtimeNs int64, topLevelId string) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
 	}
@@ -134,7 +137,11 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 		}
 
 		if sourceChunk.IsChunkManifest {
-			replicatedChunk, replicateErr := fs.replicateOneManifestChunk(ctx, sourceChunk, path, sourceMtimeNs)
+			anchor := topLevelId
+			if anchor == "" {
+				anchor = sourceChunk.GetFileIdString()
+			}
+			replicatedChunk, replicateErr := fs.replicateOneManifestChunk(ctx, sourceChunk, path, sourceMtimeNs, anchor)
 			if replicateErr != nil {
 				setError(replicateErr)
 				break
@@ -152,7 +159,7 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 			defer wg.Done()
 			var replicatedChunk *filer_pb.FileChunk
 			retryErr := util.Retry("replicate chunks", func() error {
-				chunk, e := fs.replicateOneChunk(source, path, sourceMtimeNs)
+				chunk, e := fs.replicateOneChunk(source, path, sourceMtimeNs, topLevelId)
 				if e != nil {
 					return e
 				}
@@ -175,9 +182,9 @@ func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_
 	return
 }
 
-func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64, topLevelId string) (*filer_pb.FileChunk, error) {
 
-	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtimeNs)
+	fileId, err := fs.fetchAndWrite(sourceChunk, path, sourceMtimeNs, topLevelId)
 	if err != nil {
 		return nil, fmt.Errorf("copy %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -196,7 +203,7 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 	}, nil
 }
 
-func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
+func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64, topLevelId string) (*filer_pb.FileChunk, error) {
 	// LookupFileId can transiently fail during a write burst (volume not yet
 	// registered). Retry like the data-chunk path does; the gate stops on
 	// supersession or, when that cannot be checked, after a few attempts.
@@ -210,12 +217,12 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		}
 		resolvedChunks = rc
 		return nil
-	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, sourceChunk.GetFileIdString(), missingGate))
+	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, topLevelId, missingGate))
 	if err != nil {
 		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), missingGate.wrap(err))
 	}
 
-	replicatedResolvedChunks, err := fs.replicateChunks(ctx, resolvedChunks, path, sourceMtimeNs)
+	replicatedResolvedChunks, err := fs.replicateChunks(ctx, resolvedChunks, path, sourceMtimeNs, topLevelId)
 	if err != nil {
 		return nil, fmt.Errorf("replicate manifest data chunks %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -369,7 +376,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourc
 	return fileId, nil
 }
 
-func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (fileId string, err error) {
+func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64, topLevelId string) (fileId string, err error) {
 	uploader, err := fs.getUploader()
 	if err != nil {
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
@@ -498,9 +505,13 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 					sourceChunk.GetFileIdString(), path, retryErr)
 				return false
 			}
-			if fs.sourceDroppedChunk(path, sourceChunk.GetFileIdString(), sourceMtimeNs) {
+			anchorId := topLevelId
+			if anchorId == "" {
+				anchorId = sourceChunk.GetFileIdString()
+			}
+			if fs.sourceDroppedChunk(path, anchorId, sourceMtimeNs) {
 				glog.V(0).Infof("source no longer lists %s for %s, skipping the obsolete version: %v",
-					sourceChunk.GetFileIdString(), path, retryErr)
+					anchorId, path, retryErr)
 				return false
 			}
 		}

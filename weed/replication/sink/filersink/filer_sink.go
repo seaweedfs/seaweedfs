@@ -294,7 +294,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
 		}
 
-		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
 
 		if err != nil {
 			// don't swallow: committing mismatched bytes would propagate corruption
@@ -374,7 +374,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	case updateRepair:
 		glog.Warningf("repair %s: destination diverged from source (dst %d chunks, src %d chunks); re-replicating full source content",
 			key, len(existingEntry.GetChunks()), len(newEntry.GetChunks()))
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
@@ -402,7 +402,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
