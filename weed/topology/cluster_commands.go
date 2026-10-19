@@ -31,9 +31,6 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
-	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
-	}
 	if c.TopologyId != "" {
 		prevTopologyId := topo.GetTopologyId()
 		topo.SetTopologyId(c.TopologyId)
@@ -45,6 +42,9 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 				glog.V(0).Infof("TopologyId applied on follower: %s", c.TopologyId)
 			}
 		}
+	}
+	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 

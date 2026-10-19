@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -84,6 +85,7 @@ type Topology struct {
 	dataNodeIndexLock sync.RWMutex
 
 	maxVolumeIdFile          string
+	maxVolumeIdFileLock      sync.Mutex
 	lastPersistedMaxVolumeId atomic.Uint32
 }
 
@@ -972,16 +974,16 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 // leader before a raft apply and by both raft implementations on apply and
 // recovery, so follower mirrors stay current too.
 func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
-	for {
-		current := t.lastPersistedMaxVolumeId.Load()
-		if current >= uint32(vid) {
-			return nil
-		}
-		if t.lastPersistedMaxVolumeId.CompareAndSwap(current, uint32(vid)) {
-			break
-		}
+	if t.lastPersistedMaxVolumeId.Load() >= uint32(vid) {
+		return nil
+	}
+	t.maxVolumeIdFileLock.Lock()
+	defer t.maxVolumeIdFileLock.Unlock()
+	if t.lastPersistedMaxVolumeId.Load() >= uint32(vid) {
+		return nil
 	}
 	if t.maxVolumeIdFile == "" {
+		t.lastPersistedMaxVolumeId.Store(uint32(vid))
 		return nil
 	}
 	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, t.GetTopologyId()))
@@ -1004,5 +1006,12 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, t.maxVolumeIdFile)
+	if err := os.Rename(tmp, t.maxVolumeIdFile); err != nil {
+		return err
+	}
+	if err := util.FsyncDir(filepath.Dir(t.maxVolumeIdFile)); err != nil {
+		return err
+	}
+	t.lastPersistedMaxVolumeId.Store(uint32(vid))
+	return nil
 }

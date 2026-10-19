@@ -72,12 +72,12 @@ func (s StateMachine) Recovery(data []byte) error {
 	}
 	glog.V(1).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
-	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
-	}
 	if state.TopologyId != "" {
 		s.topo.SetTopologyId(state.TopologyId)
 		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 	return nil
 }
@@ -90,9 +90,6 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 		return err
 	}
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
-	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
-	}
 	if state.TopologyId != "" {
 		prevTopologyId := s.topo.GetTopologyId()
 		s.topo.SetTopologyId(state.TopologyId)
@@ -100,6 +97,9 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 		if prevTopologyId == "" {
 			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
