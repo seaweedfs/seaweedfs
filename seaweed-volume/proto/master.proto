@@ -59,6 +59,8 @@ service Seaweed {
   }
   rpc RaftLeadershipTransfer (RaftLeadershipTransferRequest) returns (RaftLeadershipTransferResponse) {
   }
+  rpc ResumeVolumeGrowth (ResumeVolumeGrowthRequest) returns (ResumeVolumeGrowthResponse) {
+  }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
   rpc CollectionStatistics (CollectionStatisticsRequest) returns (CollectionStatisticsResponse) {
@@ -322,6 +324,13 @@ message VolumeGrowRequest {
   // fill level with one call, instead of listing volumes to compute the
   // ratio themselves. Ignored when there are no writable volumes.
   float grow_avg_fill_threshold = 10;
+}
+
+message ResumeVolumeGrowthRequest {
+}
+
+message ResumeVolumeGrowthResponse {
+  bool was_frozen = 1;
 }
 
 message AssignResponse {
