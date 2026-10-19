@@ -88,6 +88,7 @@ type Topology struct {
 	maxVolumeIdFileLock      sync.Mutex
 	lastPersistedMaxVolumeId atomic.Uint32
 	lastPersistedTopologyId  atomic.Value
+	volumeIdAllocator        VolumeIdAllocator
 
 	growthFrozen          atomic.Bool
 	growthFrozenAt        atomic.Int64
@@ -443,6 +444,17 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 		if t.IsGrowthFrozen() {
 			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
 		}
+	}
+	if a := t.volumeIdAllocator; a != nil {
+		vid, err := a.NextVolumeId()
+		if err != nil {
+			return 0, err
+		}
+		if err := t.PersistMaxVolumeId(vid); err != nil {
+			return 0, fmt.Errorf("can not assign next volume id %d: %w", vid, err)
+		}
+		t.UpAdjustMaxVolumeId(vid)
+		return vid, nil
 	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
@@ -1123,6 +1135,10 @@ func (t *Topology) SetTopologyId(topologyId string) {
 func (t *Topology) SetGrowthFreezeConfig(freezeOnMismatch bool, recoveryWait time.Duration) {
 	t.freezeOnMismatch.Store(freezeOnMismatch)
 	t.stateLossRecoveryWait.Store(int64(recoveryWait))
+}
+
+func (t *Topology) SetVolumeIdAllocator(a VolumeIdAllocator) {
+	t.volumeIdAllocator = a
 }
 
 // CheckReportedTopologyId freezes growth when a volume server reports a
