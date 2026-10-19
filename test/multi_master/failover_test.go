@@ -290,9 +290,31 @@ func TestLeaderConsistencyAcrossNodes(t *testing.T) {
 	assertTopologyIdConsistent(t, mc, topologyId)
 }
 
-// assertTopologyIdConsistent verifies that all running nodes report the expected TopologyId.
+// assertTopologyIdConsistent waits until all running nodes report the expected
+// TopologyId. A restarted node only discovers it after the leader has admitted
+// it back into raft — /dir/status is proxied to the leader, so a node that has
+// not yet learned the leader reports its own empty id. That admission trails
+// HTTP readiness by several seconds, so a one-shot check races the propagation.
 func assertTopologyIdConsistent(t *testing.T, mc *MasterCluster, expectedId string) {
 	t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		consistent := true
+		for i := range 3 {
+			if !mc.IsNodeRunning(i) {
+				continue
+			}
+			if id, err := mc.GetTopologyId(i); err != nil || id != expectedId {
+				consistent = false
+				break
+			}
+		}
+		if consistent {
+			return
+		}
+		time.Sleep(waitTick)
+	}
+	// Timed out: report what each node actually sees.
 	for i := range 3 {
 		if !mc.IsNodeRunning(i) {
 			continue
