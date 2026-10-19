@@ -76,6 +76,9 @@ func (s StateMachine) Recovery(data []byte) error {
 		s.topo.SetTopologyId(state.TopologyId)
 		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
 	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
+	}
 	return nil
 }
 
@@ -94,6 +97,9 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 		if prevTopologyId == "" {
 			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
@@ -163,6 +169,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), os.ModePerm); err != nil {
 		return nil, err
 	}
+	option.Topo.SetMaxVolumeIdFile(path.Join(s.dataDir, "max_volume_id"))
 
 	stateMachine := StateMachine{topo: option.Topo}
 	s.raftServer, err = raft.NewServer(string(s.serverAddr), s.dataDir, transporter, stateMachine, option.Topo, s.serverAddr.ToGrpcAddress())
