@@ -1141,6 +1141,31 @@ impl VolumeServer for VolumeGrpcService {
                 };
                 match delete_result {
                     Ok(size) => {
+                        // The guard dropped before delete_needle, so ec.encode
+                        // could have mounted EC shards between the recheck and
+                        // the tombstone: the encode would then remove the .dat
+                        // this delete touched and resurrect the needle from
+                        // pre-tombstone shards. If the vid is EC now, return
+                        // the retriable 503 so the filer requeues onto the EC
+                        // path — the same check a delete under the old store
+                        // lock could not race.
+                        let now_ec = {
+                            let store = self.state.store.read().unwrap();
+                            store.has_ec_volume(file_id.volume_id)
+                        };
+                        if now_ec {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 503,
+                                error: format!(
+                                    "volume {} became ec during delete, try again",
+                                    file_id.volume_id
+                                ),
+                                size: 0,
+                                version: 0,
+                            });
+                            continue;
+                        }
                         if size.0 == 0 {
                             results.push(volume_server_pb::DeleteResult {
                                 file_id: fid_str.clone(),
