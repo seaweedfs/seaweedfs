@@ -656,14 +656,62 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 	}
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
 	glog.Errorf("duplicate volume id %d: %s reports it under collection %q but %v also serves it under collection %q; marking all copies read-only", v.Id, dn.Id(), v.Collection, nodes, dupCollection)
-	t.quarantinedVolumeIds.Store(quarantinedVolume{dn.Id(), v.Id}, struct{}{})
-	if vl := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)); vl != nil {
-		vl.SetVolumeReadOnly(dn, v.Id)
+	quarantine := func(n *DataNode, vl *VolumeLayout) {
+		reported := false
+		if vi, err := n.GetVolumesById(v.Id); err == nil {
+			reported = vi.ReadOnly
+		}
+		t.quarantinedVolumeIds.LoadOrStore(quarantinedVolume{n.Id(), v.Id}, reported)
+		if vl != nil {
+			vl.SetVolumeReadOnly(n, v.Id)
+		}
 	}
+	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
 	for _, n := range nodes {
-		t.quarantinedVolumeIds.Store(quarantinedVolume{n.Id(), v.Id}, struct{}{})
-		dupLayout.SetVolumeReadOnly(n, v.Id)
+		quarantine(n, dupLayout)
 	}
+}
+
+// releaseResolvedQuarantine lifts read-only marks once the conflicting copy
+// is gone, so a finished move does not leave the surviving copy quarantined.
+func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
+	t.quarantinedVolumeIds.Range(func(key, val any) bool {
+		q := key.(quarantinedVolume)
+		if q.vid != vid {
+			return true
+		}
+		dn, vl, vi := t.findQuarantinedVolume(q.dnId, vid)
+		if dn == nil {
+			t.quarantinedVolumeIds.Delete(key)
+			return true
+		}
+		if _, _, nodes := t.findDuplicateVolumeLayout(vi, dn); len(nodes) > 0 {
+			return true
+		}
+		reported, _ := val.(bool)
+		if reported {
+			dn.SetVolumeReadOnly(vid, true)
+			vl.SetReplicaReadOnlyFlag(dn, vid, true)
+		} else {
+			vl.SetVolumeWritable(dn, vid)
+		}
+		t.quarantinedVolumeIds.Delete(key)
+		return true
+	})
+}
+
+func (t *Topology) findQuarantinedVolume(dnId NodeId, vid needle.VolumeId) (*DataNode, *VolumeLayout, storage.VolumeInfo) {
+	for _, item := range t.collectionMap.Items() {
+		for _, vl := range item.(*Collection).GetAllVolumeLayouts() {
+			for _, n := range vl.Lookup(vid) {
+				if n.Id() == dnId {
+					vi, _ := n.GetVolumesById(vid)
+					return n, vl, vi
+				}
+			}
+		}
+	}
+	return nil, nil, storage.VolumeInfo{}
 }
 
 // findDuplicateVolumeLayout reports the layout and the other data nodes
@@ -702,6 +750,7 @@ func (t *Topology) findDuplicateVolumeLayout(v storage.VolumeInfo, dn *DataNode)
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
 	t.quarantinedVolumeIds.Delete(quarantinedVolume{dn.Id(), v.Id})
+	defer t.releaseResolvedQuarantine(v.Id)
 	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)

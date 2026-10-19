@@ -89,6 +89,31 @@ func TestSameNodeVolumeMoveIsNotDuplicate(t *testing.T) {
 	}
 }
 
+func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	vi, err := dn1.GetVolumesById(7)
+	if err != nil {
+		t.Fatalf("volume info not stored on dn1: %v", err)
+	}
+	if vi.ReadOnly {
+		t.Fatal("the surviving copy must be released once the conflict is gone")
+	}
+}
+
 func TestQuarantineSurvivesResync(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
