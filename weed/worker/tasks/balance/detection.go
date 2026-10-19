@@ -485,29 +485,6 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 			glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)
 			return nil, ""
 		}
-	}
-
-	// Verify the resolved destination. If it falls outside the filtered scope
-	// or violates replica placement, fall back to the score-based planner and
-	// pick the best candidate that is actually valid.
-	if !isValidBalanceDestination(destinationPlan, allowedServers, volumeRP, replicas, selectedVolume.Server) {
-		switch {
-		case destinationPlan == nil:
-			glog.V(1).Infof("BALANCE [%s]: Planned destination for volume %d is nil, falling back",
-				diskType, selectedVolume.VolumeID)
-		case !isAllowedBalanceTarget(destinationPlan.TargetNode, allowedServers):
-			glog.V(1).Infof("BALANCE [%s]: Planned destination %s for volume %d is outside filtered scope, falling back",
-				diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
-		case volumeRP != nil && len(replicas) > 0:
-			glog.V(1).Infof("BALANCE [%s]: Destination %s violates replica placement for volume %d (rp=%03d), falling back",
-				diskType, destinationPlan.TargetNode, selectedVolume.VolumeID, selectedVolume.ExpectedReplicas)
-		}
-
-		destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume, volumeRP, replicas, allowedServers)
-		if err != nil {
-			glog.Warningf("BALANCE [%s]: Failed to plan fallback destination for volume %d: %v", diskType, selectedVolume.VolumeID, err)
-			return nil, ""
-		}
 		if !isValidBalanceDestination(destinationPlan, allowedServers, volumeRP, replicas, selectedVolume.Server) {
 			if destinationPlan == nil {
 				glog.V(1).Infof("BALANCE [%s]: Fallback destination for volume %d is nil",
@@ -518,6 +495,15 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 			}
 			return nil, ""
 		}
+	} else if !isValidBalanceDestination(destinationPlan, allowedServers, volumeRP, replicas, selectedVolume.Server) {
+		// The loop-chosen target is out of scope or already holds a replica of
+		// this volume. Skip it like shell volume.balance does instead of
+		// redirecting the move to a third server: with equally full servers the
+		// redirected move never shrinks the imbalance and ping-pongs the same
+		// volumes back on the next detection cycle.
+		glog.V(1).Infof("BALANCE [%s]: target %s is not a valid destination for volume %d, trying next volume",
+			diskType, targetServer, selectedVolume.VolumeID)
+		return nil, ""
 	}
 
 	// Find the actual disk containing the volume on the source server
