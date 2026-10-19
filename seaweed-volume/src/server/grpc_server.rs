@@ -8272,7 +8272,7 @@ mod tests {
 
     /// Writes needles 1 and 2 and deletes 1, so a compaction moves needle 2.
     fn seed_compactable_volume(service: &VolumeGrpcService) {
-        let store = service.state.store.write().unwrap();
+        let store = service.state.store.read().unwrap();
         for id in [1u64, 2] {
             let data = format!("needle-{id}").into_bytes();
             let mut n = Needle {
@@ -8594,7 +8594,7 @@ mod tests {
         let (endpoint, shutdown_tx, _deletes) = spawn_fake_s3_server(dat_bytes.clone());
         register_tier_backend("s3.tier_up_then_commit", endpoint);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.update_remote_files(|files| {
                 files.push(volume_server_pb::RemoteFile {
@@ -8643,7 +8643,7 @@ mod tests {
         let (endpoint, shutdown_tx, _deletes) = spawn_fake_s3_server(dat_bytes.clone());
         register_tier_backend("s3.tiered_then_compact", endpoint);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.update_remote_files(|files| {
                 files.push(volume_server_pb::RemoteFile {
@@ -8701,7 +8701,7 @@ mod tests {
     fn make_local_service_with_large_volume() -> (VolumeGrpcService, TempDir, Vec<u8>) {
         let (service, tmp) = make_local_service_with_volume("", None);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
             // Non-uniform payload so reassembly catches duplicated or reordered
             // chunks that a repeated byte would hide.
@@ -9539,7 +9539,7 @@ mod tests {
     }
 
     fn write_volume_needle(service: &VolumeGrpcService, id: u64, data: &[u8]) {
-        let store = service.state.store.write().unwrap();
+        let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(VolumeId(1)).unwrap();
         let mut n = Needle {
             id: NeedleId(id),
@@ -10202,7 +10202,7 @@ mod tests {
         let (service, _tmp) = make_local_service_with_volume("", None);
         let vid = VolumeId(1);
         let cpd = {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             for i in 100..110u64 {
                 let data = format!("data-{i}");
                 let mut n = Needle {
@@ -10292,7 +10292,7 @@ mod tests {
         // actually diverge the way they do in production, rather than poking
         // the struct fields directly.
         let (revision_before, revision_after, last_compact_revision_after) = {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, v) = store.find_volume(VolumeId(1)).unwrap();
             let before = v.super_block().compaction_revision;
 
@@ -11258,7 +11258,7 @@ mod tests {
 
         generate_and_mount_ec_1(&service, (0..14).collect()).await;
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let mut n = Needle {
                 id: NeedleId(11),
                 cookie: Cookie(0x3344),
@@ -11303,7 +11303,7 @@ mod tests {
     async fn ec_1_with_a_manifest_needle() -> (VolumeGrpcService, TempDir) {
         let (service, tmp) = make_local_service_with_volume("", None);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, volume) = store.find_volume(VolumeId(1)).unwrap();
             let mut manifest = Needle {
                 id: NeedleId(12),
@@ -12383,7 +12383,7 @@ mod tests {
     async fn volume_delete_only_garbage_deletes_a_fully_deleted_volume() {
         let (service, _tmp) = make_local_service_with_volume("", None);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.delete_needle(&mut Needle {
                 id: NeedleId(11),
@@ -12446,7 +12446,7 @@ mod tests {
         // though the empty check would not.
         let (service, _tmp) = make_local_service_with_volume("", None);
         {
-            let store = service.state.store.write().unwrap();
+            let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.delete_needle(&mut Needle {
                 id: NeedleId(11),

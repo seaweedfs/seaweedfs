@@ -7059,7 +7059,7 @@ mod tests {
         );
 
         {
-            let store = state.store.write().unwrap();
+            let store = state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             vol.fail_next_fsync_for_test(true);
             vol.fail_next_truncate_for_test(true);

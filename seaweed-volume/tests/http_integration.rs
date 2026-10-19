@@ -1084,7 +1084,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     let manifest_nid = NeedleId(0x7);
     let manifest_cookie = Cookie(0x55667788);
     {
-        let store = state.store.write().unwrap();
+        let store = state.store.read().unwrap();
         let mut n = Needle {
             id: manifest_nid,
             cookie: manifest_cookie,
