@@ -81,6 +81,11 @@ func TestVidStampBootstrapFromVolumes(t *testing.T) {
 	}
 	store.Close()
 
+	// upgrading a pre-stamp dir: volumes exist but no stamp yet
+	if err := os.Remove(filepath.Join(dir, vidStampFileName)); err != nil {
+		t.Fatalf("remove stamp: %v", err)
+	}
+
 	restarted := newVidStampStore(t, dir)
 	defer restarted.Close()
 	if got := restarted.MaxVolumeIdSeen(); got != needle.VolumeId(17) {
