@@ -31,7 +31,8 @@ func (kv *fakeEtcdKV) Get(ctx context.Context, key string, opts ...clientv3.OpOp
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	if v, ok := kv.data[key]; ok {
-		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{v}}, nil
+		cp := *v
+		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{&cp}}, nil
 	}
 	return &clientv3.GetResponse{}, nil
 }
@@ -136,7 +137,7 @@ func (kv *fakeEtcdKV) evalCmp(cmp clientv3.Cmp) bool {
 }
 
 func TestEtcdAllocatorSeedsFromLocalBound(t *testing.T) {
-	alloc := NewEtcdVolumeIdAllocator(newFakeEtcdKV(), "/sw/", time.Second, func() needle.VolumeId {
+	alloc := newEtcdVolumeIdAllocator(newFakeEtcdKV(), "/sw/", time.Second, func() needle.VolumeId {
 		return 41
 	})
 	for i, want := range []needle.VolumeId{42, 43, 44} {
@@ -150,10 +151,25 @@ func TestEtcdAllocatorSeedsFromLocalBound(t *testing.T) {
 	}
 }
 
+func TestEtcdAllocatorNeverBelowLocalBound(t *testing.T) {
+	kv := newFakeEtcdKV()
+	kv.Put(context.Background(), "seaweedfs/max_volume_id", "10")
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+		return 41
+	})
+	got, err := alloc.NextVolumeId()
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("a stale stored counter must not reissue ids: got %d", got)
+	}
+}
+
 func TestEtcdAllocatorResumesFromStoredKey(t *testing.T) {
 	kv := newFakeEtcdKV()
 	kv.Put(context.Background(), "seaweedfs/max_volume_id", "100")
-	alloc := NewEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
 		return 41
 	})
 	got, err := alloc.NextVolumeId()
@@ -169,7 +185,7 @@ func TestEtcdAllocatorRetriesOnCasConflict(t *testing.T) {
 	kv := newFakeEtcdKV()
 	// the seed runs after the empty read and a competing writer lands the key
 	// before the allocator's create-CAS, forcing a retry
-	alloc := NewEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
 		kv.Put(context.Background(), "seaweedfs/max_volume_id", "55")
 		return 5
 	})
@@ -185,7 +201,7 @@ func TestEtcdAllocatorRetriesOnCasConflict(t *testing.T) {
 func TestEtcdAllocatorExhaustion(t *testing.T) {
 	kv := newFakeEtcdKV()
 	kv.Put(context.Background(), "seaweedfs/max_volume_id", strconv.FormatUint(math.MaxUint32, 10))
-	alloc := NewEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
+	alloc := newEtcdVolumeIdAllocator(kv, "seaweedfs", time.Second, func() needle.VolumeId {
 		return 5
 	})
 	if _, err := alloc.NextVolumeId(); err == nil {

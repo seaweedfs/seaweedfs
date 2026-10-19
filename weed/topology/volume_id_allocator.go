@@ -25,12 +25,19 @@ type VolumeIdAllocator interface {
 // residual window: an id cannot be issued without the etcd write committing.
 type EtcdVolumeIdAllocator struct {
 	kv      clientv3.KV
+	client  *clientv3.Client
 	key     string
 	timeout time.Duration
 	seed    func() needle.VolumeId
 }
 
-func NewEtcdVolumeIdAllocator(kv clientv3.KV, keyPrefix string, timeout time.Duration, seed func() needle.VolumeId) *EtcdVolumeIdAllocator {
+func NewEtcdVolumeIdAllocator(client *clientv3.Client, keyPrefix string, timeout time.Duration, seed func() needle.VolumeId) *EtcdVolumeIdAllocator {
+	a := newEtcdVolumeIdAllocator(client.KV, keyPrefix, timeout, seed)
+	a.client = client
+	return a
+}
+
+func newEtcdVolumeIdAllocator(kv clientv3.KV, keyPrefix string, timeout time.Duration, seed func() needle.VolumeId) *EtcdVolumeIdAllocator {
 	return &EtcdVolumeIdAllocator{
 		kv:      kv,
 		key:     strings.TrimRight(keyPrefix, "/") + "/max_volume_id",
@@ -39,13 +46,27 @@ func NewEtcdVolumeIdAllocator(kv clientv3.KV, keyPrefix string, timeout time.Dur
 	}
 }
 
+func (a *EtcdVolumeIdAllocator) Close() error {
+	if a.client == nil {
+		return nil
+	}
+	return a.client.Close()
+}
+
 func (a *EtcdVolumeIdAllocator) NextVolumeId() (needle.VolumeId, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
 	defer cancel()
+	var seedBound uint64
+	seeded := false
 	for {
 		resp, err := a.kv.Get(ctx, a.key)
 		if err != nil {
 			return 0, fmt.Errorf("volume id allocator read: %w", err)
+		}
+		if !seeded {
+			// A stale etcd counter (restored backup, re-enabled allocator) must
+			// never go below the bound this master already knows.
+			seedBound, seeded = uint64(a.seed()), true
 		}
 		var cur uint64
 		cmp := clientv3.Compare(clientv3.CreateRevision(a.key), "=", 0)
@@ -54,8 +75,9 @@ func (a *EtcdVolumeIdAllocator) NextVolumeId() (needle.VolumeId, error) {
 				return 0, fmt.Errorf("volume id counter %q: %w", resp.Kvs[0].Value, err)
 			}
 			cmp = clientv3.Compare(clientv3.ModRevision(a.key), "=", resp.Kvs[0].ModRevision)
-		} else {
-			cur = uint64(a.seed())
+		}
+		if seedBound > cur {
+			cur = seedBound
 		}
 		if cur >= math.MaxUint32 {
 			return 0, fmt.Errorf("volume id counter exhausted at %d", cur)
