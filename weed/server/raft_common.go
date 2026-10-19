@@ -33,6 +33,9 @@ func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persis
 		return
 	}
 
+	topo.SetTopologyInitPending(true)
+	defer topo.SetTopologyInitPending(false)
+
 	topologyId := uuid.New().String()
 	for {
 		if !checkLeaderFn() {
