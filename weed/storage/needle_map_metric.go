@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -155,6 +156,12 @@ func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric, version needle.Vers
 	var liveKeyBytes uint64
 	err := reverseWalkIndexFile(r, func(entryCount int64) {
 		bf = boom.NewBloomFilter(uint(entryCount), 0.001)
+		// The default FNV-1 kernel leaves the last byte of a big-endian
+		// NeedleId as the final XOR, so keys in the same 256-block get
+		// correlated probe positions and false positives arrive in bursts
+		// of hundreds. xxhash diffuses the input fully and keeps the
+		// observed rate near the 0.001 target.
+		bf.SetHash(xxhash.New())
 	}, func(key NeedleId, offset Offset, size Size) error {
 
 		mm.MaybeSetMaxFileKey(key)
