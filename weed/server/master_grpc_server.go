@@ -46,6 +46,8 @@ func (ms *MasterServer) heartbeatResponse() *master_pb.HeartbeatResponse {
 	return &master_pb.HeartbeatResponse{
 		VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 		Preallocate:     ms.preallocateSize > 0,
+		MaxVolumeId:     uint32(ms.Topo.GetMaxVolumeId()),
+		TopologyId:      ms.Topo.GetTopologyId(),
 	}
 }
 
@@ -179,6 +181,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
+		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
 		if dn == nil {
 			// Skip delta heartbeat for volume server versions  better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
 			if heartbeat.Ip == "" {
