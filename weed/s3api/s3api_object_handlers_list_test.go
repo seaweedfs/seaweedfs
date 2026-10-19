@@ -98,18 +98,31 @@ func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.Li
 		return &testListEntriesStream{entries: entries}, nil
 	}
 
-	for i, e := range entries {
-		if e.Name == in.StartFromFileName {
-			// Emulate buggy backend behavior: return marker again even when exclusive.
-			if c.returnFollowing {
-				echoAndFollowing := entries[i:]
-				return &testListEntriesStream{entries: echoAndFollowing}, nil
-			}
-			return &testListEntriesStream{entries: []*filer_pb.Entry{e}}, nil
+	filtered := make([]*filer_pb.Entry, 0, len(entries))
+	for _, e := range entries {
+		if e.Name > in.StartFromFileName || (in.InclusiveStartFrom && e.Name == in.StartFromFileName) {
+			filtered = append(filtered, e)
 		}
 	}
-
-	return &testListEntriesStream{entries: nil}, nil
+	// Emulate buggy backend behavior: echo the start entry again even when the
+	// request did not ask for it.
+	if !in.InclusiveStartFrom {
+		var echo *filer_pb.Entry
+		for _, e := range entries {
+			if e.Name == in.StartFromFileName {
+				echo = e
+				break
+			}
+		}
+		if echo != nil {
+			if c.returnFollowing {
+				filtered = append([]*filer_pb.Entry{echo}, filtered...)
+			} else {
+				filtered = []*filer_pb.Entry{echo}
+			}
+		}
+	}
+	return &testListEntriesStream{entries: filtered}, nil
 }
 
 func ensureEntryAttributes(entries []*filer_pb.Entry) {
@@ -1142,4 +1155,57 @@ func TestListObjectsV2_PrefixEndingWithSlash_WithDelimiter(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000'")
+}
+
+// A marker landing between a directory's name and its trailing slash must
+// still produce keys inside the directory in byte order: the marker's own
+// block band, not just its name, decides what follows it.
+func TestDoListFilerEntries_MarkerBetweenDirAndSlash(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b/o":      {dir("a"), file("a-c"), file("a.txt"), file("a0"), file("ab")},
+			"/buckets/b/o/a":   {file("b"), dir("c")},
+			"/buckets/b/o/a/c": {file("d")},
+		},
+	}
+
+	collect := func(marker string) []string {
+		cursor := &ListingCursor{maxKeys: 1000}
+		var seen []string
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b/o", marker: marker, bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, strings.TrimPrefix(dir, "/buckets/b/")+"/"+entry.Name)
+			cursor.maxKeys--
+		})
+		assert.NoError(t, err)
+		return seen
+	}
+
+	// byte order: o/a-c, o/a.txt, o/a/b, o/a/c/d, o/a0, o/ab
+	assert.Equal(t, []string{
+		"o/a-c", "o/a.txt", "o/a/b", "o/a/c/d", "o/a0", "o/ab",
+	}, collect(""))
+
+	assert.Equal(t, []string{
+		"o/a/b", "o/a/c/d", "o/a0", "o/ab",
+	}, collect("a.txt"))
+
+	assert.Equal(t, []string{
+		"o/a/c/d", "o/a0", "o/ab",
+	}, collect("a/b"))
+
+	assert.Equal(t, []string{
+		"o/ab",
+	}, collect("a0"))
+
+	// a marker that sorts inside the "a" band before its slash still walks a:
+	assert.Equal(t, []string{
+		"o/a.txt", "o/a/b", "o/a/c/d", "o/a0", "o/ab",
+	}, collect("a-c"))
 }
