@@ -69,7 +69,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString := s3a.generateUploadID(*input.Key)
 
-	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	// a time-ordered uuid keeps uploads of one key in initiation order
+	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
 
 	// Validate checksum algorithm before creating the upload directory
 	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
@@ -1291,7 +1292,26 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	glog.V(2).Infof("listMultipartUploads input %v", input)
 
-	output = &ListMultipartUploadsResult{
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
+	if err != nil {
+		// A missing .uploads folder normally lists as empty with no error; a
+		// store that reports it as not-found still means an empty list.
+		if isFilerNotFound(err) {
+			return selectMultipartUploads(input, nil), s3err.ErrNone
+		}
+		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
+		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
+		return nil, s3err.ErrInternalError
+	}
+
+	return selectMultipartUploads(input, entries), s3err.ErrNone
+}
+
+// selectMultipartUploads orders uploads by key, then by upload id, and resumes
+// after the (key-marker, upload-id-marker) position, so an aborted marker
+// upload does not hide the rest of its key.
+func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*filer_pb.Entry) *ListMultipartUploadsResult {
+	output := &ListMultipartUploadsResult{
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
 		EncodingType:   input.EncodingType,
@@ -1301,39 +1321,8 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		UploadIdMarker: input.UploadIdMarker,
 		IsTruncated:    aws.Bool(false),
 	}
-
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
-	if err != nil {
-		// A missing .uploads folder normally lists as empty with no error; a
-		// store that reports it as not-found still means an empty list.
-		if isFilerNotFound(err) {
-			return output, s3err.ErrNone
-		}
-		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
-		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
-		return output, s3err.ErrInternalError
-	}
-
-	uploads, truncated := selectMultipartUploads(entries, *input.Prefix, *input.KeyMarker, *input.UploadIdMarker, *input.MaxUploads)
-	output.Upload = uploads
-	output.IsTruncated = aws.Bool(truncated)
-	if truncated && len(uploads) > 0 {
-		last := uploads[len(uploads)-1]
-		output.NextKeyMarker = last.Key
-		output.NextUploadIdMarker = last.UploadId
-	}
-
-	return
-}
-
-// selectMultipartUploads orders uploads by key, then by upload id, and applies
-// the key-marker and upload-id-marker rules of ListMultipartUploads: without an
-// upload-id-marker the listing starts after every upload of key-marker; with
-// one it also includes the uploads of key-marker whose ids sort after it, so a
-// marker upload aborted between pages does not hide the rest of its key.
-func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, uploadIdMarker string, maxUploads int64) (uploads []*s3.MultipartUpload, truncated bool) {
-	if maxUploads <= 0 {
-		return nil, false
+	if *input.MaxUploads <= 0 {
+		return output
 	}
 	type candidate struct {
 		key   string
@@ -1345,10 +1334,10 @@ func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, upload
 			continue
 		}
 		key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
-		if prefix != "" && !strings.HasPrefix(key, prefix) {
+		if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
 			continue
 		}
-		if keyMarker != "" && (key < keyMarker || key == keyMarker && (uploadIdMarker == "" || entry.Name <= uploadIdMarker)) {
+		if *input.KeyMarker != "" && (key < *input.KeyMarker || key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker)) {
 			continue
 		}
 		candidates = append(candidates, candidate{key: key, entry: entry})
@@ -1358,8 +1347,11 @@ func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, upload
 	})
 
 	for _, c := range candidates {
-		if int64(len(uploads)) >= maxUploads {
-			return uploads, true
+		if int64(len(output.Upload)) >= *input.MaxUploads {
+			last := output.Upload[len(output.Upload)-1]
+			output.IsTruncated = aws.Bool(true)
+			output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
+			return output
 		}
 		upload := &s3.MultipartUpload{
 			Key:      aws.String(c.key),
@@ -1368,9 +1360,9 @@ func selectMultipartUploads(entries []*filer_pb.Entry, prefix, keyMarker, upload
 		if c.entry.Attributes != nil {
 			upload.Initiated = aws.Time(time.Unix(c.entry.Attributes.Crtime, int64(c.entry.Attributes.CrtimeNs)))
 		}
-		uploads = append(uploads, upload)
+		output.Upload = append(output.Upload, upload)
 	}
-	return uploads, false
+	return output
 }
 
 type ListPartsResult struct {

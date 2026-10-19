@@ -4,12 +4,13 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// uploadEntry is an upload folder as createMultipartUpload leaves it: named by
-// upload id, with the object key in Extended and the creation time.
+// uploadEntry is an upload folder as createMultipartUpload leaves it.
 func uploadEntry(id, key string, crtime int64) *filer_pb.Entry {
 	return &filer_pb.Entry{
 		Name:        id,
@@ -19,13 +20,22 @@ func uploadEntry(id, key string, crtime int64) *filer_pb.Entry {
 	}
 }
 
+func listUploadsInput(prefix, keyMarker, uploadIdMarker string, maxUploads int64) *s3.ListMultipartUploadsInput {
+	return &s3.ListMultipartUploadsInput{
+		Prefix:         aws.String(prefix),
+		KeyMarker:      aws.String(keyMarker),
+		UploadIdMarker: aws.String(uploadIdMarker),
+		MaxUploads:     aws.Int64(maxUploads),
+	}
+}
+
 func listedUploads(entries []*filer_pb.Entry, prefix, keyMarker, uploadIdMarker string, maxUploads int64) ([]string, bool) {
-	uploads, truncated := selectMultipartUploads(entries, prefix, keyMarker, uploadIdMarker, maxUploads)
+	out := selectMultipartUploads(listUploadsInput(prefix, keyMarker, uploadIdMarker, maxUploads), entries)
 	var got []string
-	for _, u := range uploads {
+	for _, u := range out.Upload {
 		got = append(got, *u.Key+"/"+*u.UploadId)
 	}
-	return got, truncated
+	return got, *out.IsTruncated
 }
 
 func TestSelectMultipartUploads(t *testing.T) {
@@ -76,19 +86,27 @@ func TestSelectMultipartUploadsPaginatesEveryUploadOnce(t *testing.T) {
 		entries = append(entries, uploadEntry(string(rune('a'+i)), key, int64(i)))
 	}
 	seen := map[string]bool{}
-	keyMarker, uploadIdMarker := "", ""
-	for page := 0; page < 10; page++ {
-		uploads, truncated := selectMultipartUploads(entries, "", keyMarker, uploadIdMarker, 2)
-		for _, u := range uploads {
+	input := listUploadsInput("", "", "", 2)
+	pages := 0
+	for {
+		out := selectMultipartUploads(input, entries)
+		for _, u := range out.Upload {
 			if seen[*u.UploadId] {
 				t.Fatalf("upload %s listed twice", *u.UploadId)
 			}
 			seen[*u.UploadId] = true
 		}
-		if !truncated {
+		pages++
+		if !*out.IsTruncated {
 			break
 		}
-		keyMarker, uploadIdMarker = *uploads[len(uploads)-1].Key, *uploads[len(uploads)-1].UploadId
+		if out.NextKeyMarker == nil || out.NextUploadIdMarker == nil {
+			t.Fatalf("truncated page without next markers")
+		}
+		input.KeyMarker, input.UploadIdMarker = out.NextKeyMarker, out.NextUploadIdMarker
+	}
+	if pages != 4 {
+		t.Fatalf("got %d pages, want 4", pages)
 	}
 	if len(seen) != len(entries) {
 		t.Fatalf("listed %d of %d uploads", len(seen), len(entries))
