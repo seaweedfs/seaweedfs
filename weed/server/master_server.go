@@ -127,6 +127,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
 	v.SetDefault("master.volume_growth.freeze_on_topology_mismatch", true)
 	v.SetDefault("master.volume_growth.state_loss_recovery_wait", "0s")
+	v.SetDefault("master.volume_id_allocator", "")
+	v.SetDefault("master.volume_id_etcd.servers", "localhost:2379")
+	v.SetDefault("master.volume_id_etcd.key_prefix", "/seaweedfs")
+	v.SetDefault("master.volume_id_etcd.timeout", "3s")
 
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
@@ -180,6 +184,17 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 			glog.Warningf("quarantine volume %d on %s readOnly=%v: %v", vid, dn.Id(), readOnly, err)
 		}
 		return err
+	}
+	switch v.GetString("master.volume_id_allocator") {
+	case "":
+	case "etcd":
+		allocator, err := newVolumeIdAllocator(v, ms.Topo)
+		if err != nil {
+			glog.Fatalf("volume id allocator: %v", err)
+		}
+		ms.Topo.SetVolumeIdAllocator(allocator)
+	default:
+		glog.Fatalf("unknown master.volume_id_allocator %q", v.GetString("master.volume_id_allocator"))
 	}
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
