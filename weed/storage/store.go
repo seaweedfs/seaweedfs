@@ -1038,6 +1038,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ..
 				ReadOnly:          readOnly,
 				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
+			s.UpdateMaxVolumeIdSeen(i)
 			return nil
 		}
 	}
