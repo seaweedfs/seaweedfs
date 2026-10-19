@@ -586,6 +586,15 @@ func (vl *VolumeLayout) isEmpty() bool {
 	return len(vl.vid2location) == 0
 }
 
+func (vl *VolumeLayout) ListVids() (vids []needle.VolumeId) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid := range vl.vid2location {
+		vids = append(vids, vid)
+	}
+	return
+}
+
 func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
