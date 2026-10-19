@@ -32,6 +32,14 @@ func TestDuplicateVolumeIdAcrossCollections(t *testing.T) {
 	if !vi.ReadOnly {
 		t.Fatal("duplicate newcomer should be marked read-only")
 	}
+
+	vi, err = dn1.GetVolumesById(7)
+	if err != nil {
+		t.Fatalf("volume info not stored on dn1: %v", err)
+	}
+	if !vi.ReadOnly {
+		t.Fatal("either copy could be the impostor; the earlier copy must go read-only too")
+	}
 }
 
 func TestSameLayoutReplicaIsNotDuplicate(t *testing.T) {
