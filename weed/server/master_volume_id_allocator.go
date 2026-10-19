@@ -3,6 +3,7 @@ package weed_server
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -14,11 +15,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func newVolumeIdAllocator(v *util.ViperProxy, topo *topology.Topology) (topology.VolumeIdAllocator, error) {
+// newVolumeIdAllocator returns the allocator and an io.Closer to release the
+// etcd client on shutdown; the closer is nil for built-in allocation.
+func newVolumeIdAllocator(v *util.ViperProxy, topo *topology.Topology) (topology.VolumeIdAllocator, io.Closer, error) {
 	servers := v.GetString("master.volume_id_etcd.servers")
 	timeout, err := time.ParseDuration(v.GetString("master.volume_id_etcd.timeout"))
 	if err != nil {
-		return nil, fmt.Errorf("parse master.volume_id_etcd.timeout: %w", err)
+		return nil, nil, fmt.Errorf("parse master.volume_id_etcd.timeout: %w", err)
 	}
 
 	var tlsConfig *tls.Config
@@ -29,7 +32,7 @@ func newVolumeIdAllocator(v *util.ViperProxy, topo *topology.Topology) (topology
 			TrustedCAFile: caFile,
 		}
 		if tlsConfig, err = tlsInfo.ClientConfig(); err != nil {
-			return nil, fmt.Errorf("etcd TLS client configuration error: %w", err)
+			return nil, nil, fmt.Errorf("etcd TLS client configuration error: %w", err)
 		}
 	}
 
@@ -41,13 +44,14 @@ func newVolumeIdAllocator(v *util.ViperProxy, topo *topology.Topology) (topology
 		TLS:         tlsConfig,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("connect volume id etcd: %w", err)
+		return nil, nil, fmt.Errorf("connect volume id etcd: %w", err)
 	}
 
 	glog.Infof("volume id allocator: etcd %s", servers)
-	return topology.NewEtcdVolumeIdAllocator(
-		client.KV,
+	allocator := topology.NewEtcdVolumeIdAllocator(
+		client,
 		v.GetString("master.volume_id_etcd.key_prefix"),
 		timeout,
-		topo.GetMaxVolumeId), nil
+		topo.GetMaxVolumeId)
+	return allocator, allocator, nil
 }

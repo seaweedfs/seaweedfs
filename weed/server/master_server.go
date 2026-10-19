@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -71,7 +72,8 @@ type MasterServer struct {
 	option *MasterOption
 	guard  *security.Guard
 
-	preallocateSize int64
+	preallocateSize         int64
+	volumeIdAllocatorCloser io.Closer
 
 	Topo                    *topology.Topology
 	vg                      *topology.VolumeGrowth
@@ -169,10 +171,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	switch v.GetString("master.volume_id_allocator") {
 	case "":
 	case "etcd":
-		allocator, err := newVolumeIdAllocator(v, ms.Topo)
+		allocator, closer, err := newVolumeIdAllocator(v, ms.Topo)
 		if err != nil {
 			glog.Fatalf("volume id allocator: %v", err)
 		}
+		ms.volumeIdAllocatorCloser = closer
 		ms.Topo.SetVolumeIdAllocator(allocator)
 	default:
 		glog.Fatalf("unknown master.volume_id_allocator %q", v.GetString("master.volume_id_allocator"))
@@ -667,6 +670,9 @@ func (ms *MasterServer) Shutdown() {
 	// processing stale events that trigger safety assertions.
 	if raftServer != nil {
 		raftServer.Stop()
+	}
+	if ms.volumeIdAllocatorCloser != nil {
+		ms.volumeIdAllocatorCloser.Close()
 	}
 }
 
