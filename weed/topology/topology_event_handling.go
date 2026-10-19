@@ -118,6 +118,8 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.SetVolumeUnavailable(dn, v.Id)
+		// this node may have been the conflicting copy pinning a quarantine
+		defer t.releaseResolvedQuarantine(v.Id)
 	}
 
 	// unregister ec shards when volume server disconnected
