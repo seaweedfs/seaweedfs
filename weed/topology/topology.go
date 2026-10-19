@@ -95,6 +95,9 @@ type Topology struct {
 	stateLossRecoveryWait atomic.Int64
 	allocationNotBefore   atomic.Int64
 	topologyInitPending   atomic.Bool
+
+	reportedTopologyIdsLock    sync.Mutex
+	pendingReportedTopologyIds map[string]struct{}
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -987,7 +990,19 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 		return
 	}
 	own := t.GetTopologyId()
-	if own == "" || reported == own {
+	if own == "" {
+		// The local topology id is still being minted. Keep the report so a
+		// later heartbeat echo cannot erase the mismatch on the server side
+		// before the freeze check ever ran.
+		t.reportedTopologyIdsLock.Lock()
+		if t.pendingReportedTopologyIds == nil {
+			t.pendingReportedTopologyIds = make(map[string]struct{})
+		}
+		t.pendingReportedTopologyIds[reported] = struct{}{}
+		t.reportedTopologyIdsLock.Unlock()
+		return
+	}
+	if reported == own {
 		return
 	}
 	t.growthFrozenAt.Store(time.Now().UnixNano())
@@ -1065,6 +1080,16 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 // minted, so growth cannot slip in before the warmup window is installed.
 func (t *Topology) SetTopologyInitPending(pending bool) {
 	t.topologyInitPending.Store(pending)
+	if pending {
+		return
+	}
+	t.reportedTopologyIdsLock.Lock()
+	reported := t.pendingReportedTopologyIds
+	t.pendingReportedTopologyIds = nil
+	t.reportedTopologyIdsLock.Unlock()
+	for id := range reported {
+		t.CheckReportedTopologyId(id)
+	}
 }
 
 // DeferAllocation holds off new id allocation for d. Called when the leader

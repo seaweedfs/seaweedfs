@@ -66,6 +66,24 @@ func TestCheckReportedTopologyIdBeforeTopologyIdKnown(t *testing.T) {
 	if topo.IsGrowthFrozen() {
 		t.Fatal("empty local topology id should not trigger the freeze")
 	}
+
+	topo.SetTopologyId("cluster-c")
+	topo.SetTopologyInitPending(false)
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("a report stashed before the topology id was known should still freeze growth")
+	}
+}
+
+func TestReportedTopologyIdStashDoesNotFreezeOnMatch(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+
+	topo.CheckReportedTopologyId("cluster-a")
+	topo.SetTopologyId("cluster-a")
+	topo.SetTopologyInitPending(false)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("a stashed report matching the minted id should not freeze growth")
+	}
 }
 
 func TestGrowthFreezeSurvivesMirrorRestore(t *testing.T) {
