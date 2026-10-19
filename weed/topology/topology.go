@@ -90,6 +90,7 @@ type Topology struct {
 	lastPersistedMaxVolumeId  atomic.Uint32
 	lastPersistedTopologyId   atomic.Value
 	lastPersistedGrowthFrozen atomic.Bool
+	volumeIdAllocator         VolumeIdAllocator
 
 	growthFrozen          atomic.Bool
 	growthFrozenAt        atomic.Int64
@@ -471,6 +472,17 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
 		}
 	}
+	if a := t.volumeIdAllocator; a != nil {
+		vid, err := a.NextVolumeId()
+		if err != nil {
+			return 0, err
+		}
+		if err := t.PersistMaxVolumeId(vid); err != nil {
+			return 0, fmt.Errorf("can not assign next volume id %d: %w", vid, err)
+		}
+		t.UpAdjustMaxVolumeId(vid)
+		return vid, nil
+	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
 
@@ -796,7 +808,6 @@ func ttlEqual(a, b *needle.TTL) bool {
 	}
 	return a.ToUint32() == b.ToUint32()
 }
-
 
 // findDuplicateVolumeLayouts reports every layout that already holds v.Id on
 // data nodes other than dn. Volume ids are global, so the same id held by two
@@ -1200,6 +1211,10 @@ func (t *Topology) SetTopologyId(topologyId string) {
 func (t *Topology) SetGrowthFreezeConfig(freezeOnMismatch bool, recoveryWait time.Duration) {
 	t.freezeOnMismatch.Store(freezeOnMismatch)
 	t.stateLossRecoveryWait.Store(int64(recoveryWait))
+}
+
+func (t *Topology) SetVolumeIdAllocator(a VolumeIdAllocator) {
+	t.volumeIdAllocator = a
 }
 
 // CheckReportedTopologyId freezes growth when a volume server reports a
