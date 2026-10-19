@@ -210,7 +210,7 @@ func validateFilePatterns(filename string, isMetadata bool) error {
 		errorMsg = "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file"
 	} else {
 		patterns = dataFilePatterns
-		errorMsg = "invalid data file format: must be .parquet, .orc, or .avro"
+		errorMsg = "invalid data file format: must be .parquet, .orc, .avro, .puffin or .lance"
 	}
 
 	for _, pattern := range patterns {
