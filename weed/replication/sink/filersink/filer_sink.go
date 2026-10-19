@@ -523,16 +523,8 @@ func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) boo
 	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
 		return false
 	}
-	liveIds, err := fs.resolvedChunkFileIds(live.GetChunks())
-	if err != nil {
-		glog.V(1).Infof("resolve live chunks of %s: %v", sourcePath, err)
-		return false
-	}
-	replayedIds, err := fs.resolvedChunkFileIds(entry.GetChunks())
-	if err != nil {
-		glog.V(1).Infof("resolve replayed chunks of %s: %v", sourcePath, err)
-		return false
-	}
+	liveIds := chunkFileIds(live.GetChunks())
+	replayedIds := chunkFileIds(entry.GetChunks())
 	if len(liveIds) != len(replayedIds) {
 		return true
 	}

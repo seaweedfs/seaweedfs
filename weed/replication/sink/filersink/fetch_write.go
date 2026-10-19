@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -656,28 +655,18 @@ func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string, source
 	if err != nil || live == nil || sourceMtimeNs <= 0 || getEntryMtimeNs(live) < sourceMtimeNs {
 		return false
 	}
-	ids, err := fs.resolvedChunkFileIds(live.GetChunks())
-	if err != nil {
-		glog.V(1).Infof("resolve live chunks of %s: %v", sourcePath, err)
-		return false
-	}
-	return !ids[fileId]
+	return !chunkFileIds(live.GetChunks())[fileId]
 }
 
-func (fs *FilerSink) resolvedChunkFileIds(chunks []*filer_pb.FileChunk) (map[string]bool, error) {
-	dataChunks, manifestChunks, err := filer.ResolveChunkManifestWithFilerJwt(context.Background(),
-		fs.filerSource.LookupFileId, fs.filerSource.FilerJwt(), chunks, 0, math.MaxInt64, nil)
-	if err != nil {
-		return nil, err
-	}
-	ids := make(map[string]bool, len(dataChunks)+len(manifestChunks))
-	for _, c := range dataChunks {
+// chunkFileIds indexes a chunk list by file id. The id is the immutable needle
+// identity, so the sets compare chunk content exactly — manifest chunks need no
+// resolution, and no volume reads are involved.
+func chunkFileIds(chunks []*filer_pb.FileChunk) map[string]bool {
+	ids := make(map[string]bool, len(chunks))
+	for _, c := range chunks {
 		ids[c.GetFileIdString()] = true
 	}
-	for _, c := range manifestChunks {
-		ids[c.GetFileIdString()] = true
-	}
-	return ids, nil
+	return ids
 }
 
 // SourceSupersedes reports whether the live source's entry at sourcePath has
