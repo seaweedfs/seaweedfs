@@ -227,3 +227,67 @@ func TestObjectLockActionsRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// Internal Seaweed-X-Amz-* headers carry server-validated object lock values
+// into entry metadata; client-supplied ones must be dropped on entry or the
+// dedicated-permission check on x-amz-object-lock-* is bypassed.
+func TestInternalObjectLockHeadersStrippedOnAuth(t *testing.T) {
+	iam := newTestIAM()
+
+	internal := []string{
+		s3_constants.ExtObjectLockModeKey,
+		s3_constants.ExtRetentionUntilDateKey,
+		s3_constants.ExtLegalHoldKey,
+		s3_constants.ExtVersionIdKey,
+		s3_constants.SeaweedFSSSEKMSBaseIVHeader,
+		s3_constants.SeaweedFSSSES3BaseIVHeader,
+		s3_constants.SeaweedFSSSES3KeyDataHeader,
+	}
+	req := httptest.NewRequest(http.MethodPut, "http://localhost:8333/worm/doc.txt", nil)
+	for _, k := range internal {
+		req.Header.Set(k, "injected")
+	}
+	require.NoError(t, signRawHTTPRequest(context.Background(), req,
+		"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1"))
+
+	_, _, _ = iam.authenticateRequestInternal(req)
+
+	for _, k := range internal {
+		if got := req.Header.Get(k); got != "" {
+			t.Errorf("client-supplied %s survived authentication: %q", k, got)
+		}
+	}
+}
+
+// With IAM disabled the Auth wrapper calls the handler directly; internal
+// headers must still be stripped so they never reach putToFiler.
+func TestInternalHeadersStrippedWithoutAuth(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+
+	internal := []string{
+		s3_constants.ExtObjectLockModeKey,
+		s3_constants.ExtRetentionUntilDateKey,
+		s3_constants.ExtLegalHoldKey,
+		s3_constants.ExtVersionIdKey,
+		s3_constants.SeaweedFSSSEKMSBaseIVHeader,
+		s3_constants.SeaweedFSSSES3BaseIVHeader,
+		s3_constants.SeaweedFSSSES3KeyDataHeader,
+	}
+	var leaked []string
+	handler := iam.Auth(func(w http.ResponseWriter, r *http.Request) {
+		for _, k := range internal {
+			if v := r.Header.Get(k); v != "" {
+				leaked = append(leaked, k)
+			}
+		}
+	}, s3_constants.ACTION_WRITE)
+
+	req := httptest.NewRequest(http.MethodPut, "http://localhost:8333/worm/doc.txt", nil)
+	for _, k := range internal {
+		req.Header.Set(k, "injected")
+	}
+	handler(httptest.NewRecorder(), req)
+	if len(leaked) > 0 {
+		t.Errorf("client-supplied internal headers reached handler with auth disabled: %v", leaked)
+	}
+}
