@@ -790,6 +790,13 @@ func volumeLayoutKey(collection string, rp *super_block.ReplicaPlacement, ttl *n
 	return fmt.Sprintf("collection=%q rp=%s ttl=%s disk=%s", collection, rp, ttl, diskType)
 }
 
+func ttlEqual(a, b *needle.TTL) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ToUint32() == b.ToUint32()
+}
+
 
 // findDuplicateVolumeLayouts reports every layout that already holds v.Id on
 // data nodes other than dn. Volume ids are global, so the same id held by two
@@ -802,12 +809,12 @@ func (t *Topology) findDuplicateVolumeLayouts(v storage.VolumeInfo, dn *DataNode
 	var hits []duplicateHit
 	for _, item := range t.collectionMap.Items() {
 		c := item.(*Collection)
-		var same *VolumeLayout
-		if c.Name == v.Collection {
-			same, _ = c.GetVolumeLayout(v.ReplicaPlacement, v.Ttl, diskType)
-		}
 		for _, vl := range c.GetAllVolumeLayouts() {
-			if vl == same {
+			if c.Name == v.Collection && vl.diskType == diskType && ttlEqual(vl.ttl, v.Ttl) {
+				// The reporter's own layout, or an rp-only difference:
+				// a replication change rolls through the nodes one at a
+				// time, so the same volume legitimately reports the old
+				// and new rp while it settles.
 				continue
 			}
 			var others []*DataNode

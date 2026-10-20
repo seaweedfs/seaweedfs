@@ -133,3 +133,55 @@ func TestQuarantineSurvivesResync(t *testing.T) {
 		t.Fatal("resync must not clear the quarantine")
 	}
 }
+
+func TestReplicationChangeIsNotDuplicate(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rpOld, _ := super_block.NewReplicaPlacementFromString("000")
+	rpNew, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	vOld := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rpOld, Ttl: needle.EMPTY_TTL}
+	vNew := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rpNew, Ttl: needle.EMPTY_TTL}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{vOld})
+	dn2.UpdateVolumes([]storage.VolumeInfo{vNew})
+	topo.RegisterVolumeLayout(vOld, dn1)
+	topo.RegisterVolumeLayout(vNew, dn2)
+	topo.flagDuplicateVolumeId(vNew, dn2)
+
+	if topo.isQuarantined(dn2, vNew.Id) || topo.isQuarantined(dn1, vOld.Id) {
+		t.Fatal("an rp-only layout difference is a replication change in flight, not a duplicate")
+	}
+}
+
+func TestDuplicateVolumeIdAcrossTtls(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	ttl, _ := needle.ReadTTL("3d")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: ttl}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	if !topo.isQuarantined(dn2, v2.Id) || !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("same collection with a different ttl is still a reused volume id")
+	}
+}
