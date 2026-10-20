@@ -959,6 +959,12 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request, externalHost 
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
 			continue
 		}
+		// The Go server strips Content-Length into r.ContentLength; clients do
+		// sign it, so rebuild the value the same way the client saw it.
+		if strings.EqualFold(header, "content-length") && r.ContentLength >= 0 {
+			extractedSignedHeaders[header] = []string{strconv.FormatInt(r.ContentLength, 10)}
+			continue
+		}
 		// For all other headers we need to find them in the HTTP headers and copy them over.
 		// We skip non-existent headers to be compatible with AWS signatures.
 		if values, ok := reqHeaders[http.CanonicalHeaderKey(header)]; ok {
