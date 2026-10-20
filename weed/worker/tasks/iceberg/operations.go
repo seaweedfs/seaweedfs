@@ -342,6 +342,9 @@ func collectOrphanCandidates(
 	}
 
 	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
+	// Table-root readers (DuckDB iceberg_scan, Hadoop tables) open this to find
+	// the current metadata; nothing in the metadata references it.
+	referencedFiles[path.Join("metadata", "version-hint.text")] = struct{}{}
 	for mle := range meta.PreviousFiles() {
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
