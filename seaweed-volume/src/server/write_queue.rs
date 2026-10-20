@@ -1,7 +1,8 @@
 //! Async batched write processing for the volume server.
 //!
-//! Instead of each upload handler directly calling `write_needle`, writes are
-//! submitted to a queue. Each volume gets its own FIFO worker (Go's
+//! Durable (fsync) uploads are submitted here instead of each handler calling
+//! `write_needle` directly — Go's `writeNeedle2` makes the same split, so the
+//! queue is always constructed. Each volume gets its own FIFO worker (Go's
 //! volume_write.go keeps one batching worker per volume), which drains its
 //! channel in batches of up to 128 entries or 4 MiB and shares the .dat/.idx
 //! flushes across durable writes (see `Volume::write_needles_grouped`).
@@ -66,6 +67,9 @@ pub struct WriteQueue {
     /// alone would multiply the old single queue's capacity by volume count.
     queue_permits: Arc<Semaphore>,
     workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
+    /// Submissions accepted, for tests asserting which writes route here.
+    #[cfg(test)]
+    submits: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl WriteQueue {
@@ -78,7 +82,15 @@ impl WriteQueue {
             io_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_VOLUME_WRITES)),
             queue_permits: Arc::new(Semaphore::new(capacity)),
             workers: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            submits: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// How many writes were submitted, for tests asserting upload routing.
+    #[cfg(test)]
+    pub fn submits_for_test(&self) -> u64 {
+        self.submits.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Sender for the volume's worker, spawning one on first use.
@@ -110,6 +122,9 @@ impl WriteQueue {
     pub async fn submit(&self, volume_id: VolumeId, needle: Needle, fsync: bool) -> WriteResult {
         // Workers spawn only for mounted volumes — a bogus id never creates
         // a channel, so volume-id sprays can't grow the worker map.
+        #[cfg(test)]
+        self.submits
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         {
             let store = self.state.store.read().unwrap();
             if store.find_volume(volume_id).is_none() {

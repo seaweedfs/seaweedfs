@@ -2953,15 +2953,7 @@ pub async fn post_handler(
     let needle_etag = n.etag();
     let needle_has_name = n.has_name();
 
-    let write_result = if let Some(wq) = state.write_queue.get() {
-        wq.submit(vid, n, fsync).await
-    } else {
-        let vol = {
-            let store = state.store.read().unwrap();
-            store.writable_volume(vid)
-        };
-        vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
-    };
+    let write_result = write_upload_needle(&state, vid, n, fsync).await;
 
     // Replicate to remote volume servers if this volume has replicas.
     // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
@@ -3053,6 +3045,28 @@ pub async fn post_handler(
 
     // _upload_guard drops here, releasing inflight bytes
     resp
+}
+
+/// Append an uploaded needle the way Go's `writeNeedle2` does: a durable
+/// write goes to the volume's batching worker, which group-commits the
+/// batch's .dat/.idx syncs, while anything else — a non-durable write, or a
+/// durable one landing while the server is stopping and the workers are
+/// winding down — takes the synchronous path and fsyncs inline.
+async fn write_upload_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    mut n: Needle,
+    fsync: bool,
+) -> Result<(u64, Size, bool), crate::storage::volume::VolumeError> {
+    let queued = fsync && !*state.is_stopping.read().unwrap();
+    if queued && let Some(wq) = state.write_queue.get() {
+        return wq.submit(vid, n, fsync).await;
+    }
+    let vol = {
+        let store = state.store.read().unwrap();
+        store.writable_volume(vid)
+    };
+    vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
 }
 
 // ============================================================================
@@ -7187,5 +7201,53 @@ mod tests {
             before,
             "the vacuum moves the needle once the stream drains"
         );
+    }
+
+    /// Issue #801: an fsync upload takes the per-volume worker so its sync is
+    /// shared across the batch (Go's `writeNeedle2` split); a non-fsync write,
+    /// or an fsync write landing while the server is stopping, takes the
+    /// synchronous path instead.
+    #[tokio::test]
+    async fn test_write_upload_needle_routes_fsync_to_queue() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        assert!(
+            state
+                .write_queue
+                .set(crate::server::write_queue::WriteQueue::new(
+                    state.clone(),
+                    128,
+                ))
+                .is_ok()
+        );
+        let queue = state.write_queue.get().unwrap();
+
+        let needle = |id: u64| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                data: vec![id as u8; 8],
+                data_size: 8,
+                ..Needle::default()
+            };
+            n.checksum = CRC::new(&n.data);
+            n
+        };
+
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b01), true)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
+
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b02), false)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
+
+        *state.is_stopping.write().unwrap() = true;
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b03), true)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
     }
 }

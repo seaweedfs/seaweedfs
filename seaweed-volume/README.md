@@ -68,7 +68,10 @@ seaweed-volume --port 8080 --master localhost:9333 --dir /data/vol1 --max 7 \
 | `--pprof` | `false` | Enable pprof HTTP handlers |
 
 Set `RUST_LOG=debug` (or `trace`, `info`, `warn`) for log level control.
-Set `SEAWEED_WRITE_QUEUE=1` to enable batched async write processing.
+
+Durable (`fsync=true`) uploads always go through per-volume batching workers
+that share one `.dat`/`.idx` sync per batch, matching the Go volume server;
+non-fsync writes take the synchronous path.
 
 ## Features
 

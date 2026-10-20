@@ -77,7 +77,9 @@ pub struct VolumeServerState {
     pub pre_stop_seconds: u32,
     /// Notify heartbeat to send an immediate update when volume state changes.
     pub volume_state_notify: tokio::sync::Notify,
-    /// Optional batched write queue for improved throughput under load.
+    /// Per-volume write workers that group-commit durable (fsync) uploads.
+    /// Set once at startup in production; a test state may leave it unset,
+    /// which sends every write down the synchronous path.
     pub write_queue: std::sync::OnceLock<WriteQueue>,
     /// Read mode: local, proxy, or redirect for non-local volumes.
     pub read_mode: ReadMode,
