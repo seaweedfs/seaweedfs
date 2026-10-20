@@ -109,6 +109,14 @@ var (
 			Help:      "1 while volume growth is frozen after detected master state loss",
 		})
 
+	MasterDuplicateVolumeIds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "duplicate_volume_ids",
+			Help:      "volume id registered under two different layouts",
+		}, []string{"collection", "volumeId"})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -1000,6 +1008,7 @@ func init() {
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
 	Gather.MustRegister(MasterVolumeGrowthFrozen)
+	Gather.MustRegister(MasterDuplicateVolumeIds)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
