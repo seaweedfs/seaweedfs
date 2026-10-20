@@ -14,7 +14,7 @@ use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
 use crate::storage::erasure_coding::ec_volume::{
-    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file, read_ec_shard_config_across_dirs,
 };
 use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
@@ -414,6 +414,39 @@ impl Store {
             .filter(|(_, loc)| owned_ec_shard_count(loc, vid, shard_ids) > 0)
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Look up the per-volume EC data-shard count, preferring a mounted EC
+    /// volume's own config and then the `.vif` on whichever disk holds it.
+    /// Falls back to the default when neither exists yet (e.g. before the
+    /// first shard streams in during ec.rebuild), so
+    /// `find_ec_shard_target_location`'s free-slot maths scores custom-ratio
+    /// volumes against their real width instead of the build default.
+    pub fn lookup_ec_data_shards(&self, collection: &str, vid: VolumeId) -> u32 {
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+
+        for loc in &self.locations {
+            if let Some(ec_vol) = loc.find_ec_volume(vid) {
+                return ec_vol.data_shards;
+            }
+        }
+        let Some(first) = self.locations.first() else {
+            return DATA_SHARDS_COUNT as u32;
+        };
+        let other_dirs: Vec<String> = self.locations[1..]
+            .iter()
+            .flat_map(|loc| [loc.directory.clone(), loc.idx_directory.clone()])
+            .filter(|d| !d.is_empty())
+            .collect();
+        read_ec_shard_config_across_dirs(
+            &first.directory,
+            &first.idx_directory,
+            &other_dirs,
+            collection,
+            vid,
+        )
+        .map(|(data_shards, _, _)| data_shards)
+        .unwrap_or(DATA_SHARDS_COUNT as u32)
     }
 
     /// Create a new volume, placing it on the location with the most free space.
@@ -2978,6 +3011,35 @@ mod tests {
             "placement leaked off the .ecx-owning disk; got {:?}",
             got,
         );
+    }
+
+    /// A volume whose `.vif` declares a custom EC ratio must feed its own
+    /// data-shard count into the free-slot maths — not the build default —
+    /// wherever the `.vif` happens to sit. With no `.vif` anywhere (a
+    /// brand-new volume mid-ec.rebuild) the answer is the default.
+    #[test]
+    fn test_lookup_ec_data_shards_reads_vif_on_any_disk() {
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+
+        let (store, _tmp) = make_ec_target_test_store(3);
+        let collection = "custom-ratio";
+        let vid = VolumeId(4242);
+
+        assert_eq!(
+            store.lookup_ec_data_shards(collection, vid),
+            DATA_SHARDS_COUNT as u32,
+            "no .vif anywhere must answer the default"
+        );
+
+        // A 6+2 .vif lands on disk 2 only — the rebuild staging disk.
+        let base = volume_file_name(&store.locations[2].directory, collection, vid);
+        std::fs::write(
+            format!("{}.vif", base),
+            br#"{"ecShardConfig":{"dataShards":6,"parityShards":2}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(store.lookup_ec_data_shards(collection, vid), 6);
     }
 
     /// Deleting a disk's last shard removes that disk's now-orphaned `.ecsum`;

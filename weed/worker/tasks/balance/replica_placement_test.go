@@ -219,7 +219,48 @@ func TestPlanBalanceDestination_ChoosesBestValidCompositeDestination(t *testing.
 	}
 }
 
+// The score-based fallback runs when the loop-chosen target cannot be
+// resolved (here: a node absent from the topology), and must still pick a
+// destination that satisfies the volume's replica placement.
 func TestCreateBalanceTask_FallbackSelectsValidCompositeDestination(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack3"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+	volumes := makeVolumesWith("node-a", "hdd", "dc1", "rack1", "c1", 1, 1, withReplicas(11))
+	clusterInfo := &types.ClusterInfo{
+		ActiveTopology: buildTopology(servers, volumes),
+		VolumeReplicaMap: map[uint32][]types.ReplicaLocation{
+			1: {
+				loc("dc1", "rack1", "node-a"),
+				loc("dc1", "rack1", "node-d"),
+				loc("dc1", "rack2", "node-e"),
+			},
+		},
+	}
+
+	task, destination := createBalanceTask("hdd", volumes[0], clusterInfo, "node-x", map[string]int{
+		"node-b": 0,
+		"node-c": 0,
+	}, 0)
+	if task == nil {
+		t.Fatal("expected a balance task")
+	}
+	if destination != "node-c" {
+		t.Fatalf("expected fallback destination node-c, got %s", destination)
+	}
+	if len(task.TypedParams.Targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(task.TypedParams.Targets))
+	}
+	if got := task.TypedParams.Targets[0].Node; got != "node-c:8080" {
+		t.Fatalf("expected target node-c:8080, got %s", got)
+	}
+}
+
+// A resolvable but invalid loop-chosen target (rp=011 cannot add a third
+// rack) must skip the volume rather than redirect it to another server.
+func TestCreateBalanceTask_SkipsWhenTargetViolatesPlacement(t *testing.T) {
 	servers := []serverSpec{
 		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
 		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack3"},
@@ -241,16 +282,7 @@ func TestCreateBalanceTask_FallbackSelectsValidCompositeDestination(t *testing.T
 		"node-b": 0,
 		"node-c": 0,
 	}, 0)
-	if task == nil {
-		t.Fatal("expected a balance task")
-	}
-	if destination != "node-c" {
-		t.Fatalf("expected fallback destination node-c, got %s", destination)
-	}
-	if len(task.TypedParams.Targets) != 1 {
-		t.Fatalf("expected 1 target, got %d", len(task.TypedParams.Targets))
-	}
-	if got := task.TypedParams.Targets[0].Node; got != "node-c:8080" {
-		t.Fatalf("expected target node-c:8080, got %s", got)
+	if task != nil || destination != "" {
+		t.Fatalf("expected no task when the chosen target violates replica placement, got task=%v dest=%s", task != nil, destination)
 	}
 }

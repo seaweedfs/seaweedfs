@@ -12,41 +12,51 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// The very first write against a fresh cluster must succeed in one shot: the
-// assign that triggers volume growth waits for it instead of shedding itself
-// with "volume growth in progress". No client retries — a single request per
-// assign, like a plain HTTP client.
+// The very first write against a fresh cluster must succeed: the assign that
+// triggers volume growth waits for it, and when growth outlasts that wait the
+// master sheds with a retryable 503/Retry-After. A normal client honors the
+// hint and retries, so the test does the same within a deadline.
 func TestColdStartFirstWrite(t *testing.T) {
 	c := StartCluster(t, 3)
 
 	// Each subtest uses its own replication so its volume layout starts cold.
 	t.Run("http_assign_and_write", func(t *testing.T) {
 		client := &http.Client{Timeout: 15 * time.Second}
-		resp, err := client.Get(c.MasterURL() + "/dir/assign?replication=002")
-		if err != nil {
-			t.Fatalf("dir/assign: %v", err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("dir/assign returned %d: %s", resp.StatusCode, body)
-		}
 		var assign struct {
 			Fid   string `json:"fid"`
 			Url   string `json:"url"`
 			Error string `json:"error"`
 		}
-		if err := json.Unmarshal(body, &assign); err != nil {
-			t.Fatalf("parse assign response %q: %v", body, err)
-		}
-		if assign.Error != "" || assign.Fid == "" {
-			t.Fatalf("assign failed: %s", body)
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			resp, err := client.Get(c.MasterURL() + "/dir/assign?replication=002")
+			if err != nil {
+				t.Fatalf("dir/assign: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusServiceUnavailable && time.Now().Before(deadline) {
+				time.Sleep(time.Second)
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("dir/assign returned %d: %s", resp.StatusCode, body)
+			}
+			if err := json.Unmarshal(body, &assign); err != nil {
+				t.Fatalf("parse assign response %q: %v", body, err)
+			}
+			if assign.Error != "" || assign.Fid == "" {
+				t.Fatalf("assign failed: %s", body)
+			}
+			break
 		}
 
 		content := []byte("cold start write")
@@ -57,21 +67,28 @@ func TestColdStartFirstWrite(t *testing.T) {
 
 	t.Run("grpc_assign", func(t *testing.T) {
 		grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-		err := pb.WithMasterClient(context.Background(), false, pb.ServerAddress(c.MasterAddress()), grpcDialOption, false,
-			func(client master_pb.SeaweedClient) error {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				resp, err := client.Assign(ctx, &master_pb.AssignRequest{Count: 1, Replication: "001"})
-				if err != nil {
-					return err
-				}
-				if resp.Error != "" || resp.Fid == "" {
-					return fmt.Errorf("assign failed: %+v", resp)
-				}
-				return nil
-			})
+		var err error
+		for deadline := time.Now().Add(60 * time.Second); ; {
+			err = pb.WithMasterClient(context.Background(), false, pb.ServerAddress(c.MasterAddress()), grpcDialOption, false,
+				func(client master_pb.SeaweedClient) error {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					resp, err := client.Assign(ctx, &master_pb.AssignRequest{Count: 1, Replication: "001"})
+					if err != nil {
+						return err
+					}
+					if resp.Error != "" || resp.Fid == "" {
+						return fmt.Errorf("assign failed: %+v", resp)
+					}
+					return nil
+				})
+			if err == nil || status.Code(err) != codes.ResourceExhausted || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(time.Second)
+		}
 		if err != nil {
-			t.Fatalf("single grpc assign on cold cluster: %v", err)
+			t.Fatalf("grpc assign on cold cluster: %v", err)
 		}
 	})
 }

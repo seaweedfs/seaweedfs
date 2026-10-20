@@ -396,23 +396,31 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 	return views, lastFileName, nil
 }
 
-// handleUpdateView replaces the metadata pointer for a view, mirroring UpdateTable.
-func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	var req UpdateViewRequest
-	if err := h.readRequestBody(r, &req); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
+// updateViewTarget is the view state an update was authorized against: the
+// metadata the version-token check reads and the fields the response echoes.
+type updateViewTarget struct {
+	bucketName    string
+	namespaceName string
+	viewName      string
+	viewPath      string
+	viewARN       string
+	metadata      tableMetadataInternal
+}
 
+// authorizeUpdateView validates the names an update names, loads the view and
+// the policies governing it, and checks the caller may update it, writing the
+// error response itself. Credential vending asks the same question without
+// updating anything, so it runs this gate through Manager.AuthorizeUpdateView.
+func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Request, filerClient FilerClient, req *UpdateViewRequest) (*updateViewTarget, error) {
 	bucketName, namespaceName, viewName, err := h.parseViewRef(req.TableBucketARN, req.Namespace, req.Name)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	viewPath := GetTablePath(bucketName, namespaceName, viewName)
@@ -437,20 +445,45 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		}
-		return err
+		return nil, err
 	}
 
 	accountID := h.getAccountID(r)
 	viewPolicy, bucketPolicy, bucketTags, bucketMetadata, err := h.loadAuthContext(r, filerClient, viewPath, GetTableBucketPath(bucketName))
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
-		return err
+		return nil, err
 	}
 	viewARN := h.generateViewARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+viewName)
 	if !h.authorizeViewOp(r, "UpdateView", accountID, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, viewPolicy, bucketPolicy, viewARN, bucketName, namespaceName, viewName, bucketTags) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update view")
-		return NewAuthError("UpdateView", accountID, "not authorized to update view")
+		return nil, NewAuthError("UpdateView", accountID, "not authorized to update view")
 	}
+
+	return &updateViewTarget{
+		bucketName:    bucketName,
+		namespaceName: namespaceName,
+		viewName:      viewName,
+		viewPath:      viewPath,
+		viewARN:       viewARN,
+		metadata:      metadata,
+	}, nil
+}
+
+// handleUpdateView replaces the metadata pointer for a view, mirroring UpdateTable.
+func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req UpdateViewRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	target, err := h.authorizeUpdateView(w, r, filerClient, &req)
+	if err != nil {
+		return err
+	}
+	metadata := target.metadata
+	viewPath := target.viewPath
 
 	if req.VersionToken != "" && req.VersionToken != metadata.VersionToken {
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, "Version token mismatch")
@@ -499,7 +532,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.writeJSON(w, http.StatusOK, &UpdateViewResponse{
-		ViewARN:          viewARN,
+		ViewARN:          target.viewARN,
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
 	})

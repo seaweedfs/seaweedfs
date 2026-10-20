@@ -411,6 +411,9 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 // or one on a server in maintenance mode, holds the whole volume out.
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
 	if location, ok := vl.vid2location[vid]; ok {
+		if location.AnyReadOnly() {
+			return false
+		}
 		for _, dn := range location.list {
 			if dn.InMaintenanceMode() {
 				return false
@@ -586,12 +589,21 @@ func (vl *VolumeLayout) isEmpty() bool {
 	return len(vl.vid2location) == 0
 }
 
+func (vl *VolumeLayout) ListVids() (vids []needle.VolumeId) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid := range vl.vid2location {
+		vids = append(vids, vid)
+	}
+	return
+}
+
 func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
 	if location := vl.vid2location[vid]; location != nil {
-		return location.list
+		return append([]*DataNode(nil), location.list...)
 	}
 	return nil
 }
@@ -1019,6 +1031,19 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 		return vl.setVolumeWritable(vid)
 	}
 	return false
+}
+
+// SetVolumeQuarantined marks dn's replica read-only at the layout level only.
+// The node's stored report is left untouched so the volume digest still tracks
+// what the server reports and quarantined copies do not force endless full
+// heartbeats.
+func (vl *VolumeLayout) SetVolumeQuarantined(dn *DataNode, vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, true)
+	}
+	vl.removeFromWritable(vid)
 }
 
 // SetReplicaReadOnlyFlag records what dn's latest heartbeat said about its

@@ -1,0 +1,187 @@
+package topology
+
+import (
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+)
+
+func isWritable(t *testing.T, topo *Topology, v storage.VolumeInfo) bool {
+	t.Helper()
+	vl := topo.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType))
+	for _, id := range vl.CloneWritableVolumes() {
+		if id == v.Id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDuplicateVolumeIdAcrossCollections(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	if isWritable(t, topo, v2) {
+		t.Fatal("duplicate newcomer should be quarantined out of the writable list")
+	}
+	if isWritable(t, topo, v1) {
+		t.Fatal("either copy could be the impostor; the earlier copy must be quarantined too")
+	}
+}
+
+func TestSameLayoutReplicaIsNotDuplicate(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	v := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn1)
+	topo.RegisterVolumeLayout(v, dn2)
+	topo.flagDuplicateVolumeId(v, dn2)
+
+	if !isWritable(t, topo, v) {
+		t.Fatal("a same-layout replica is a legitimate copy, not a duplicate")
+	}
+}
+
+func TestSameNodeVolumeMoveIsNotDuplicate(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	dn := NewDataNode("server1")
+
+	old := storage.VolumeInfo{Id: 7, Collection: "c", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	moved := storage.VolumeInfo{Id: 7, Collection: "c", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: "ssd"}
+	dn.UpdateVolumes([]storage.VolumeInfo{old})
+	topo.RegisterVolumeLayout(old, dn)
+
+	// the move registers the new layout before the old entry is removed
+	dn.UpdateVolumes([]storage.VolumeInfo{moved})
+	topo.RegisterVolumeLayout(moved, dn)
+	topo.flagDuplicateVolumeId(moved, dn)
+
+	if !isWritable(t, topo, moved) {
+		t.Fatal("a same-node disk move is not a duplicate")
+	}
+}
+
+func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	if !isWritable(t, topo, v1) {
+		t.Fatal("the surviving copy must be released once the conflict is gone")
+	}
+}
+
+func TestQuarantineSurvivesResync(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// a resync from the same server re-reports the volume as writable;
+	// the quarantine must keep it out of the writable list
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 7, Collection: "b", ReplicaPlacement: 0, Version: 3,
+	}}, dn2)
+
+	if isWritable(t, topo, v2) {
+		t.Fatal("resync must not clear the quarantine")
+	}
+}
+
+func TestReplicationChangeIsNotDuplicate(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rpOld, _ := super_block.NewReplicaPlacementFromString("000")
+	rpNew, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	vOld := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rpOld, Ttl: needle.EMPTY_TTL}
+	vNew := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rpNew, Ttl: needle.EMPTY_TTL}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{vOld})
+	dn2.UpdateVolumes([]storage.VolumeInfo{vNew})
+	topo.RegisterVolumeLayout(vOld, dn1)
+	topo.RegisterVolumeLayout(vNew, dn2)
+	topo.flagDuplicateVolumeId(vNew, dn2)
+
+	if topo.isQuarantined(dn2, vNew.Id) || topo.isQuarantined(dn1, vOld.Id) {
+		t.Fatal("an rp-only layout difference is a replication change in flight, not a duplicate")
+	}
+}
+
+func TestDuplicateVolumeIdAcrossTtls(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	ttl, _ := needle.ReadTTL("3d")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: ttl}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	if !topo.isQuarantined(dn2, v2.Id) || !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("same collection with a different ttl is still a reused volume id")
+	}
+}

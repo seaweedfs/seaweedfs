@@ -170,7 +170,6 @@ mod tests {
             grpc_allowed_wildcard_domain: String::new(),
             grpc_volume_allowed_common_names: vec![],
             tls_policy: TlsPolicy::default(),
-            enable_write_queue: false,
             security_file: String::new(),
         }
     }

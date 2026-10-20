@@ -45,10 +45,11 @@ type VendedCredentials struct {
 }
 
 // CredentialVendor mints credentials limited to a single table's prefix for a
-// caller the catalog has already authenticated and authorized. A nil result with
-// no error means the deployment has vending switched off.
+// caller the catalog has already authenticated and authorized, read-only when
+// readOnly is set. A nil result with no error means the deployment has vending
+// switched off.
 type CredentialVendor interface {
-	VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*VendedCredentials, error)
+	VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error)
 }
 
 // Server implements the Lance Namespace REST spec.

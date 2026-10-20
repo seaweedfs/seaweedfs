@@ -294,7 +294,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
-		config, storageCredentials := s.buildFileIOConfig(r, location)
+		// The staged table is not registered yet, so there is nothing to
+		// authorize an update against; the create gate above is the write
+		// authority for the prefix the staged table will occupy.
+		config, storageCredentials := s.buildFileIOConfig(r, location, func() bool { return true })
 		result := LoadTableResult{
 			MetadataLocation:   metadataLocation,
 			Metadata:           metadata,
@@ -395,7 +398,9 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
-	config, storageCredentials := s.buildFileIOConfig(r, location)
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, req.Name)
+	})
 	result := LoadTableResult{
 		MetadataLocation:   finalLocation,
 		Metadata:           metadata,
@@ -590,7 +595,9 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
-	config, storageCredentials := s.buildFileIOConfig(r, location)
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, tableName)
+	})
 	return LoadTableResult{
 		MetadataLocation:   getResp.MetadataLocation,
 		Metadata:           metadata,
@@ -646,7 +653,7 @@ func applySnapshotsParam(r *http.Request, metadata table.Metadata) (table.Metada
 // a region on attach don't need to be told it out-of-band. See issue #9103.
 // It also returns, for a client that asked for credential vending, the
 // credentials scoped to this table.
-func (s *Server) buildFileIOConfig(r *http.Request, location string) (iceberg.Properties, []StorageCredential) {
+func (s *Server) buildFileIOConfig(r *http.Request, location string, canWrite func() bool) (iceberg.Properties, []StorageCredential) {
 	config := make(iceberg.Properties)
 	if s.s3Endpoint == "" {
 		return config, nil
@@ -654,7 +661,7 @@ func (s *Server) buildFileIOConfig(r *http.Request, location string) (iceberg.Pr
 
 	vended := iceberg.Properties(nil)
 	if wantsVendedCredentials(r) {
-		vended = s.vendCredentials(r, location)
+		vended = s.vendCredentials(r, location, canWrite)
 		// A client asking for vended credentials builds its storage credential
 		// out of whatever comes back here and stops using the one it was
 		// configured with. With nothing to vend, an endpoint on its own leaves
@@ -687,7 +694,7 @@ func (s *Server) buildFileIOConfig(r *http.Request, location string) (iceberg.Pr
 // nil when the deployment has no vending configured or the mint failed, which
 // leaves the caller withholding the endpoint so the client keeps its own
 // credentials rather than falling back to unsigned requests.
-func (s *Server) vendCredentials(r *http.Request, location string) iceberg.Properties {
+func (s *Server) vendCredentials(r *http.Request, location string, canWrite func() bool) iceberg.Properties {
 	if s.credentialVendor == nil || location == "" {
 		return nil
 	}
@@ -699,7 +706,7 @@ func (s *Server) vendCredentials(r *http.Request, location string) iceberg.Prope
 	}
 
 	principal := s3_constants.GetIdentityNameFromContext(r)
-	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, prefix)
+	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, prefix, canWrite == nil || !canWrite())
 	if err != nil {
 		glog.Warningf("Iceberg: failed to vend credentials for %s: %v", location, err)
 		return nil
@@ -717,6 +724,42 @@ func (s *Server) vendCredentials(r *http.Request, location string) iceberg.Prope
 		vended["s3.session-token-expires-at-ms"] = strconv.FormatInt(credentials.Expiration.UnixMilli(), 10)
 	}
 	return vended
+}
+
+// mayUpdateTable reports whether the caller may commit to the table the
+// credentials would cover. The session stays read-only when it may not, so
+// the vend carries no more authority than the caller holds at the catalog.
+func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []string, tableName string) bool {
+	updateReq := &s3tables.UpdateTableRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
+	}
+	return err == nil
+}
+
+// mayUpdateView is mayUpdateTable for a view, whose commit path is UpdateView.
+func (s *Server) mayUpdateView(r *http.Request, bucketName string, namespace []string, viewName string) bool {
+	updateReq := &s3tables.UpdateViewRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           viewName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateView(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateView check for %s/%s failed, vending read-only: %v", bucketName, viewName, err)
+	}
+	return err == nil
 }
 
 // handleTableExists checks if a table exists.

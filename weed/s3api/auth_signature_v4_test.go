@@ -681,6 +681,22 @@ func TestExtractSignedHeadersCase(t *testing.T) {
 	}
 }
 
+// A client may sign content-length even when the request carries no body
+// (aws-cli's checksum HEAD does). The Go server strips the header into
+// r.ContentLength, so extraction rebuilds it rather than dropping it.
+func TestExtractSignedHeadersContentLength(t *testing.T) {
+	r, _ := http.NewRequest("HEAD", "http://bucket.domain.com/bucket/key", nil)
+	r.Host = "bucket.domain.com"
+	r.ContentLength = 0
+	extracted, errCode := extractSignedHeaders([]string{"host", "content-length"}, r, "")
+	if errCode != s3err.ErrNone {
+		t.Fatalf("extractSignedHeaders failed: %v", errCode)
+	}
+	if got := getCanonicalHeaders(extracted); got != "content-length:0\nhost:bucket.domain.com\n" {
+		t.Fatalf("unexpected canonical headers %q", got)
+	}
+}
+
 // A router that internally rewrites the request path (the Iceberg catalog
 // collapses a doubled /v1 prefix) must still verify the signature against
 // the path the client signed, which is kept in the request context.

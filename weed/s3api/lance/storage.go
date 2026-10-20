@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -135,7 +136,7 @@ func confineLocation(bucket, location string) error {
 // storageOptions builds the object_store settings a Lance client needs to reach
 // the dataset. The key names are the aws_-prefixed forms Lance clients pass
 // through to object_store.
-func (s *Server) storageOptions(r *http.Request, bucket, location string, vend bool) (map[string]string, error) {
+func (s *Server) storageOptions(r *http.Request, bucket, location string, vend bool, canWrite func() bool) (map[string]string, error) {
 	options := map[string]string{}
 	if s.s3Endpoint != "" {
 		options["aws_endpoint"] = s.s3Endpoint
@@ -154,7 +155,7 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 	}
 
 	principal := s3_constants.GetIdentityNameFromContext(r)
-	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, locationPrefix(location))
+	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, locationPrefix(location), canWrite == nil || !canWrite())
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +171,25 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 		options["expires_at_millis"] = strconv.FormatInt(credentials.Expiration.UnixMilli(), 10)
 	}
 	return options, nil
+}
+
+// mayUpdateTable reports whether the caller may commit to the table the
+// credentials would cover, the same gate the Iceberg catalog applies so a
+// read-only caller never gets write-capable storage_options.
+func (s *Server) mayUpdateTable(r *http.Request, bucket string, ns []string, name string) bool {
+	req := &s3tables.UpdateTableRequest{
+		TableBucketARN: bucketARN(bucket),
+		Namespace:      ns,
+		Name:           name,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), req, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("lance: UpdateTable check for %s/%s failed, vending read-only: %v", bucket, name, err)
+	}
+	return err == nil
 }
 
 // locationPrefix strips the s3://bucket/ part of a location, leaving the key

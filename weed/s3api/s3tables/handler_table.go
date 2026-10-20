@@ -1465,40 +1465,51 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// handleUpdateTable updates table metadata
-func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	var req UpdateTableRequest
-	if err := h.readRequestBody(r, &req); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
+// updateTableTarget is the table state an update was authorized against: the
+// stored values the optimistic-concurrency check compares and the fields the
+// response echoes back.
+type updateTableTarget struct {
+	bucketName     string
+	namespaceName  string
+	tableName      string
+	tablePath      string
+	tableARN       string
+	metadata       tableMetadataInternal
+	storedMetadata []byte
+	storedPolicy   []byte
+}
 
+// authorizeUpdateTable validates the names an update names, loads the table
+// and the policies governing it, and checks the caller may update it, writing
+// the error response itself. Credential vending asks the same question without
+// updating anything, so it runs this gate through Manager.AuthorizeUpdateTable.
+func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, req *UpdateTableRequest) (*updateTableTarget, error) {
 	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
-		return fmt.Errorf("missing required parameters")
+		return nil, fmt.Errorf("missing required parameters")
 	}
 
 	namespaceName, err := validateNamespace(req.Namespace)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	tableName, err := validateTableName(req.Name)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
@@ -1567,7 +1578,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		}
-		return err
+		return nil, err
 	}
 
 	// Authorization Check
@@ -1596,8 +1607,34 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		} else {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
 		}
-		return NewAuthError("UpdateTable", principal, "not authorized to update table")
+		return nil, NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
+
+	return &updateTableTarget{
+		bucketName:     bucketName,
+		namespaceName:  namespaceName,
+		tableName:      tableName,
+		tablePath:      tablePath,
+		tableARN:       tableARN,
+		metadata:       metadata,
+		storedMetadata: storedMetadata,
+		storedPolicy:   storedPolicy,
+	}, nil
+}
+
+// handleUpdateTable updates table metadata
+func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req UpdateTableRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	target, err := h.authorizeUpdateTable(w, r, filerClient, &req)
+	if err != nil {
+		return err
+	}
+	metadata := target.metadata
 
 	// Check version token if provided
 	if req.VersionToken != "" && req.VersionToken != metadata.VersionToken {
@@ -1645,15 +1682,15 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateEntryExtended(r.Context(), client, tablePath, func(extended map[string][]byte) error {
-			if !bytes.Equal(extended[ExtendedKeyMetadata], storedMetadata) {
+		return h.mutateEntryExtended(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
 			// The policy this request was authorized against must still be the
 			// one in force: an administrator restricting it mid-commit should
 			// send the caller back through authorization, not have its decision
 			// applied afterwards.
-			if !bytes.Equal(extended[ExtendedKeyPolicy], storedPolicy) {
+			if !bytes.Equal(extended[ExtendedKeyPolicy], target.storedPolicy) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
@@ -1671,7 +1708,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.writeJSON(w, http.StatusOK, &UpdateTableResponse{
-		TableARN:         tableARN,
+		TableARN:         target.tableARN,
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
 	})
