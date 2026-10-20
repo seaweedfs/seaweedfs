@@ -80,11 +80,11 @@ func (s StateMachine) Recovery(data []byte) error {
 		s.topo.SetTopologyId(state.TopologyId)
 		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
 	}
-	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
-	}
 	if state.GrowthFrozen != nil {
 		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 	return nil
 }
@@ -105,11 +105,11 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
 	}
-	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
-	}
 	if state.GrowthFrozen != nil {
 		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
@@ -117,13 +117,11 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 }
 
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
+	frozen := s.topo.IsGrowthFrozen()
 	state := &topology.MaxVolumeIdCommand{
-		MaxVolumeId: s.topo.GetMaxVolumeId(),
-		TopologyId:  s.topo.GetTopologyId(),
-	}
-	if s.topo.IsGrowthFrozen() {
-		state.GrowthFrozen = new(bool)
-		*state.GrowthFrozen = true
+		MaxVolumeId:  s.topo.GetMaxVolumeId(),
+		TopologyId:   s.topo.GetTopologyId(),
+		GrowthFrozen: &frozen,
 	}
 	return state, nil
 }

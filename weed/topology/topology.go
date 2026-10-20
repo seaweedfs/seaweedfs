@@ -84,10 +84,11 @@ type Topology struct {
 	dataNodeIndex     map[string]*DataNode
 	dataNodeIndexLock sync.RWMutex
 
-	maxVolumeIdFile          string
-	maxVolumeIdFileLock      sync.Mutex
-	lastPersistedMaxVolumeId atomic.Uint32
-	lastPersistedTopologyId  atomic.Value
+	maxVolumeIdFile           string
+	maxVolumeIdFileLock       sync.Mutex
+	lastPersistedMaxVolumeId  atomic.Uint32
+	lastPersistedTopologyId   atomic.Value
+	lastPersistedGrowthFrozen atomic.Bool
 
 	growthFrozen          atomic.Bool
 	growthFrozenAt        atomic.Int64
@@ -1124,6 +1125,7 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 		t.SetTopologyId(cmd.TopologyId)
 	}
 	if cmd.GrowthFrozen != nil {
+		t.lastPersistedGrowthFrozen.Store(*cmd.GrowthFrozen)
 		t.SetGrowthFrozen(*cmd.GrowthFrozen)
 	}
 }
@@ -1133,8 +1135,9 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 // recovery, so follower mirrors stay current too.
 func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	topoId := t.GetTopologyId()
+	frozen := t.IsGrowthFrozen()
 	mirrored := func() bool {
-		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId
+		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId && t.lastPersistedGrowthFrozen.Load() == frozen
 	}
 	if mirrored() {
 		return nil
@@ -1147,13 +1150,11 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	if t.maxVolumeIdFile == "" {
 		t.lastPersistedMaxVolumeId.Store(uint32(vid))
 		t.lastPersistedTopologyId.Store(topoId)
+		t.lastPersistedGrowthFrozen.Store(frozen)
 		return nil
 	}
 	cmd := NewMaxVolumeIdCommand(vid, topoId)
-	if t.growthFrozen.Load() {
-		cmd.GrowthFrozen = new(bool)
-		*cmd.GrowthFrozen = true
-	}
+	cmd.GrowthFrozen = &frozen
 	b, err := json.Marshal(cmd)
 	if err != nil {
 		return err
@@ -1182,5 +1183,6 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	}
 	t.lastPersistedMaxVolumeId.Store(uint32(vid))
 	t.lastPersistedTopologyId.Store(topoId)
+	t.lastPersistedGrowthFrozen.Store(frozen)
 	return nil
 }

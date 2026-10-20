@@ -46,11 +46,11 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 			}
 		}
 	}
-	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
-		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
-	}
 	if c.GrowthFrozen != nil {
 		topo.SetGrowthFrozen(*c.GrowthFrozen)
+	}
+	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
