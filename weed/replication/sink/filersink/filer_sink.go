@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // ChunkTransferSnapshot is a lock-free, copyable view of a chunk transfer's
@@ -67,6 +68,10 @@ type FilerSink struct {
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
 	missingVolumes   sync.Map // source volume id -> time.Time first found unlocatable
+	// missingNeedles records when each file id first came back not-found from an
+	// answering volume: only that needle serving again resets it, so a live
+	// volume's other needles neither shorten nor restart the wait.
+	missingNeedles sync.Map // source file id -> time.Time first answered not-found
 }
 
 func init() {
@@ -289,7 +294,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
 		}
 
-		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
 
 		if err != nil {
 			// don't swallow: committing mismatched bytes would propagate corruption
@@ -369,7 +374,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	case updateRepair:
 		glog.Warningf("repair %s: destination diverged from source (dst %d chunks, src %d chunks); re-replicating full source content",
 			key, len(existingEntry.GetChunks()), len(newEntry.GetChunks()))
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
@@ -397,7 +402,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
@@ -470,7 +475,7 @@ func EntryMtimeNs(entry *filer_pb.Entry) int64 {
 // meta events are full snapshots, so a later event re-carries the current chunks).
 // Otherwise the live version is corrupt, so return the error and halt loudly.
 func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
 		return nil
 	}
@@ -486,15 +491,49 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 // later event from ever being checkpointed. Otherwise propagate so the offset
 // stays put and the event is retried; returning nil would silently drop the file.
 func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
 		return nil
 	}
-	if errors.Is(err, errSourceChunkMissing) && fs.sourceStillServesChunks() {
+	// A volume server's own 404 names this needle, so a direct-read 404 needs no
+	// liveness probe; a filer-proxied 404 also covers "no volume locations" and
+	// could be an outage, so it still must pass the probe.
+	direct404 := errors.Is(err, util_http.ErrNotFound) && fs.filerSource != nil && !fs.filerSource.ProxyByFiler()
+	if errors.Is(err, errSourceChunkMissing) && (direct404 || fs.sourceStillServesChunks()) {
 		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
 		return nil
 	}
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
+}
+
+// sourceMovedOn reports whether the live source entry moved past the replayed
+// version: gone, strictly newer, or rewritten in place so it no longer
+// references the same chunks — the last is invisible to the mtime check. A live
+// entry older than the replayed version proves nothing about it.
+func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
+	if !ok {
+		return false
+	}
+	replayedMtimeNs := getEntryMtimeNs(entry)
+	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
+		return true
+	}
+	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
+		return false
+	}
+	liveIds := chunkFileIds(live.GetChunks())
+	replayedIds := chunkFileIds(entry.GetChunks())
+	if len(liveIds) != len(replayedIds) {
+		return true
+	}
+	for id := range replayedIds {
+		if !liveIds[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with

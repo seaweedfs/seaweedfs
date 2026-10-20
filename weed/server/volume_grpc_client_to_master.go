@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -217,6 +218,8 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					os.Exit(1)
 				}
 			}
+			vs.store.UpdateMaxVolumeIdSeen(needle.VolumeId(in.MaxVolumeId))
+			vs.store.UpdateLastSeenTopologyId(in.TopologyId)
 			volumeOptsChanged := false
 			if vs.store.GetPreallocate() != in.GetPreallocate() {
 				vs.store.SetPreallocate(in.GetPreallocate())

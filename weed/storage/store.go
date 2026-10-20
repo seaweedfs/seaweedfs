@@ -97,6 +97,11 @@ type Store struct {
 	// the heartbeat that saw it. Written only from the heartbeat goroutine.
 	reportedCollections   map[string]struct{}
 	reportedEcCollections map[string]struct{}
+	maxVolumeIdSeen       atomic.Uint32
+	lastSeenTopologyId    atomic.Value // string
+	vidStampReady         atomic.Bool
+	vidStampDirty         atomic.Bool
+	vidStampLock          sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -145,6 +150,7 @@ func NewStore(
 		diskId := uint32(i) // Track disk ID
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
+			s.UpdateMaxVolumeIdSeen(vid)
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 
@@ -210,6 +216,8 @@ func NewStore(
 	if err != nil {
 		glog.Fatalf("failed to resolve state for volume %s: %v", id, err)
 	}
+
+	s.bootstrapMaxVolumeIdSeen()
 
 	return
 }
@@ -320,6 +328,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 	return ret
 }
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+	s.UpdateMaxVolumeIdSeen(vid)
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
@@ -686,27 +695,29 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	stats.VolumeServerIoQuarantineGauge.WithLabelValues("ec_shard").Set(float64(quarantinedEcShards))
 
 	return &master_pb.Heartbeat{
-		Ip:              s.Ip,
-		Port:            uint32(s.Port),
-		GrpcPort:        uint32(s.GrpcPort),
-		PublicUrl:       s.PublicUrl,
-		Id:              s.Id,
-		MaxVolumeCounts: maxVolumeCounts,
-		DiskTotalBytes:  diskTotalBytes,
-		DiskFreeBytes:   diskFreeBytes,
-		MaxFileKey:      NeedleIdToUint64(maxFileKey),
-		DataCenter:      s.dataCenter,
-		Rack:            s.rack,
-		Volumes:         heartbeatVolumes,
-		ChangedVolumes:  changedVolumes,
-		DeletedVolumes:  departedVolumes,
-		VolumeDigest:    &volumeDigest,
-		DeletedEcShards: deletedEcVolumes,
-		HasNoVolumes:    hasNoVolumes,
-		HasNoEcShards:   len(ecVolumeMessages) == 0,
-		LocationUuids:   uuidList,
-		DiskTags:        diskTags,
-		State:           state,
+		Ip:                 s.Ip,
+		Port:               uint32(s.Port),
+		GrpcPort:           uint32(s.GrpcPort),
+		PublicUrl:          s.PublicUrl,
+		Id:                 s.Id,
+		MaxVolumeCounts:    maxVolumeCounts,
+		DiskTotalBytes:     diskTotalBytes,
+		DiskFreeBytes:      diskFreeBytes,
+		MaxFileKey:         NeedleIdToUint64(maxFileKey),
+		DataCenter:         s.dataCenter,
+		Rack:               s.rack,
+		Volumes:            heartbeatVolumes,
+		ChangedVolumes:     changedVolumes,
+		DeletedVolumes:     departedVolumes,
+		VolumeDigest:       &volumeDigest,
+		DeletedEcShards:    deletedEcVolumes,
+		HasNoVolumes:       hasNoVolumes,
+		HasNoEcShards:      len(ecVolumeMessages) == 0,
+		LocationUuids:      uuidList,
+		DiskTags:           diskTags,
+		State:              state,
+		MaxVolumeIdSeen:    uint32(s.MaxVolumeIdSeen()),
+		LastSeenTopologyId: s.LastSeenTopologyId(),
 	}
 
 }
@@ -1027,6 +1038,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ..
 				ReadOnly:          readOnly,
 				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
+			s.UpdateMaxVolumeIdSeen(i)
 			return nil
 		}
 	}

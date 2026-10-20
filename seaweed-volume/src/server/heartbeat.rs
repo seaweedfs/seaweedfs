@@ -474,6 +474,14 @@ async fn do_heartbeat(
                             )
                             .into());
                         }
+                        let echo_max_volume_id = hb_resp.max_volume_id;
+                        let echo_topology_id = hb_resp.topology_id.clone();
+                        off_runtime(config, state, move |_, state| {
+                            let store = state.store.read().unwrap();
+                            store.update_max_volume_id_seen(echo_max_volume_id);
+                            store.update_last_seen_topology_id(&echo_topology_id);
+                        })
+                        .await?;
                         let options_changed =
                             volume_options_pass(config, state, &hb_resp).await?;
                         if options_changed && maybe_adjust_volume_max(config, state).await? {
@@ -1360,6 +1368,8 @@ fn build_heartbeat_with_ec_status(
         grpc_port: config.grpc_port as u32,
         location_uuids,
         disk_tags,
+        max_volume_id_seen: store.max_volume_id_seen(),
+        last_seen_topology_id: store.last_seen_topology_id(),
         ..Default::default()
     };
     (heartbeat, volumes, actions)

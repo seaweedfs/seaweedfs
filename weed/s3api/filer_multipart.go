@@ -69,7 +69,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString := s3a.generateUploadID(*input.Key)
 
-	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	// a time-ordered uuid keeps uploads of one key in initiation order
+	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
 
 	// Validate checksum algorithm before creating the upload directory
 	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
@@ -1291,56 +1292,77 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	glog.V(2).Infof("listMultipartUploads input %v", input)
 
-	output = &ListMultipartUploadsResult{
-		Bucket:       input.Bucket,
-		Delimiter:    input.Delimiter,
-		EncodingType: input.EncodingType,
-		KeyMarker:    input.KeyMarker,
-		MaxUploads:   input.MaxUploads,
-		Prefix:       input.Prefix,
-		IsTruncated:  aws.Bool(false),
-	}
-
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
 		if isFilerNotFound(err) {
-			return output, s3err.ErrNone
+			return selectMultipartUploads(input, nil), s3err.ErrNone
 		}
 		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
-		return output, s3err.ErrInternalError
+		return nil, s3err.ErrInternalError
 	}
 
-	uploadsCount := int64(0)
+	return selectMultipartUploads(input, entries), s3err.ErrNone
+}
+
+// selectMultipartUploads orders uploads by key, then by upload id, and resumes
+// after the (key-marker, upload-id-marker) position, so an aborted marker
+// upload does not hide the rest of its key.
+func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*filer_pb.Entry) *ListMultipartUploadsResult {
+	output := &ListMultipartUploadsResult{
+		Bucket:         input.Bucket,
+		Delimiter:      input.Delimiter,
+		EncodingType:   input.EncodingType,
+		KeyMarker:      input.KeyMarker,
+		MaxUploads:     input.MaxUploads,
+		Prefix:         input.Prefix,
+		UploadIdMarker: input.UploadIdMarker,
+		IsTruncated:    aws.Bool(false),
+	}
+	if *input.MaxUploads <= 0 {
+		return output
+	}
+	type candidate struct {
+		key   string
+		entry *filer_pb.Entry
+	}
+	var candidates []candidate
 	for _, entry := range entries {
-		if entry.Extended != nil {
-			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
-			if *input.KeyMarker != "" && *input.KeyMarker != key {
-				continue
-			}
-			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
-				continue
-			}
-			upload := &s3.MultipartUpload{
-				Key:      objectKey(aws.String(key)),
-				UploadId: aws.String(entry.Name),
-			}
-			if entry.Attributes != nil {
-				upload.Initiated = aws.Time(time.Unix(entry.Attributes.Crtime, int64(entry.Attributes.CrtimeNs)))
-			}
-			output.Upload = append(output.Upload, upload)
-			uploadsCount += 1
+		if !isMultipartUploadEntry(entry) {
+			continue
 		}
-		if uploadsCount >= *input.MaxUploads {
-			output.IsTruncated = aws.Bool(true)
-			output.NextUploadIdMarker = aws.String(entry.Name)
-			break
+		key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
+		if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+			continue
 		}
+		if *input.KeyMarker != "" && (key < *input.KeyMarker || key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker)) {
+			continue
+		}
+		candidates = append(candidates, candidate{key: key, entry: entry})
 	}
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
+	})
 
-	return
+	for _, c := range candidates {
+		if int64(len(output.Upload)) >= *input.MaxUploads {
+			last := output.Upload[len(output.Upload)-1]
+			output.IsTruncated = aws.Bool(true)
+			output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
+			return output
+		}
+		upload := &s3.MultipartUpload{
+			Key:      aws.String(c.key),
+			UploadId: aws.String(c.entry.Name),
+		}
+		if c.entry.Attributes != nil {
+			upload.Initiated = aws.Time(time.Unix(c.entry.Attributes.Crtime, int64(c.entry.Attributes.CrtimeNs)))
+		}
+		output.Upload = append(output.Upload, upload)
+	}
+	return output
 }
 
 type ListPartsResult struct {

@@ -304,6 +304,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				DiskId:      uint32(diskId),
 				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}
+			s.UpdateMaxVolumeIdSeen(vid)
 			return nil
 		}
 		if errors.Is(err, os.ErrNotExist) {

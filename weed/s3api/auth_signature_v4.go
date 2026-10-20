@@ -364,7 +364,15 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			pathForSignature = r.URL.Path
 		}
 	}
-	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
+	// The signature is checked against prefix+path but the request is routed
+	// and authorized on path alone, so only a trusted proxy may set the prefix.
+	iam.m.RLock()
+	trustedPeer := iam.trustedProxies.IsTrustedPeer(r)
+	iam.m.RUnlock()
+	forwardedPrefix := ""
+	if trustedPeer {
+		forwardedPrefix = r.Header.Get("X-Forwarded-Prefix")
+	}
 	var matchedHost string
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
@@ -949,6 +957,12 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request, externalHost 
 			// Get host value.
 			hostHeaderValue := extractHostHeader(r, externalHost)
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
+			continue
+		}
+		// The Go server strips Content-Length into r.ContentLength; clients do
+		// sign it, so rebuild the value the same way the client saw it.
+		if strings.EqualFold(header, "content-length") && r.ContentLength >= 0 {
+			extractedSignedHeaders[header] = []string{strconv.FormatInt(r.ContentLength, 10)}
 			continue
 		}
 		// For all other headers we need to find them in the HTTP headers and copy them over.

@@ -1670,6 +1670,7 @@ func (iam *IdentityAccessManagement) isConfiguredAccountID(id string) bool {
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		scrubInternalHeaders(r)
 		if !iam.isEnabled() {
 			f(w, r)
 			return
@@ -1695,6 +1696,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 // signature verification, which is mandatory for all PostPolicy uploads.
 func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		scrubInternalHeaders(r)
 		if !iam.isEnabled() {
 			f(w, r)
 			return
@@ -1780,19 +1782,33 @@ func (iam *IdentityAccessManagement) AuthenticateRequest(r *http.Request) (*Iden
 	return ident, err
 }
 
+// scrubInternalHeaders drops internal headers only the server may set, so
+// client-supplied values cannot spoof identity claims or reach the handlers'
+// internal consumers (putToFiler persists the object-lock and version-id ones
+// into authoritative metadata; the SSE ones carry key material between handler
+// stages of a request). The server sets them itself after this point.
+func scrubInternalHeaders(r *http.Request) {
+	r.Header.Del(s3_constants.SeaweedFSPrincipalHeader)
+	r.Header.Del(s3_constants.SeaweedFSSessionTokenHeader)
+	r.Header.Del(s3_constants.ExtObjectLockModeKey)
+	r.Header.Del(s3_constants.ExtRetentionUntilDateKey)
+	r.Header.Del(s3_constants.ExtLegalHoldKey)
+	r.Header.Del(s3_constants.ExtVersionIdKey)
+	r.Header.Del(s3_constants.SeaweedFSSSEKMSBaseIVHeader)
+	r.Header.Del(s3_constants.SeaweedFSSSES3BaseIVHeader)
+	r.Header.Del(s3_constants.SeaweedFSSSES3KeyDataHeader)
+}
+
 func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request) (*Identity, s3err.ErrorCode, authType) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
 	var amzAuthType string
 
-	// SECURITY: Prevent clients from spoofing internal IAM headers.
-	// These headers are only set by the server after successful JWT authentication
-	// and are trusted by downstream authorization (including S3Tables IAM checks
-	// reached via AuthSignatureOnly). Clearing them here — the shared entry point
-	// for every auth path — prevents privilege escalation via header injection.
-	r.Header.Del(s3_constants.SeaweedFSPrincipalHeader)
-	r.Header.Del(s3_constants.SeaweedFSSessionTokenHeader)
+	// Clearing them here — the shared entry point for every auth path —
+	// prevents privilege escalation via header injection, including through
+	// the S3Tables checks reached via AuthSignatureOnly.
+	scrubInternalHeaders(r)
 	// Deferred so signature verification can still read a client-signed value.
 	defer r.Header.Del(s3_constants.AmzAccountId)
 

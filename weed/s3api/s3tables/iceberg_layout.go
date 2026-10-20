@@ -15,7 +15,7 @@ import (
 // - metadata/v*.metadata.json (table metadata)
 // - metadata/snap-*.avro (snapshot manifest lists)
 // - metadata/*.avro (manifest files)
-// - data/*.parquet, data/*.orc, data/*.avro (data files)
+// - data/*.parquet, *.orc, *.avro, *.puffin (data files)
 
 const uuidPattern = `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`
 
@@ -75,6 +75,7 @@ var (
 		regexp.MustCompile(`^[^/]+\.parquet$`), // Parquet files
 		regexp.MustCompile(`^[^/]+\.orc$`),     // ORC files
 		regexp.MustCompile(`^[^/]+\.avro$`),    // Avro files
+		regexp.MustCompile(`^[^/]+\.puffin$`),  // Iceberg v3 deletion vectors
 		regexp.MustCompile(`^[^/]+\.lance$`),   // Lance fragments
 	}
 
@@ -209,7 +210,7 @@ func validateFilePatterns(filename string, isMetadata bool) error {
 		errorMsg = "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file"
 	} else {
 		patterns = dataFilePatterns
-		errorMsg = "invalid data file format: must be .parquet, .orc, or .avro"
+		errorMsg = "invalid data file format: must be .parquet, .orc, .avro, .puffin or .lance"
 	}
 
 	for _, pattern := range patterns {

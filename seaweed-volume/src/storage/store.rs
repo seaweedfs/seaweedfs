@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config::MinFreeSpace;
@@ -72,6 +72,10 @@ pub struct Store {
     /// reporting the heartbeat that saw it.
     pub reported_collections: Mutex<HashSet<String>>,
     pub reported_ec_collections: Mutex<HashSet<String>>,
+    pub max_volume_id_seen: AtomicU32,
+    pub last_seen_topology_id: Mutex<String>,
+    pub vid_stamp_lock: Mutex<()>,
+    pub vid_stamp_dirty: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
@@ -91,6 +95,10 @@ impl Store {
             rack: String::new(),
             reported_collections: Mutex::new(HashSet::new()),
             reported_ec_collections: Mutex::new(HashSet::new()),
+            max_volume_id_seen: AtomicU32::new(0),
+            last_seen_topology_id: Mutex::new(String::new()),
+            vid_stamp_lock: Mutex::new(()),
+            vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -151,6 +159,12 @@ impl Store {
         // needed after the mirror pass for volumes whose mirror failed
         // (read-only target, partial copy).
         self.reconcile_ec_shards_across_disks();
+
+        self.fold_location_into_vid_stamp(self.locations.last().unwrap());
+        // Write the combined bound back to every dir, including ones whose
+        // own stamp or volumes sit below it — a lost disk must not restart
+        // the server below the bound its remaining dirs once reached.
+        self.save_vid_stamps();
 
         Ok(())
     }
@@ -409,6 +423,7 @@ impl Store {
         disk_type: DiskType,
         spec: &VolumeSpec<'_>,
     ) -> Result<(), VolumeError> {
+        self.stamp_allocated_vid(vid);
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
         }
@@ -506,7 +521,7 @@ impl Store {
                         vid
                     ))));
                 }
-                return loc.create_volume(
+                let result = loc.create_volume(
                     vid,
                     self.needle_map_kind,
                     &VolumeSpec {
@@ -514,6 +529,10 @@ impl Store {
                         ..Default::default()
                     },
                 );
+                if result.is_ok() {
+                    self.stamp_allocated_vid(vid);
+                }
+                return result;
             }
         }
         Err(VolumeError::Io(io::Error::new(
@@ -603,7 +622,10 @@ impl Store {
                                 ..Default::default()
                             },
                         ) {
-                            Ok(()) => return Ok(()),
+                            Ok(()) => {
+                                self.stamp_allocated_vid(vid);
+                                return Ok(());
+                            }
                             Err(e) => {
                                 last_err = Some(e);
                                 continue;
@@ -659,7 +681,10 @@ impl Store {
                         ..Default::default()
                     },
                 ) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        self.stamp_allocated_vid(vid);
+                        return Ok(());
+                    }
                     Err(e) => {
                         last_err = Some(e);
                         continue;
@@ -952,6 +977,7 @@ impl Store {
         collection: &str,
         shard_ids: &[ShardId],
     ) -> Result<(), VolumeError> {
+        self.stamp_allocated_vid(vid);
         // Find the location where the EC files live
         let loc_idx = self.find_ec_location(vid, collection).ok_or_else(|| {
             VolumeError::Io(io::Error::new(
@@ -974,6 +1000,7 @@ impl Store {
         shard_id: ShardId,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
+        self.stamp_allocated_vid(vid);
         // The .ecx may live on a different disk than the shard being mounted
         // (ec.balance / ec.rebuild can spread shards across sibling disks), so
         // look up its owner once and point EcVolume::new at the directory that
