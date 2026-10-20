@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,23 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 
 	return filer_pb.Mkdir(context.Background(), s3a, parentDirectoryPath, dirName, fn)
 
+}
+
+// mkdirExclusive never replaces an entry already at the path: PutBucket uses
+// it so a plain bucket cannot replace a table bucket created in its
+// check-to-create window.
+func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
+
+	return filer_pb.MkdirExclusive(context.Background(), s3a, parentDirectoryPath, dirName, fn)
+
+}
+
+// concurrentEntryIsForeign: after PutBucket's exclusive mkdir met an entry,
+// whether that entry must be answered BucketAlreadyExists without looking at
+// its owner: a table bucket (it carries no S3 owner and must never read as
+// "owned by you"), or an entry that could not be read.
+func concurrentEntryIsForeign(entry *filer_pb.Entry, err error) bool {
+	return err != nil || entry == nil || s3tables.IsTableBucketEntry(entry)
 }
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {

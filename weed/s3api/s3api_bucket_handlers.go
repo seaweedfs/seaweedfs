@@ -330,7 +330,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// This ensures Object Lock configuration is set in the same CreateEntry call,
 	// preventing race conditions where the bucket exists without Object Lock enabled
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 
 		// Set bucket owner
@@ -373,6 +373,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		// return the appropriate already-exists error instead of InternalError.
 		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
 			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			// From the entry itself, not the bucket registry: the pre-check
+			// above has just cached this name as not found, so in the race this
+			// branch exists for the registry would still say "no table bucket".
+			if concurrentEntryIsForeign(s3a.getEntry(s3a.option.BucketsPath, bucket)) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+				return
+			}
 			errCode := s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL)
 			if errCode == s3err.ErrBucketAlreadyOwnedByYou {
 				s3a.healBucketOwnerIndex(bucket, currentIdentityId)
@@ -744,7 +751,7 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 
 	identityId := s3_constants.GetIdentityNameFromContext(r)
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 		setBucketOwner(r)(entry)
 	}); err != nil {
