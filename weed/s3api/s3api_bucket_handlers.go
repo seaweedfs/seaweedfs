@@ -380,6 +380,9 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 				s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
 				return
 			}
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+			}
 			errCode := s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL)
 			if errCode == s3err.ErrBucketAlreadyOwnedByYou {
 				s3a.healBucketOwnerIndex(bucket, currentIdentityId)
@@ -761,10 +764,15 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
 			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
 		} else if exist {
+			entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket)
+			if getErr == nil && concurrentEntryIsForeign(entry, nil) {
+				// A table bucket carries no S3 owner and must not gain one.
+				return nil
+			}
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
 			// we'll set it here to ensure consistency.
-			if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil {
+			if getErr == nil {
 				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
 					// No owner set, assign current admin as owner
 					setBucketOwner(r)(entry)
