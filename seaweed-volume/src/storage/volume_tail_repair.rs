@@ -385,3 +385,561 @@ impl Volume {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::volume::VolumeSpec;
+    use tempfile::TempDir;
+
+    // A torn tail is what a crash between the two appends of a write leaves:
+    // the needle is in the .dat, its entry never reached the .idx. These
+    // tests write needles (and deletes) normally, drop the last .idx
+    // entries, cut or damage the .dat as a crash would, and reload the
+    // volume through the real load path — the same fixture Go's
+    // volume_checking_tail_repair_test.go builds.
+
+    enum Op {
+        Write(u64),
+        Del(u64),
+        Empty(u64), // a write with no data appends a size 0 record like a delete
+    }
+
+    struct TornFixture {
+        _tmp: TempDir,
+        dir: String,
+        starts: Vec<i64>, // .dat offset of each op's record
+        end: i64,         // .dat size after every op
+        written: HashMap<u64, Vec<u8>>,
+    }
+
+    impl TornFixture {
+        fn dat_path(&self) -> String {
+            format!("{}/1.dat", self.dir)
+        }
+        fn idx_path(&self) -> String {
+            format!("{}/1.idx", self.dir)
+        }
+        fn dat_size(&self) -> i64 {
+            fs::metadata(self.dat_path()).unwrap().len() as i64
+        }
+        fn idx_size(&self) -> i64 {
+            fs::metadata(self.idx_path()).unwrap().len() as i64
+        }
+        /// An offset inside the body of op i's record: past its header,
+        /// short of its end.
+        fn mid_record(&self, i: usize) -> i64 {
+            let end = if i + 1 < self.starts.len() {
+                self.starts[i + 1]
+            } else {
+                self.end
+            };
+            self.starts[i]
+                + NEEDLE_HEADER_SIZE as i64
+                + (end - self.starts[i] - NEEDLE_HEADER_SIZE as i64) / 2
+        }
+        fn truncate_dat(&self, size: i64) {
+            OpenOptions::new()
+                .write(true)
+                .open(self.dat_path())
+                .unwrap()
+                .set_len(size as u64)
+                .unwrap();
+        }
+        /// Damage the data of the record at the given offset so its CRC no
+        /// longer matches.
+        fn flip_data_byte(&self, at: i64) {
+            // Positional writes without Unix-only FileExt so the helper also
+            // builds on Windows; single-threaded, no reader can move the
+            // offset between seek and write.
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(self.dat_path())
+                .unwrap();
+            let pos = (at + NEEDLE_HEADER_SIZE as i64 + 4) as u64; // past the 4-byte DataSize field
+            let mut b = [0u8; 1];
+            file.seek(SeekFrom::Start(pos)).unwrap();
+            file.read_exact(&mut b).unwrap();
+            b[0] ^= 0xff;
+            file.seek(SeekFrom::Start(pos)).unwrap();
+            file.write_all(&b).unwrap();
+        }
+        /// Zero the DataSize field and the first data byte (read as the
+        /// flags once DataSize is 0): the header still claims a body, the
+        /// body parses as an empty needle.
+        fn zero_data_size(&self, at: i64) {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .open(self.dat_path())
+                .unwrap();
+            file.seek(SeekFrom::Start(at as u64 + NEEDLE_HEADER_SIZE as u64))
+                .unwrap();
+            file.write_all(&[0u8; 5]).unwrap();
+        }
+    }
+
+    fn open_volume(dir: &str) -> Volume {
+        Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap()
+    }
+
+    fn new_needle(id: u64) -> Needle {
+        let data = format!("needle-{id}-payload").into_bytes();
+        Needle {
+            id: NeedleId(id),
+            cookie: Cookie(0x1234_0000 + id as u32),
+            data,
+            ..Needle::default()
+        }
+    }
+
+    /// Run ops against a fresh volume (each op appends one .dat record and
+    /// one .idx entry), drop it, and remove the last `unindexed` entries.
+    fn build_fixture(ops: &[Op], unindexed: usize) -> TornFixture {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut f = TornFixture {
+            _tmp: tmp,
+            dir,
+            starts: Vec::new(),
+            end: 0,
+            written: HashMap::new(),
+        };
+        {
+            let v = open_volume(&f.dir);
+            for op in ops {
+                f.starts.push(v.current_dat_file_size().unwrap() as i64);
+                match op {
+                    Op::Write(id) => {
+                        let mut n = new_needle(*id);
+                        v.write_needle(&mut n, true, false).unwrap();
+                        f.written.insert(*id, n.data.clone());
+                    }
+                    Op::Del(id) => {
+                        v.delete_needle(&mut Needle {
+                            id: NeedleId(*id),
+                            ..Needle::default()
+                        })
+                        .unwrap();
+                    }
+                    Op::Empty(id) => {
+                        let mut n = Needle {
+                            id: NeedleId(*id),
+                            cookie: Cookie(0x1234_0000 + *id as u32),
+                            ..Needle::default()
+                        };
+                        v.write_needle(&mut n, true, false).unwrap();
+                        f.written.insert(*id, n.data.clone());
+                    }
+                }
+            }
+            f.end = v.current_dat_file_size().unwrap() as i64;
+        }
+        if unindexed > 0 {
+            let idx_file = OpenOptions::new().write(true).open(f.idx_path()).unwrap();
+            let idx_size = idx_file.metadata().unwrap().len();
+            idx_file
+                .set_len(idx_size - unindexed as u64 * NEEDLE_MAP_ENTRY_SIZE as u64)
+                .unwrap();
+        }
+        f
+    }
+
+    fn assert_readable(v: &Volume, id: u64, want: &[u8]) {
+        let mut n = Needle {
+            id: NeedleId(id),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n).unwrap();
+        assert_eq!(n.data, want, "needle {id} reads back different data");
+    }
+
+    fn assert_not_readable(v: &Volume, id: u64) {
+        let mut n = Needle {
+            id: NeedleId(id),
+            ..Needle::default()
+        };
+        assert!(
+            v.read_needle(&mut n).is_err(),
+            "needle {id} reads back; it should be deleted or absent"
+        );
+    }
+
+    fn writes(ids: &[u64]) -> Vec<Op> {
+        ids.iter().map(|id| Op::Write(*id)).collect()
+    }
+
+    struct RepairCase {
+        name: &'static str,
+        ops: Vec<Op>,
+        unindexed: usize,
+        damage: Option<fn(&TornFixture)>,
+        want_dat_size: fn(&TornFixture) -> i64,
+        reindexed: usize,
+        readable: &'static [u64],
+        absent: &'static [u64],
+    }
+
+    #[test]
+    fn volume_load_repairs_unindexed_dat_tail() {
+        let cases = vec![
+            RepairCase {
+                name: "one complete unindexed needle is re-indexed",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[1, 2, 3, 4],
+                absent: &[],
+            },
+            RepairCase {
+                name: "two complete unindexed needles are re-indexed",
+                ops: writes(&[1, 2, 3, 4, 5]),
+                unindexed: 2,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 2,
+                readable: &[1, 2, 3, 4, 5],
+                absent: &[],
+            },
+            RepairCase {
+                name: "an unindexed delete is re-indexed as a tombstone",
+                ops: {
+                    let mut ops = writes(&[1, 2, 3]);
+                    ops.push(Op::Del(2));
+                    ops
+                },
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[1, 3],
+                absent: &[2],
+            },
+            RepairCase {
+                name: "a partial header is cut",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: Some(|f| f.truncate_dat(f.starts[3] + 7)),
+                want_dat_size: |f| f.starts[3],
+                reindexed: 0,
+                readable: &[1, 2, 3],
+                absent: &[4],
+            },
+            RepairCase {
+                name: "a partial body is cut",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: Some(|f| f.truncate_dat(f.mid_record(3))),
+                want_dat_size: |f| f.starts[3],
+                reindexed: 0,
+                readable: &[1, 2, 3],
+                absent: &[4],
+            },
+            RepairCase {
+                name: "a complete needle is re-indexed and the partial one after it cut",
+                ops: writes(&[1, 2, 3, 4, 5]),
+                unindexed: 2,
+                damage: Some(|f| f.truncate_dat(f.mid_record(4))),
+                want_dat_size: |f| f.starts[4],
+                reindexed: 1,
+                readable: &[1, 2, 3, 4],
+                absent: &[5],
+            },
+            RepairCase {
+                name: "a last needle with a bad CRC is cut",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: Some(|f| f.flip_data_byte(f.starts[3])),
+                want_dat_size: |f| f.starts[3],
+                reindexed: 0,
+                readable: &[1, 2, 3],
+                absent: &[4],
+            },
+            RepairCase {
+                name: "a last needle whose data size field reads 0 is cut",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: Some(|f| f.zero_data_size(f.starts[3])),
+                want_dat_size: |f| f.starts[3],
+                reindexed: 0,
+                readable: &[1, 2, 3],
+                absent: &[4],
+            },
+            RepairCase {
+                name: "an unindexed empty write of a new id stays an empty needle",
+                ops: {
+                    let mut ops = writes(&[1, 2]);
+                    ops.push(Op::Empty(3));
+                    ops
+                },
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[1, 2, 3],
+                absent: &[],
+            },
+            RepairCase {
+                name: "an unindexed empty write after a delete of the same id stays an empty needle",
+                ops: {
+                    let mut ops = writes(&[1, 2]);
+                    ops.push(Op::Del(2));
+                    ops.push(Op::Empty(2));
+                    ops
+                },
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[1, 2],
+                absent: &[],
+            },
+            RepairCase {
+                name: "an unindexed write and delete of the same id are re-indexed in order",
+                ops: {
+                    let mut ops = writes(&[1, 2, 3]);
+                    ops.push(Op::Del(3));
+                    ops
+                },
+                unindexed: 2,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 2,
+                readable: &[1, 2],
+                absent: &[3],
+            },
+            RepairCase {
+                name: "an unindexed empty write and its delete are re-indexed in order",
+                ops: {
+                    let mut ops = writes(&[1, 2]);
+                    ops.push(Op::Empty(3));
+                    ops.push(Op::Del(3));
+                    ops
+                },
+                unindexed: 2,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 2,
+                readable: &[1, 2],
+                absent: &[3],
+            },
+            RepairCase {
+                name: "a partial needle after an indexed tombstone is cut",
+                ops: {
+                    let mut ops = writes(&[1, 2, 3]);
+                    ops.push(Op::Del(2));
+                    ops.push(Op::Write(4));
+                    ops
+                },
+                unindexed: 1,
+                damage: Some(|f| f.truncate_dat(f.mid_record(4))),
+                want_dat_size: |f| f.starts[4],
+                reindexed: 0,
+                readable: &[1, 3],
+                absent: &[2, 4],
+            },
+        ];
+        for tc in cases {
+            let f = build_fixture(&tc.ops, tc.unindexed);
+            if let Some(damage) = tc.damage {
+                damage(&f);
+            }
+            let idx_before = f.idx_size();
+
+            {
+                let v = open_volume(&f.dir);
+                assert!(
+                    !v.is_read_only(),
+                    "{}: volume with an unindexed .dat tail loaded read-only",
+                    tc.name
+                );
+                assert_eq!(
+                    f.dat_size(),
+                    (tc.want_dat_size)(&f),
+                    "{}: .dat size after load",
+                    tc.name
+                );
+                assert_eq!(
+                    f.idx_size(),
+                    idx_before + tc.reindexed as i64 * NEEDLE_MAP_ENTRY_SIZE as i64,
+                    "{}: .idx size after load ({} entries re-indexed)",
+                    tc.name,
+                    tc.reindexed
+                );
+                for &id in tc.readable {
+                    assert_readable(&v, id, &f.written[&id]);
+                }
+                for &id in tc.absent {
+                    assert_not_readable(&v, id);
+                }
+                let mut extra = new_needle(100);
+                v.write_needle(&mut extra, true, false)
+                    .expect("write after repair");
+                assert_readable(&v, 100, &extra.data);
+            }
+
+            // the repaired volume reloads clean, and keeps what it indexed
+            let v = open_volume(&f.dir);
+            assert!(
+                !v.is_read_only(),
+                "{}: repaired volume loaded read-only on the next load",
+                tc.name
+            );
+            for &id in tc.readable {
+                assert_readable(&v, id, &f.written[&id]);
+            }
+            assert_readable(&v, 100, b"needle-100-payload");
+        }
+    }
+
+    /// Every tail an interrupted append does not explain is left exactly as
+    /// it is, and the volume loads read-only as before.
+    #[test]
+    fn volume_load_keeps_unexplained_tail_read_only() {
+        struct ReadOnlyCase {
+            name: &'static str,
+            ops: Vec<Op>,
+            unindexed: usize,
+            damage: fn(&TornFixture),
+        }
+        let cases = vec![
+            ReadOnlyCase {
+                name: "the last indexed needle's id differs from its entry",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: |f| {
+                    let mut file = OpenOptions::new().write(true).open(f.dat_path()).unwrap();
+                    file.seek(SeekFrom::Start(
+                        (f.starts[2] + COOKIE_SIZE as i64 + NEEDLE_ID_SIZE as i64 - 1) as u64,
+                    ))
+                    .unwrap();
+                    file.write_all(&[0xff]).unwrap();
+                },
+            },
+            ReadOnlyCase {
+                name: "the last indexed needle fails its CRC",
+                ops: writes(&[1, 2, 3, 4]),
+                unindexed: 1,
+                damage: |f| f.flip_data_byte(f.starts[2]),
+            },
+            ReadOnlyCase {
+                name: "a zeroed data size field followed by more data",
+                ops: writes(&[1, 2, 3, 4, 5]),
+                unindexed: 2,
+                damage: |f| f.zero_data_size(f.starts[3]),
+            },
+            ReadOnlyCase {
+                name: "a bad CRC followed by more data",
+                ops: writes(&[1, 2, 3, 4, 5]),
+                unindexed: 2,
+                damage: |f| f.flip_data_byte(f.starts[3]),
+            },
+            ReadOnlyCase {
+                name: "zero bytes past the last needle (id 0)",
+                ops: writes(&[1, 2, 3]),
+                unindexed: 0,
+                damage: |f| {
+                    let mut file = OpenOptions::new().append(true).open(f.dat_path()).unwrap();
+                    file.write_all(&[0u8; 64]).unwrap();
+                },
+            },
+            ReadOnlyCase {
+                name: "the index ends past the data",
+                ops: writes(&[1, 2, 3]),
+                unindexed: 0,
+                damage: |f| f.truncate_dat(f.end - 10),
+            },
+        ];
+        for tc in cases {
+            let f = build_fixture(&tc.ops, tc.unindexed);
+            (tc.damage)(&f);
+            let (dat_before, idx_before) = (f.dat_size(), f.idx_size());
+
+            let v = open_volume(&f.dir);
+            assert!(
+                v.is_read_only(),
+                "{}: volume with an unexplained tail loaded writable",
+                tc.name
+            );
+            assert_eq!(
+                f.dat_size(),
+                dat_before,
+                "{}: .dat changed on load",
+                tc.name
+            );
+            assert_eq!(
+                f.idx_size(),
+                idx_before,
+                "{}: .idx changed on load",
+                tc.name
+            );
+        }
+    }
+
+    #[test]
+    fn volume_load_leaves_clean_volume_untouched() {
+        let f = build_fixture(
+            &{
+                let mut ops = writes(&[1, 2, 3]);
+                ops.push(Op::Del(2));
+                ops
+            },
+            0,
+        );
+        let (dat_before, idx_before) = (f.dat_size(), f.idx_size());
+
+        let v = open_volume(&f.dir);
+        assert!(!v.is_read_only(), "clean volume loaded read-only");
+        assert_eq!(f.dat_size(), dat_before, "clean .dat changed");
+        assert_eq!(f.idx_size(), idx_before, "clean .idx changed");
+        assert_readable(&v, 1, &f.written[&1]);
+        assert_readable(&v, 3, &f.written[&3]);
+        assert_not_readable(&v, 2);
+    }
+
+    /// A volume persisted read-only is not repaired: the tail stays for
+    /// whoever marked it.
+    #[test]
+    fn volume_load_leaves_read_only_volume_tail_alone() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let v = open_volume(&dir);
+            for id in [1u64, 2, 99] {
+                let mut n = new_needle(id);
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.set_read_only_persist(false, true).unwrap();
+        }
+        let idx_path = format!("{dir}/1.idx");
+        let idx_len = fs::metadata(&idx_path).unwrap().len();
+        OpenOptions::new()
+            .write(true)
+            .open(&idx_path)
+            .unwrap()
+            .set_len(idx_len - NEEDLE_MAP_ENTRY_SIZE as u64)
+            .unwrap();
+        let dat_path = format!("{dir}/1.dat");
+        let (dat_before, idx_before) = (
+            fs::metadata(&dat_path).unwrap().len(),
+            fs::metadata(&idx_path).unwrap().len(),
+        );
+
+        let v = open_volume(&dir);
+        assert!(
+            v.is_read_only(),
+            "volume persisted read-only loaded writable"
+        );
+        assert_eq!(fs::metadata(&dat_path).unwrap().len(), dat_before);
+        assert_eq!(fs::metadata(&idx_path).unwrap().len(), idx_before);
+    }
+}
