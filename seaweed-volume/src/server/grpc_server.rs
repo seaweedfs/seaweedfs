@@ -1353,6 +1353,7 @@ impl VolumeServer for VolumeGrpcService {
                     // Go's CommitCompact waits out leased readers under
                     // dataFileAccessLock — do it without holding the store
                     // guard, so a slow download stalls only this vacuum.
+                    let _sync_guard = vol.data_file_sync_lock().lock().unwrap();
                     let _lease = vol.instance().write_lock();
                     let is_read_only = vol.is_read_only();
                     vol.commit_compact_held()
@@ -4723,6 +4724,7 @@ impl VolumeServer for VolumeGrpcService {
                     // backend swap: between clearing the remote-only write
                     // restriction and attaching the local .dat a write would
                     // pass check_writable and then fail on a missing dat_file.
+                    let _sync_guard = vol.data_file_sync_lock().lock().unwrap();
                     let _lease = vol.instance().write_lock();
 
                     // The store guard dropped before the lease was taken, so an

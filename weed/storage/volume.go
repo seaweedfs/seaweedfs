@@ -43,7 +43,7 @@ type Volume struct {
 
 	super_block.SuperBlock
 
-	dataFileAccessLock   sync.RWMutex
+	dataFileAccessLock sync.RWMutex
 	// Serializes a data-file mutation with the sync that makes it durable:
 	// write, delete, lifecycle and compaction paths hold it for their whole
 	// critical section, while the fsync itself runs with dataFileAccessLock
@@ -320,18 +320,18 @@ func (v *Volume) SyncToDisk() {
 
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
-	v.dataFileSyncLock.Lock()
-	defer v.dataFileSyncLock.Unlock()
 	// Wait for any in-progress compaction to finish and claim the flag so no
 	// new compaction can start. This must happen BEFORE acquiring
-	// dataFileAccessLock to avoid deadlocking with CommitCompact which holds
-	// the flag while waiting for the lock.
+	// dataFileSyncLock and dataFileAccessLock to avoid deadlocking with
+	// CommitCompact which holds the flag while waiting for the locks.
 	for !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		time.Sleep(521 * time.Millisecond)
 		glog.Warningf("Volume Close wait for compaction %d", v.Id)
 	}
 	defer v.isCompactionInProgress.Store(false)
 
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 

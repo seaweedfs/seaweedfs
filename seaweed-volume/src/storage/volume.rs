@@ -1454,6 +1454,13 @@ impl Volume {
         self.data_file_access_control.clone()
     }
 
+    /// The mutation/sync serializer, for callers that manage the access
+    /// lease themselves (the `_held` lifecycle paths). Same lock order as
+    /// everywhere else: sync lock first, then the write lease, then `io`.
+    pub(crate) fn data_file_sync_lock(&self) -> &std::sync::Mutex<()> {
+        &self.data_file_sync_lock
+    }
+
     pub(crate) fn is_instance(&self, instance: &Arc<DataFileAccessControl>) -> bool {
         Arc::ptr_eq(instance, &self.data_file_access_control)
     }
@@ -5004,6 +5011,16 @@ impl Volume {
         // would stall every volume behind one slow client. The vacuum-commit
         // RPC uses the lease-holding path instead — it waits with no store
         // guard held, matching Go's blocking commit.
+        // The sync lock must come before the lease and be non-blocking like
+        // it: a durable write holds it across its fsync, and the commit must
+        // not swap files over an unpublished write — nor stall the store
+        // behind one.
+        let Ok(_sync_guard) = self.data_file_sync_lock.try_lock() else {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                COMMIT_WAITS_FOR_READS,
+            )));
+        };
         let Some(_lease) = self.data_file_access_control.try_write_lock() else {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -5013,7 +5030,9 @@ impl Volume {
         self.commit_compact_held()
     }
 
-    /// `commit_compact` for callers already holding the write lease.
+    /// `commit_compact` for callers already holding `data_file_sync_lock`
+    /// and the write lease — the swap must not land between a durable
+    /// write's append and its publish.
     pub(crate) fn commit_compact_held(&self) -> Result<(), VolumeError> {
         // A handle detached between lookup and lease must not swap compacted
         // files over the ones its remounted replacement now owns.

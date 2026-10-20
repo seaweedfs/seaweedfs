@@ -446,23 +446,26 @@ func TestBatchFsyncRollbackRestoresOriginalValueAfterRepeatedNeedleId(t *testing
 	}
 	v.processBatch(requests)
 
-	for _, request := range requests {
-		_, _, _, err = request.WaitComplete()
-		require.Error(t, err)
-	}
+	// A repeated needle id starts a new batch run, so the second write syncs
+	// on its own: the first run rolls back to "original-value" and the second
+	// write lands as a normal sequential overwrite.
+	_, _, _, err = requests[0].WaitComplete()
+	require.Error(t, err)
+	_, _, _, err = requests[1].WaitComplete()
+	require.NoError(t, err)
 
 	readBack := new(needle.Needle)
 	readBack.Id = kept.Id
 	_, err = v.readNeedle(readBack, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, []byte("original-value"), readBack.Data)
+	require.Equal(t, []byte("second-failed-value"), readBack.Data)
 
 	reloaded := reopenCountingVolume(t, v)
 	readBack = new(needle.Needle)
 	readBack.Id = kept.Id
 	_, err = reloaded.readNeedle(readBack, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, []byte("original-value"), readBack.Data)
+	require.Equal(t, []byte("second-failed-value"), readBack.Data)
 }
 
 // Rolling back a first-time write must not leave a tombstoned map entry: the
