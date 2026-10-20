@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -116,17 +118,42 @@ func (s3a *S3ApiServer) authorizeAnonymousObjectRead(r *http.Request, bucket, ob
 // public-read bucket. Anything else masks the miss as AccessDenied.
 func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket string) s3err.ErrorCode {
 	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
-	code, policyAllowed := s3a.checkPolicyWithEntry(r, bucket, "", string(s3_constants.ACTION_LIST), buildPrincipalARN(identity, r), nil)
+	object := mux.Vars(r)["object"]
+	// The caller's query parameters would otherwise retarget these checks
+	// (?policy resolves to GetBucketPolicy) or satisfy a prefix condition on an
+	// unrelated subtree, so each runs on a request with a fixed shape: a
+	// ListBucket scoped to the probed key, and a plain read of the key itself.
+	// A caller that could learn the key's existence either way — by listing or
+	// by getting it — gets the real miss.
+	listReq := r.Clone(r.Context())
+	listReq.URL = &url.URL{Path: "/" + bucket, RawQuery: url.Values{"prefix": {object}}.Encode()}
+	readReq := r.Clone(r.Context())
+	readReq.URL = &url.URL{Path: "/" + bucket + "/" + object}
+
+	principal := buildPrincipalARN(identity, r)
+	policyAllowed := false
+	code, allowed := s3a.checkPolicyWithEntry(listReq, bucket, "", string(s3_constants.ACTION_LIST), principal, nil)
 	if code != s3err.ErrNone {
 		return code
 	}
-	if s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, s3_constants.ACTION_LIST, bucket, "") {
+	policyAllowed = allowed
+	if !policyAllowed {
+		code, allowed = s3a.checkPolicyWithEntry(readReq, bucket, object, string(s3_constants.ACTION_READ), principal, nil)
+		if code != s3err.ErrNone {
+			return code
+		}
+		policyAllowed = allowed
+	}
+	if s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(listReq, identity, s3_constants.ACTION_LIST, bucket, "") ||
+		s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(readReq, identity, s3_constants.ACTION_READ, bucket, object) {
 		return s3err.ErrAccessDenied
 	}
 	if policyAllowed {
 		return s3err.ErrNone
 	}
-	if identity != nil && s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, bucket, "") == s3err.ErrNone {
+	if identity != nil &&
+		(s3a.iam.VerifyActionPermission(listReq, identity, s3_constants.ACTION_LIST, bucket, "") == s3err.ErrNone ||
+			s3a.iam.VerifyActionPermission(readReq, identity, s3_constants.ACTION_READ, bucket, object) == s3err.ErrNone) {
 		return s3err.ErrNone
 	}
 	if config, code := s3a.getBucketConfig(bucket); code == s3err.ErrNone && config.IsPublicRead {
