@@ -44,6 +44,11 @@ type Volume struct {
 	super_block.SuperBlock
 
 	dataFileAccessLock   sync.RWMutex
+	// Serializes a data-file mutation with the sync that makes it durable:
+	// write, delete, lifecycle and compaction paths hold it for their whole
+	// critical section, while the fsync itself runs with dataFileAccessLock
+	// released so readers of this volume do not wait on it.
+	dataFileSyncLock     sync.Mutex
 	superBlockAccessLock sync.Mutex
 
 	// The batch worker exists only once the volume takes a durable write. Most
@@ -129,6 +134,8 @@ func (v *Volume) FileName(ext string) (fileName string) {
 // gone. A no-op when the index already lives in newIdxDir. A derived .ldb is
 // not moved: the reload rebuilds it in newIdxDir from the .idx.
 func (v *Volume) RelocateIndexTo(newIdxDir string) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -290,22 +297,31 @@ func (v *Volume) DiskType() types.DiskType {
 }
 
 func (v *Volume) SyncToDisk() {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
-	if v.nm != nil {
-		if err := v.nm.Sync(); err != nil {
+	// Flush with the access lock dropped so readers are not stalled by the
+	// fsync; writers and file swaps stay excluded by dataFileSyncLock.
+	nm, backend := v.nm, v.DataBackend
+	v.dataFileAccessLock.Unlock()
+	if nm != nil {
+		if err := nm.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
 		}
 	}
-	if v.DataBackend != nil {
-		if err := v.DataBackend.Sync(); err != nil {
+	if backend != nil {
+		if err := backend.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
 		}
 	}
+	v.dataFileAccessLock.Lock()
 }
 
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	// Wait for any in-progress compaction to finish and claim the flag so no
 	// new compaction can start. This must happen BEFORE acquiring
 	// dataFileAccessLock to avoid deadlocking with CommitCompact which holds
@@ -331,6 +347,8 @@ func (v *Volume) Close() {
 // stale-false flag would make doDeleteRequest skip the new .dat's tombstones and
 // disable the phantom-.dat guard.
 func (v *Volume) SwapDataBackend(newBackend backend.BackendStorageFile, hasRemoteFile bool) {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	v.swapDataBackendLocked(newBackend, hasRemoteFile)

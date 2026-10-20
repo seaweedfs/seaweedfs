@@ -80,6 +80,8 @@ func (v *Volume) HasRemoteFile() bool {
 // backend concurrently. load() must instead use loadRemoteFileLocked, since it
 // can be reached with the lock already held (CommitCompact).
 func (v *Volume) LoadRemoteFile() error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	return v.loadRemoteFileLocked()

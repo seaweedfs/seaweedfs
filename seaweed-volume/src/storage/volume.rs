@@ -1247,6 +1247,12 @@ pub struct Volume {
     idx_syncs_for_test: std::sync::atomic::AtomicUsize,
     needle_map_kind: NeedleMapKind,
     data_file_access_control: Arc<DataFileAccessControl>,
+    /// Serializes a data-file mutation with the sync that makes it durable:
+    /// write, delete and lifecycle paths hold it for their whole critical
+    /// section, while the fsync itself runs with only the `io` read guard so
+    /// readers of this volume do not wait on it. Lock order is
+    /// `data_file_sync_lock` -> `data_file_access_control` -> `io`.
+    data_file_sync_lock: std::sync::Mutex<()>,
 
     /// Go's superBlockAccessLock.
     super_block: RwLock<SuperBlock>,
@@ -1370,6 +1376,7 @@ impl Volume {
             idx_syncs_for_test: Default::default(),
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
+            data_file_sync_lock: std::sync::Mutex::new(()),
             super_block: RwLock::new(SuperBlock {
                 replica_placement: replica_placement.unwrap_or_default(),
                 ttl: ttl.unwrap_or(crate::storage::needle::ttl::TTL::EMPTY),
@@ -1426,6 +1433,7 @@ impl Volume {
             idx_syncs_for_test: Default::default(),
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
+            data_file_sync_lock: std::sync::Mutex::new(()),
             super_block: RwLock::new(SuperBlock::default()),
             no_write: AtomicU8::new(0),
             io_unavailable: Arc::default(),
@@ -1980,6 +1988,7 @@ impl Volume {
     }
 
     pub(crate) fn load_remote_dat_file(&self) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
         self.load_remote_dat_file_io(&mut io)
@@ -2509,10 +2518,14 @@ impl Volume {
         check_cookie: bool,
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
-        let _guard = self.data_file_access_control.write_lock();
-        let mut io = self.io.write().unwrap();
-        self.check_writable()?;
-        self.do_write_request(&mut io, n, check_cookie, fsync)
+        // A single write is a one-entry run of the grouped path: identical
+        // outcome, and the fsync handling lives in one place.
+        debug_assert!(check_cookie, "every write_needle caller checks the cookie");
+        let _ = check_cookie;
+        let mut writes = [(std::mem::take(n), fsync)];
+        let mut results = self.write_needles_grouped(&mut writes);
+        *n = std::mem::replace(&mut writes[0].0, Needle::default());
+        results.pop().unwrap_or(Err(VolumeError::NotFound))
     }
 
     /// Write a batch of needles the way Go's processBatch does: one .dat
@@ -2527,8 +2540,13 @@ impl Volume {
         &self,
         writes: &mut [(Needle, bool)],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
-        let _guard = self.data_file_access_control.write_lock();
-        let mut io = self.io.write().unwrap();
+        // The sync lock serializes a .dat mutation with the flush that makes
+        // it durable: a failed sync's rollback can never clobber an append
+        // that slipped in behind it, and a compaction swap or unlink cannot
+        // land between the append and its sync. Readers never take it, and
+        // the write-side guards are dropped for the sync itself, so reads of
+        // this volume do not wait on fsync.
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let mut results = Vec::with_capacity(writes.len());
         let mut rest = writes;
         while !rest.is_empty() {
@@ -2536,8 +2554,10 @@ impl Volume {
             let len = rest.iter().take_while(|(n, _)| ids.insert(n.id)).count();
             let (run, tail) = std::mem::take(&mut rest).split_at_mut(len);
             if run.iter().any(|(_, fsync)| *fsync) {
-                results.extend(self.write_synced_run(&mut io, run));
+                results.extend(self.write_synced_run(run));
             } else {
+                let _guard = self.data_file_access_control.write_lock();
+                let mut io = self.io.write().unwrap();
                 for (n, _) in run.iter_mut() {
                     results.push(
                         self.check_writable()
@@ -2552,7 +2572,6 @@ impl Volume {
 
     fn write_synced_run(
         &self,
-        io: &mut VolumeIo,
         run: &mut [(Needle, bool)],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // Per entry: Some(offset) once appended, None when it dedups.
@@ -2560,63 +2579,82 @@ impl Volume {
         // Per entry: the I/O error streak once it is staged, where a write
         // sent on its own would have recorded its success.
         let mut marks = Vec::with_capacity(run.len());
-        let mut last_append_at_ns = io.last_append_at_ns;
+        let mut last_append_at_ns;
         let mut run_start = None;
         let mut sync = false;
-        for (n, fsync) in run.iter_mut() {
-            let r = self.append_unpublished(io, n, &mut last_append_at_ns);
-            marks.push(self.io_errors.mark());
-            if let Ok(Some(offset)) = r {
-                run_start.get_or_insert(offset);
-            }
-            // Only a durable entry that got this far needs the sync.
-            sync |= *fsync && r.is_ok();
-            staged.push(r);
-        }
-
-        if sync && let Err(e) = self.flush_dat(io) {
-            self.check_read_write_error(Some(&e));
-            if let Some(start) = run_start {
-                self.undo_unsynced_append(io, start);
-            }
-            let e = VolumeError::Io(e);
-            return staged
-                .into_iter()
-                .map(|r| r.and_then(|_| Err(run_error(&e))))
-                .collect();
-        }
-        io.last_append_at_ns = last_append_at_ns;
-        for ((n, _), r) in run.iter().zip(&staged) {
-            if matches!(r, Ok(Some(_))) && n.append_at_ns > io.last_write_append_at_ns {
-                io.last_write_append_at_ns = n.append_at_ns;
-                io.last_write_needle_key = n.id;
-                io.last_write_deleted = false;
+        {
+            // Append under the write guards, then drop them for the flush:
+            // readers need only `io`'s read side, while mutators and a
+            // compaction swap stay excluded by the caller's sync lock.
+            let _guard = self.data_file_access_control.write_lock();
+            let mut io = self.io.write().unwrap();
+            last_append_at_ns = io.last_append_at_ns;
+            for (n, fsync) in run.iter_mut() {
+                let r = self.append_unpublished(&mut io, n, &mut last_append_at_ns);
+                marks.push(self.io_errors.mark());
+                if let Ok(Some(offset)) = r {
+                    run_start.get_or_insert(offset);
+                }
+                // Only a durable entry that got this far needs the sync.
+                sync |= *fsync && r.is_ok();
+                staged.push(r);
             }
         }
 
-        // A durable entry that fails to publish stops the volume taking
-        // writes, so the entries after it are refused the way a lone
-        // write would be.
-        let mut refused = false;
-        for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
-            if refused {
-                *r = Err(self
-                    .check_writable()
-                    .err()
-                    .unwrap_or(VolumeError::ReadOnly(self.id)));
-            } else if let Ok(Some(offset)) = *r
-                && let Err(e) = self.publish_write(io, n, offset, *fsync)
-            {
-                *r = Err(e);
-                refused = *fsync;
+        if sync {
+            let io = self.io.read().unwrap();
+            if let Err(e) = self.flush_dat(&io) {
+                self.check_read_write_error(Some(&e));
+                if let Some(start) = run_start {
+                    self.undo_unsynced_append(&io, start);
+                }
+                let e = VolumeError::Io(e);
+                return staged
+                    .into_iter()
+                    .map(|r| r.and_then(|_| Err(run_error(&e))))
+                    .collect();
             }
         }
 
-        if sync && let Err(e) = self.flush_idx(io) {
-            return staged
-                .into_iter()
-                .map(|r| r.and_then(|_| Err(run_error(&e))))
-                .collect();
+        {
+            let _guard = self.data_file_access_control.write_lock();
+            let mut io = self.io.write().unwrap();
+            io.last_append_at_ns = last_append_at_ns;
+            for ((n, _), r) in run.iter().zip(&staged) {
+                if matches!(r, Ok(Some(_))) && n.append_at_ns > io.last_write_append_at_ns {
+                    io.last_write_append_at_ns = n.append_at_ns;
+                    io.last_write_needle_key = n.id;
+                    io.last_write_deleted = false;
+                }
+            }
+
+            // A durable entry that fails to publish stops the volume taking
+            // writes, so the entries after it are refused the way a lone
+            // write would be.
+            let mut refused = false;
+            for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
+                if refused {
+                    *r = Err(self
+                        .check_writable()
+                        .err()
+                        .unwrap_or(VolumeError::ReadOnly(self.id)));
+                } else if let Ok(Some(offset)) = *r
+                    && let Err(e) = self.publish_write(&mut io, n, offset, *fsync)
+                {
+                    *r = Err(e);
+                    refused = *fsync;
+                }
+            }
+        }
+
+        if sync {
+            let io = self.io.read().unwrap();
+            if let Err(e) = self.flush_idx(&io) {
+                return staged
+                    .into_iter()
+                    .map(|r| r.and_then(|_| Err(run_error(&e))))
+                    .collect();
+            }
         }
 
         let written = run
@@ -2630,7 +2668,9 @@ impl Volume {
             // Sent one at a time, the last write to land would have cleared
             // the streak of the appends before it, and the ones after it
             // would have failed on top of that.
-            self.finish_write(io, last_modified, sync, marks[last]);
+            let _guard = self.data_file_access_control.write_lock();
+            let mut io = self.io.write().unwrap();
+            self.finish_write(&mut io, last_modified, sync, marks[last]);
         }
 
         run.iter()
@@ -3082,6 +3122,7 @@ impl Volume {
 
     /// Delete a needle from the volume.
     pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
         if self.is_closed() {
@@ -3981,6 +4022,7 @@ impl Volume {
         offset: Offset,
         size: Size,
     ) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
         if let Some(ref mut nm) = io.nm {
@@ -4005,6 +4047,7 @@ impl Volume {
         // The flag flip and the .vif save are one critical section with the idx
         // attach: Go's markVolumeReadonly runs under dataFileAccessLock, so a
         // racing mark-writable cannot interleave a save of half-applied state.
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         self.set_read_only_persist_held(can_delete, persist)
     }
@@ -4089,6 +4132,7 @@ impl Volume {
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let (was_no_write_or_delete, was_no_write_can_delete) = self.no_write_flags();
         // Remote-tiered volumes must stay no_write_can_delete regardless of marks.
@@ -4187,6 +4231,7 @@ impl Volume {
         &self,
         f: impl FnOnce(&mut Vec<PbRemoteFile>),
     ) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         self.update_remote_files_held(f)
     }
@@ -4451,6 +4496,7 @@ impl Volume {
 
     /// Change the replication placement and rewrite the super block.
     pub fn set_replica_placement(&self, rp: ReplicaPlacement) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let bytes = {
             let mut sb = self.super_block.write().unwrap();
@@ -4621,6 +4667,7 @@ impl Volume {
 
     /// Write a raw needle blob at a specific offset in the .dat file.
     pub fn write_needle_blob(&self, offset: i64, needle_blob: &[u8]) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly(self.id));
@@ -4652,6 +4699,7 @@ impl Volume {
         needle_blob: &[u8],
         size: Size,
     ) -> Result<(), VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         // nm.put on a read-only volume fails only after the blob is appended to .dat.
         if self.is_read_only() {
@@ -5356,6 +5404,7 @@ impl Volume {
     /// Go's `Volume.Close`: the write lease excludes in-flight I/O — with a
     /// shared handle, `&mut self` no longer provides that exclusion.
     pub fn close(&self) {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         self.closed.store(true, Ordering::Release);
         self.close_locked();
@@ -5401,6 +5450,7 @@ impl Volume {
         if self.is_compacting() {
             return Err(self.compacting_error());
         }
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
 
         if self.dir_idx() == new_idx_dir {
@@ -5463,6 +5513,7 @@ impl Volume {
     ) -> Result<(), VolumeError> {
         // Go's Destroy holds dataFileAccessLock: file unlinking must exclude
         // in-flight I/O from a shared handle, not just borrow exclusivity.
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         // Either enabled check may pass: a volume with no live data qualifies
         // whether it reads empty or as all garbage. Byte counters, not counts:

@@ -140,6 +140,8 @@ var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 // true the cloud-tier object backing the volume is left intact — used by
 // moves where another server is taking over the same .vif.
 func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	return v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData)
@@ -264,6 +266,8 @@ func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) bool {
 
 func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -297,7 +301,14 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	if err != nil {
 		return
 	}
-	if syncErr := v.DataBackend.Sync(); syncErr != nil {
+	// fsync with the access lock dropped so same-volume reads do not wait on
+	// it; writers and compaction stay excluded by dataFileSyncLock, so the
+	// rollback below still runs before any other append can land.
+	backend := v.DataBackend
+	v.dataFileAccessLock.Unlock()
+	syncErr := backend.Sync()
+	v.dataFileAccessLock.Lock()
+	if syncErr != nil {
 		v.checkReadWriteError(syncErr)
 		if !isUnchanged {
 			v.rollbackUnflushedWrite(n, offset, end, priorOffset, priorSize, hasPrior)
@@ -449,6 +460,8 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) 
 
 func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -516,6 +529,8 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 }
 
 func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -582,8 +597,15 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 	}
 
 	// if sync error the batch is not durable; restore it before another
-	// operation observes the volume
-	if syncErr := v.DataBackend.Sync(); syncErr != nil {
+	// operation observes the volume. The sync runs with the access lock
+	// dropped so same-volume reads do not wait on it; writers and compaction
+	// stay excluded by dataFileSyncLock, so rollbackBatch still runs before
+	// any other append can land.
+	backend := v.DataBackend
+	v.dataFileAccessLock.Unlock()
+	syncErr := backend.Sync()
+	v.dataFileAccessLock.Lock()
+	if syncErr != nil {
 		v.checkReadWriteError(syncErr)
 		v.lastAppendAtNs = batchLastAppendAtNs
 		v.lastWriteAppendAtNs = batchLastWriteAppendAtNs
@@ -673,6 +695,8 @@ func (v *Volume) stopWorker() {
 
 func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size) error {
 
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 

@@ -177,6 +177,8 @@ func (v *Volume) CommitCompact() error {
 	}
 	defer v.isCompactionInProgress.Store(false)
 
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -367,6 +369,8 @@ func (v *Volume) cleanupCompact() error {
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll
 	// forward to, so removing them mid-commit would strand a decided swap.
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if util.FileExists(v.FileName(".cpc")) {
