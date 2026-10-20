@@ -11,7 +11,19 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+// errOwnerlessBucket marks a table bucket that has the marker but no
+// metadata: damaged, and answered with the operation's own denial rather than
+// letting the caller name itself the bucket's owner before any check runs.
+var errOwnerlessBucket = fmt.Errorf("table bucket has no owner metadata")
+
+// mayRepairOwnerlessBucket reports whether the caller may repair a bucket in
+// that state: the admin or a trusted internal handler.
+func (h *S3TablesHandler) mayRepairOwnerlessBucket(r *http.Request) bool {
+	return h.trusted || h.getAccountID(r) == s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r))
+}
 
 // handleCreateNamespace creates a new namespace in a table bucket
 func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
@@ -66,6 +78,9 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 				if entryResp.Entry == nil || !IsTableBucketEntry(entryResp.Entry) {
 					return filer_pb.ErrNotFound
 				}
+				if !h.mayRepairOwnerlessBucket(r) {
+					return errOwnerlessBucket
+				}
 				bucketMetadata = tableBucketMetadata{
 					Name:           bucketName,
 					CreatedAt:      time.Now(),
@@ -101,6 +116,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	})
 
 	if err != nil {
+		if errors.Is(err, errOwnerlessBucket) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+			return ErrAccessDenied
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
