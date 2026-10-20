@@ -156,11 +156,15 @@ func (store *MemoryStore) UpdateUser(ctx context.Context, username string, ident
 
 	// Deep copy to avoid mutation issues
 	identityCopy := store.deepCopyIdentity(identity)
-	store.users[username] = identityCopy
+	if identityCopy.Name != username {
+		// Rename: re-key the record, the way filer_etc does (delete old, save new).
+		delete(store.users, username)
+	}
+	store.users[identityCopy.Name] = identityCopy
 
 	// Re-index access keys
 	for _, cred := range identity.Credentials {
-		store.accessKeys[cred.AccessKey] = username
+		store.accessKeys[cred.AccessKey] = identityCopy.Name
 	}
 
 	return nil
