@@ -427,8 +427,20 @@ func TestCheckVolumeDataIntegrityVerifiesDeletionTail(t *testing.T) {
 	}
 	defer idxFile.Close()
 
+	// A read-only volume keeps its tail: the check must report it.
+	v.noWriteOrDelete = true
 	if _, err := CheckVolumeDataIntegrity(v, idxFile); err == nil {
 		t.Fatal("CheckVolumeDataIntegrity should detect bytes past a deletion-tombstone tail")
+	}
+
+	// A writable volume would have a torn needle re-indexed or cut, but 64 zero
+	// bytes are no needle (id 0): they are reported and left in place.
+	v.noWriteOrDelete = false
+	if _, err := CheckVolumeDataIntegrity(v, idxFile); err == nil {
+		t.Fatal("CheckVolumeDataIntegrity should detect zero bytes past a deletion-tombstone tail on a writable volume")
+	}
+	if got, _, _ := v.DataBackend.GetStat(); got != datSize+64 {
+		t.Fatalf(".dat is %d bytes after the check, want %d (nothing cut)", got, datSize+64)
 	}
 }
 
