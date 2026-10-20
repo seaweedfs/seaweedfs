@@ -17,6 +17,7 @@ import (
 	"github.com/jinzhu/copier"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -607,6 +608,7 @@ func iamApiServerWithCredentialManager() (*IamApiServer, *credential.CredentialM
 type countingConfigSaver struct {
 	cm        *credential.CredentialManager
 	putCalled int
+	policies  Policies
 }
 
 func (c *countingConfigSaver) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
@@ -616,6 +618,8 @@ func (c *countingConfigSaver) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigura
 	}
 	s3cfg.Identities = config.Identities
 	s3cfg.Policies = config.Policies
+	s3cfg.Groups = config.Groups
+	s3cfg.ServiceAccounts = config.ServiceAccounts
 	return nil
 }
 
@@ -625,10 +629,15 @@ func (c *countingConfigSaver) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigura
 }
 
 func (c *countingConfigSaver) GetPolicies(policies *Policies) error {
+	*policies = c.policies
+	if c.policies.Policies == nil && c.policies.InlinePolicies == nil {
+		return filer_pb.ErrNotFound
+	}
 	return nil
 }
 
 func (c *countingConfigSaver) PutPolicies(policies *Policies) error {
+	c.policies = *policies
 	return nil
 }
 

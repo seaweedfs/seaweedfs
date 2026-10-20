@@ -378,3 +378,48 @@ func TestMemoryStoreServiceAccountByAccessKey(t *testing.T) {
 		t.Errorf("Expected ErrAccessKeyNotFound after delete, got %v", err)
 	}
 }
+
+// TestMemoryStoreUpdateUserRename: UpdateUser with an identity whose Name
+// differs from the key must re-key the record, the way filer_etc does
+// (delete old, save new). The IAM rename path relies on this.
+func TestMemoryStoreUpdateUserRename(t *testing.T) {
+	store := &MemoryStore{}
+	if err := store.Initialize(util.GetViper(), "credential."); err != nil {
+		t.Fatalf("Failed to initialize store: %v", err)
+	}
+	ctx := context.Background()
+
+	err := store.CreateUser(ctx, &iam_pb.Identity{
+		Name:        "oldname",
+		Credentials: []*iam_pb.Credential{{AccessKey: "access123", SecretKey: "secret123"}},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	err = store.UpdateUser(ctx, "oldname", &iam_pb.Identity{
+		Name:        "newname",
+		Credentials: []*iam_pb.Credential{{AccessKey: "access123", SecretKey: "secret123"}},
+	})
+	if err != nil {
+		t.Fatalf("Failed to rename user via UpdateUser: %v", err)
+	}
+
+	if _, err := store.GetUser(ctx, "oldname"); err != credential.ErrUserNotFound {
+		t.Fatalf("Expected ErrUserNotFound for old name, got %v", err)
+	}
+	renamed, err := store.GetUser(ctx, "newname")
+	if err != nil {
+		t.Fatalf("Failed to get renamed user: %v", err)
+	}
+	if renamed.Name != "newname" {
+		t.Errorf("Expected 'newname', got '%s'", renamed.Name)
+	}
+	byKey, err := store.GetUserByAccessKey(ctx, "access123")
+	if err != nil {
+		t.Fatalf("Access key must resolve to the renamed user: %v", err)
+	}
+	if byKey.Name != "newname" {
+		t.Errorf("Expected access key owner 'newname', got '%s'", byKey.Name)
+	}
+}
