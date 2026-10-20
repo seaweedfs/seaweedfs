@@ -127,8 +127,15 @@ func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket str
 	// by getting it — gets the real miss.
 	listReq := r.Clone(r.Context())
 	listReq.URL = &url.URL{Path: "/" + bucket, RawQuery: url.Values{"prefix": {object}}.Encode()}
+	// versionId must survive: a read of a specific version resolves to
+	// s3:GetObjectVersion, and dropping it would let a GetObject grant answer
+	// for versions the caller may not read.
+	readQuery := url.Values{}
+	if v := r.URL.Query().Get("versionId"); v != "" {
+		readQuery.Set("versionId", v)
+	}
 	readReq := r.Clone(r.Context())
-	readReq.URL = &url.URL{Path: "/" + bucket + "/" + object}
+	readReq.URL = &url.URL{Path: "/" + bucket + "/" + object, RawQuery: readQuery.Encode()}
 
 	principal := buildPrincipalARN(identity, r)
 	policyAllowed := false
