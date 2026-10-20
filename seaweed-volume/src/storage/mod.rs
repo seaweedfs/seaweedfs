@@ -11,6 +11,7 @@ pub mod store_ec_mirror;
 pub mod store_ec_reconcile;
 pub mod super_block;
 pub mod types;
+pub mod vid_stamp;
 pub mod volume;
 pub mod volume_idx_rebuild;
 pub mod volume_idx_repair;

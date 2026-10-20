@@ -46,6 +46,8 @@ func (ms *MasterServer) heartbeatResponse() *master_pb.HeartbeatResponse {
 	return &master_pb.HeartbeatResponse{
 		VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 		Preallocate:     ms.preallocateSize > 0,
+		MaxVolumeId:     uint32(ms.Topo.GetMaxVolumeId()),
+		TopologyId:      ms.Topo.GetTopologyId(),
 	}
 }
 
@@ -137,6 +139,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 	}()
 
+	var echoedVid needle.VolumeId
+	var echoedTopoId string
 	for {
 		heartbeat, err := stream.Recv()
 		if err != nil {
@@ -179,6 +183,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
+		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
 		if dn == nil {
 			// Skip delta heartbeat for volume server versions  better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
 			if heartbeat.Ip == "" {
@@ -206,6 +211,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
 			dn.Counter++
 		}
@@ -342,6 +348,19 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
+		}
+
+		// Every connected server keeps a durable copy of the bound. Echo it
+		// whenever it moved so one veteran can restore it after state loss,
+		// even while the offline server that held the high ids never rejoins.
+		if vid, topoId := ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId(); vid != echoedVid || topoId != echoedTopoId {
+			response := ms.heartbeatResponse()
+			if err := stream.Send(response); err != nil {
+				glog.Warningf("SendHeartbeat.Send bound echo %v", err)
+				return err
+			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 		}
 	}
 }

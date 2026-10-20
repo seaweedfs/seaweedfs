@@ -130,8 +130,13 @@ type Heartbeat struct {
 	// place of `volumes`. A master that does not understand this never sets
 	// volume_digest_supported, so it keeps being sent the whole list.
 	ChangedVolumes []*VolumeInformationMessage `protobuf:"bytes,28,rep,name=changed_volumes,json=changedVolumes,proto3" json:"changed_volumes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Highest volume id this server has ever observed, persisted locally. Fed
+	// by HeartbeatResponse.max_volume_id echoes and by AllocateVolume requests.
+	MaxVolumeIdSeen uint32 `protobuf:"varint,29,opt,name=max_volume_id_seen,json=maxVolumeIdSeen,proto3" json:"max_volume_id_seen,omitempty"`
+	// Topology id of the master cluster this server last heartbeated to.
+	LastSeenTopologyId string `protobuf:"bytes,30,opt,name=last_seen_topology_id,json=lastSeenTopologyId,proto3" json:"last_seen_topology_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -339,6 +344,20 @@ func (x *Heartbeat) GetChangedVolumes() []*VolumeInformationMessage {
 	return nil
 }
 
+func (x *Heartbeat) GetMaxVolumeIdSeen() uint32 {
+	if x != nil {
+		return x.MaxVolumeIdSeen
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetLastSeenTopologyId() string {
+	if x != nil {
+		return x.LastSeenTopologyId
+	}
+	return ""
+}
+
 type HeartbeatResponse struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	VolumeSizeLimit        uint64                 `protobuf:"varint,1,opt,name=volume_size_limit,json=volumeSizeLimit,proto3" json:"volume_size_limit,omitempty"`
@@ -354,8 +373,14 @@ type HeartbeatResponse struct {
 	// The master compares volume digests, so a server that reports one may send
 	// changed_volumes in place of its whole list.
 	VolumeDigestSupported bool `protobuf:"varint,9,opt,name=volume_digest_supported,json=volumeDigestSupported,proto3" json:"volume_digest_supported,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// The leader's current allocation bound; servers persist it and report it
+	// back as max_volume_id_seen so the bound survives master state loss.
+	MaxVolumeId uint32 `protobuf:"varint,10,opt,name=max_volume_id,json=maxVolumeId,proto3" json:"max_volume_id,omitempty"`
+	// The leader's cluster identity; a different value reported back later
+	// means the master's state was rebuilt.
+	TopologyId    string `protobuf:"bytes,11,opt,name=topology_id,json=topologyId,proto3" json:"topology_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HeartbeatResponse) Reset() {
@@ -449,6 +474,20 @@ func (x *HeartbeatResponse) GetVolumeDigestSupported() bool {
 		return x.VolumeDigestSupported
 	}
 	return false
+}
+
+func (x *HeartbeatResponse) GetMaxVolumeId() uint32 {
+	if x != nil {
+		return x.MaxVolumeId
+	}
+	return 0
+}
+
+func (x *HeartbeatResponse) GetTopologyId() string {
+	if x != nil {
+		return x.TopologyId
+	}
+	return ""
 }
 
 type VolumeInformationMessage struct {
@@ -5058,7 +5097,7 @@ const file_master_proto_rawDesc = "" +
 	"\adisk_id\x18\x01 \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12(\n" +
-	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xf0\v\n" +
+	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xd0\f\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -5090,7 +5129,9 @@ const file_master_proto_rawDesc = "" +
 	"\x10disk_total_bytes\x18\x19 \x03(\v2(.master_pb.Heartbeat.DiskTotalBytesEntryR\x0ediskTotalBytes\x12O\n" +
 	"\x0fdisk_free_bytes\x18\x1a \x03(\v2'.master_pb.Heartbeat.DiskFreeBytesEntryR\rdiskFreeBytes\x12(\n" +
 	"\rvolume_digest\x18\x1b \x01(\x04H\x00R\fvolumeDigest\x88\x01\x01\x12L\n" +
-	"\x0fchanged_volumes\x18\x1c \x03(\v2#.master_pb.VolumeInformationMessageR\x0echangedVolumes\x1aB\n" +
+	"\x0fchanged_volumes\x18\x1c \x03(\v2#.master_pb.VolumeInformationMessageR\x0echangedVolumes\x12+\n" +
+	"\x12max_volume_id_seen\x18\x1d \x01(\rR\x0fmaxVolumeIdSeen\x121\n" +
+	"\x15last_seen_topology_id\x18\x1e \x01(\tR\x12lastSeenTopologyId\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\x1aA\n" +
@@ -5100,7 +5141,7 @@ const file_master_proto_rawDesc = "" +
 	"\x12DiskFreeBytesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01B\x10\n" +
-	"\x0e_volume_digest\"\xbc\x03\n" +
+	"\x0e_volume_digest\"\x81\x04\n" +
 	"\x11HeartbeatResponse\x12*\n" +
 	"\x11volume_size_limit\x18\x01 \x01(\x04R\x0fvolumeSizeLimit\x12\x16\n" +
 	"\x06leader\x18\x02 \x01(\tR\x06leader\x12'\n" +
@@ -5110,7 +5151,11 @@ const file_master_proto_rawDesc = "" +
 	"\x10duplicated_uuids\x18\x06 \x03(\tR\x0fduplicatedUuids\x12 \n" +
 	"\vpreallocate\x18\a \x01(\bR\vpreallocate\x125\n" +
 	"\x17resend_full_volume_list\x18\b \x01(\bR\x14resendFullVolumeList\x126\n" +
-	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\"\xe2\x04\n" +
+	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\x12\"\n" +
+	"\rmax_volume_id\x18\n" +
+	" \x01(\rR\vmaxVolumeId\x12\x1f\n" +
+	"\vtopology_id\x18\v \x01(\tR\n" +
+	"topologyId\"\xe2\x04\n" +
 	"\x18VolumeInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1e\n" +
