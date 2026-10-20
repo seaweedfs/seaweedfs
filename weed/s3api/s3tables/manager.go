@@ -100,6 +100,24 @@ func (m *Manager) AuthorizeUpdateTable(ctx context.Context, filerClient FilerCli
 	return authErr
 }
 
+// AuthorizeUpdateView checks that identity may update the view the request
+// describes, without updating anything.
+func (m *Manager) AuthorizeUpdateView(ctx context.Context, filerClient FilerClient, req *UpdateViewRequest, identity string) error {
+	httpReq, err := newManagerRequest(ctx, "UpdateView", nil, identity)
+	if err != nil {
+		return err
+	}
+	recorder := httptest.NewRecorder()
+	_, authErr := m.handler.authorizeUpdateView(recorder, httpReq, filerClient, req)
+	if authErr == nil {
+		return nil
+	}
+	if decoded := decodeS3TablesHTTPResponse(recorder, nil); decoded != nil {
+		return decoded
+	}
+	return authErr
+}
+
 func newManagerRequest(ctx context.Context, operation string, body []byte, identity string) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", bytes.NewReader(body))
 	if err != nil {
