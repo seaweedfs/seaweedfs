@@ -132,7 +132,11 @@ func TestDigestCheckAsksForTheListWhenTheLookupIndexDrifts(t *testing.T) {
 // preallocate is a bare bool with no way to tell "off" from "not mentioned". A
 // response that left it out would turn preallocation off until reconnect.
 func TestHeartbeatResponsesCarryTheVolumeOptions(t *testing.T) {
-	ms := &MasterServer{option: &MasterOption{VolumeSizeLimitMB: 1024}, preallocateSize: 1}
+	ms := &MasterServer{
+		option:          &MasterOption{VolumeSizeLimitMB: 1024},
+		preallocateSize: 1,
+		Topo:            topology.NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false),
+	}
 
 	resend := ms.heartbeatResponse()
 	resend.ResendFullVolumeList = true
