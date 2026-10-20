@@ -1348,6 +1348,46 @@ func TestDoListFilerEntries_DelimiterSkipsResumedDirBlock(t *testing.T) {
 	assert.Equal(t, []string{"/b"}, collect("a/x"))
 }
 
+// A delimited listing resumes a directory at its "<name>/" block boundary, not
+// the bare name: the name alone sorts inside the (name, name/) band and makes
+// the next pass re-emit the same common prefix until the quota runs out. The
+// marker also survives a round trip through the request path unchanged —
+// adjustMarkerForDelimiter must not trim the trailing slash off it.
+func TestDoListFilerEntries_DelimitedDirResumesAtBlockBoundary(t *testing.T) {
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b":   {dir("a"), file("b")},
+			"/buckets/b/a": {file("x")},
+		},
+	}
+
+	// The outer listFilerEntries loop re-enters with the returned marker until
+	// a pass comes back empty; every entry must be emitted exactly once.
+	var seen []string
+	marker := ""
+	for pass := 0; pass < 4; pass++ {
+		cursor := &ListingCursor{maxKeys: 1000}
+		emitted := 0
+		nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: marker, delimiter: "/", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+			emitted++
+		})
+		assert.NoError(t, err)
+		if emitted == 0 {
+			break
+		}
+		marker = adjustMarkerForDelimiter(nextMarker, "", "/")
+	}
+	assert.Equal(t, []string{"/a", "/b"}, seen)
+}
+
 // A prefix object's "<name>/" common prefix belongs to the block position, not
 // the name position: it must not outrank "a.txt" on a full page nor repeat on
 // the next one.

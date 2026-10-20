@@ -1091,6 +1091,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			case !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor):
 				eachEntryFn(dir, emitEntry)
 			}
+			// Whatever the block emitted sits at its "<name>/" position, so the
+			// resume marker is the block boundary: the bare name sorts inside the
+			// (name, name/) band and would reopen the block for a second emission.
+			nextMarker = e.Name + "/"
 		}
 		return nil
 	}
@@ -1568,6 +1572,15 @@ func adjustMarkerForDelimiter(marker, prefix, delimiter string) string {
 		return marker
 	}
 	if strings.TrimLeft(marker, "/") == strings.TrimLeft(prefix, "/") {
+		return marker
+	}
+
+	// A marker ending on "/" already names the bound past that directory's
+	// block — the walk reads "boo/" as "the boo/ block is done". Trimming it
+	// to the bare name would sort inside the (name, name/) band instead and
+	// reopen the block. Other delimiters have no matching directory boundary,
+	// so their markers still need the trim below.
+	if delimiter == "/" {
 		return marker
 	}
 
