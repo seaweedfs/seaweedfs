@@ -663,7 +663,7 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 	} else if isDirectoryObject {
 		// Directory object but doesn't exist
 		glog.V(2).Infof("%s: directory object %s/%s not found", handlerName, bucket, object)
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
 		return true // Request was handled (with not found)
 	}
 
