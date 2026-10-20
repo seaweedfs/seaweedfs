@@ -159,20 +159,22 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Create namespace directory
-		if err := h.createDirectory(r.Context(), client, namespacePath); err != nil {
-			return err
+		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, map[string][]byte{ExtendedKeyMetadata: metadataBytes})
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			taken = err // an answer, not a filer failure
+			return nil
 		}
-
-		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
-
+	if err == nil && taken != nil {
+		err = taken
+	}
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
+		return err
+	}
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create namespace")
 		return err
