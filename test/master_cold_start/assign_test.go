@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -44,7 +45,11 @@ func TestColdStartFirstWrite(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusServiceUnavailable && time.Now().Before(deadline) {
-				time.Sleep(time.Second)
+				delay, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+				if delay <= 0 {
+					t.Fatalf("dir/assign shed without a usable Retry-After: %d %s", resp.StatusCode, body)
+				}
+				time.Sleep(time.Duration(delay) * time.Second)
 				continue
 			}
 			if resp.StatusCode != http.StatusOK {
