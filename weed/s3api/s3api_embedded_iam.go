@@ -67,6 +67,136 @@ func (e *EmbeddedIamApi) refreshIAMConfiguration() error {
 	return nil
 }
 
+// canPersistIdentity reports whether a change to the named identity can be written through the
+// credential manager's single-identity methods instead of SaveConfiguration. It is false when
+// there is no credential manager, when the caller asked for no persistent write (skipPersist),
+// and for static identities, which live outside the store: those keep the full-save path.
+func (e *EmbeddedIamApi) canPersistIdentity(skipPersist bool, userName string) bool {
+	return e.credentialManager != nil && !skipPersist && !e.credentialManager.IsStaticIdentity(userName)
+}
+
+// groupsWithMember returns the groups in s3cfg that list userName as a member. Taken before a
+// handler renames or removes the user, it names the group records that handler will change.
+func groupsWithMember(s3cfg *iam_pb.S3ApiConfiguration, userName string) []*iam_pb.Group {
+	var groups []*iam_pb.Group
+	for _, g := range s3cfg.Groups {
+		for _, m := range g.Members {
+			if m == userName {
+				groups = append(groups, g)
+				break
+			}
+		}
+	}
+	return groups
+}
+
+// serviceAccountsOf returns the service accounts in s3cfg whose parent is userName.
+func serviceAccountsOf(s3cfg *iam_pb.S3ApiConfiguration, userName string) []*iam_pb.ServiceAccount {
+	var accounts []*iam_pb.ServiceAccount
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.ParentUser == userName {
+			accounts = append(accounts, sa)
+		}
+	}
+	return accounts
+}
+
+// persistIdentity writes the one identity a handler changed in s3cfg through the credential
+// manager. The store writes that identity's record and propagates it alone; the other
+// identities are not rewritten.
+func (e *EmbeddedIamApi) persistIdentity(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, userName string) error {
+	ident := findIdentityByName(s3cfg, userName)
+	if ident == nil {
+		return credential.ErrUserNotFound
+	}
+	return e.credentialManager.UpdateUser(ctx, userName, ident)
+}
+
+// persistRenamedIdentity writes a user renamed from oldName to newName by UpdateUser through the
+// credential manager: the identity, the groups that listed the old name and the service accounts
+// it parented. Where the store has RenameUser the handler already moved the record and its inline
+// policies, and the identity is written under the new name. Otherwise UpdateUser under the old
+// name moves the record in stores that treat a changed Name as a rename (filer_etc, memory), the
+// propagating store propagates the new identity and the old name's removal, and the inline policy
+// copies the handler left under the old name are removed. A store that did neither still holds
+// the user under the old name; the caller is told so (false) and keeps the full save, which is
+// what renames such a store today.
+func (e *EmbeddedIamApi) persistRenamedIdentity(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, oldName, newName string, groups []*iam_pb.Group, accounts []*iam_pb.ServiceAccount) (bool, error) {
+	ident := findIdentityByName(s3cfg, newName)
+	if ident == nil {
+		return false, credential.ErrUserNotFound
+	}
+	storedAs := oldName
+	if _, err := e.credentialManager.GetUser(ctx, newName); err == nil {
+		storedAs = newName
+	}
+	if err := e.credentialManager.UpdateUser(ctx, storedAs, ident); err != nil {
+		return false, err
+	}
+	if storedAs == oldName {
+		if _, err := e.credentialManager.GetUser(ctx, newName); err != nil {
+			return false, nil
+		}
+		policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, oldName)
+		if err != nil {
+			return false, fmt.Errorf("list inline policies for %s: %w", oldName, err)
+		}
+		for _, policyName := range policyNames {
+			if err := e.credentialManager.DeleteUserInlinePolicy(ctx, oldName, policyName); err != nil {
+				return false, fmt.Errorf("remove inline policy %s from %s: %w", policyName, oldName, err)
+			}
+		}
+	}
+	for _, g := range groups {
+		if err := e.credentialManager.UpdateGroup(ctx, g); err != nil {
+			return false, fmt.Errorf("update group %s: %w", g.Name, err)
+		}
+	}
+	for _, sa := range accounts {
+		if err := e.credentialManager.UpdateServiceAccount(ctx, sa.Id, sa); err != nil {
+			return false, fmt.Errorf("update service account %s: %w", sa.Id, err)
+		}
+	}
+	return true, nil
+}
+
+// deleteIdentity removes a user deleted by DeleteUser through the credential manager: its inline
+// policies, its record (the store propagates the one removal) and the groups that listed it,
+// whose membership DeleteUser already changed in s3cfg.
+func (e *EmbeddedIamApi) deleteIdentity(ctx context.Context, userName string, groups []*iam_pb.Group) error {
+	policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+	if err != nil {
+		return fmt.Errorf("list inline policies for %s: %w", userName, err)
+	}
+	for _, policyName := range policyNames {
+		if err := e.credentialManager.DeleteUserInlinePolicy(ctx, userName, policyName); err != nil {
+			return fmt.Errorf("remove inline policy %s from %s: %w", policyName, userName, err)
+		}
+	}
+	if err := e.credentialManager.DeleteUser(ctx, userName); err != nil {
+		return err
+	}
+	for _, g := range groups {
+		if err := e.credentialManager.UpdateGroup(ctx, g); err != nil {
+			return fmt.Errorf("update group %s: %w", g.Name, err)
+		}
+	}
+	return nil
+}
+
+// reloadsAfterTargetedWrite names the actions that persist through the credential manager
+// rather than SaveConfiguration; the in-memory identity maps are refreshed after them the way
+// they are after a full save.
+func reloadsAfterTargetedWrite(action string) bool {
+	switch action {
+	case "AttachUserPolicy", "DetachUserPolicy", "CreatePolicy", "CreatePolicyVersion", "DeletePolicy",
+		"CreateUser", "UpdateUser", "DeleteUser", "CreateAccessKey", "DeleteAccessKey", "UpdateAccessKey",
+		"SetUserStatus", "PutUserPolicy", "DeleteUserPolicy", "PutGroupPolicy", "DeleteGroupPolicy":
+		return true
+	}
+	return false
+}
+
 // Constants for service account identifiers
 const (
 	ServiceAccountIDLength  = 12 // Length of the service account ID
@@ -2735,27 +2865,79 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 		changed = false
 	case "UpdateUser":
+		userName, newUserName := values.Get("UserName"), values.Get("NewUserName")
+		// Taken before the rename: the records the handler changes besides the identity.
+		groups := groupsWithMember(s3cfg, userName)
+		accounts := serviceAccountsOf(s3cfg, userName)
 		var iamErr *iamError
 		response, iamErr = e.UpdateUser(ctx, s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		// Write the renamed identity, its groups and service accounts through the credential
+		// manager instead of rewriting every identity via SaveConfiguration. A request that
+		// renames nothing changed nothing, so there is nothing to write either way.
+		if e.canPersistIdentity(skipPersist, userName) {
+			renamed := true
+			if newUserName != "" && newUserName != userName {
+				var err error
+				renamed, err = e.persistRenamedIdentity(ctx, s3cfg, userName, newUserName, groups, accounts)
+				if err != nil {
+					return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+				}
+			}
+			changed = !renamed
+		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
+		groups := groupsWithMember(s3cfg, userName)
 		var iamErr *iamError
 		response, iamErr = e.DeleteUser(s3cfg, userName)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		// Targeted delete: one record removed and one removal propagated, plus the groups whose
+		// membership changed, instead of rewriting every remaining identity.
+		if e.canPersistIdentity(skipPersist, userName) {
+			if err := e.deleteIdentity(ctx, userName, groups); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
+		}
 	case "CreateAccessKey":
-		var iamErr *iamError
-		response, iamErr = e.CreateAccessKey(s3cfg, values)
+		userName := values.Get("UserName")
+		resp, iamErr := e.CreateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("CreateAccessKey: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		response = resp
+		// Targeted write: credentialManager.CreateAccessKey adds the key to the one identity
+		// and propagates that identity alone.
+		if e.canPersistIdentity(skipPersist, userName) {
+			cred := &iam_pb.Credential{
+				AccessKey: *resp.CreateAccessKeyResult.AccessKey.AccessKeyId,
+				SecretKey: *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey,
+				Status:    iamAccessKeyStatusActive,
+			}
+			if err := e.credentialManager.CreateAccessKey(ctx, userName, cred); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
+		}
 	case "DeleteAccessKey":
+		userName, accessKeyId := values.Get("UserName"), values.Get("AccessKeyId")
 		response = e.DeleteAccessKey(s3cfg, values)
+		// Targeted write: credentialManager.DeleteAccessKey removes the key from the one identity
+		// and propagates that identity alone. The handler answers 200 for a key or user it does
+		// not know, so a not-found from the store is the same no-op it always was.
+		if e.canPersistIdentity(skipPersist, userName) {
+			err := e.credentialManager.DeleteAccessKey(ctx, userName, accessKeyId)
+			if err != nil && !errors.Is(err, credential.ErrAccessKeyNotFound) && !errors.Is(err, credential.ErrUserNotFound) {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
+		}
 	case "CreatePolicy":
 		var iamErr *iamError
 		response, iamErr = e.CreatePolicy(ctx, values)
@@ -2773,11 +2955,20 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 		changed = false
 	case "PutUserPolicy":
+		userName := values.Get("UserName")
 		var iamErr *iamError
 		response, iamErr = e.PutUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("PutUserPolicy: %+v", iamErr.Error)
 			return nil, iamErr
+		}
+		// The policy document is already stored; what remains is the identity's recomputed
+		// Actions, written and propagated for that identity alone.
+		if e.canPersistIdentity(skipPersist, userName) {
+			if err := e.persistIdentity(ctx, s3cfg, userName); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
 		}
 	case "GetUserPolicy":
 		var iamErr *iamError
@@ -2787,10 +2978,17 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 		changed = false
 	case "DeleteUserPolicy":
+		userName := values.Get("UserName")
 		var iamErr *iamError
 		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
+		}
+		if e.canPersistIdentity(skipPersist, userName) {
+			if err := e.persistIdentity(ctx, s3cfg, userName); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
 		}
 	case "ListUserPolicies":
 		var iamErr *iamError
@@ -2883,16 +3081,30 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 		changed = false
 	case "SetUserStatus":
+		userName := values.Get("UserName")
 		var iamErr *iamError
 		response, iamErr = e.SetUserStatus(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		if e.canPersistIdentity(skipPersist, userName) {
+			if err := e.persistIdentity(ctx, s3cfg, userName); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
+		}
 	case "UpdateAccessKey":
+		userName := values.Get("UserName")
 		var iamErr *iamError
 		response, iamErr = e.UpdateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
+		}
+		if e.canPersistIdentity(skipPersist, userName) {
+			if err := e.persistIdentity(ctx, s3cfg, userName); err != nil {
+				return nil, &iamError{Code: CredentialErrToIamErrCode(err), Error: err}
+			}
+			changed = false
 		}
 	// Service Account actions
 	case "CreateServiceAccount":
@@ -3034,7 +3246,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "CreatePolicyVersion" || action == "DeletePolicy" || action == "CreateUser" || action == "PutGroupPolicy" || action == "DeleteGroupPolicy" {
+	} else if reloadsAfterTargetedWrite(action) {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
