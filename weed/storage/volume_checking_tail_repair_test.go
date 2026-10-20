@@ -81,6 +81,21 @@ func buildTornFixture(t *testing.T, ops []tornOp, unindexed int) *tornFixture {
 	return f
 }
 
+// midRecord is an offset inside the body of op i's record: past its header,
+// short of its end. A fixed offset is not: a needle with a few bytes of data
+// is a 40-byte record, which a cut at +40 leaves whole.
+func (f *tornFixture) midRecord(i int) int64 {
+	end := f.end
+	if i+1 < len(f.starts) {
+		end = f.starts[i+1]
+	}
+	return midRecordBody(f.starts[i], end)
+}
+
+func midRecordBody(start, end int64) int64 {
+	return start + types.NeedleHeaderSize + (end-start-types.NeedleHeaderSize)/2
+}
+
 func (f *tornFixture) truncateDat(t *testing.T, size int64) {
 	t.Helper()
 	if err := os.Truncate(f.datName, size); err != nil {
@@ -179,12 +194,12 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 			readable: []uint64{1, 2, 3}, absent: []uint64{4}},
 		{name: "a partial body is cut",
 			ops: writes(1, 2, 3, 4), unindexed: 1,
-			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.starts[3]+40) },
+			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.midRecord(3)) },
 			wantSize: func(f *tornFixture) int64 { return f.starts[3] },
 			readable: []uint64{1, 2, 3}, absent: []uint64{4}},
 		{name: "a complete needle is re-indexed and the partial one after it cut",
 			ops: writes(1, 2, 3, 4, 5), unindexed: 2,
-			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.starts[4]+40) },
+			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.midRecord(4)) },
 			wantSize: func(f *tornFixture) int64 { return f.starts[4] }, reindexed: 1,
 			readable: []uint64{1, 2, 3, 4}, absent: []uint64{5}},
 		{name: "a last needle with a bad CRC is cut",
@@ -215,7 +230,7 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 			readable: []uint64{1, 2}, absent: []uint64{3}},
 		{name: "a partial needle after an indexed tombstone is cut",
 			ops: append(append(writes(1, 2, 3), tornOp{id: 2, del: true}), tornOp{id: 4}), unindexed: 1,
-			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.starts[4]+40) },
+			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.midRecord(4)) },
 			wantSize: func(f *tornFixture) int64 { return f.starts[4] },
 			readable: []uint64{1, 3}, absent: []uint64{2, 4}},
 	}
@@ -475,6 +490,7 @@ func TestCheckVolumeDataIntegrityFailsOnUnsyncedRepair(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	end, _, _ := v.DataBackend.GetStat()
 	// persisted read-only so the load below does not repair the tail itself
 	if err := v.PersistReadOnly(true, false); err != nil {
 		t.Fatal(err)
@@ -484,7 +500,7 @@ func TestCheckVolumeDataIntegrityFailsOnUnsyncedRepair(t *testing.T) {
 	if err := os.Truncate(idxName, fileSize(t, idxName)-types.NeedleMapEntrySize); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Truncate(datName, starts[3]+40); err != nil {
+	if err := os.Truncate(datName, midRecordBody(starts[3], end)); err != nil {
 		t.Fatal(err)
 	}
 
