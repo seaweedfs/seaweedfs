@@ -993,7 +993,9 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	// hasEntries reports whether the filer directory holds at least one entry,
 	// probed on the request's own client; errors answer conservatively as true.
 	hasEntries := func(path string) bool {
-		stream, lerr := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{Directory: path, Limit: 1})
+		probeCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stream, lerr := client.ListEntries(probeCtx, &filer_pb.ListEntriesRequest{Directory: path, Limit: 1})
 		if lerr != nil {
 			return true
 		}
