@@ -18,3 +18,4 @@ pub mod volume_idx_repair;
 pub mod volume_open;
 pub mod volume_report;
 pub mod volume_report_hash;
+pub mod volume_tail_repair;
