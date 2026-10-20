@@ -81,16 +81,26 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 				if !h.mayRepairOwnerlessBucket(r) {
 					return errOwnerlessBucket
 				}
-				bucketMetadata = tableBucketMetadata{
-					Name:           bucketName,
-					CreatedAt:      time.Now(),
-					OwnerAccountID: ownerAccountID,
-				}
-				metadataBytes, err := json.Marshal(&bucketMetadata)
-				if err != nil {
-					return fmt.Errorf("failed to marshal bucket metadata: %w", err)
-				}
-				if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+				// Repair the marker-only entry under the entry lock so a
+				// creator finishing its own create in the meantime keeps its
+				// owner: adopt whatever metadata is there, write only when it
+				// is still absent.
+				if err := h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+					if data, ok := extended[ExtendedKeyMetadata]; ok {
+						return json.Unmarshal(data, &bucketMetadata)
+					}
+					bucketMetadata = tableBucketMetadata{
+						Name:           bucketName,
+						CreatedAt:      time.Now(),
+						OwnerAccountID: ownerAccountID,
+					}
+					metadataBytes, err := json.Marshal(&bucketMetadata)
+					if err != nil {
+						return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+					}
+					extended[ExtendedKeyMetadata] = metadataBytes
+					return nil
+				}); err != nil {
 					return err
 				}
 			} else {

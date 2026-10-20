@@ -51,7 +51,29 @@ func TestCreateNamespaceOnAnOwnerlessBucket(t *testing.T) {
 		m.SetTrusted(true)
 		body, err := json.Marshal(request)
 		require.NoError(t, err)
-		req, err := newManagerRequest(context.Background(), "CreateNamespace", body, "admin")
+		identity := &testIdentity{Name: "svc", Account: &testIdentityAccount{Id: "svc"}, Actions: []string{"Read"}}
+		req, err := newManagerRequest(s3_constants.SetIdentityInContext(context.Background(), identity), "CreateNamespace", body, "svc")
+		require.NoError(t, err)
+
+		recorder := httptest.NewRecorder()
+		m.handler.HandleRequest(recorder, req, NewManagerClient(fs.Client))
+		assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		entry := fs.Get(TablesPath, bucket)
+		require.NotNil(t, entry)
+		var metadata tableBucketMetadata
+		require.NoError(t, json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata))
+		assert.Equal(t, "svc", metadata.OwnerAccountID)
+		require.NotNil(t, fs.Get(GetTableBucketPath(bucket), "ns"))
+	})
+
+	t.Run("an untrusted admin repairs it too", func(t *testing.T) {
+		fs := s3tablestest.Start(t)
+		plant(fs)
+		m := NewManager()
+		body, err := json.Marshal(request)
+		require.NoError(t, err)
+		identity := &testIdentity{Name: "admin", Account: &testIdentityAccount{Id: s3_constants.AccountAdminId}, Actions: []string{"Admin"}}
+		req, err := newManagerRequest(s3_constants.SetIdentityInContext(context.Background(), identity), "CreateNamespace", body, "admin")
 		require.NoError(t, err)
 
 		recorder := httptest.NewRecorder()
@@ -62,6 +84,5 @@ func TestCreateNamespaceOnAnOwnerlessBucket(t *testing.T) {
 		var metadata tableBucketMetadata
 		require.NoError(t, json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata))
 		assert.Equal(t, s3_constants.AccountAdminId, metadata.OwnerAccountID)
-		require.NotNil(t, fs.Get(GetTableBucketPath(bucket), "ns"))
 	})
 }
