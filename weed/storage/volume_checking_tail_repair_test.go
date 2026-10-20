@@ -2,9 +2,11 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -366,5 +368,113 @@ func TestVolumeLoadLeavesPartialIdxEntryAlone(t *testing.T) {
 	}
 	if got := fileSize(t, f.idxName); got != idxPartial {
 		t.Fatalf(".idx changed from %d to %d bytes", idxPartial, got)
+	}
+}
+
+// faultyDatFile fails Sync, or the read of a whole record at one offset, the
+// way a failing disk does.
+type faultyDatFile struct {
+	backend.BackendStorageFile
+	failSync      bool
+	failRecordAt  int64
+	failRecordSet bool
+}
+
+var errFaultyDisk = errors.New("input/output error")
+
+func (f *faultyDatFile) Sync() error {
+	if f.failSync {
+		return errFaultyDisk
+	}
+	return f.BackendStorageFile.Sync()
+}
+
+func (f *faultyDatFile) ReadAt(p []byte, off int64) (int, error) {
+	if f.failRecordSet && off == f.failRecordAt && len(p) > types.NeedleHeaderSize {
+		return 0, errFaultyDisk
+	}
+	return f.BackendStorageFile.ReadAt(p, off)
+}
+
+// A repair that changed a file but could not sync it fails the integrity
+// check, so the volume loads read-only rather than writable on an unsynced
+// repair.
+func TestCheckVolumeDataIntegrityFailsOnUnsyncedRepair(t *testing.T) {
+	dir := t.TempDir()
+	v := newTornTailTestVolume(t, dir)
+	var starts []int64
+	for _, id := range []uint64{1, 2, 3, 4} {
+		at, _, _ := v.DataBackend.GetStat()
+		starts = append(starts, at)
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(id), true, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// persisted read-only so the load below does not repair the tail itself
+	if err := v.PersistReadOnly(true, false); err != nil {
+		t.Fatal(err)
+	}
+	datName, idxName := v.FileName(".dat"), v.FileName(".idx")
+	v.Close()
+	if err := os.Truncate(idxName, fileSize(t, idxName)-types.NeedleMapEntrySize); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(datName, starts[3]+40); err != nil {
+		t.Fatal(err)
+	}
+
+	v = newTornTailTestVolume(t, dir)
+	defer v.Close()
+	v.noWriteOrDelete = false
+	v.DataBackend = &faultyDatFile{BackendStorageFile: v.DataBackend, failSync: true}
+	indexFile, err := os.OpenFile(idxName, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer indexFile.Close()
+
+	if _, err := CheckVolumeDataIntegrity(v, indexFile); err == nil {
+		t.Fatal("integrity check passed although the repaired .dat was not synced")
+	}
+}
+
+// partialWriteIndex accepts only the first n bytes of a write, as a full disk
+// does.
+type partialWriteIndex struct {
+	data      []byte
+	accept    int
+	truncated bool
+}
+
+func (p *partialWriteIndex) WriteAt(b []byte, off int64) (int, error) {
+	n := min(len(b), p.accept)
+	if end := int(off) + n; end > len(p.data) {
+		p.data = append(p.data, make([]byte, end-len(p.data))...)
+	}
+	copy(p.data[off:], b[:n])
+	if n < len(b) {
+		return n, errors.New("no space left on device")
+	}
+	return n, nil
+}
+
+func (p *partialWriteIndex) Truncate(size int64) error {
+	p.data = p.data[:size]
+	p.truncated = true
+	return nil
+}
+
+func (p *partialWriteIndex) Sync() error  { return nil }
+func (p *partialWriteIndex) Name() string { return "test.idx" }
+
+// A failed append leaves no partial entry behind.
+func TestAppendIndexEntriesRemovesPartialWrite(t *testing.T) {
+	idxFile := &partialWriteIndex{data: make([]byte, 2*types.NeedleMapEntrySize), accept: types.NeedleMapEntrySize + 5}
+	entries := make([]byte, 2*types.NeedleMapEntrySize)
+	if err := appendIndexEntries(idxFile, entries, 2*types.NeedleMapEntrySize); err == nil {
+		t.Fatal("a partial append reported success")
+	}
+	if got, want := len(idxFile.data), 2*types.NeedleMapEntrySize; got != want {
+		t.Fatalf(".idx is %d bytes after a failed append, want %d", got, want)
 	}
 }

@@ -173,9 +173,15 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	// needles in it and cut an incomplete remainder before the check below,
 	// which would otherwise load the volume read-only. Only a volume that is
 	// about to load writable is repaired; a read-only one is left as it is.
+	// A repair that fails for any other reason than an unexplained tail (a
+	// read, write, truncate or sync error) fails the check, so the volume
+	// loads read-only instead of writable on a repair that may not be on disk.
 	if !v.noWriteOrDelete && !v.noWriteCanDelete {
 		reindexed, _, err := repairUnindexedDatTail(v, indexFile, indexSize, tailEntryPos)
 		if err != nil {
+			if !errors.Is(err, errTailNotTorn) {
+				return 0, fmt.Errorf("CheckVolumeDataIntegrity %s: repair unindexed .dat tail: %v", indexFile.Name(), err)
+			}
 			glog.Warningf("volume %d: unindexed .dat tail not repaired: %v", v.Id, err)
 		}
 		if reindexed > 0 {
@@ -326,11 +332,8 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 	}
 	reindexed := len(entries) / types.NeedleMapEntrySize
 	if reindexed > 0 {
-		if _, err := indexFile.WriteAt(entries, indexSize); err != nil {
-			return 0, 0, fmt.Errorf("append %d entries to %s: %v", reindexed, indexFile.Name(), err)
-		}
-		if err := indexFile.Sync(); err != nil {
-			return reindexed, 0, fmt.Errorf("sync %s: %v", indexFile.Name(), err)
+		if err := appendIndexEntries(indexFile, entries, indexSize); err != nil {
+			return 0, 0, err
 		}
 	}
 	var cut int64
@@ -346,6 +349,30 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 	glog.Warningf("volume %d: repaired the unindexed tail of %s: re-indexed %d needle(s), cut %d bytes (%d -> %d bytes)",
 		v.Id, v.FileName(".dat"), reindexed, cut, fileSize, fileSize-cut)
 	return reindexed, cut, nil
+}
+
+// indexAppender is the part of the .idx file the repair writes through.
+type indexAppender interface {
+	io.WriterAt
+	Truncate(size int64) error
+	Sync() error
+	Name() string
+}
+
+// appendIndexEntries writes entries at the end (at) of the .idx and syncs it.
+// A failed write can leave part of the entries behind, which would make the
+// next load reject the .idx as a partial entry; they are removed again.
+func appendIndexEntries(indexFile indexAppender, entries []byte, at int64) error {
+	if _, err := indexFile.WriteAt(entries, at); err != nil {
+		if truncErr := indexFile.Truncate(at); truncErr != nil {
+			return fmt.Errorf("append %d bytes to %s: %v; truncate back to %d: %v", len(entries), indexFile.Name(), err, at, truncErr)
+		}
+		return fmt.Errorf("append %d bytes to %s: %v", len(entries), indexFile.Name(), err)
+	}
+	if err := indexFile.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %v", indexFile.Name(), err)
+	}
+	return nil
 }
 
 // readTailNeedle reads and verifies the whole record of a needle of the given
