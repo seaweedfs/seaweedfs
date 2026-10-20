@@ -739,6 +739,9 @@ func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
 	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
+	}
 	return err == nil
 }
 
@@ -753,6 +756,9 @@ func (s *Server) mayUpdateView(r *http.Request, bucketName string, namespace []s
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.AuthorizeUpdateView(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
 	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateView check for %s/%s failed, vending read-only: %v", bucketName, viewName, err)
+	}
 	return err == nil
 }
 
