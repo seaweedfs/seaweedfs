@@ -20,8 +20,9 @@ import (
 // through the real load path.
 
 type tornOp struct {
-	id  uint64
-	del bool
+	id    uint64
+	del   bool
+	empty bool // a write with no data, which appends a size 0 record like a delete
 }
 
 type tornFixture struct {
@@ -61,6 +62,9 @@ func buildTornFixture(t *testing.T, ops []tornOp, unindexed int) *tornFixture {
 			continue
 		}
 		n := newRandomNeedle(op.id)
+		if op.empty {
+			n = newEmptyNeedle(op.id)
+		}
 		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", op.id, err)
 		}
@@ -193,6 +197,22 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 			damage:   func(t *testing.T, f *tornFixture) { f.zeroDataSize(t, f.starts[3]) },
 			wantSize: func(f *tornFixture) int64 { return f.starts[3] },
 			readable: []uint64{1, 2, 3}, absent: []uint64{4}},
+		{name: "an unindexed empty write of a new id stays an empty needle",
+			ops: append(writes(1, 2), tornOp{id: 3, empty: true}), unindexed: 1,
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 1,
+			readable: []uint64{1, 2, 3}},
+		{name: "an unindexed empty write after a delete of the same id stays an empty needle",
+			ops: append(append(writes(1, 2), tornOp{id: 2, del: true}), tornOp{id: 2, empty: true}), unindexed: 1,
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 1,
+			readable: []uint64{1, 2}},
+		{name: "an unindexed write and delete of the same id are re-indexed in order",
+			ops: append(writes(1, 2, 3), tornOp{id: 3, del: true}), unindexed: 2,
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 2,
+			readable: []uint64{1, 2}, absent: []uint64{3}},
+		{name: "an unindexed empty write and its delete are re-indexed in order",
+			ops: append(writes(1, 2), tornOp{id: 3, empty: true}, tornOp{id: 3, del: true}), unindexed: 2,
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 2,
+			readable: []uint64{1, 2}, absent: []uint64{3}},
 		{name: "a partial needle after an indexed tombstone is cut",
 			ops: append(append(writes(1, 2, 3), tornOp{id: 2, del: true}), tornOp{id: 4}), unindexed: 1,
 			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.starts[4]+40) },
