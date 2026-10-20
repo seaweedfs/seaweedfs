@@ -433,12 +433,11 @@ async fn run(
         }
     }
 
-    // Initialize the batched write queue if enabled
-    if config.enable_write_queue {
-        info!("Batched write queue enabled");
-        let wq = WriteQueue::new(state.clone(), 128);
-        let _ = state.write_queue.set(wq);
-    }
+    // The write queue is always on: durable (fsync) uploads go through it so
+    // a batch shares one .dat/.idx sync, the way Go's per-volume async writer
+    // group-commits. Non-fsync writes stay on the synchronous path.
+    let wq = WriteQueue::new(state.clone(), 128);
+    let _ = state.write_queue.set(wq);
 
     // Set initial metric gauges for concurrent limits and max volumes
     metrics::CONCURRENT_UPLOAD_LIMIT.set(state.concurrent_upload_limit);

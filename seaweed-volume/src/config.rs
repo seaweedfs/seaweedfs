@@ -303,8 +303,6 @@ pub struct VolumeServerConfig {
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
-    /// Enable batched write queue for improved throughput under load.
-    pub enable_write_queue: bool,
     /// Path to security.toml — stored for SIGHUP reload.
     pub security_file: String,
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation
@@ -968,8 +966,6 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
         grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
         tls_policy: sec.tls_policy,
-        enable_write_queue: env_string(env, "SEAWEED_WRITE_QUEUE")
-            .is_some_and(|v| v == "1" || v == "true"),
         security_file: cli.security_file,
         allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
     }
