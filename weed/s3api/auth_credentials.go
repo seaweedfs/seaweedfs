@@ -1800,6 +1800,11 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	r.Header.Del(s3_constants.ExtRetentionUntilDateKey)
 	r.Header.Del(s3_constants.ExtLegalHoldKey)
 	r.Header.Del(s3_constants.ExtVersionIdKey)
+	// Internal SSE headers carry server-provided key material and IVs between
+	// handler stages of one request; inbound values are never legitimate.
+	r.Header.Del(s3_constants.SeaweedFSSSEKMSBaseIVHeader)
+	r.Header.Del(s3_constants.SeaweedFSSSES3BaseIVHeader)
+	r.Header.Del(s3_constants.SeaweedFSSSES3KeyDataHeader)
 	// Deferred so signature verification can still read a client-signed value.
 	defer r.Header.Del(s3_constants.AmzAccountId)
 

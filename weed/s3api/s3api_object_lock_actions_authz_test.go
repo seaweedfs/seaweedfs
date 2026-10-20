@@ -239,6 +239,9 @@ func TestInternalObjectLockHeadersStrippedOnAuth(t *testing.T) {
 		s3_constants.ExtRetentionUntilDateKey,
 		s3_constants.ExtLegalHoldKey,
 		s3_constants.ExtVersionIdKey,
+		s3_constants.SeaweedFSSSEKMSBaseIVHeader,
+		s3_constants.SeaweedFSSSES3BaseIVHeader,
+		s3_constants.SeaweedFSSSES3KeyDataHeader,
 	}
 	req := httptest.NewRequest(http.MethodPut, "http://localhost:8333/worm/doc.txt", nil)
 	for _, k := range internal {
