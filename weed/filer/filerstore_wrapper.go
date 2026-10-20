@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -19,6 +20,7 @@ import (
 var (
 	_ = VirtualFilerStore(&FilerStoreWrapper{})
 	_ = Debuggable(&FilerStoreWrapper{})
+	_ = EntryScanner(&FilerStoreWrapper{})
 )
 
 type VirtualFilerStore interface {
@@ -362,6 +364,33 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	}
 	return lastFileName, err
+}
+
+// ScanEntries delegates to the default store. With path-specific stores
+// configured, entries below dirPath could live in several stores and one
+// snapshot per store is not one snapshot, so the scan is declined. Hard links
+// are resolved inside the snapshot; a store error fails the scan (the per-path
+// copy can be stale), a missing record falls back to it as listings do.
+func (fsw *FilerStoreWrapper) ScanEntries(ctx context.Context, dirPath util.FullPath, fn func(ctx context.Context, entry *Entry) error) error {
+	if fsw.hasPathSpecificStore {
+		return ErrUnsupportedEntryScan
+	}
+	scanner, ok := fsw.defaultStore.(EntryScanner)
+	if !ok {
+		return ErrUnsupportedEntryScan
+	}
+	stats.FilerStoreCounter.WithLabelValues(fsw.defaultStore.GetName(), "scan").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(fsw.defaultStore.GetName(), "scan").Observe(time.Since(start).Seconds())
+	}()
+	return scanner.ScanEntries(ctx, dirPath, func(scanCtx context.Context, entry *Entry) error {
+		if err := fsw.maybeReadHardLink(scanCtx, entry); err != nil && !errors.Is(err, ErrKvNotFound) {
+			return fmt.Errorf("resolve hard link of %s: %w", entry.FullPath, err)
+		}
+		filer_pb.AfterEntryDeserialization(entry.GetChunks())
+		return fn(scanCtx, entry)
+	})
 }
 
 func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {

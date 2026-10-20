@@ -67,6 +67,16 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 // consumers would mistake for an entry.
 const ListSnapshotTsNsTrailerKey = "sw-list-snapshot-ts-ns"
 
+// TraverseModeHeaderKey is gRPC metadata on a TraverseBfsMetadata stream. As
+// request metadata, TraverseModeSnapshot asks for the entries from one store
+// snapshot (any order, entry_ts_ns left 0) instead of a breadth-first walk; as
+// a response header it says what the filer did. An older filer sends none.
+const (
+	TraverseModeHeaderKey = "sw-traverse-mode"
+	TraverseModeSnapshot  = "snapshot"
+	TraverseModeBfs       = "bfs"
+)
+
 type EachEntryFunction func(entry *Entry, isLast bool) error
 
 func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction) (err error) {
