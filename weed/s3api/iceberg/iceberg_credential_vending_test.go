@@ -14,10 +14,11 @@ type stubVendor struct {
 	gotBucket   string
 	gotPrefix   string
 	gotcaller   string
+	gotReadOnly bool
 }
 
-func (v *stubVendor) VendTableCredentials(_ context.Context, principal, bucket, prefix string) (*VendedCredentials, error) {
-	v.gotcaller, v.gotBucket, v.gotPrefix = principal, bucket, prefix
+func (v *stubVendor) VendTableCredentials(_ context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error) {
+	v.gotcaller, v.gotBucket, v.gotPrefix, v.gotReadOnly = principal, bucket, prefix, readOnly
 	return v.credentials, v.err
 }
 
@@ -40,7 +41,7 @@ func TestBuildFileIOConfigVendingVendsScopedCredentials(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t", nil)
 
 	if vendor.gotBucket != "warehouse" || vendor.gotPrefix != "ns/t" {
 		t.Errorf("vendor called with bucket=%q prefix=%q, want warehouse and ns/t", vendor.gotBucket, vendor.gotPrefix)
@@ -70,7 +71,7 @@ func TestBuildFileIOConfigVendingWithoutVendorSaysNothing(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t", nil)
 	if len(config) != 0 || storageCredentials != nil {
 		t.Errorf("config = %v, storage-credentials = %v, want both empty", config, storageCredentials)
 	}
@@ -81,9 +82,32 @@ func TestBuildFileIOConfigVendingFallsBackWhenVendingFails(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t", nil)
 	if len(config) != 0 || storageCredentials != nil {
 		t.Errorf("config = %v, storage-credentials = %v, want both empty", config, storageCredentials)
+	}
+}
+
+// The vend stays read-only unless the caller proved write authority: a nil
+// or false canWrite must reach the vendor as readOnly.
+func TestBuildFileIOConfigVendingReadOnlyUnlessCanWrite(t *testing.T) {
+	vendor := &stubVendor{credentials: &VendedCredentials{AccessKeyID: "ASIAEXAMPLE"}}
+	s := vendingServer(vendor)
+
+	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
+	r.Header.Set(accessDelegationHeader, "vended-credentials")
+
+	s.buildFileIOConfig(r, "s3://warehouse/ns/t", nil)
+	if !vendor.gotReadOnly {
+		t.Error("vendCredentials() passed readOnly=false for a nil canWrite, want readOnly=true")
+	}
+	s.buildFileIOConfig(r, "s3://warehouse/ns/t", func() bool { return false })
+	if !vendor.gotReadOnly {
+		t.Error("vendCredentials() passed readOnly=false for canWrite=false, want readOnly=true")
+	}
+	s.buildFileIOConfig(r, "s3://warehouse/ns/t", func() bool { return true })
+	if vendor.gotReadOnly {
+		t.Error("vendCredentials() passed readOnly=true for canWrite=true, want readOnly=false")
 	}
 }
 
@@ -94,7 +118,7 @@ func TestBuildFileIOConfigVendingWithoutDelegationHeader(t *testing.T) {
 	s := vendingServer(vendor)
 
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
-	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t", nil)
 
 	if _, vended := config["s3.access-key-id"]; vended {
 		t.Errorf("credentials vended without the delegation header: %v", config)

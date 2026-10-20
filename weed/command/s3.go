@@ -762,8 +762,8 @@ type icebergCredentialVendor struct {
 	server *s3api.S3ApiServer
 }
 
-func (v icebergCredentialVendor) VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*iceberg.VendedCredentials, error) {
-	credentials, err := v.server.VendTableCredentials(ctx, principal, bucket, prefix)
+func (v icebergCredentialVendor) VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*iceberg.VendedCredentials, error) {
+	credentials, err := v.server.VendTableCredentials(ctx, principal, bucket, prefix, readOnly)
 	if err != nil || credentials == nil {
 		return nil, err
 	}
@@ -781,8 +781,8 @@ type lanceCredentialVendor struct {
 	server *s3api.S3ApiServer
 }
 
-func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*lance.VendedCredentials, error) {
-	credentials, err := v.server.VendTableCredentials(ctx, principal, bucket, prefix)
+func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*lance.VendedCredentials, error) {
+	credentials, err := v.server.VendTableCredentials(ctx, principal, bucket, prefix, readOnly)
 	if err != nil || credentials == nil {
 		return nil, err
 	}

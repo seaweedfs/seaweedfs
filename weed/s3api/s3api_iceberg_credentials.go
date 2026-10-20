@@ -29,11 +29,12 @@ type VendedCredentials struct {
 	Expiration      time.Time
 }
 
-// VendTableCredentials mints credentials that can read and write exactly one
-// table's prefix, for a caller the Iceberg catalog has already authenticated
-// and authorized. Returns nil when no role is configured, which leaves the
-// catalog telling the client to keep using its own credentials.
-func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*VendedCredentials, error) {
+// VendTableCredentials mints credentials that can read exactly one table's
+// prefix, and write it too unless readOnly, for a caller the Iceberg catalog
+// has already authenticated and authorized. Returns nil when no role is
+// configured, which leaves the catalog telling the client to keep using its
+// own credentials.
+func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error) {
 	if s3a.icebergCredentialRole == "" {
 		return nil, nil
 	}
@@ -49,7 +50,7 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 		return nil, fmt.Errorf("STS is not configured")
 	}
 
-	policy, err := tablePrefixSessionPolicy(bucket, prefix)
+	policy, err := tablePrefixSessionPolicy(bucket, prefix, readOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +99,9 @@ func (s3a *S3ApiServer) stsService() *sts.STSService {
 }
 
 // tablePrefixSessionPolicy narrows a session to one table's files plus the
-// bucket listing that clients need to resolve them.
-func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
+// bucket listing that clients need to resolve them. A read-only session drops
+// the write verbs: the catalog vends no more authority than the caller holds.
+func tablePrefixSessionPolicy(bucket, prefix string, readOnly bool) (string, error) {
 	prefix = strings.Trim(prefix, "/")
 	// A resource pattern is matched with wildcards, so a location carrying one
 	// would widen the session to sibling tables. Refuse rather than escape it:
@@ -114,12 +116,17 @@ func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
 		return "", fmt.Errorf("refusing to scope credentials to a whole bucket: s3://%s", bucket)
 	}
 
+	objectActions := []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"}
+	if readOnly {
+		objectActions = []string{"s3:GetObject"}
+	}
+
 	policy := map[string]interface{}{
 		"Version": "2012-10-17",
 		"Statement": []map[string]interface{}{
 			{
 				"Effect":   "Allow",
-				"Action":   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
+				"Action":   objectActions,
 				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)},
 			},
 			{
