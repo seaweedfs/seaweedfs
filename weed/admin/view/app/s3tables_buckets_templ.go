@@ -5,13 +5,12 @@ package app
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
-import templruntime "github.com/a-h/templ/runtime"
-
 import (
 	"fmt"
 	"net/url"
 
+	"github.com/a-h/templ"
+	templruntime "github.com/a-h/templ/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
@@ -636,7 +635,7 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)`)
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<label class=\"btn btn-outline-primary w-100 text-start p-3\" for=\"s3tablesBucketFormatIceberg\"><span class=\"d-block fw-semibold\"><i class=\"bi bi-snow me-1\"></i>Iceberg</span> <span class=\"d-block small text-muted mt-1\">Served over the Iceberg REST catalog. Spark, Trino, PyIceberg, DuckDB.</span></label></div><div class=\"col-6\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<label class=\"btn btn-outline-primary w-100 text-start p-3\" for=\"s3tablesBucketFormatIceberg\"><span class=\"d-block fw-semibold\"><i class=\"bi bi-snow me-1\"></i>Iceberg</span> <span class=\"d-block small text-muted mt-1\">Served over the Iceberg REST catalog. Spark, Trino, PyIceberg, DuckDB, OLake Go.</span></label></div><div class=\"col-6\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

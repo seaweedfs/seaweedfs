@@ -3,7 +3,7 @@
 An integration test for [OLake](https://github.com/datazip-inc/olake) against
 SeaweedFS's Iceberg REST Catalog, in the same shape as `catalog_clickhouse`.
 
-## Why OLake, given we already test five engines
+## Why OLake, given we already test other engines
 
 Two things here are covered by nothing else in this directory.
 
@@ -73,8 +73,9 @@ Nothing in the destination config is SeaweedFS-specific:
 ```
 
 `catalog_type` is the generic `rest`, auth is the standard OAuth2
-client-credentials flow, and `s3_path_style` does not even need setting —
-OLake turns it on by itself whenever `s3_endpoint` is non-empty. As of
+client-credentials flow, and the test config sets `s3_path_style` explicitly;
+OLake also defaults to path style whenever `s3_endpoint` is non-empty, so
+either form works. As of
 OLake v0.10.1 this works with no change on either side.
 
 ## Running it

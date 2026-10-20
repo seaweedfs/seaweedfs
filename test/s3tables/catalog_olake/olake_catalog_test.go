@@ -376,8 +376,8 @@ func (env *TestEnvironment) execSQL(t *testing.T, sqlText string) {
 // writeOLakeConfigs writes the source and destination configs. The destination
 // is the point of this test: nothing in it is SeaweedFS-specific. catalog_type
 // is the generic "rest", auth is the standard OAuth2 client-credentials flow,
-// and path-style access is not even set here because OLake turns it on by
-// itself whenever s3_endpoint is non-empty.
+// and path-style access is set explicitly here; OLake also turns it on by
+// itself whenever s3_endpoint is non-empty, so either form works.
 func (env *TestEnvironment) writeOLakeConfigs(t *testing.T) {
 	t.Helper()
 
