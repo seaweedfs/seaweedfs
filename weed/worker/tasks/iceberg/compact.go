@@ -1429,7 +1429,8 @@ func compactRandomSuffix() string {
 	return hex.EncodeToString(b)
 }
 
-// schemasEqual compares two parquet schemas structurally.
+// schemasEqual compares two parquet schemas structurally, and their Iceberg
+// field ids wherever both carry them.
 func schemasEqual(a, b *parquet.Schema) bool {
 	if a == b {
 		return true
@@ -1437,7 +1438,32 @@ func schemasEqual(a, b *parquet.Schema) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return parquet.EqualNodes(a, b)
+	return parquet.EqualNodes(a, b) && fieldIDsAgree(a, b)
+}
+
+// fieldIDsAgree reports whether two structurally equal nodes carry the same
+// Iceberg field id at every position where both carry one. parquet-go's
+// EqualNodes ignores field ids, so a column dropped and re-added under the
+// same name and type (a new field id) looked like the old one, and a merge
+// filed the old values under the new field, or the live values under the
+// dropped one.
+func fieldIDsAgree(a, b parquet.Node) bool {
+	if a.ID() > 0 && b.ID() > 0 && a.ID() != b.ID() {
+		return false
+	}
+	if a.Leaf() || b.Leaf() {
+		return a.Leaf() == b.Leaf()
+	}
+	fa, fb := a.Fields(), b.Fields()
+	if len(fa) != len(fb) {
+		return false
+	}
+	for i := range fa {
+		if fa[i].Name() != fb[i].Name() || !fieldIDsAgree(fa[i], fb[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureFilerDir ensures a directory exists in the filer.
