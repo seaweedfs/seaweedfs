@@ -57,6 +57,7 @@ func TestOrphanCleanupKeepsStatisticsFiles(t *testing.T) {
 	filer.PutFile(metaDir, "stats-1.puffin", old)
 	filer.PutFile(metaDir, "partition-stats-1.parquet", old)
 	filer.PutFile(metaDir, "stats-0.puffin", old) // superseded: a real orphan
+	filer.PutFile(metaDir, "version-hint.text", old)
 
 	candidates, err := collectOrphanCandidates(context.Background(), filer.Client, bucket, path.Join(namespace, tbl),
 		meta, "v1.metadata.json", 1)
@@ -70,7 +71,7 @@ func TestOrphanCleanupKeepsStatisticsFiles(t *testing.T) {
 	if !doomed["stats-0.puffin"] {
 		t.Fatalf("expected the unreferenced stats-0.puffin to be an orphan, got %v", doomed)
 	}
-	for _, name := range []string{"stats-1.puffin", "partition-stats-1.parquet", "v1.metadata.json"} {
+	for _, name := range []string{"stats-1.puffin", "partition-stats-1.parquet", "v1.metadata.json", "version-hint.text"} {
 		if doomed[name] {
 			t.Errorf("%s is referenced by the table metadata and must not be an orphan", name)
 		}
