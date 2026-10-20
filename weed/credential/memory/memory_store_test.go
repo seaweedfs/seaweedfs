@@ -423,3 +423,37 @@ func TestMemoryStoreUpdateUserRename(t *testing.T) {
 		t.Errorf("Expected access key owner 'newname', got '%s'", byKey.Name)
 	}
 }
+
+// TestMemoryStoreUpdateUserRenameCollision: a rename whose destination name is
+// taken must fail rather than overwrite the existing user.
+func TestMemoryStoreUpdateUserRenameCollision(t *testing.T) {
+	store := &MemoryStore{}
+	if err := store.Initialize(util.GetViper(), "credential."); err != nil {
+		t.Fatalf("Failed to initialize store: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := store.CreateUser(ctx, &iam_pb.Identity{Name: "alice"}); err != nil {
+		t.Fatalf("Failed to create alice: %v", err)
+	}
+	if err := store.CreateUser(ctx, &iam_pb.Identity{
+		Name:        "bob",
+		Credentials: []*iam_pb.Credential{{AccessKey: "bobkey123", SecretKey: "secret123"}},
+	}); err != nil {
+		t.Fatalf("Failed to create bob: %v", err)
+	}
+
+	err := store.UpdateUser(ctx, "alice", &iam_pb.Identity{Name: "bob"})
+	if err != credential.ErrUserAlreadyExists {
+		t.Fatalf("Expected ErrUserAlreadyExists, got %v", err)
+	}
+
+	// Both users must be intact.
+	if _, err := store.GetUser(ctx, "alice"); err != nil {
+		t.Fatalf("alice must still exist: %v", err)
+	}
+	bob, err := store.GetUserByAccessKey(ctx, "bobkey123")
+	if err != nil || bob.Name != "bob" {
+		t.Fatalf("bob's access key must still resolve to bob: %v", err)
+	}
+}

@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -105,4 +106,51 @@ func TestIamGrpcStore_AdminBearerToken(t *testing.T) {
 			t.Fatalf("ListUsers with no key: error message %q does not mention authorization", err)
 		}
 	})
+}
+
+// TestIamGrpcStore_DeleteAccessKeyNotFound pins the not-found translation:
+// the filer reports a missing user or key as gRPC NotFound, and the store must
+// surface it as credential.ErrAccessKeyNotFound so repeat deletes stay a no-op
+// for IAM dispatchers that tolerate the sentinel.
+func TestIamGrpcStore_DeleteAccessKeyNotFound(t *testing.T) {
+	const goodKey = "iam-admin-itest-key"
+
+	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
+	if err != nil {
+		t.Fatalf("NewCredentialManager: %v", err)
+	}
+	defer cm.Shutdown()
+
+	iamSrv := weed_server.NewIamGrpcServer(cm, security.SigningKey(goodKey))
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcSrv := grpc.NewServer()
+	iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcSrv, iamSrv)
+	go func() { _ = grpcSrv.Serve(lis) }()
+	t.Cleanup(grpcSrv.Stop)
+
+	_, portStr, err := net.SplitHostPort(lis.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	serverAddr := pb.ServerAddress(fmt.Sprintf("127.0.0.1:0.%s", portStr))
+
+	store := &IamGrpcStore{}
+	store.SetFilerAddressFunc(func() pb.ServerAddress { return serverAddr }, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	store.SetAdminSigning(security.SigningKey(goodKey), 0)
+
+	ctx := context.Background()
+	if err := store.CreateUser(ctx, &iam_pb.Identity{Name: "alice"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if err := store.DeleteAccessKey(ctx, "alice", "AKIAMISSING0000000001"); !errors.Is(err, credential.ErrAccessKeyNotFound) {
+		t.Fatalf("DeleteAccessKey with missing key: got %v, want ErrAccessKeyNotFound", err)
+	}
+	if err := store.DeleteAccessKey(ctx, "ghost", "AKIAMISSING0000000001"); !errors.Is(err, credential.ErrAccessKeyNotFound) {
+		t.Fatalf("DeleteAccessKey with missing user: got %v, want ErrAccessKeyNotFound", err)
+	}
 }

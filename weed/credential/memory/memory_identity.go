@@ -142,6 +142,14 @@ func (store *MemoryStore) UpdateUser(ctx context.Context, username string, ident
 		return credential.ErrUserNotFound
 	}
 
+	if identity.Name != username {
+		// Rename: the destination name must not already be taken, matching
+		// RenameUser's collision check.
+		if _, clash := store.users[identity.Name]; clash {
+			return credential.ErrUserAlreadyExists
+		}
+	}
+
 	// Remove old access keys from index
 	for _, cred := range existingUser.Credentials {
 		delete(store.accessKeys, cred.AccessKey)
