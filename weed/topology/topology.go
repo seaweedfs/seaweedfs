@@ -109,7 +109,7 @@ type Topology struct {
 	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
 	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
 	// layout level only.
-	QuarantineVolumeFn func(dn *DataNode, vid needle.VolumeId, readOnly bool)
+	QuarantineVolumeFn func(dn *DataNode, vid needle.VolumeId, readOnly bool) error
 }
 
 type quarantinedVolume struct {
@@ -138,12 +138,15 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 		state := v.(quarantinedVolumeState)
 		if !state.enforced {
 			state.reported = vi.ReadOnly
-			t.quarantinedVolumeIds.Store(q, state)
-		} else if !vi.ReadOnly && t.QuarantineVolumeFn != nil {
-			// The server lost the pushed mark (restart, manual unquarantine);
-			// re-push it while the conflict stands.
-			t.QuarantineVolumeFn(dn, vi.Id, true)
 		}
+		if t.QuarantineVolumeFn != nil && (!state.enforced || !vi.ReadOnly) {
+			// The mark never landed, or the server lost it (restart, manual
+			// unquarantine); push it while the conflict stands.
+			if t.QuarantineVolumeFn(dn, vi.Id, true) == nil {
+				state.enforced = true
+			}
+		}
+		t.quarantinedVolumeIds.Store(q, state)
 	}
 	return vi
 }
@@ -706,8 +709,7 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 		if vl != nil {
 			vl.SetVolumeQuarantined(n, v.Id)
 		}
-		if t.QuarantineVolumeFn != nil {
-			t.QuarantineVolumeFn(n, v.Id, true)
+		if t.QuarantineVolumeFn != nil && t.QuarantineVolumeFn(n, v.Id, true) == nil {
 			if val, ok := t.quarantinedVolumeIds.Load(q); ok {
 				state := val.(quarantinedVolumeState)
 				state.enforced = true
@@ -745,6 +747,13 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 			vl.SetReplicaReadOnlyFlag(dn, vid, true)
 		} else {
 			vl.SetVolumeWritable(dn, vid)
+			if state.enforced && t.QuarantineVolumeFn != nil {
+				if err := t.QuarantineVolumeFn(dn, vid, false); err != nil {
+					// The server still rejects writes; keep the mark so a
+					// later release pass retries the writable push.
+					return true
+				}
+			}
 		}
 		t.quarantinedVolumeIds.Delete(key)
 		return true
@@ -780,6 +789,7 @@ func (h duplicateHit) layoutKey() string {
 func volumeLayoutKey(collection string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) string {
 	return fmt.Sprintf("collection=%q rp=%s ttl=%s disk=%s", collection, rp, ttl, diskType)
 }
+
 
 // findDuplicateVolumeLayouts reports every layout that already holds v.Id on
 // data nodes other than dn. Volume ids are global, so the same id held by two
