@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
 )
 
@@ -225,6 +226,22 @@ func TestObjectLockActionsRoundTrip(t *testing.T) {
 				t.Errorf("MapToIdentitiesAction(%q) = %q, want %q", tc.identityAction, got, tc.policyAction)
 			}
 		})
+	}
+}
+
+// Anonymous misses must not disclose bucket or key existence: 404 is only
+// served when anonymous listing is allowed.
+func TestAnonymousBucketListAuthorization(t *testing.T) {
+	s3a := &S3ApiServer{iam: &IdentityAccessManagement{}, bucketConfigCache: NewBucketConfigCache(time.Minute)}
+	s3a.bucketConfigCache.Set("open", &BucketConfig{Name: "open", IsPublicRead: true})
+	s3a.bucketConfigCache.Set("private", &BucketConfig{Name: "private"})
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8333/open/key", nil)
+	if got := s3a.authorizeAnonymousBucketList(req, "open"); got != s3err.ErrNone {
+		t.Errorf("listable bucket: %v, want ErrNone", got)
+	}
+	if got := s3a.authorizeAnonymousBucketList(req, "private"); got != s3err.ErrAccessDenied {
+		t.Errorf("private bucket: %v, want AccessDenied", got)
 	}
 }
 

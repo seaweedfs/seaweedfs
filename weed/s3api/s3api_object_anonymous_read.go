@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -109,4 +111,71 @@ func (s3a *S3ApiServer) authorizeAnonymousObjectRead(r *http.Request, bucket, ob
 		return s3err.ErrNone
 	}
 	return s3err.ErrAccessDenied
+}
+
+// authorizeAnonymousBucketList reports whether an anonymous caller may learn
+// which keys exist in the bucket: bucket listing via policy or identity, or a
+// public-read bucket. Anything else masks the miss as AccessDenied.
+func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket string) s3err.ErrorCode {
+	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+	object := mux.Vars(r)["object"]
+	// The caller's query parameters would otherwise retarget these checks
+	// (?policy resolves to GetBucketPolicy) or satisfy a prefix condition on an
+	// unrelated subtree, so each runs on a request with a fixed shape: a
+	// ListBucket scoped to the probed key, and a plain read of the key itself.
+	// A caller that could learn the key's existence either way — by listing or
+	// by getting it — gets the real miss.
+	listReq := r.Clone(r.Context())
+	listReq.URL = &url.URL{Path: "/" + bucket, RawQuery: url.Values{"prefix": {object}}.Encode()}
+	// versionId must survive: a read of a specific version resolves to
+	// s3:GetObjectVersion, and dropping it would let a GetObject grant answer
+	// for versions the caller may not read.
+	readQuery := url.Values{}
+	if v := r.URL.Query().Get("versionId"); v != "" {
+		readQuery.Set("versionId", v)
+	}
+	readReq := r.Clone(r.Context())
+	readReq.URL = &url.URL{Path: "/" + bucket + "/" + object, RawQuery: readQuery.Encode()}
+
+	principal := buildPrincipalARN(identity, r)
+	policyAllowed := false
+	code, allowed := s3a.checkPolicyWithEntry(listReq, bucket, "", string(s3_constants.ACTION_LIST), principal, nil)
+	if code != s3err.ErrNone {
+		return code
+	}
+	policyAllowed = allowed
+	if !policyAllowed {
+		code, allowed = s3a.checkPolicyWithEntry(readReq, bucket, object, string(s3_constants.ACTION_READ), principal, nil)
+		if code != s3err.ErrNone {
+			return code
+		}
+		policyAllowed = allowed
+	}
+	if s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(listReq, identity, s3_constants.ACTION_LIST, bucket, "") ||
+		s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(readReq, identity, s3_constants.ACTION_READ, bucket, object) {
+		return s3err.ErrAccessDenied
+	}
+	if policyAllowed {
+		return s3err.ErrNone
+	}
+	if identity != nil &&
+		(s3a.iam.VerifyActionPermission(listReq, identity, s3_constants.ACTION_LIST, bucket, "") == s3err.ErrNone ||
+			s3a.iam.VerifyActionPermission(readReq, identity, s3_constants.ACTION_READ, bucket, object) == s3err.ErrNone) {
+		return s3err.ErrNone
+	}
+	if config, code := s3a.getBucketConfig(bucket); code == s3err.ErrNone && config.IsPublicRead {
+		return s3err.ErrNone
+	}
+	return s3err.ErrAccessDenied
+}
+
+// writeAnonymousAwareNotFound keeps missing-bucket and missing-key misses
+// indistinguishable from denied reads for anonymous callers: a 404 only
+// reaches the wire when the bucket is anonymously listable.
+func (s3a *S3ApiServer) writeAnonymousAwareNotFound(w http.ResponseWriter, r *http.Request, bucket string, code s3err.ErrorCode) {
+	if isAnonymousObjectRead(r) && s3a.authorizeAnonymousBucketList(r, bucket) != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, code)
 }

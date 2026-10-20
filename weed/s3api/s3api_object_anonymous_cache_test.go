@@ -174,7 +174,7 @@ func TestAnonymousObjectACLVersionedEmptyDirectoryMarker(t *testing.T) {
 					require.Equal(t, "null", rr.Header().Get("x-amz-version-id"))
 				}
 				rr := serveAnonymousRead(s3a, method, "folder", "", nil)
-				require.Equal(t, 404, rr.Code, "the bare prefix is still not an object")
+				require.Equal(t, 403, rr.Code, "the bare prefix is not an object, and the miss stays masked for a non-listable bucket")
 				marker.Extended[s3_constants.ExtAmzAclKey] = []byte(`[]`)
 				rr = serveAnonymousRead(s3a, method, "folder/", "", nil)
 				require.Equal(t, 403, rr.Code, rr.Body.String())
@@ -238,8 +238,12 @@ func TestAnonymousObjectACLVersionedDirectoryIdentity(t *testing.T) {
 							f.entries["/buckets/b/folder/.versions"] = &filer_pb.Entry{IsDirectory: true, Extended: map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("")}}
 						}
 						// Equivalent filer-path spellings must not recover a different object's data.
-						for _, object := range []string{"folder/", "folder//", "folder\\"} {
-							assertMissing(serveAnonymousRead(s3a, method, object, route.query, headers))
+						assertMissing(serveAnonymousRead(s3a, method, "folder/", route.query, headers))
+						// Spellings the policy's folder/ grant does not cover are
+						// masked: a miss must be indistinguishable from a denied read.
+						for _, object := range []string{"folder//", "folder\\"} {
+							rr := serveAnonymousRead(s3a, method, object, route.query, headers)
+							require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 						}
 						if kind == "regular file" || kind == "prefix object" || kind == "empty prefix object" {
 							// A slash-only policy must not authorize data belonging to the bare key.
