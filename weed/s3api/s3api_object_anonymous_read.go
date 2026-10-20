@@ -110,3 +110,38 @@ func (s3a *S3ApiServer) authorizeAnonymousObjectRead(r *http.Request, bucket, ob
 	}
 	return s3err.ErrAccessDenied
 }
+
+// authorizeAnonymousBucketList reports whether an anonymous caller may learn
+// which keys exist in the bucket: bucket listing via policy or identity, or a
+// public-read bucket. Anything else masks the miss as AccessDenied.
+func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket string) s3err.ErrorCode {
+	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+	code, policyAllowed := s3a.checkPolicyWithEntry(r, bucket, "", string(s3_constants.ACTION_LIST), buildPrincipalARN(identity, r), nil)
+	if code != s3err.ErrNone {
+		return code
+	}
+	if s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, s3_constants.ACTION_LIST, bucket, "") {
+		return s3err.ErrAccessDenied
+	}
+	if policyAllowed {
+		return s3err.ErrNone
+	}
+	if identity != nil && s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, bucket, "") == s3err.ErrNone {
+		return s3err.ErrNone
+	}
+	if config, code := s3a.getBucketConfig(bucket); code == s3err.ErrNone && config.IsPublicRead {
+		return s3err.ErrNone
+	}
+	return s3err.ErrAccessDenied
+}
+
+// writeAnonymousAwareNotFound keeps missing-bucket and missing-key misses
+// indistinguishable from denied reads for anonymous callers: a 404 only
+// reaches the wire when the bucket is anonymously listable.
+func (s3a *S3ApiServer) writeAnonymousAwareNotFound(w http.ResponseWriter, r *http.Request, bucket string, code s3err.ErrorCode) {
+	if isAnonymousObjectRead(r) && s3a.authorizeAnonymousBucketList(r, bucket) != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, code)
+}
