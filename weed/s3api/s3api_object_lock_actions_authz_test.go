@@ -227,3 +227,31 @@ func TestObjectLockActionsRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// Internal Seaweed-X-Amz-* headers carry server-validated object lock values
+// into entry metadata; client-supplied ones must be dropped on entry or the
+// dedicated-permission check on x-amz-object-lock-* is bypassed.
+func TestInternalObjectLockHeadersStrippedOnAuth(t *testing.T) {
+	iam := newTestIAM()
+
+	internal := []string{
+		s3_constants.ExtObjectLockModeKey,
+		s3_constants.ExtRetentionUntilDateKey,
+		s3_constants.ExtLegalHoldKey,
+		s3_constants.ExtVersionIdKey,
+	}
+	req := httptest.NewRequest(http.MethodPut, "http://localhost:8333/worm/doc.txt", nil)
+	for _, k := range internal {
+		req.Header.Set(k, "injected")
+	}
+	require.NoError(t, signRawHTTPRequest(context.Background(), req,
+		"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1"))
+
+	_, _, _ = iam.authenticateRequestInternal(req)
+
+	for _, k := range internal {
+		if got := req.Header.Get(k); got != "" {
+			t.Errorf("client-supplied %s survived authentication: %q", k, got)
+		}
+	}
+}

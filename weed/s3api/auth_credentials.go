@@ -1793,6 +1793,13 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	// for every auth path — prevents privilege escalation via header injection.
 	r.Header.Del(s3_constants.SeaweedFSPrincipalHeader)
 	r.Header.Del(s3_constants.SeaweedFSSessionTokenHeader)
+	// Same for the internal object-metadata headers putToFiler persists: the
+	// server sets them from validated x-amz-object-lock-* inputs and generated
+	// version ids, so client-supplied values are never legitimate.
+	r.Header.Del(s3_constants.ExtObjectLockModeKey)
+	r.Header.Del(s3_constants.ExtRetentionUntilDateKey)
+	r.Header.Del(s3_constants.ExtLegalHoldKey)
+	r.Header.Del(s3_constants.ExtVersionIdKey)
 	// Deferred so signature verification can still read a client-signed value.
 	defer r.Header.Del(s3_constants.AmzAccountId)
 
