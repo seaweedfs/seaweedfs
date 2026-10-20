@@ -1069,8 +1069,10 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 			glog.Warningf("apply growth freeze %v: %v", frozen, err)
 		}
 	} else if t.HashicorpRaft != nil {
-		if b, err := json.Marshal(cmd); err == nil {
-			t.HashicorpRaft.Apply(b, time.Second)
+		if b, err := json.Marshal(cmd); err != nil {
+			glog.Warningf("marshal growth freeze %v: %v", frozen, err)
+		} else if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, future.Error())
 		}
 	} else {
 		t.SetGrowthFrozen(frozen)
