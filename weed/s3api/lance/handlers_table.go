@@ -150,7 +150,7 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
 	}
 
-	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials))
+	options, err := s.storageOptions(r, bucket, ns, name, location, wants(r, "vend_credentials", req.VendCredentials))
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, codeInternal, err.Error())
 		return
@@ -210,7 +210,7 @@ func (s *Server) handleDescribeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials))
+	options, err := s.storageOptions(r, bucket, ns, name, location, wants(r, "vend_credentials", req.VendCredentials))
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, codeInternal, err.Error())
 		return
