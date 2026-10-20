@@ -198,6 +198,12 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 		return 0, 0, false, fmt.Errorf("cannot read current volume position: %v", statErr)
 	}
 
+	lastAppendAtNs := v.lastAppendAtNs
+	lastWriteAppendAtNs := v.lastWriteAppendAtNs
+	lastWriteNeedleKey := v.lastWriteNeedleKey
+	lastWriteDeleted := v.lastWriteDeleted
+	lastModifiedTsSeconds := v.lastModifiedTsSeconds
+
 	offset, size, isUnchanged, err = v.appendWriteRequest(n, checkCookie, fsync)
 	if err != nil {
 		return
@@ -211,6 +217,11 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	v.dataFileAccessLock.Lock()
 	if syncErr != nil {
 		v.checkReadWriteError(syncErr)
+		v.lastAppendAtNs = lastAppendAtNs
+		v.lastWriteAppendAtNs = lastWriteAppendAtNs
+		v.lastWriteNeedleKey = lastWriteNeedleKey
+		v.lastWriteDeleted = lastWriteDeleted
+		v.lastModifiedTsSeconds = lastModifiedTsSeconds
 		if !isUnchanged {
 			// Nothing was published, so the whole rollback is taking the
 			// unflushed append back off the .dat.
