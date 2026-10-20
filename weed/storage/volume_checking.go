@@ -388,6 +388,12 @@ func readTailNeedle(datFile backend.BackendStorageFile, version needle.Version, 
 	if err := n.ReadBytes(blob, at, size, version); err != nil {
 		return nil, err
 	}
+	if size > 0 && len(n.Data) == 0 {
+		// A needle with no data is written with size 0, so a record with a
+		// body whose data size reads 0 is damaged. The CRC covers only the
+		// data, and ReadBytes does not check it for empty data.
+		return nil, fmt.Errorf("needle %v at %d has size %d but no data: %w", n.Id, at, size, needle.ErrorCorrupted)
+	}
 	return n, nil
 }
 

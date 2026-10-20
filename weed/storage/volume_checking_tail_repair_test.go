@@ -104,6 +104,21 @@ func (f *tornFixture) flipDataByte(t *testing.T, at int64) {
 	}
 }
 
+// zeroDataSize zeroes the DataSize field and the first data byte (read as
+// the flags once DataSize is 0) of the record at the given offset: the header
+// still claims a body, the body parses as an empty needle.
+func (f *tornFixture) zeroDataSize(t *testing.T, at int64) {
+	t.Helper()
+	file, err := os.OpenFile(f.datName, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.WriteAt(make([]byte, 5), at+types.NeedleHeaderSize); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertReadable(t *testing.T, v *Volume, want *needle.Needle) {
 	t.Helper()
 	got := &needle.Needle{Id: want.Id}
@@ -171,6 +186,11 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 		{name: "a last needle with a bad CRC is cut",
 			ops: writes(1, 2, 3, 4), unindexed: 1,
 			damage:   func(t *testing.T, f *tornFixture) { f.flipDataByte(t, f.starts[3]) },
+			wantSize: func(f *tornFixture) int64 { return f.starts[3] },
+			readable: []uint64{1, 2, 3}, absent: []uint64{4}},
+		{name: "a last needle whose data size field reads 0 is cut",
+			ops: writes(1, 2, 3, 4), unindexed: 1,
+			damage:   func(t *testing.T, f *tornFixture) { f.zeroDataSize(t, f.starts[3]) },
 			wantSize: func(f *tornFixture) int64 { return f.starts[3] },
 			readable: []uint64{1, 2, 3}, absent: []uint64{4}},
 		{name: "a partial needle after an indexed tombstone is cut",
@@ -249,6 +269,9 @@ func TestVolumeLoadKeepsUnexplainedTailReadOnly(t *testing.T) {
 		{name: "the last indexed needle fails its CRC",
 			ops: writes(1, 2, 3, 4), unindexed: 1,
 			damage: func(t *testing.T, f *tornFixture) { f.flipDataByte(t, f.starts[2]) }},
+		{name: "a zeroed data size field followed by more data",
+			ops: writes(1, 2, 3, 4, 5), unindexed: 2,
+			damage: func(t *testing.T, f *tornFixture) { f.zeroDataSize(t, f.starts[3]) }},
 		{name: "a bad CRC followed by more data",
 			ops: writes(1, 2, 3, 4, 5), unindexed: 2,
 			damage: func(t *testing.T, f *tornFixture) { f.flipDataByte(t, f.starts[3]) }},
