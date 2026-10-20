@@ -1090,6 +1090,36 @@ func mergeParquetFiles(
 	rowGroupRows int64,
 	lineage bool,
 ) ([]byte, int64, error) {
+	// A file whose schema is wider than the writer's restarts the bin with
+	// that schema; each restart takes a schema covering the one before, so
+	// there are at most as many restarts as files.
+	var target *parquet.Schema
+	for attempt := 0; ; attempt++ {
+		out, rows, err := mergeParquetFilesInto(ctx, filerClient, bucketName, dataPath, entries, positionDeletes,
+			eqDeleteGroups, icebergSchema, rowGroupRows, lineage, target)
+		var wider *widerSchemaError
+		if errors.As(err, &wider) && attempt < len(entries) {
+			target = wider.schema
+			continue
+		}
+		return out, rows, err
+	}
+}
+
+// mergeParquetFilesInto merges with target as the writer's schema on a v1/v2
+// table (nil: the first file's).
+func mergeParquetFilesInto(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+	positionDeletes map[string][]int64,
+	eqDeleteGroups []equalityDeleteGroup,
+	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
+	lineage bool,
+	target *parquet.Schema,
+) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
 	}
@@ -1122,6 +1152,30 @@ func mergeParquetFiles(
 			return nil, 0, fmt.Errorf("schema of %s: %w", entries[0].DataFile().FilePath(), err)
 		}
 		outputSchema = layout.schema
+	} else if target != nil {
+		outputSchema = target
+	}
+
+	// joins is how one file enters the merge on a v1/v2 table: converted into
+	// the writer's schema when that covers it, with its equality-delete
+	// columns resolved on its own schema.
+	joins := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (parquet.Conversion, []resolvedEqDeleteGroup, error) {
+		if layout != nil {
+			return nil, resolvedEqGroups, nil // a v3 merge matches files with their lineage columns set aside
+		}
+		source := entry.DataFile().FilePath()
+		conv, err := evolvedFileConversion(outputSchema, reader.Schema(), source)
+		if err != nil {
+			return nil, nil, err
+		}
+		if schemasEqual(parquetSchema, reader.Schema()) {
+			return conv, resolvedEqGroups, nil
+		}
+		groups, err := resolveEqualityDeleteGroupsForSchema(reader.Schema(), eqDeleteGroups, icebergSchema)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve equality columns in %s: %w", source, err)
+		}
+		return conv, groups, nil
 	}
 
 	var outputBuf bytes.Buffer
@@ -1129,7 +1183,17 @@ func mergeParquetFiles(
 
 	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
 		source := entry.DataFile().FilePath()
-		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, resolvedEqGroups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
+		conv, groups, err := joins(reader, entry)
+		if err != nil {
+			reader.Close()
+			return 0, err
+		}
+		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, groups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
+			if conv != nil {
+				if _, err := conv.Convert(filtered); err != nil {
+					return fmt.Errorf("convert rows from %s: %w", source, err)
+				}
+			}
 			if _, err := writer.WriteRows(filtered); err != nil {
 				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
@@ -1161,13 +1225,6 @@ func mergeParquetFiles(
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
-		// A v3 merge matches files with their lineage columns set aside.
-		if layout == nil && !schemasEqual(parquetSchema, reader.Schema()) {
-			reader.Close()
-			writer.Close()
-			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
-		}
-
 		rowsWritten, err := drainReader(reader, entry)
 		if err != nil {
 			writer.Close()
