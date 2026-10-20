@@ -88,6 +88,7 @@ jobs:
           aws --no-verify-ssl s3 cp --no-progress generated s3://bucket/test-multipart
           for i in 1 2 3 4 5; do
             aws --no-verify-ssl s3 cp --no-progress s3://bucket/test-multipart downloaded && break
+            if [ "$i" -eq 5 ]; then exit 1; fi
             sleep 2
           done
           diff -q generated downloaded
