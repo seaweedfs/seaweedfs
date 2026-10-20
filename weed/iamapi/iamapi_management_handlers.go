@@ -4,6 +4,7 @@ package iamapi
 // Common IAM types and helpers are imported from the shared weed/iam package.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -1312,6 +1314,115 @@ func (iama *IamApiServer) handleImplicitUsername(r *http.Request, values url.Val
 	values.Set("UserName", identity.Name)
 }
 
+// targetedCredentialManager returns the credential manager through which a change to the named
+// identity is written on its own instead of via SaveConfiguration, or nil when this server has
+// none, or the identity is static: static identities live outside the store and keep the
+// full-save path.
+func (iama *IamApiServer) targetedCredentialManager(userName string) *credential.CredentialManager {
+	if iama.iam == nil {
+		return nil
+	}
+	cm := iama.iam.GetCredentialManager()
+	if cm == nil || cm.IsStaticIdentity(userName) {
+		return nil
+	}
+	return cm
+}
+
+// findIdentityByName returns the identity named userName in s3cfg, or nil.
+func findIdentityByName(s3cfg *iam_pb.S3ApiConfiguration, userName string) *iam_pb.Identity {
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			return ident
+		}
+	}
+	return nil
+}
+
+// groupsWithMember returns the groups in s3cfg that list userName as a member. Taken before a
+// handler renames or removes the user, it names the group records that handler will change.
+func groupsWithMember(s3cfg *iam_pb.S3ApiConfiguration, userName string) []*iam_pb.Group {
+	var groups []*iam_pb.Group
+	for _, g := range s3cfg.Groups {
+		for _, m := range g.Members {
+			if m == userName {
+				groups = append(groups, g)
+				break
+			}
+		}
+	}
+	return groups
+}
+
+// serviceAccountsOf returns the service accounts in s3cfg whose parent is userName.
+func serviceAccountsOf(s3cfg *iam_pb.S3ApiConfiguration, userName string) []*iam_pb.ServiceAccount {
+	var accounts []*iam_pb.ServiceAccount
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.ParentUser == userName {
+			accounts = append(accounts, sa)
+		}
+	}
+	return accounts
+}
+
+// persistIdentity writes the one identity a handler changed in s3cfg through the credential
+// manager. The store writes that identity's record and propagates it alone; the other
+// identities are not rewritten.
+func persistIdentity(ctx context.Context, cm *credential.CredentialManager, s3cfg *iam_pb.S3ApiConfiguration, userName string) error {
+	ident := findIdentityByName(s3cfg, userName)
+	if ident == nil {
+		return credential.ErrUserNotFound
+	}
+	return cm.UpdateUser(ctx, userName, ident)
+}
+
+// persistRenamedIdentity writes a user renamed from oldName to newName by UpdateUser through the
+// credential manager: the identity, the groups that listed the old name and the service accounts
+// it parented. UpdateUser under the old name moves the record in stores that treat a changed Name
+// as a rename (filer_etc, memory), and the propagating store propagates the new identity and the
+// old name's removal; UpdateUser already moved the inline policies through PutPolicies. A store
+// that did not move the record still holds the user under the old name; the caller is told so
+// (false) and keeps the full save, which is what renames such a store today.
+func persistRenamedIdentity(ctx context.Context, cm *credential.CredentialManager, s3cfg *iam_pb.S3ApiConfiguration, oldName, newName string, groups []*iam_pb.Group, accounts []*iam_pb.ServiceAccount) (bool, error) {
+	ident := findIdentityByName(s3cfg, newName)
+	if ident == nil {
+		return false, credential.ErrUserNotFound
+	}
+	if err := cm.UpdateUser(ctx, oldName, ident); err != nil {
+		return false, err
+	}
+	if _, err := cm.GetUser(ctx, newName); err != nil {
+		return false, nil
+	}
+	for _, g := range groups {
+		if err := cm.UpdateGroup(ctx, g); err != nil {
+			return false, fmt.Errorf("update group %s: %w", g.Name, err)
+		}
+	}
+	for _, sa := range accounts {
+		if err := cm.UpdateServiceAccount(ctx, sa.Id, sa); err != nil {
+			return false, fmt.Errorf("update service account %s: %w", sa.Id, err)
+		}
+	}
+	return true, nil
+}
+
+// deleteIdentity removes a user deleted by DeleteUser through the credential manager: its record
+// (the store propagates the one removal) and the groups that listed it, whose membership
+// DeleteUser already changed in s3cfg. DeleteUser already removed the inline policies through
+// PutPolicies.
+func deleteIdentity(ctx context.Context, cm *credential.CredentialManager, userName string, groups []*iam_pb.Group) error {
+	if err := cm.DeleteUser(ctx, userName); err != nil {
+		return err
+	}
+	for _, g := range groups {
+		if err := cm.UpdateGroup(ctx, g); err != nil {
+			return fmt.Errorf("update group %s: %w", g.Name, err)
+		}
+	}
+	return nil
+}
+
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	policyLock.Lock()
@@ -1333,6 +1444,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	glog.V(4).Infof("DoActions: %+v", iamlib.RedactSensitiveFormValues(values))
 	var response iamlib.RequestIDSetter
 	changed := true
+	// persisted is set by the actions that wrote one identity through the credential manager
+	// instead of SaveConfiguration; the in-memory identity maps are reloaded after them too.
+	persisted := false
 	switch r.Form.Get("Action") {
 	case "ListUsers":
 		response = iama.ListUsers(s3cfg, values)
@@ -1365,39 +1479,106 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = false
 	case "UpdateUser":
+		userName, newUserName := values.Get("UserName"), values.Get("NewUserName")
+		// Taken before the rename: the records the handler changes besides the identity.
+		groups := groupsWithMember(s3cfg, userName)
+		accounts := serviceAccountsOf(s3cfg, userName)
 		var err *IamError
 		response, err = iama.UpdateUser(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		// Write the renamed identity, its groups and service accounts through the credential
+		// manager instead of rewriting every identity via SaveConfiguration. A request that
+		// renames nothing changed nothing, so there is nothing to write either way.
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			renamed := true
+			if newUserName != "" && newUserName != userName {
+				var err error
+				renamed, err = persistRenamedIdentity(r.Context(), cm, s3cfg, userName, newUserName, groups, accounts)
+				if err != nil {
+					writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+					return
+				}
+			}
+			changed, persisted = !renamed, renamed
+		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
+		groups := groupsWithMember(s3cfg, userName)
 		var err *IamError
 		response, err = iama.DeleteUser(s3cfg, userName)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		// Targeted delete: one record removed and one removal propagated, plus the groups whose
+		// membership changed, instead of rewriting every remaining identity.
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			if err := deleteIdentity(r.Context(), cm, userName, groups); err != nil {
+				writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+				return
+			}
+			changed, persisted = false, true
+		}
 	case "CreateAccessKey":
 		iama.handleImplicitUsername(r, values)
-		var err *IamError
-		response, err = iama.CreateAccessKey(s3cfg, values)
+		userName := values.Get("UserName")
+		resp, err := iama.CreateAccessKey(s3cfg, values)
 		if err != nil {
 			glog.Errorf("CreateAccessKey: %+v", err.Error)
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		response = resp
+		// Targeted write: credentialManager.CreateAccessKey adds the key to the one identity and
+		// propagates that identity alone. The handler creates the identity for a user it does
+		// not know; that case still needs the full save.
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			if _, known := cm.GetUser(r.Context(), userName); known == nil {
+				cred := &iam_pb.Credential{
+					AccessKey: *resp.CreateAccessKeyResult.AccessKey.AccessKeyId,
+					SecretKey: *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey,
+					Status:    accessKeyStatusActive,
+				}
+				if err := cm.CreateAccessKey(r.Context(), userName, cred); err != nil {
+					writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+					return
+				}
+				changed, persisted = false, true
+			}
+		}
 	case "DeleteAccessKey":
 		iama.handleImplicitUsername(r, values)
+		userName, accessKeyId := values.Get("UserName"), values.Get("AccessKeyId")
 		response = iama.DeleteAccessKey(s3cfg, values)
+		// Targeted write: credentialManager.DeleteAccessKey removes the key from the one identity
+		// and propagates that identity alone. The handler answers 200 for a key or user it does
+		// not know, so a not-found from the store is the same no-op it always was.
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			err := cm.DeleteAccessKey(r.Context(), userName, accessKeyId)
+			if err != nil && !errors.Is(err, credential.ErrAccessKeyNotFound) && !errors.Is(err, credential.ErrUserNotFound) {
+				writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+				return
+			}
+			changed, persisted = false, true
+		}
 	case "UpdateAccessKey":
 		iama.handleImplicitUsername(r, values)
+		userName := values.Get("UserName")
 		var err *IamError
 		response, err = iama.UpdateAccessKey(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
+		}
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			if err := persistIdentity(r.Context(), cm, s3cfg, userName); err != nil {
+				writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+				return
+			}
+			changed, persisted = false, true
 		}
 	case "CreatePolicy":
 		var err *IamError
@@ -1410,12 +1591,22 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		// The `changed` flag is false because this does not modify the main s3cfg.Identities configuration.
 		changed = false
 	case "PutUserPolicy":
+		userName := values.Get("UserName")
 		var err *IamError
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("PutUserPolicy:  %+v", err.Error)
 			writeIamErrorResponse(w, r, reqID, err)
 			return
+		}
+		// The policy document is already stored through PutPolicies; what remains is the
+		// identity's recomputed Actions, written and propagated for that identity alone.
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			if err := persistIdentity(r.Context(), cm, s3cfg, userName); err != nil {
+				writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+				return
+			}
+			changed, persisted = false, true
 		}
 	case "GetUserPolicy":
 		var err *IamError
@@ -1426,11 +1617,19 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = false
 	case "DeleteUserPolicy":
+		userName := values.Get("UserName")
 		var err *IamError
 		response, err = iama.DeleteUserPolicy(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
+		}
+		if cm := iama.targetedCredentialManager(userName); cm != nil {
+			if err := persistIdentity(r.Context(), cm, s3cfg, userName); err != nil {
+				writeIamErrorResponse(w, r, reqID, &IamError{Code: s3api.CredentialErrToIamErrCode(err), Error: err})
+				return
+			}
+			changed, persisted = false, true
 		}
 	case "ListUserPolicies":
 		iama.handleImplicitUsername(r, values)
@@ -1642,6 +1841,8 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, &iamError)
 			return
 		}
+	}
+	if changed || persisted {
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
 		// can see newly created or deleted keys immediately
 		if iama.iam != nil {
