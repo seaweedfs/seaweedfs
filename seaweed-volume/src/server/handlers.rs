@@ -2433,6 +2433,9 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
+/// Store an uploaded needle on the local volume — durable (fsync) uploads
+/// through the per-volume write queue, the rest synchronously — and then
+/// replicate it if the volume's placement calls for more copies.
 pub async fn post_handler(
     State(state): State<Arc<VolumeServerState>>,
     request: Request<Body>,
