@@ -2796,8 +2796,9 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 
 	// 1. Check If-Match
 	if headers.ifMatch != "" {
+		// AWS answers 404 when there is no current version (or it is a delete marker)
 		if !objectExists {
-			return s3err.ErrPreconditionFailed
+			return s3err.ErrNoSuchKey
 		}
 		// If `ifMatch` is "*", the condition is met if the object exists.
 		// Otherwise, we need to check the ETag.
