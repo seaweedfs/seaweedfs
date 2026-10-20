@@ -471,6 +471,13 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	return resp, nil
 }
 
+func (ms *MasterServer) ResumeVolumeGrowth(ctx context.Context, req *master_pb.ResumeVolumeGrowthRequest) (*master_pb.ResumeVolumeGrowthResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+	return &master_pb.ResumeVolumeGrowthResponse{WasFrozen: ms.Topo.ResumeVolumeGrowth()}, nil
+}
+
 func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGrowRequest) (*master_pb.VolumeGrowResponse, error) {
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError

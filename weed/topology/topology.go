@@ -84,10 +84,21 @@ type Topology struct {
 	dataNodeIndex     map[string]*DataNode
 	dataNodeIndexLock sync.RWMutex
 
-	maxVolumeIdFile          string
-	maxVolumeIdFileLock      sync.Mutex
-	lastPersistedMaxVolumeId atomic.Uint32
-	lastPersistedTopologyId  atomic.Value
+	maxVolumeIdFile           string
+	maxVolumeIdFileLock       sync.Mutex
+	lastPersistedMaxVolumeId  atomic.Uint32
+	lastPersistedTopologyId   atomic.Value
+	lastPersistedGrowthFrozen atomic.Bool
+
+	growthFrozen          atomic.Bool
+	growthFrozenAt        atomic.Int64
+	freezeOnMismatch      atomic.Bool
+	stateLossRecoveryWait atomic.Int64
+	allocationNotBefore   atomic.Int64
+	topologyInitPending   atomic.Bool
+
+	reportedTopologyIdsLock    sync.Mutex
+	pendingReportedTopologyIds map[string]struct{}
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -393,6 +404,22 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	if !t.IsLeaderAndCanRead() {
 		return 0, fmt.Errorf("as leader can not read yet")
 
+	}
+	for t.topologyInitPending.Load() {
+		if !t.IsLeaderAndCanRead() {
+			return 0, fmt.Errorf("as leader can not read yet")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if t.IsGrowthFrozen() {
+		return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+	}
+	if wait := t.allocationDelay(); wait > 0 {
+		glog.V(0).Infof("deferring volume id allocation for %v", wait)
+		time.Sleep(wait)
+		if t.IsGrowthFrozen() {
+			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+		}
 	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
@@ -950,6 +977,135 @@ func (t *Topology) SetTopologyId(topologyId string) {
 	}
 }
 
+func (t *Topology) SetGrowthFreezeConfig(freezeOnMismatch bool, recoveryWait time.Duration) {
+	t.freezeOnMismatch.Store(freezeOnMismatch)
+	t.stateLossRecoveryWait.Store(int64(recoveryWait))
+}
+
+// CheckReportedTopologyId freezes growth when a volume server reports a
+// topology id different from this cluster's: the topology id survives raft
+// state cleanup, so a mismatch means the master's state was rebuilt (or a
+// foreign disk was cloned in).
+func (t *Topology) CheckReportedTopologyId(reported string) {
+	if reported == "" || !t.freezeOnMismatch.Load() {
+		return
+	}
+	own := t.GetTopologyId()
+	if own == "" {
+		// The local topology id is still being minted. Keep the report so a
+		// later heartbeat echo cannot erase the mismatch on the server side
+		// before the freeze check ever ran.
+		t.reportedTopologyIdsLock.Lock()
+		if t.pendingReportedTopologyIds == nil {
+			t.pendingReportedTopologyIds = make(map[string]struct{})
+		}
+		t.pendingReportedTopologyIds[reported] = struct{}{}
+		t.reportedTopologyIdsLock.Unlock()
+		return
+	}
+	if reported == own {
+		return
+	}
+	t.growthFrozenAt.Store(time.Now().UnixNano())
+	if t.growthFrozen.CompareAndSwap(false, true) {
+		stats.MasterVolumeGrowthFrozen.Set(1)
+		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
+		t.applyGrowthFreeze(true)
+	}
+}
+
+func (t *Topology) IsGrowthFrozen() bool {
+	if !t.growthFrozen.Load() {
+		return false
+	}
+	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
+		if time.Duration(time.Now().UnixNano()-t.growthFrozenAt.Load()) > time.Duration(wait) {
+			if t.growthFrozen.CompareAndSwap(true, false) {
+				stats.MasterVolumeGrowthFrozen.Set(0)
+				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (t *Topology) ResumeVolumeGrowth() bool {
+	if !t.growthFrozen.CompareAndSwap(true, false) {
+		return false
+	}
+	stats.MasterVolumeGrowthFrozen.Set(0)
+	glog.V(0).Infof("volume growth resumed by operator")
+	t.applyGrowthFreeze(false)
+	return true
+}
+
+// SetGrowthFrozen applies a replicated freeze state on every master. The
+// timestamp lands before the flag so a reader can never see frozen with a
+// zero time and misjudge the auto-resume window.
+func (t *Topology) SetGrowthFrozen(frozen bool) {
+	if frozen {
+		t.growthFrozenAt.Store(time.Now().UnixNano())
+		if t.growthFrozen.CompareAndSwap(false, true) {
+			stats.MasterVolumeGrowthFrozen.Set(1)
+			glog.V(0).Infof("volume growth freeze applied from raft")
+		}
+		return
+	}
+	if t.growthFrozen.CompareAndSwap(true, false) {
+		stats.MasterVolumeGrowthFrozen.Set(0)
+	}
+}
+
+// applyGrowthFreeze replicates the freeze flag so followers keep it across a
+// leader change. No raft server (single-master test topologies) just sets it.
+func (t *Topology) applyGrowthFreeze(frozen bool) {
+	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
+	cmd.GrowthFrozen = &frozen
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+	if t.RaftServer != nil {
+		if _, err := t.RaftServer.Do(cmd); err != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, err)
+		}
+	} else if t.HashicorpRaft != nil {
+		if b, err := json.Marshal(cmd); err != nil {
+			glog.Warningf("marshal growth freeze %v: %v", frozen, err)
+		} else if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, future.Error())
+		}
+	} else {
+		t.SetGrowthFrozen(frozen)
+	}
+}
+
+// SetTopologyInitPending gates allocation while a topology id is being
+// minted, so growth cannot slip in before the warmup window is installed.
+func (t *Topology) SetTopologyInitPending(pending bool) {
+	t.topologyInitPending.Store(pending)
+	if pending {
+		return
+	}
+	t.reportedTopologyIdsLock.Lock()
+	reported := t.pendingReportedTopologyIds
+	t.pendingReportedTopologyIds = nil
+	t.reportedTopologyIdsLock.Unlock()
+	for id := range reported {
+		t.CheckReportedTopologyId(id)
+	}
+}
+
+// DeferAllocation holds off new id allocation for d. Called when the leader
+// mints a fresh topology id: on a rebuilt master that window gives veteran
+// servers a pulse to raise the bound or trip the freeze.
+func (t *Topology) DeferAllocation(d time.Duration) {
+	t.allocationNotBefore.Store(time.Now().Add(d).UnixNano())
+}
+
+func (t *Topology) allocationDelay() time.Duration {
+	return time.Until(time.Unix(0, t.allocationNotBefore.Load()))
+}
+
 // SetMaxVolumeIdFile mirrors the allocation bound to a file outside raft, so
 // a master whose raft state is gone still restores a safe boundary. An
 // existing file seeds both the bound and the topology id.
@@ -970,6 +1126,10 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 	if cmd.TopologyId != "" {
 		t.SetTopologyId(cmd.TopologyId)
 	}
+	if cmd.GrowthFrozen != nil {
+		t.lastPersistedGrowthFrozen.Store(*cmd.GrowthFrozen)
+		t.SetGrowthFrozen(*cmd.GrowthFrozen)
+	}
 }
 
 // PersistMaxVolumeId writes the bound to the mirror file. Called by the
@@ -977,8 +1137,9 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 // recovery, so follower mirrors stay current too.
 func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	topoId := t.GetTopologyId()
+	frozen := t.IsGrowthFrozen()
 	mirrored := func() bool {
-		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId
+		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId && t.lastPersistedGrowthFrozen.Load() == frozen
 	}
 	if mirrored() {
 		return nil
@@ -991,9 +1152,12 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	if t.maxVolumeIdFile == "" {
 		t.lastPersistedMaxVolumeId.Store(uint32(vid))
 		t.lastPersistedTopologyId.Store(topoId)
+		t.lastPersistedGrowthFrozen.Store(frozen)
 		return nil
 	}
-	b, err := json.Marshal(NewMaxVolumeIdCommand(vid, topoId))
+	cmd := NewMaxVolumeIdCommand(vid, topoId)
+	cmd.GrowthFrozen = &frozen
+	b, err := json.Marshal(cmd)
 	if err != nil {
 		return err
 	}
@@ -1021,5 +1185,6 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	}
 	t.lastPersistedMaxVolumeId.Store(uint32(vid))
 	t.lastPersistedTopologyId.Store(topoId)
+	t.lastPersistedGrowthFrozen.Store(frozen)
 	return nil
 }

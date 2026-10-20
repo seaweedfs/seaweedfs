@@ -122,6 +122,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.reservation_timeout", "5m")
 	v.SetDefault("master.volume_growth.disable", false)
 	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
+	v.SetDefault("master.volume_growth.freeze_on_topology_mismatch", true)
+	v.SetDefault("master.volume_growth.state_loss_recovery_wait", "0s")
 
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
@@ -157,6 +159,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		glog.Fatalf("create sequencer failed.")
 	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
+	ms.Topo.SetGrowthFreezeConfig(
+		v.GetBool("master.volume_growth.freeze_on_topology_mismatch"),
+		v.GetDuration("master.volume_growth.state_loss_recovery_wait"))
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
