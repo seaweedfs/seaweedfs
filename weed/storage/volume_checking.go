@@ -267,8 +267,10 @@ var errTailNotTorn = errors.New("not a torn tail")
 // (a size 0 record, which is how a delete is appended, as a tombstone), in
 // .dat order, and the .idx is synced. Only what follows the last complete
 // needle and is itself incomplete is cut: fewer bytes than a header, a record
-// running past the end of the file, or a last record whose CRC fails; the .dat
-// is synced after the cut.
+// running past the end of the file, or a last record whose bytes are damaged
+// (its CRC fails or its body does not parse); the .dat is synced after the
+// cut. A record that cannot be read is not cut: a read error is returned and
+// nothing is changed.
 //
 // Nothing is changed when the tail is anything else: the .idx entry at the
 // highest offset does not describe the needle there (id, size, CRC), a record
@@ -414,6 +416,10 @@ func walkUnindexedDatTail(datFile backend.BackendStorageFile, version needle.Ver
 		}
 		n, err := readTailNeedle(datFile, version, at, header.Size)
 		if err != nil {
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				// a read error says nothing about the bytes: leave them
+				return nil, 0, fmt.Errorf("read record %v at %d: %w", header.Id, at, err)
+			}
 			if end == fileSize {
 				return entries, at, nil // the last record is damaged: it never completed
 			}

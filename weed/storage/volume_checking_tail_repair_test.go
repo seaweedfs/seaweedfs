@@ -396,6 +396,28 @@ func (f *faultyDatFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.BackendStorageFile.ReadAt(p, off)
 }
 
+// A read error is not evidence of a torn write: the last record is kept.
+func TestWalkUnindexedDatTailKeepsRecordOnReadError(t *testing.T) {
+	f := buildTornFixture(t, writes(1, 2, 3, 4), 1)
+	file, err := os.Open(f.datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dat := &faultyDatFile{BackendStorageFile: backend.NewDiskFile(file), failRecordAt: f.starts[3], failRecordSet: true}
+	defer dat.Close()
+
+	records, cutAt, err := walkUnindexedDatTail(dat, needle.Version3, f.starts[3], f.end, 0)
+	if err == nil {
+		t.Fatalf("read error on the last record: walk returned %d record(s) and a cut at %d, want an error", len(records), cutAt)
+	}
+	if errors.Is(err, errTailNotTorn) {
+		t.Fatalf("read error reported as an unexplained tail: %v", err)
+	}
+	if !errors.Is(err, errFaultyDisk) {
+		t.Fatalf("walk error %v does not carry the read error", err)
+	}
+}
+
 // A repair that changed a file but could not sync it fails the integrity
 // check, so the volume loads read-only rather than writable on an unsynced
 // repair.
