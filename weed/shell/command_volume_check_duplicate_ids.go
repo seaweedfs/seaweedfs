@@ -74,8 +74,8 @@ func (c *commandVolumeCheckDuplicateIds) Do(args []string, commandEnv *CommandEn
 						addCollection(collections, vi.Id, vi.Collection)
 					}
 					for _, si := range di.EcShardInfos {
-						add(ecSeen, si.Id, fmt.Sprintf("collection=%q ec_shards disk=%s", si.Collection, si.DiskType),
-							fmt.Sprintf("%s %s", dn.Id, diskKey))
+						add(ecSeen, si.Id, fmt.Sprintf("collection=%q ec_shards", si.Collection),
+							fmt.Sprintf("%s %s disk=%s", dn.Id, diskKey, si.DiskType))
 						addCollection(ecCollections, si.Id, si.Collection)
 					}
 				}
