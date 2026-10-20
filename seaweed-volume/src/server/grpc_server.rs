@@ -16,7 +16,7 @@ use crate::pb::filer_pb;
 use crate::pb::master_pb;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
-use crate::storage::erasure_coding::ec_shard::{DATA_SHARDS_COUNT, ShardId, shard_id_try_from};
+use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
@@ -2317,9 +2317,9 @@ impl VolumeServer for VolumeGrpcService {
                             // owns the .ecx on disk (volume not yet mounted — relevant
                             // when shards stream in mid-rebuild before any
                             // VolumeEcShardsMount has happened; see #9212), then any
-                            // HDD, then any disk. Pass the build's default data-shard
-                            // count for free-slot maths; the helper takes it as a
-                            // parameter so custom-ratio builds can swap it.
+                            // HDD, then any disk. The free-slot maths uses the
+                            // volume's own data-shard count from its .vif so a
+                            // custom-ratio volume is not scored as 10+4.
                             let vid = VolumeId(info.volume_id);
                             let dir = if info.disk_id > 0 {
                                 let count = store.locations.len();
@@ -2334,11 +2334,13 @@ impl VolumeServer for VolumeGrpcService {
                             } else {
                                 // The mounted-volume refusal above means no disk
                                 // holds an in-memory claim here.
+                                let data_shards =
+                                    store.lookup_ec_data_shards(&info.collection, vid);
                                 store
                                     .find_ec_shard_target_location(
                                         &info.collection,
                                         vid,
-                                        DATA_SHARDS_COUNT as u32,
+                                        data_shards,
                                         &[],
                                     )
                                     .map(|i| store.locations[i].directory.clone())
@@ -3288,9 +3290,9 @@ impl VolumeServer for VolumeGrpcService {
         //   volume mounted, then a disk that owns the .ecx on disk (volume
         //   not yet mounted — relevant for ec.rebuild, where only the
         //   first shard carries .ecx and subsequent shards must land on
-        //   the same disk; see #9212), then any HDD, then any disk. Pass
-        //   the build's default data-shard count; the helper takes it as a
-        //   parameter so custom-ratio builds can swap it.
+        //   the same disk; see #9212), then any HDD, then any disk. The
+        //   free-slot maths uses the volume's own data-shard count from its
+        //   .vif so a custom-ratio volume is not scored as 10+4.
         let (dest_dir, dest_idx_dir) = {
             let store = self.state.store.read().unwrap();
             let count = store.locations.len();
@@ -3322,10 +3324,11 @@ impl VolumeServer for VolumeGrpcService {
                         req.volume_id, shard_ids, dirs
                     )));
                 }
+                let data_shards = store.lookup_ec_data_shards(&req.collection, vid);
                 match store.find_ec_shard_target_location(
                     &req.collection,
                     vid,
-                    DATA_SHARDS_COUNT as u32,
+                    data_shards,
                     &shard_ids,
                 ) {
                     Some(i) => {
