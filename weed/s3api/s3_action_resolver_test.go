@@ -114,6 +114,36 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 	}
 }
 
+// A tagging request carrying versionId targets a specific version and must
+// resolve to the version-tagging action so a grant limited to current-object
+// tagging cannot reach historical versions.
+func TestResolveS3Action_VersionTagging(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		object string
+		query  string
+		want   string
+	}{
+		{"get current tags", http.MethodGet, "key", "tagging", s3_constants.S3_ACTION_GET_OBJECT_TAGGING},
+		{"put current tags", http.MethodPut, "key", "tagging", s3_constants.S3_ACTION_PUT_OBJECT_TAGGING},
+		{"delete current tags", http.MethodDelete, "key", "tagging", s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING},
+		{"get version tags", http.MethodGet, "key", "tagging&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING},
+		{"put version tags", http.MethodPut, "key", "tagging&versionId=v1", s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING},
+		{"delete version tags", http.MethodDelete, "key", "tagging&versionId=v1", s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING},
+		{"empty versionId stays current", http.MethodGet, "key", "tagging&versionId=", s3_constants.S3_ACTION_GET_OBJECT_TAGGING},
+		{"bucket tagging ignores versionId", http.MethodGet, "", "tagging&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_TAGGING},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_READ, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // Bucket subresources registered with ACTION_ADMIN must resolve to their own
 // S3 actions so a policy granting one of them does not need s3:*, and so no
 // broader grant sweeps them in.

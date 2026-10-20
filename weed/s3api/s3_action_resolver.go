@@ -182,20 +182,31 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Tagging operations
+	// Tagging operations. A versionId retargets them at a specific version, so
+	// the version-tagging action applies, not the current-object one.
 	if query.Has("tagging") {
+		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
 		case http.MethodGet:
+			if versioned {
+				return s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_TAGGING
 			}
 			return s3_constants.S3_ACTION_GET_BUCKET_TAGGING
 		case http.MethodPut:
+			if versioned {
+				return s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
 			}
 			return s3_constants.S3_ACTION_PUT_BUCKET_TAGGING
 		case http.MethodDelete:
+			if versioned {
+				return s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
 			}
