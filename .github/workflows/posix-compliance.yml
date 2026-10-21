@@ -33,8 +33,13 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.26'
   TIMEOUT: '45m'
 
 jobs:
@@ -49,12 +54,12 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         fetch-depth: 1
     
     - name: Set up Go ${{ env.GO_VERSION }}
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -476,7 +481,7 @@ jobs:
         fi
     
     - name: Upload test results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: posix-test-results-ubuntu-fuse${{ matrix.fuse-version }}
@@ -486,7 +491,7 @@ jobs:
         retention-days: 30
     
     - name: Upload test coverage
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always() && (github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'extended')
       with:
         name: posix-coverage-ubuntu
@@ -522,12 +527,16 @@ jobs:
             📊 Full results available in [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
             `;
             
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } catch (err) {
+              console.log('Could not post PR comment: ' + err.message);
+            }
           }
 
   posix-compliance-macos:
@@ -536,10 +545,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
     
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -574,7 +583,7 @@ jobs:
         make -f posix_Makefile test-posix-critical
     
     - name: Upload macOS test results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: posix-test-results-macos
@@ -589,10 +598,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
     
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
     
@@ -632,7 +641,7 @@ jobs:
         echo "Issues found: $(wc -l < staticcheck-report.txt 2>/dev/null || echo 0)"
     
     - name: Upload security analysis results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: security-analysis-results
@@ -645,10 +654,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
     
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
     
@@ -678,7 +687,7 @@ jobs:
         make -f posix_Makefile test-fio-posix
     
     - name: Store performance baseline
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: performance-baseline-results
         path: |
@@ -693,10 +702,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
     
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
     
