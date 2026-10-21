@@ -216,6 +216,20 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	return
 }
 
+// allowBackslashInObjectKey keeps '\' a literal object-key character instead
+// of normalizing it to '/'. It is a process-wide mode set once at S3 server
+// startup; the filer only treats '/' as a path separator, so a verbatim '\'
+// stays inside one filer entry name.
+var allowBackslashInObjectKey atomic.Bool
+
+func SetAllowBackslashInObjectKey(allow bool) {
+	allowBackslashInObjectKey.Store(allow)
+}
+
+func AllowBackslashInObjectKey() bool {
+	return allowBackslashInObjectKey.Load()
+}
+
 // IsValidObjectKey rejects S3 object keys that — after normalization
 // (backslash→slash, slash collapse) — contain a `.` or `..` path segment, or
 // embed a NUL byte. Such keys are collapsed by filepath.Join inside the filer
@@ -229,7 +243,9 @@ func IsValidObjectKey(object string) bool {
 	if strings.ContainsRune(object, '\x00') {
 		return false
 	}
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	for _, seg := range strings.Split(object, "/") {
 		if seg == "." || seg == ".." {
 			return false
@@ -271,7 +287,9 @@ func NormalizeObjectKey(object string) string {
 	hasTrailingSlash := strings.HasSuffix(object, "/")
 
 	// Convert Windows-style backslashes to forward slashes
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	object = removeDuplicateSlashes(object)
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
