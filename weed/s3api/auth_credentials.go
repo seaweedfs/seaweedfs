@@ -69,6 +69,11 @@ type IdentityAccessManagement struct {
 	// IAM Integration for advanced features
 	iamIntegration IAMIntegration
 
+	// selfServiceRequiresGrant makes the self-service IAM actions (an
+	// identity's own access keys, GetUser on itself) need an iam:<Action>
+	// grant like every other IAM action. Off by default.
+	selfServiceRequiresGrant bool
+
 	// Serializes resyncs of the policy set into the advanced IAM manager so that
 	// concurrent policy updates can't apply stale views out of order. See
 	// resyncIAMManagerPolicies.
@@ -337,6 +342,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 		hashCounters: make(map[string]*int32),
 		filerClient:  filerClient,
 	}
+	iam.selfServiceRequiresGrant = option.IamSelfServiceRequiresGrant
 
 	// Always initialize credential manager with fallback to defaults
 	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.CredentialStoreTypeName(explicitStore))
