@@ -741,7 +741,7 @@ func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(pu
 			if len(it.hardLinkId) > 0 {
 				key = it.hardLinkId
 			}
-			chans[int(uint32(util.HashToInt32(key)))%workers] <- it
+			chans[int(uint32(util.HashToInt32(key))%uint32(workers))] <- it
 		}, func() {
 			for _, ch := range chans {
 				close(ch)
