@@ -372,13 +372,13 @@ func TestEmbeddedIamGetUserImplicitUsername(t *testing.T) {
 		t.Fatalf("failed to load iam config: %v", err)
 	}
 
-	// GetUser request with NO UserName, but signed by accessKey.
+	// GetUser request with NO UserName, carrying the identity authentication
+	// verified for accessKey, the way the middleware records it.
 	form := url.Values{}
 	form.Set("Action", "GetUser")
 	req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+accessKey+
-		"/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesig")
+	req = req.WithContext(SetIdentityNameInContext(req.Context(), "TestUser"))
 
 	out := iamGetUserResponse{}
 	rr, err := executeEmbeddedIamRequest(api, req, &out)
@@ -1578,29 +1578,15 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
 }
 
-// TestEmbeddedIamHandleImplicitUsername tests implicit username extraction from authorization header
+// TestEmbeddedIamHandleImplicitUsername checks that the implicit user name is
+// taken from the authenticated identity in the request context, never from
+// re-parsing the Authorization header.
 func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
-	// Create IAM with test credentials - the handleImplicitUsername function now looks
-	// up the username from the credential store based on AccessKeyId
-	// Note: Using obviously fake access keys to avoid secret scanner false positives
-	iam := &IdentityAccessManagement{}
-	testConfig := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{
-				Name: "testuser1",
-				Credentials: []*iam_pb.Credential{
-					{AccessKey: UserAccessKeyPrefix + "TESTFAKEKEY000001", SecretKey: "testsecretfake"},
-				},
-			},
-		},
-	}
-	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
-	if err != nil {
-		t.Fatalf("Failed to load test config: %v", err)
-	}
+	embeddedApi := &EmbeddedIamApi{}
 
-	embeddedApi := &EmbeddedIamApi{
-		iam: iam,
+	withIdentity := func(name string) *http.Request {
+		r := &http.Request{Header: http.Header{}}
+		return r.WithContext(SetIdentityNameInContext(r.Context(), name))
 	}
 
 	var tests = []struct {
@@ -1608,14 +1594,14 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 		values   url.Values
 		userName string
 	}{
-		// No authorization header - should not set username
+		// No authenticated identity - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
-		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
-		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// Authenticated identity in context - sets its name
+		{withIdentity("testuser1"), url.Values{}, "testuser1"},
+		// A client-controlled Authorization header naming another user is ignored
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// An explicit UserName is left alone
+		{withIdentity("testuser1"), url.Values{"UserName": {"other"}}, "other"},
 	}
 
 	for i, test := range tests {

@@ -2,10 +2,16 @@ package iamapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -140,4 +146,34 @@ func TestIamManagementAllowedForAdmin(t *testing.T) {
 	resp := postSignedIamAction(t, server.URL, "AKIATESTFAKEADMIN0001", "testAdminSecretFake0000000000000000000000",
 		"", "Action=CreateUser&UserName=new-user&Version=2010-05-08")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// The implicit UserName must come from the identity authentication verified,
+// never from re-parsing the Authorization header: a request can carry presigned
+// credentials for one user alongside a junk SigV4 header naming another.
+func TestImplicitUserNameUsesVerifiedIdentity(t *testing.T) {
+	server := newAuthzTestServer(t)
+	expires := strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10)
+	sts := "POST\n\napplication/x-www-form-urlencoded\n" + expires + "\n/"
+	mac := hmac.New(sha1.New, []byte("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"))
+	mac.Write([]byte(sts))
+	sig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	q := url.Values{"AWSAccessKeyId": {"AKIAIOSFODNN7EXAMPLE"}, "Expires": {expires}, "Signature": {sig}}
+	for _, action := range []string{"ListAccessKeys", "CreateAccessKey"} {
+		t.Run(action, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/?"+q.Encode(), strings.NewReader("Action="+action+"&Version=2010-05-08"))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIATESTFAKEADMIN0001/20261021/us-east-1/iam/aws4_request, SignedHeaders=host, Signature=00")
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			t.Logf("%s: %d %s", action, resp.StatusCode, body)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.NotContains(t, string(body), "iam_admin")
+			assert.Contains(t, string(body), "power_user")
+		})
+	}
 }
