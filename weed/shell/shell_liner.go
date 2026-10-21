@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -57,9 +58,19 @@ func RunShell(options ShellOptions) error {
 
 	commandEnv := NewCommandEnv(&options)
 
+	connectTimeout := options.ConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 30 * time.Second
+	}
 	ctx := context.Background()
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
 	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
+	if commandEnv.MasterClient.GetMaster(connectCtx) == "" {
+		err := fmt.Errorf("cannot connect to master %s within %s", *options.Masters, connectTimeout)
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
