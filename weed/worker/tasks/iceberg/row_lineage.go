@@ -10,6 +10,8 @@ import (
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress"
+	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
 // Row lineage (Iceberg v3, spec "Row Lineage" and "Snapshot Row IDs").
@@ -170,9 +172,15 @@ func newLineageLayout(reference *parquet.Schema) (*lineageLayout, error) {
 		offsets = append(offsets, leaves)
 		leaves += leafCount(f)
 	}
+	// The lineage columns are compressed like the reference's own columns: a
+	// leaf that declares no codec is written uncompressed, 16 bytes a row.
+	codec := lineageCodec(reference)
+	lineageLeaf := func(id int) parquet.Node {
+		return parquet.FieldID(parquet.Compressed(parquet.Optional(parquet.Leaf(parquet.Int64Type)), codec), id)
+	}
 	fields := append(append([]parquet.Field{}, base...),
-		lineageField{Node: parquet.FieldID(parquet.Optional(parquet.Leaf(parquet.Int64Type)), iceberg.RowIDFieldID), name: iceberg.RowIDColumnName},
-		lineageField{Node: parquet.FieldID(parquet.Optional(parquet.Leaf(parquet.Int64Type)), iceberg.LastUpdatedSequenceNumberFieldID), name: iceberg.LastUpdatedSequenceNumberColumnName},
+		lineageField{Node: lineageLeaf(iceberg.RowIDFieldID), name: iceberg.RowIDColumnName},
+		lineageField{Node: lineageLeaf(iceberg.LastUpdatedSequenceNumberFieldID), name: iceberg.LastUpdatedSequenceNumberColumnName},
 	)
 	return &lineageLayout{
 		schema:      parquet.NewSchema(reference.Name(), &orderedGroup{Node: reference, fields: fields}),
@@ -391,4 +399,25 @@ func mergedFileFirstRowID(data []byte) (*int64, error) {
 		return &id, nil
 	}
 	return nil, nil
+}
+
+// lineageCodec is the codec of the reference's first leaf that declares one,
+// ZSTD when none does.
+func lineageCodec(reference parquet.Node) compress.Codec {
+	if c := columnCodec(reference); c != nil {
+		return c
+	}
+	return &zstd.Codec{}
+}
+
+func columnCodec(n parquet.Node) compress.Codec {
+	if n.Leaf() {
+		return n.Compression()
+	}
+	for _, f := range n.Fields() {
+		if c := columnCodec(f); c != nil {
+			return c
+		}
+	}
+	return nil
 }
