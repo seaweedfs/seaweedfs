@@ -341,6 +341,26 @@ func TestPlanRebalanceNoDuplicateShardInDomain(t *testing.T) {
 	assert.Equal(t, []int{3}, plan.Analysis.AllNodes["b1"].ShardIDs)
 }
 
+// Shard locations may be registered without registering the node first; the
+// rebalancer must still see the shard, counted under the node's own dc/rack.
+func TestPlanRebalanceShardForUnregisteredNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddNode(makeNode("n2", "dc1", "r1", 10))
+	a.Finalize()
+
+	assert.Equal(t, 1, a.TotalDCs)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+	assert.Equal(t, 1, plan.TotalMoves)
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))

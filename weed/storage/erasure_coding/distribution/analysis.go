@@ -26,6 +26,13 @@ func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
 	if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
 		a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
 	}
+	seen := node.ShardIDs[:0]
+	for _, shardID := range node.ShardIDs {
+		if !contains(seen, shardID) {
+			seen = append(seen, shardID)
+		}
+	}
+	node.ShardIDs = seen
 	for _, shardID := range node.ShardIDs {
 		a.AddShardLocation(ShardLocation{
 			ShardID:    shardID,
@@ -38,19 +45,26 @@ func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
 
 // AddShardLocation records one shard's placement in the topology. Repeated
 // calls for a shard already known to its node are ignored, so callers may
-// either set ShardIDs on the TopologyNode or register each shard here.
+// either set ShardIDs on the TopologyNode or register each shard here. A
+// location naming an unregistered node registers that node so the rebalancer
+// can see the shard; for a registered node the node's own dc/rack win.
 func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
+	node, ok := a.AllNodes[loc.NodeID]
+	if !ok {
+		node = &TopologyNode{NodeID: loc.NodeID, DataCenter: loc.DataCenter, Rack: loc.Rack}
+		a.AddNode(node)
+	}
 	if contains(a.NodeToShards[loc.NodeID], loc.ShardID) {
 		return
 	}
-	a.ShardsByDC[loc.DataCenter]++
-	a.ShardsByRack[rackKey(loc.DataCenter, loc.Rack)]++
+	a.ShardsByDC[node.DataCenter]++
+	a.ShardsByRack[rackKey(node.DataCenter, node.Rack)]++
 	a.ShardsByNode[loc.NodeID]++
-	a.DCToShards[loc.DataCenter] = append(a.DCToShards[loc.DataCenter], loc.ShardID)
-	a.RackToShards[rackKey(loc.DataCenter, loc.Rack)] = append(a.RackToShards[rackKey(loc.DataCenter, loc.Rack)], loc.ShardID)
+	a.DCToShards[node.DataCenter] = append(a.DCToShards[node.DataCenter], loc.ShardID)
+	a.RackToShards[rackKey(node.DataCenter, node.Rack)] = append(a.RackToShards[rackKey(node.DataCenter, node.Rack)], loc.ShardID)
 	a.NodeToShards[loc.NodeID] = append(a.NodeToShards[loc.NodeID], loc.ShardID)
 	a.TotalShards++
-	if node, ok := a.AllNodes[loc.NodeID]; ok && !contains(node.ShardIDs, loc.ShardID) {
+	if !contains(node.ShardIDs, loc.ShardID) {
 		node.ShardIDs = append(node.ShardIDs, loc.ShardID)
 	}
 }
