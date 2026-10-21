@@ -1145,10 +1145,11 @@ func mergeParquetFiles(
 }
 
 // binWriterSchema is the writer schema for a v1/v2 bin-pack merge: the union
-// of the files' schemas by field id. Files whose schemas cannot union (no
-// field ids, nested or repeated columns, a field id or name carrying
-// different types) merge only under the old rule — every file's schema equal
-// to the first — and the bin is refused as before otherwise.
+// of the files' schemas by field id. Only each file's footer is read to learn
+// its schema; the merge then downloads each file once. Files whose schemas
+// cannot union (no field ids, nested or repeated columns, a field id or name
+// carrying different types) merge only under the old rule — every file's
+// schema equal to the first — and the bin is refused as before otherwise.
 func binWriterSchema(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -1160,15 +1161,10 @@ func binWriterSchema(
 	unionable, allEqual := true, true
 	for _, entry := range entries {
 		source := entry.DataFile().FilePath()
-		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, source)
+		schema, err := parquetSchemaByIcebergPath(ctx, filerClient, bucketName, dataPath, source)
 		if err != nil {
-			return nil, fmt.Errorf("read parquet file %s: %w", source, err)
+			return nil, fmt.Errorf("schema of %s: %w", source, err)
 		}
-		f, err := parquet.OpenFile(bytes.NewReader(data), int64(len(data)))
-		if err != nil {
-			return nil, fmt.Errorf("open parquet file %s: %w", source, err)
-		}
-		schema := f.Schema()
 		if schema == nil {
 			return nil, fmt.Errorf("no parquet schema found in %s", source)
 		}
