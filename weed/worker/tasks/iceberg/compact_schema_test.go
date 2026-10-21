@@ -253,10 +253,19 @@ func TestMergeParquetFilesReaddedColumn(t *testing.T) {
 	}
 }
 
+type disjointColumnsRow struct { // id id=1, extra id=3: no name
+	ID    int64  `parquet:"id,id(1)"`
+	Extra string `parquet:"extra,id(3),optional"`
+}
+
+type requiredExtraSchemaRow struct { // extra REQUIRED id=3
+	ID    int64  `parquet:"id,id(1)"`
+	Name  string `parquet:"name,id(2),optional"`
+	Extra string `parquet:"extra,id(3)"`
+}
+
 // Differences field-id matching does not cover stay refused: a rename, a
-// type change, a column only one side has in both directions, an added
-// REQUIRED column, files without field ids; and a control pair still
-// compacts.
+// type change, files without field ids; and a control pair still compacts.
 func TestMergeParquetFilesSchemaRefusals(t *testing.T) {
 	type renamedSchemaRow struct {
 		ID    int64  `parquet:"id,id(1)"`
@@ -265,15 +274,6 @@ func TestMergeParquetFilesSchemaRefusals(t *testing.T) {
 	type widenedSchemaRow struct {
 		ID   int32  `parquet:"id,id(1)"`
 		Name string `parquet:"name,id(2),optional"`
-	}
-	type requiredExtraSchemaRow struct {
-		ID    int64  `parquet:"id,id(1)"`
-		Name  string `parquet:"name,id(2),optional"`
-		Extra string `parquet:"extra,id(3)"`
-	}
-	type missingBothWaysRow struct { // id id=1, extra id=3: no name
-		ID    int64  `parquet:"id,id(1)"`
-		Extra string `parquet:"extra,id(3),optional"`
 	}
 	type noIDExtraRow struct {
 		ID    int64  `parquet:"id"`
@@ -290,12 +290,6 @@ func TestMergeParquetFilesSchemaRefusals(t *testing.T) {
 		}},
 		{"type change", func(fs *fakeFilerServer, name string) {
 			putDataFileRows(t, fs, name, []widenedSchemaRow{{5, "e"}})
-		}},
-		{"columns only one side has", func(fs *fakeFilerServer, name string) {
-			putDataFileRows(t, fs, name, []missingBothWaysRow{{5, "e"}})
-		}},
-		{"added required column", func(fs *fakeFilerServer, name string) {
-			putDataFileRows(t, fs, name, []requiredExtraSchemaRow{{5, "e", "x"}})
 		}},
 		{"no field ids", func(fs *fakeFilerServer, name string) {
 			putDataFileRows(t, fs, name, []noIDExtraRow{{5, "e", "x"}})
@@ -379,11 +373,97 @@ func TestMergeParquetFilesEvolvedSchemaEqualityDelete(t *testing.T) {
 	if count != 3 {
 		t.Fatalf("merged %d rows, want 3", count)
 	}
-	// The wider file's schema (extra, id, name) is the writer's.
+	// The union schema (id, name, extra) is the writer's.
 	checkMergedRows(t, merged, [][]any{
-		{nil, int64(1), "a"},
-		{nil, int64(3), "c"},
-		{"e4", int64(4), "d"},
+		{int64(1), "a", nil},
+		{int64(3), "c", nil},
+		{int64(4), "d", "e4"},
+	})
+}
+
+// File pairs where neither schema covers the other merge under the union
+// writer schema: a REQUIRED/OPTIONAL difference plus an added column, a
+// column each side lacks the other's of, and an added REQUIRED column
+// (demoted to OPTIONAL: the files without it read null).
+func TestMergeParquetFilesUnionWriterSchema(t *testing.T) {
+	t.Run("added column and repetition differ", func(t *testing.T) {
+		for _, names := range [][]string{
+			{"wide.parquet", "optional.parquet"},
+			{"optional.parquet", "wide.parquet"},
+		} {
+			fs, client := startFakeFiler(t)
+			putDataFileRows(t, fs, "wide.parquet", []wideSchemaRow{{4, "d", "e4"}, {5, "e", "e5"}})
+			putDataFileRows(t, fs, "optional.parquet", []optionalIDSchemaRow{{1, "a"}, {2, "b"}})
+
+			merged, count, err := mergeNamedFiles(t, client, names,
+				map[string]int64{"wide.parquet": 2, "optional.parquet": 2}, nil, nil, false)
+			if err != nil {
+				t.Fatalf("merge of %v: %v", names, err)
+			}
+			if count != 4 {
+				t.Fatalf("merged %d rows, want 4", count)
+			}
+			var want [][]any
+			if names[0] == "wide.parquet" {
+				want = [][]any{{int64(4), "d", "e4"}, {int64(5), "e", "e5"}, {int64(1), "a", nil}, {int64(2), "b", nil}}
+			} else {
+				want = [][]any{{int64(1), "a", nil}, {int64(2), "b", nil}, {int64(4), "d", "e4"}, {int64(5), "e", "e5"}}
+			}
+			schema := checkMergedRows(t, merged, want)
+			if !schema.Fields()[0].Optional() {
+				t.Errorf("merged id column is REQUIRED, want OPTIONAL")
+			}
+		}
+	})
+
+	t.Run("disjoint columns", func(t *testing.T) {
+		for _, names := range [][]string{
+			{"narrow.parquet", "disjoint.parquet"},
+			{"disjoint.parquet", "narrow.parquet"},
+		} {
+			fs, client := startFakeFiler(t)
+			putDataFileRows(t, fs, "narrow.parquet", []narrowSchemaRow{{1, "a"}})
+			putDataFileRows(t, fs, "disjoint.parquet", []disjointColumnsRow{{5, "e"}})
+
+			merged, count, err := mergeNamedFiles(t, client, names,
+				map[string]int64{"narrow.parquet": 1, "disjoint.parquet": 1}, nil, nil, false)
+			if err != nil {
+				t.Fatalf("merge of %v: %v", names, err)
+			}
+			if count != 2 {
+				t.Fatalf("merged %d rows, want 2", count)
+			}
+			var want [][]any
+			if names[0] == "narrow.parquet" { // union (id, name, extra)
+				want = [][]any{{int64(1), "a", nil}, {int64(5), nil, "e"}}
+			} else { // union (id, extra, name)
+				want = [][]any{{int64(5), "e", nil}, {int64(1), nil, "a"}}
+			}
+			checkMergedRows(t, merged, want)
+		}
+	})
+
+	t.Run("added required column", func(t *testing.T) {
+		fs, client := startFakeFiler(t)
+		putDataFileRows(t, fs, "narrow.parquet", []narrowSchemaRow{{1, "a"}})
+		putDataFileRows(t, fs, "required-extra.parquet", []requiredExtraSchemaRow{{5, "e", "x"}})
+
+		merged, count, err := mergeNamedFiles(t, client,
+			[]string{"narrow.parquet", "required-extra.parquet"},
+			map[string]int64{"narrow.parquet": 1, "required-extra.parquet": 1}, nil, nil, false)
+		if err != nil {
+			t.Fatalf("mergeParquetFiles: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("merged %d rows, want 2", count)
+		}
+		schema := checkMergedRows(t, merged, [][]any{
+			{int64(1), "a", nil},
+			{int64(5), "e", "x"},
+		})
+		if !schema.Fields()[2].Optional() {
+			t.Error("merged extra column is REQUIRED, want OPTIONAL")
+		}
 	})
 }
 

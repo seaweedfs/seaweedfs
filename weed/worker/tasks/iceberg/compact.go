@@ -1104,10 +1104,18 @@ func mergeParquetFiles(
 	rowGroupRows int64,
 	lineage bool,
 ) ([]byte, int64, error) {
-	// A file whose schema is wider than the writer's restarts the bin with
-	// that schema; each restart takes a schema covering the one before, so
-	// there are at most as many restarts as files.
+	// On a v1/v2 table the writer's schema is chosen before any row is
+	// written: the union of the bin's file schemas by field id, so a bin of
+	// progressively wider files merges in one pass instead of restarting
+	// (and rewriting every earlier file) on each wider one. The v3 merge
+	// keeps the first file's columns plus the lineage columns.
 	var target *parquet.Schema
+	if !lineage {
+		var err error
+		if target, err = binWriterSchema(ctx, filerClient, bucketName, dataPath, entries); err != nil {
+			return nil, 0, err
+		}
+	}
 	for attempt := 0; ; attempt++ {
 		out, rows, err := mergeParquetFilesInto(ctx, filerClient, bucketName, dataPath, entries, positionDeletes,
 			eqDeleteGroups, icebergSchema, rowGroupRows, lineage, target)
@@ -1118,6 +1126,52 @@ func mergeParquetFiles(
 		}
 		return out, rows, err
 	}
+}
+
+// binWriterSchema is the writer schema for a v1/v2 bin-pack merge: the union
+// of the files' schemas by field id. Files whose schemas cannot union (no
+// field ids, nested or repeated columns, a field id or name carrying
+// different types) merge only under the old rule — every file's schema equal
+// to the first — and the bin is refused as before otherwise.
+func binWriterSchema(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+) (*parquet.Schema, error) {
+	var union schemaUnion
+	var first *parquet.Schema
+	unionable, allEqual := true, true
+	for _, entry := range entries {
+		source := entry.DataFile().FilePath()
+		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, source)
+		if err != nil {
+			return nil, fmt.Errorf("read parquet file %s: %w", source, err)
+		}
+		f, err := parquet.OpenFile(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return nil, fmt.Errorf("open parquet file %s: %w", source, err)
+		}
+		schema := f.Schema()
+		if schema == nil {
+			return nil, fmt.Errorf("no parquet schema found in %s", source)
+		}
+		if first == nil {
+			first = schema
+		} else if !schemasEqual(first, schema) {
+			allEqual = false
+		}
+		if unionable {
+			unionable = union.fold(schema, source) == nil
+		}
+		if !unionable && !allEqual {
+			return nil, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", source)
+		}
+	}
+	if !unionable || first == nil {
+		return nil, nil // every file spells the first file's schema
+	}
+	return union.schema(first.Name(), first), nil
 }
 
 // mergeParquetFilesInto merges with target as the writer's schema on a v1/v2
