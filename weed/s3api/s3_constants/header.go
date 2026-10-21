@@ -226,10 +226,6 @@ func SetAllowBackslashInObjectKey(allow bool) {
 	allowBackslashInObjectKey.Store(allow)
 }
 
-func AllowBackslashInObjectKey() bool {
-	return allowBackslashInObjectKey.Load()
-}
-
 // IsValidObjectKey rejects S3 object keys that — after the mode-dependent
 // normalization NormalizeObjectKey applies — contain a `.` or `..` path
 // segment, or embed a NUL byte. Such keys are collapsed by filepath.Join
