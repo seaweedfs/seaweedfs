@@ -514,21 +514,22 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			var namespacePolicy, bucketPolicy string
 			bucketTags := map[string]string{}
 
-			// Fetch namespace metadata and policy
+			// Fetch namespace metadata and policy; a missing or foreign entry
+			// leaves them empty and lets the check below answer.
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-			if err != nil {
-				return err // Not Found handled by caller
-			}
-			if err := json.Unmarshal(data, &nsMeta); err != nil {
+			nsFound := err == nil
+			if nsFound {
+				if err := json.Unmarshal(data, &nsMeta); err != nil {
+					return err
+				}
+				policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+				if err == nil {
+					namespacePolicy = string(policyData)
+				} else if !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to fetch namespace policy: %w", err)
+				}
+			} else if !absentEntry(err) {
 				return err
-			}
-
-			// Fetch namespace policy if it exists
-			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
-			if err == nil {
-				namespacePolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch namespace policy: %w", err)
 			}
 
 			// Fetch bucket metadata and policy
@@ -537,18 +538,20 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				if err := json.Unmarshal(data, &bucketMeta); err != nil {
 					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 				}
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !absentEntry(err) {
 				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
 
-			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !absentEntry(err) {
 				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return fmt.Errorf("failed to read bucket tags: %w", err)
+				if !absentEntry(err) {
+					return fmt.Errorf("failed to read bucket tags: %w", err)
+				}
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -566,7 +569,11 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 					IdentityActions:  identityActions,
 					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
-				return ErrAccessDenied
+				// The target is absent: an empty list would reveal that, so
+				// only a caller that may learn absence proceeds to it.
+				if nsFound || !h.mayLearnAbsence(r, "ListTables", bucketName) {
+					return ErrAccessDenied
+				}
 			}
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
@@ -580,24 +587,28 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			var bucketPolicy string
 			bucketTags := map[string]string{}
 
-			// Fetch bucket metadata and policy
+			// Fetch bucket metadata and policy; a missing or foreign entry
+			// leaves them empty and lets the check below answer.
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-			if err != nil {
+			bucketFound := err == nil
+			if bucketFound {
+				if err := json.Unmarshal(data, &bucketMeta); err != nil {
+					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+				}
+			} else if !absentEntry(err) {
 				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
-			if err := json.Unmarshal(data, &bucketMeta); err != nil {
-				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
-			}
 
-			// Fetch bucket policy if it exists
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !absentEntry(err) {
 				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return fmt.Errorf("failed to read bucket tags: %w", err)
+				if !absentEntry(err) {
+					return fmt.Errorf("failed to read bucket tags: %w", err)
+				}
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -612,7 +623,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				IdentityActions:  identityActions,
 				DefaultAllow:     h.defaultAllowFor(r),
 			}) {
-				return ErrAccessDenied
+				if bucketFound || !h.mayLearnAbsence(r, "ListTables", bucketName) {
+					return ErrAccessDenied
+				}
 			}
 
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
