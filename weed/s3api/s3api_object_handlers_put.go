@@ -112,7 +112,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
 		return
 	}
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+	if isVerify, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object); err != nil || (isVerify && !volumeVerifyPutAllowed(r)) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
