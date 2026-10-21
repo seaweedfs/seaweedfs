@@ -242,6 +242,8 @@ func buildPreflightResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse 
 		if rule.MaxAgeSeconds != nil {
 			response.MaxAge = strconv.Itoa(*rule.MaxAgeSeconds)
 		}
+
+		response.AllowCredentials = true
 	}
 
 	return response
@@ -250,7 +252,8 @@ func buildPreflightResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse 
 // buildResponse builds a CORS response from a matching rule
 func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 	response := &CORSResponse{
-		AllowOrigin: corsReq.Origin,
+		AllowOrigin:      corsReq.Origin,
+		AllowCredentials: true,
 	}
 
 	// Set allowed methods
