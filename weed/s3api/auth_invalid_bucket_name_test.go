@@ -209,3 +209,42 @@ func TestAnonymousReadDeniedInvalidBucketName(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, read(s3a, method, "Bad_Bucket"), method)
 	}
 }
+
+// An existing private key and a missing key in the same malformed-name bucket
+// must answer alike, or the status code tells an anonymous caller which keys
+// exist.
+func TestAnonymousReadDeniedInvalidBucketNameExistingKey(t *testing.T) {
+	const bucket = "bücket"
+	read := func(s3a *S3ApiServer, method, object string) int {
+		r := httptest.NewRequest(method, "/"+bucket+"/"+object, nil)
+		r = mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": object})
+		handler := s3a.GetObjectHandler
+		if method == http.MethodHead {
+			handler = s3a.HeadObjectHandler
+		}
+		rr := httptest.NewRecorder()
+		s3a.AuthWithPublicRead(handler, s3_constants.ACTION_READ)(rr, r)
+		return rr.Code
+	}
+	setup := func(anonymous bool) *S3ApiServer {
+		s3a, f := newAnonymousReadTestServer(t)
+		if anonymous {
+			s3a.iam.identityAnonymous = &Identity{Name: s3_constants.AccountAnonymousId}
+		}
+		s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Ownership: s3_constants.OwnershipObjectWriter})
+		f.entries["/buckets/"+bucket+"/private"] = anonymousReadEntry([]byte(`[]`))
+		f.entries["/buckets/"+bucket+"/public"] = anonymousReadEntry(anonymousReadGrant("READ"))
+		return s3a
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		s3a := setup(true)
+		assert.Equal(t, http.StatusOK, read(s3a, method, "public"), "%s: a public key is still served", method)
+		assert.Equal(t, http.StatusBadRequest, read(s3a, method, "missing"), method)
+		assert.Equal(t, http.StatusBadRequest, read(s3a, method, "private"), "%s: an existing private key answers like a missing one", method)
+
+		// No anonymous identity configured: both stay 403, as in Auth.
+		s3a = setup(false)
+		assert.Equal(t, http.StatusForbidden, read(s3a, method, "missing"), method)
+		assert.Equal(t, http.StatusForbidden, read(s3a, method, "private"), method)
+	}
+}

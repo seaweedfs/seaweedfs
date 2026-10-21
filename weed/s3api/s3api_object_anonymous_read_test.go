@@ -299,7 +299,9 @@ func TestAnonymousObjectACLConfiguredIdentity(t *testing.T) {
 	}{
 		{"legacy anonymous permission", false, []Action{s3_constants.ACTION_READ}, "", false, 200},
 		{"identity policy allow", false, nil, `{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, false, 200},
-		{"identity deny beats object ACL", true, nil, `{"Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, false, 403},
+		// The fixture bucket "b" is shorter than S3's three-character minimum,
+		// so a denial for a resolved identity answers InvalidBucketName.
+		{"identity deny beats object ACL", true, nil, `{"Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, false, 400},
 		{"disabled identity cannot grant", false, []Action{s3_constants.ACTION_READ}, "", true, 403},
 		{"public ACL does not require identity", true, nil, "", true, 200},
 	} {
