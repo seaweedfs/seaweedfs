@@ -154,7 +154,7 @@ func TestParseRangeHeaderRejectsUnsatisfiableRange(t *testing.T) {
 // A part copied with x-amz-copy-source-range must report the MD5 of the copied
 // bytes: per destination chunk for a partial-chunk copy, and the whole-part MD5
 // the part entry's Attributes.Md5 carries for CopyPartResult / ListParts /
-// complete's composite ETag (#11855).
+// complete's composite ETag.
 func TestCopyChunksForRangeCopiedETags(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
