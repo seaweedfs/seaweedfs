@@ -29,6 +29,7 @@ use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, Red
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE, SuperBlock};
 use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
+use crate::storage::volume_tail_repair::TailRepairError;
 
 // ============================================================================
 // Errors
@@ -1724,6 +1725,46 @@ impl Volume {
                 ),
             }
 
+            // A crash between the .dat append and the .idx append leaves a
+            // .dat tail no index entry covers. Re-index complete needles and
+            // cut an incomplete remainder before the index loads, so the
+            // recovered rows land in the needle map and inside its append
+            // offset. Mirrors Go running repairUnindexedDatTail inside
+            // CheckVolumeDataIntegrity ahead of the needle map load. Only a
+            // volume about to load writable is repaired.
+            if !self.has_remote_file() && self.no_write_flags() == (false, false) {
+                // An empty .idx gets the same repair: every check below
+                // skips an empty index on its own, so a tail the repair
+                // cannot explain there fails the load like in Go rather
+                // than warn and load writable.
+                let idx_empty = fs::metadata(self.file_name(".idx"))
+                    .map(|m| m.len() == 0)
+                    .unwrap_or(false);
+                match self.repair_unindexed_dat_tail(io) {
+                    Ok(()) => {}
+                    Err(e) if e.is_not_torn() && !idx_empty => warn!(
+                        volume_id = self.id.0,
+                        error = %e,
+                        "unindexed .dat tail not repaired"
+                    ),
+                    // The index refusing a read-write open is the same failure
+                    // Go reports opening it ahead of the check: it fails the
+                    // load rather than only the repair.
+                    Err(TailRepairError::OpenIndex(e)) => return Err(e),
+                    Err(e) => {
+                        // A repair that could not complete must not load the
+                        // volume writable on files it half-fixed: the check
+                        // fails as in Go, so the volume loads read-only.
+                        self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
+                        warn!(
+                            volume_id = self.id.0,
+                            error = %e,
+                            "repair unindexed .dat tail"
+                        );
+                    }
+                }
+            }
+
             self.load_index(io)?;
 
             // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
@@ -2082,7 +2123,7 @@ impl Volume {
         self.current_dat_file_size_io(&io)
     }
 
-    fn current_dat_file_size_io(&self, io: &VolumeIo) -> io::Result<u64> {
+    pub(crate) fn current_dat_file_size_io(&self, io: &VolumeIo) -> io::Result<u64> {
         if let Some(ref f) = io.dat_file {
             Ok(f.metadata()?.len())
         } else if let Some(ref remote_dat_file) = io.remote_dat_file {
@@ -2306,7 +2347,7 @@ impl Volume {
         self.read_needle_blob_unlocked(&io, offset, size)
     }
 
-    fn read_needle_blob_unlocked(
+    pub(crate) fn read_needle_blob_unlocked(
         &self,
         io: &VolumeIo,
         offset: i64,
@@ -2726,7 +2767,7 @@ impl Volume {
     /// Flush the .dat, the first half of a durable write. The .idx is flushed
     /// separately by flush_idx once the row is published; the two are split so
     /// nothing is indexed before the bytes it points at are down.
-    fn flush_dat(&self, io: &VolumeIo) -> io::Result<()> {
+    pub(crate) fn flush_dat(&self, io: &VolumeIo) -> io::Result<()> {
         #[cfg(test)]
         self.dat_syncs_for_test.fetch_add(1, Ordering::Relaxed);
         #[cfg(test)]
@@ -2778,7 +2819,7 @@ impl Volume {
     }
 
     /// Take an unflushed append back off the .dat after its sync failed.
-    fn truncate_dat(&self, io: &VolumeIo, len: u64) -> io::Result<()> {
+    pub(crate) fn truncate_dat(&self, io: &VolumeIo, len: u64) -> io::Result<()> {
         #[cfg(test)]
         if io.fail_truncate_for_test {
             return Err(io::Error::other("injected truncate failure"));
@@ -3512,7 +3553,7 @@ impl Volume {
     /// key-sorted .idx (e.g. legacy weed fix output) falls back to a single
     /// linear scan for the maximum offset. Returns -1 when no entry has a
     /// non-zero offset (a pre-allocated / all-zero index).
-    fn find_dat_tail_entry_offset(
+    pub(crate) fn find_dat_tail_entry_offset(
         &self,
         io: &VolumeIo,
         idx_file: &mut File,
