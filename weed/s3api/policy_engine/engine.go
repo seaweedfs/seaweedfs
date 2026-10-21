@@ -547,22 +547,23 @@ func storesRequestObjectTags(r *http.Request) bool {
 	if query.Has("partNumber") && query.Has("uploadId") && isDigits(query.Get("partNumber")) {
 		return false
 	}
+	// The PUT subresources route before CopyObject and never read
+	// X-Amz-Tagging; any other query key — presign parameters included —
+	// still reaches the object PUT handlers.
+	for _, subresource := range []string{"tagging", "renameObject", "acl", "retention", "legal-hold"} {
+		if query.Has(subresource) {
+			return false
+		}
+	}
 	if r.Header.Get("X-Amz-Copy-Source") != "" {
 		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
 	}
-	if query.Has("tagging") || query.Has("partNumber") || query.Has("uploadId") {
+	if query.Has("partNumber") || query.Has("uploadId") {
 		return false
 	}
 	// An explicit directory-marker PUT stores no tags.
 	if strings.HasSuffix(r.URL.Path, "/") && r.ContentLength <= 1024 {
 		return false
-	}
-	// The other PUT subresources (acl, retention, legal-hold, ...) never store
-	// object tags; a plain object PUT carries only signing parameters.
-	for key := range query {
-		if !strings.HasPrefix(key, "X-Amz-") {
-			return false
-		}
 	}
 	return true
 }
