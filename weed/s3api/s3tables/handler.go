@@ -491,6 +491,17 @@ func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient Fil
 	}
 
 	bucketARN := h.generateTableBucketARN(bucketOwner, bucketName)
+	// Judge the target by the canonical ARN the surviving bucket resolves to:
+	// the request ARN's account and region are the caller's to choose and must
+	// not decide whether a policy Deny applies.
+	canonicalARN := resourceARN
+	if bucketOwner != "" {
+		if name != "" {
+			canonicalARN = h.generateTableARN(bucketOwner, bucketName, namespace+"/"+name)
+		} else {
+			canonicalARN = bucketARN
+		}
+	}
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
 		IsLocalAccountID: h.localAccountIDs,
@@ -501,11 +512,11 @@ func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient Fil
 		IdentityActions:  getIdentityActions(r),
 		DefaultAllow:     h.defaultAllowFor(r),
 	}
-	if resourceARN != "" &&
-		matchesDenyStatement(operation, principal, bucketPolicy, resourceARN, ctx) {
+	if canonicalARN != "" &&
+		matchesDenyStatement(operation, principal, bucketPolicy, canonicalARN, ctx) {
 		return false
 	}
-	if CheckTableOrBucketPermission(operation, principal, "", "", resourceARN,
+	if CheckTableOrBucketPermission(operation, principal, "", "", canonicalARN,
 		bucketOwner, bucketPolicy, bucketARN, ctx) {
 		return true
 	}
