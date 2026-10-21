@@ -28,6 +28,10 @@ region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 endpoint = ""
 storage_class = "STANDARD_IA"
+# optional HTTP client tuning for S3-compatible services:
+# disable_http2 = false                 # true keeps the client on HTTP/1.1, one connection per concurrent request
+# max_connections = 0                   # cap on connections to the endpoint, 0 = no cap
+# idle_connection_timeout_seconds = 0   # close idle connections sooner, 0 = Go default (90s)
 
 # create this number of logical volumes if no more writable volumes
 # count_x means how many copies of data.

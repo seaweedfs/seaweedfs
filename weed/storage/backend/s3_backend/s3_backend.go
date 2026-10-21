@@ -44,6 +44,7 @@ type S3BackendStorage struct {
 	forcePathStyle        bool
 	uploadConcurrency     int
 	downloadConcurrency   int
+	httpOptions           httpOptions
 	conn                  s3iface.S3API
 }
 
@@ -59,11 +60,16 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.forcePathStyle = util.ParseBool(configuration.GetString(configPrefix+"force_path_style"), true)
 	s.uploadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"upload_concurrency"), defaultUploadConcurrency)
 	s.downloadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"download_concurrency"), defaultDownloadConcurrency)
+	s.httpOptions = httpOptions{
+		disableHTTP2:    util.ParseBool(configuration.GetString(configPrefix+"disable_http2"), false),
+		maxConnsPerHost: parseNonNegative(configuration.GetString(configPrefix+"max_connections"), "max_connections"),
+		idleConnTimeout: time.Duration(parseNonNegative(configuration.GetString(configPrefix+"idle_connection_timeout_seconds"), "idle_connection_timeout_seconds")) * time.Second,
+	}
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
 	}
 
-	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint, s.forcePathStyle)
+	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint, s.forcePathStyle, s.httpOptions)
 
 	glog.V(0).Infof("created backend storage s3.%s for region %s bucket %s", s.id, s.region, s.bucket)
 	return
@@ -80,6 +86,9 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["force_path_style"] = util.BoolToString(s.forcePathStyle)
 	m["upload_concurrency"] = strconv.Itoa(s.uploadConcurrency)
 	m["download_concurrency"] = strconv.Itoa(s.downloadConcurrency)
+	m["disable_http2"] = util.BoolToString(s.httpOptions.disableHTTP2)
+	m["max_connections"] = strconv.Itoa(s.httpOptions.maxConnsPerHost)
+	m["idle_connection_timeout_seconds"] = strconv.Itoa(int(s.httpOptions.idleConnTimeout / time.Second))
 	return m
 }
 
@@ -97,6 +106,19 @@ func parseConcurrency(value string, def int) int {
 	}
 	glog.Warningf("invalid concurrency value %q, using default %d", value, def)
 	return def
+}
+
+// parseNonNegative reads an optional non-negative integer setting; empty or
+// invalid means 0 (the default).
+func parseNonNegative(value, name string) int {
+	if value == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(value); err == nil && n >= 0 {
+		return n
+	}
+	glog.Warningf("invalid %s value %q, using the default", name, value)
+	return 0
 }
 
 func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
