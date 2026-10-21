@@ -841,6 +841,88 @@ func TestRenameRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
 	}
 }
 
+// TestUncacheRemoteOnlyEntrySkipsEmptyUpload: a same-path update that leaves
+// the entry remote-only -- remote.uncache and storage-pressure eviction drop
+// the local chunks and reset the sync stamp -- must not upload. The stamp
+// reads as an unsynced local rewrite, but the chunk-less entry streams EOF
+// and a zero-byte object would replace the remote content.
+func TestUncacheRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 1024, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+	oldEntry := entryWith("log.json", replicated, chunk("3,01", "e1"))
+	newEntry := proto.Clone(oldEntry).(*filer_pb.Entry)
+	newEntry.Chunks = nil
+	newEntry.RemoteEntry = proto.Clone(replicated).(*filer_pb.RemoteEntry)
+	newEntry.RemoteEntry.LastLocalSyncTsNs = 0
+	if !isRemoteOnly(newEntry) {
+		t.Fatal("precondition: the uncached entry should be remote-only")
+	}
+	if !shouldSendToRemote(newEntry) {
+		t.Fatal("precondition: the reset stamp should make shouldSendToRemote true, the bug's trigger")
+	}
+	if isMetadataOnlyUpdate("/buckets/b/logs", &filer_pb.EventNotification{NewParentPath: "/buckets/b/logs", OldEntry: oldEntry, NewEntry: newEntry}) {
+		t.Fatal("precondition: dropping chunks is not a metadata-only update")
+	}
+
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/logs",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/logs",
+			NewEntry:      newEntry,
+		},
+	}
+	remote := &recordingRemote{}
+	// the filer holds the remote-only entry the event described
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: an uncached remote-only entry must not upload an empty object", remote.writes)
+	}
+}
+
+// TestRemoteOnlyEntryMetadataUpdateStillSent guards the ordering of the
+// remote-only skip: a metadata-only update to a remote-only entry (a touch
+// that moves the mtime past the remote mtime) still propagates to the remote
+// object.
+func TestRemoteOnlyEntryMetadataUpdateStillSent(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 1024, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+	oldEntry := &filer_pb.Entry{Name: "log.json", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: replicated}
+	newEntry := proto.Clone(oldEntry).(*filer_pb.Entry)
+	newEntry.Attributes = proto.Clone(oldEntry.Attributes).(*filer_pb.FuseAttributes)
+	newEntry.Attributes.Mtime = 1786096700
+	if !shouldSendToRemote(newEntry) {
+		t.Fatal("precondition: a newer mtime should be eligible for sending")
+	}
+
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/logs",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/logs",
+			NewEntry:      newEntry,
+		},
+	}
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.metadataUpdates) != 1 {
+		t.Errorf("metadataUpdates = %+v, want the remote object's metadata updated", remote.metadataUpdates)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none", remote.writes)
+	}
+}
+
 // TestRenameDeleteOldKeyFailureReturnsError checks that a failed delete of the
 // old key on a rename is returned so MetadataProcessor retries the event,
 // instead of silently continuing and leaving both keys on the remote.
