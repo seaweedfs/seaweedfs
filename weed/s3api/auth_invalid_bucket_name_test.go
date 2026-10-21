@@ -1,11 +1,15 @@
 package s3api
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -98,5 +102,110 @@ func TestRefineDenialForBucketName(t *testing.T) {
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, refineDenialForBucketName(req(c.bucket), c.identity, c.in), c.name)
+	}
+}
+
+// signedPostForm builds a multipart POST Object request for bucket, its policy
+// signed with secret under postAuthzAccessKey.
+func signedPostForm(t *testing.T, bucket, key, secret string) *http.Request {
+	t.Helper()
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	day := now.Format(yyyymmdd)
+	credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", postAuthzAccessKey, day, postAuthzRegion, postAuthzService)
+	policyJSON := fmt.Sprintf(`{"expiration":"%s","conditions":[["eq","$bucket","%s"],["eq","$key","%s"],`+
+		`["eq","$x-amz-credential","%s"],["eq","$x-amz-algorithm","AWS4-HMAC-SHA256"],["eq","$x-amz-date","%s"]]}`,
+		now.Add(time.Hour).Format("2006-01-02T15:04:05.000Z"), bucket, key, credential, amzDate)
+	encodedPolicy := base64.StdEncoding.EncodeToString([]byte(policyJSON))
+	signature := getSignature(getSigningKey(secret, day, postAuthzRegion, postAuthzService), encodedPolicy)
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	for _, field := range [][2]string{{"bucket", bucket}, {"key", key}, {"x-amz-credential", credential},
+		{"x-amz-algorithm", "AWS4-HMAC-SHA256"}, {"x-amz-date", amzDate}, {"policy", encodedPolicy}, {"x-amz-signature", signature}} {
+		require.NoError(t, writer.WriteField(field[0], field[1]))
+	}
+	filePart, err := writer.CreateFormFile("file", "payload.txt")
+	require.NoError(t, err)
+	_, err = filePart.Write([]byte("payload"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/"+bucket, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return mux.SetURLVars(req, map[string]string{"bucket": bucket})
+}
+
+// A browser POST upload authenticates in the handler, after AuthPostPolicy has
+// delegated it, so its denials are refined there: a verified form denied on a
+// malformed bucket name answers 400, a bad signature or a well-formed name 403.
+func TestPostPolicyDeniedInvalidBucketName(t *testing.T) {
+	s3a := newPostAuthzServer(t)
+	for _, bucket := range []string{"Bad_Bucket", "other-bucket"} {
+		s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: bucket})
+	}
+	// A second identity may write Bad_Bucket, except under denied/.
+	require.NoError(t, s3a.iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "tester", Actions: []string{"Write:" + postAuthzBucket},
+				Credentials: []*iam_pb.Credential{{AccessKey: postAuthzAccessKey, SecretKey: postAuthzSecretKey}}},
+		},
+	}))
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("Bad_Bucket", `{"Version":"2012-10-17","Statement":[`+
+		`{"Effect":"Deny","Principal":"*","Action":["s3:PutObject"],"Resource":["arn:aws:s3:::Bad_Bucket/denied/*"]}]}`))
+
+	serve := func(r *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s3a.iam.AuthPostPolicy(s3a.PostPolicyBucketHandler, s3_constants.ACTION_WRITE).ServeHTTP(rec, r)
+		return rec
+	}
+
+	rec := serve(signedPostForm(t, "Bad_Bucket", "k", postAuthzSecretKey))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "InvalidBucketName")
+
+	rec = serve(signedPostForm(t, "Bad_Bucket", "k", "not-the-secret"))
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "SignatureDoesNotMatch", "a form that fails verification is not refined")
+
+	rec = serve(signedPostForm(t, "other-bucket", "k", postAuthzSecretKey))
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "AccessDenied")
+
+	// The per-key authorization after the coarse Write check is refined too.
+	require.NoError(t, s3a.iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "tester", Actions: []string{"Write:Bad_Bucket"},
+				Credentials: []*iam_pb.Credential{{AccessKey: postAuthzAccessKey, SecretKey: postAuthzSecretKey}}},
+		},
+	}))
+	rec = serve(signedPostForm(t, "Bad_Bucket", "denied/k", postAuthzSecretKey))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "InvalidBucketName")
+}
+
+// Unsigned GET/HEAD object reads are authorized inside the object handlers, not
+// by Auth; their denial on a malformed bucket name answers 400 as well.
+func TestAnonymousReadDeniedInvalidBucketName(t *testing.T) {
+	read := func(s3a *S3ApiServer, method, bucket string) int {
+		r := httptest.NewRequest(method, "/"+bucket+"/key", nil)
+		r = mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": "key"})
+		handler := s3a.GetObjectHandler
+		if method == http.MethodHead {
+			handler = s3a.HeadObjectHandler
+		}
+		rr := httptest.NewRecorder()
+		s3a.AuthWithPublicRead(handler, s3_constants.ACTION_READ)(rr, r)
+		return rr.Code
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		s3a, _ := newAnonymousReadTestServer(t)
+		s3a.iam.identityAnonymous = &Identity{Name: s3_constants.AccountAnonymousId}
+		assert.Equal(t, http.StatusBadRequest, read(s3a, method, "Bad_Bucket"), method)
+		assert.Equal(t, http.StatusForbidden, read(s3a, method, "other-bucket"), "%s: a well-formed missing bucket stays masked", method)
+
+		// No anonymous identity configured: no identity resolves, as in Auth.
+		s3a, _ = newAnonymousReadTestServer(t)
+		assert.Equal(t, http.StatusForbidden, read(s3a, method, "Bad_Bucket"), method)
 	}
 }
