@@ -446,6 +446,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", defaultMiniVolumeSizeMB, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
+	miniMasterOptions.maxParallelVacuumPerRack = cmdMini.Flag.Int("master.maxParallelVacuumPerRack", 0, "maximum number of volume copies to vacuum in parallel on one rack; 0 for no limit")
 	miniMasterOptions.vacuumIntervalSeconds = cmdMini.Flag.Int("master.vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
 	miniMasterOptions.vacuumDeleteEmptyAfterSeconds = cmdMini.Flag.Int("master.vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")

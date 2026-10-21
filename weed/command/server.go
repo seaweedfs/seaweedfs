@@ -98,6 +98,7 @@ func init() {
 	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
 	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterOptions.maxParallelVacuumPerServer = cmdServer.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
+	masterOptions.maxParallelVacuumPerRack = cmdServer.Flag.Int("master.maxParallelVacuumPerRack", 0, "maximum number of volume copies to vacuum in parallel on one rack; 0 for no limit")
 	masterOptions.vacuumIntervalSeconds = cmdServer.Flag.Int("master.vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
 	masterOptions.vacuumDeleteEmptyAfterSeconds = cmdServer.Flag.Int("master.vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")

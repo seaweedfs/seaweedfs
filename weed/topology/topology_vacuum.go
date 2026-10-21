@@ -251,7 +251,7 @@ func (t *Topology) batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *
 	}
 }
 
-func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, volumeId uint32, collection string, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
+func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, maxParallelVacuumPerRack int, volumeId uint32, collection string, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
 
 	// if there is vacuum going on, return immediately
 	swapped := atomic.CompareAndSwapInt64(&t.vacuumLockCounter, 0, 1)
@@ -285,7 +285,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, false)
 					}
 				} else {
-					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, preallocate, automatic, deleteEmptyAfter)
+					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, maxParallelVacuumPerRack, preallocate, automatic, deleteEmptyAfter)
 				}
 			}
 			if automatic && t.IsVacuumDisabled() {
@@ -299,7 +299,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 	}
 }
 
-func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, maxParallelVacuumPerServer int, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
+func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, maxParallelVacuumPerServer int, maxParallelVacuumPerRack int, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
 
 	volumeLayout.accessLock.RLock()
 	todoVolumeMap := make(map[needle.VolumeId]*VolumeLocationList)
@@ -314,13 +314,21 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 		t.deleteEmptyVolumes(grpcDialOption, volumeLayout, todoVolumeMap, deleteEmptyAfter)
 	}
 
-	// limiter for each volume server
+	// limiter for each volume server, and for each rack when a rack cap is
+	// set — several volume servers can share one rack's disks and network
 	limiter := make(map[NodeId]int)
+	rackLimiter := make(map[NodeId]int)
 	var limiterLock sync.Mutex
 	for _, locationList := range todoVolumeMap {
 		for _, dn := range locationList.list {
 			if _, ok := limiter[dn.Id()]; !ok {
 				limiter[dn.Id()] = maxParallelVacuumPerServer
+			}
+			if maxParallelVacuumPerRack > 0 {
+				rackId := dn.GetRack().Id()
+				if _, ok := rackLimiter[rackId]; !ok {
+					rackLimiter[rackId] = maxParallelVacuumPerRack
+				}
 			}
 		}
 	}
@@ -336,9 +344,10 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			hasEnoughQuota := true
 			for _, dn := range locationList.list {
 				limiterLock.Lock()
-				quota := limiter[dn.Id()]
+				hasQuota := limiter[dn.Id()] > 0 &&
+					(maxParallelVacuumPerRack <= 0 || rackLimiter[dn.GetRack().Id()] > 0)
 				limiterLock.Unlock()
-				if quota <= 0 {
+				if !hasQuota {
 					hasEnoughQuota = false
 					break
 				}
@@ -352,6 +361,9 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			for _, dn := range locationList.list {
 				limiterLock.Lock()
 				limiter[dn.Id()]--
+				if maxParallelVacuumPerRack > 0 {
+					rackLimiter[dn.GetRack().Id()]--
+				}
 				limiterLock.Unlock()
 			}
 
@@ -363,6 +375,9 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 				for _, dn := range locationList.list {
 					limiterLock.Lock()
 					limiter[dn.Id()]++
+					if maxParallelVacuumPerRack > 0 {
+						rackLimiter[dn.GetRack().Id()]++
+					}
 					limiterLock.Unlock()
 				}
 				select {

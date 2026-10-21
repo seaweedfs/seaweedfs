@@ -54,6 +54,7 @@ type MasterOption struct {
 	FileSizeLimitMB               int
 	VolumePreallocate             bool
 	MaxParallelVacuumPerServer    int
+	MaxParallelVacuumPerRack      int
 	VacuumIntervalSeconds         int
 	VacuumDeleteEmptyAfterSeconds int
 	// PulseSeconds            int
@@ -228,6 +229,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
 		ms.option.MaxParallelVacuumPerServer,
+		ms.option.MaxParallelVacuumPerRack,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
 		time.Duration(ms.option.VacuumIntervalSeconds)*time.Second,
