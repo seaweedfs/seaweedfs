@@ -1556,6 +1556,10 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		}
 		if digest != nil {
 			dstChunk.ETag = base64.StdEncoding.EncodeToString(digest.Sum(nil))
+			// The range fetch returns raw bytes and the destination stores
+			// them uncompressed, so the source chunk's gzip flag must not
+			// carry over onto a partial copy.
+			dstChunk.IsCompressed = false
 		}
 		return dstChunk, nil
 	}
