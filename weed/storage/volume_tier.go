@@ -87,6 +87,41 @@ func (v *Volume) LoadRemoteFile() error {
 	return v.loadRemoteFileLocked()
 }
 
+// MarkTieredDeletable gives a volume whose data has just moved to the remote
+// tier the flags a restart gives it (load(): a tiered volume refuses writes and
+// accepts deletes). volume.tier.upload marks the volume read-only without
+// deletes before the upload; left that way, every delete until the next
+// restart is refused, the filer drops it, and the needle's bytes stay in the
+// remote object where no vacuum can find them.
+//
+// Only for a single-copy volume: the shell copies the uploaded replica's .idx
+// and .vif to the other replicas after the upload, and a tombstone written
+// before that copy would reach one replica only; a replicated volume keeps
+// refusing deletes until its next load, as before. An I/O quarantine is left
+// alone, and so is a volume past the I/O error tolerance that the next
+// heartbeat will quarantine. Otherwise the flags are the ones load() gives
+// every tiered volume.
+func (v *Volume) MarkTieredDeletable() bool {
+	if rp := v.SuperBlock.ReplicaPlacement; rp != nil && rp.GetCopyCount() > 1 {
+		return false
+	}
+	// Check the I/O state under noWriteLock: CollectHeartbeat marks the
+	// quarantine before it takes noWriteLock to refuse deletes, so either the
+	// check below sees the quarantine, or the heartbeat's refusal lands after
+	// this change and stays.
+	v.noWriteLock.Lock()
+	defer v.noWriteLock.Unlock()
+	if !v.HasRemoteFile() {
+		return false
+	}
+	if ioErr, ioCount, quarantined := v.getIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+		return false
+	}
+	v.noWriteOrDelete = false
+	v.noWriteCanDelete = true
+	return true
+}
+
 // loadRemoteFileLocked swaps the data backend to the remote tier object. The
 // caller must hold dataFileAccessLock or be single-threaded (load() during
 // construction or a compaction-commit reload). It marks the volume tiered in the

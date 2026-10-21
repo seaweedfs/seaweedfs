@@ -171,10 +171,12 @@ func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket str
 
 // writeAnonymousAwareNotFound keeps missing-bucket and missing-key misses
 // indistinguishable from denied reads for anonymous callers: a 404 only
-// reaches the wire when the bucket is anonymously listable.
+// reaches the wire when the bucket is anonymously listable. The denial is
+// refined like Auth's, so a malformed bucket name answers InvalidBucketName.
 func (s3a *S3ApiServer) writeAnonymousAwareNotFound(w http.ResponseWriter, r *http.Request, bucket string, code s3err.ErrorCode) {
 	if isAnonymousObjectRead(r) && s3a.authorizeAnonymousBucketList(r, bucket) != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, s3err.ErrAccessDenied))
 		return
 	}
 	s3err.WriteErrorResponse(w, r, code)

@@ -2,17 +2,21 @@ package s3api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1146,7 +1150,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if uploadEntryHasSSE(uploadEntry) || sourceEntryIsEncrypted(entry) || uploadEntryHasChecksum(uploadEntry) {
+	// Inline-Content sources have no chunks for the raw-byte path to copy;
+	// the plaintext stream serves their range instead.
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryIsEncrypted(entry) || uploadEntryHasChecksum(uploadEntry) || len(entry.Content) > 0 {
 		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, dstObject, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
@@ -1204,15 +1210,24 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		// For zero-size files or invalid ranges, create an empty part with size 0
 		dstEntry.Attributes.FileSize = 0
 		dstEntry.Chunks = nil
+		dstEntry.Attributes.Md5 = md5.New().Sum(nil)
 	} else {
 		// Copy chunks that overlap with the range
-		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
+		dstChunks, partMd5, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
 			s3err.WriteErrorResponse(w, r, s3a.mapCopyErrorToS3Error(err))
 			return
 		}
 		dstEntry.Chunks = dstChunks
+		dstEntry.Attributes.Md5 = partMd5
+	}
+
+	// Mirror putToFiler: the part entry carries the MD5 of its bytes so
+	// CopyPartResult, ListParts and complete's composite ETag all describe
+	// the copied range rather than the source chunks.
+	if len(dstEntry.Attributes.Md5) > 0 {
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(fmt.Sprintf("%x", dstEntry.Attributes.Md5))
 	}
 
 	// Save the part entry to the multipart uploads folder
@@ -1479,7 +1494,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	// the source volume for compressed bytes, so a gzipped chunk is
 	// forwarded to the destination without anyone having to decompress.
 	if canStreamCopyChunk(chunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil); err != nil {
 			return nil, fmt.Errorf("stream chunk: %w", err)
 		}
 		return dstChunk, nil
@@ -1534,8 +1549,21 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	// part-size = chunk-size assemble pattern hits this branch.
 	if canStreamCopyChunk(originalChunk) {
 		isFullChunk := offsetInChunk == 0 && rangeChunk.Size == originalChunk.Size
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult); err != nil {
+		// A partial range stores different bytes than the source chunk, so
+		// its ETag has to be recomputed; a whole-chunk copy reuses it.
+		var digest hash.Hash
+		if !isFullChunk {
+			digest = md5.New()
+		}
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
+		}
+		if digest != nil {
+			dstChunk.ETag = base64.StdEncoding.EncodeToString(digest.Sum(nil))
+			// The range fetch returns raw bytes and the destination stores
+			// them uncompressed, so the source chunk's gzip flag must not
+			// carry over onto a partial copy.
+			dstChunk.IsCompressed = false
 		}
 		return dstChunk, nil
 	}
@@ -1609,8 +1637,16 @@ func parseRangeHeader(rangeHeader string, fileSize int64) (startOffset, endOffse
 	return startOffset, endOffset, nil
 }
 
-// copyChunksForRange copies chunks that overlap with the specified range
-func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, error) {
+// partMd5Result carries the whole-part MD5 the copiedRangeMd5 goroutine
+// computes beside the per-chunk copies.
+type partMd5Result struct {
+	sum []byte
+	err error
+}
+
+// copyChunksForRange copies chunks that overlap with the specified range and
+// returns the MD5 of the copied bytes for the part entry's Attributes.Md5.
+func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, []byte, error) {
 	var relevantChunks []*filer_pb.FileChunk
 	var originalChunks []*filer_pb.FileChunk
 
@@ -1641,6 +1677,36 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 		}
 	}
 
+	// The part's Attributes.Md5 must cover the copied range in byte order,
+	// and md5 cannot combine per-chunk digests. A single chunk's own digest
+	// is the answer only when it supplies the whole range; anything else —
+	// several chunks, or gaps a sparse source zero-fills — needs an ordered
+	// pass the concurrent copies cannot feed, so a second stream of the
+	// source range hashes beside them.
+	partSize := endOffset - startOffset + 1
+	singleChunkCovers := len(relevantChunks) == 1 &&
+		relevantChunks[0].Offset == 0 && int64(relevantChunks[0].Size) == partSize
+
+	md5Ctx, cancelMd5 := context.WithCancel(context.Background())
+	defer cancelMd5()
+
+	var partMd5 []byte
+	var partMd5Ch chan partMd5Result
+	switch {
+	case singleChunkCovers:
+		// resolved below from the copied chunk's own digest
+	case len(entry.GetChunks()) == 0:
+		// no chunks to read at all: the part is partSize zero bytes (the
+		// stream helper returns empty for a chunkless entry, not zero-fill)
+		partMd5 = md5Zeros(partSize)
+	default:
+		partMd5Ch = make(chan partMd5Result, 1)
+		go func() {
+			sum, err := s3a.copiedRangeMd5(md5Ctx, entry, startOffset, endOffset)
+			partMd5Ch <- partMd5Result{sum, err}
+		}()
+	}
+
 	// Copy the relevant chunks using a specialized method for range copies
 	dstChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
 	const defaultChunkCopyConcurrency = 4
@@ -1664,11 +1730,79 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	// Wait for all operations to complete and check for errors
 	for i := 0; i < len(relevantChunks); i++ {
 		if err := <-errChan; err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return dstChunks, nil
+	// Reads resolve overlapping chunks by ModifiedTsNs, and the concurrent
+	// copies stamped arbitrary finish times: rank the destination chunks by
+	// the source's timestamps so the part resolves overlaps the way the
+	// source did (and the way copiedRangeMd5 hashed it).
+	if len(dstChunks) > 1 {
+		order := make([]int, len(dstChunks))
+		for i := range order {
+			order[i] = i
+		}
+		slices.SortStableFunc(order, func(a, b int) int {
+			return cmp.Compare(originalChunks[a].ModifiedTsNs, originalChunks[b].ModifiedTsNs)
+		})
+		now := time.Now().UnixNano()
+		for rank, i := range order {
+			dstChunks[i].ModifiedTsNs = now + int64(rank)
+		}
+	}
+
+	if partMd5Ch != nil {
+		if res := <-partMd5Ch; res.err != nil {
+			return nil, nil, fmt.Errorf("md5 of copied range: %w", res.err)
+		} else {
+			partMd5 = res.sum
+		}
+	} else if singleChunkCovers {
+		if partMd5 = util.Base64Md5ToBytes(dstChunks[0].ETag); len(partMd5) != md5.Size {
+			// TUS and mount writes leave chunks without an ETag; hash the
+			// copied range when the inherited digest is missing or malformed.
+			sum, err := s3a.copiedRangeMd5(md5Ctx, entry, startOffset, endOffset)
+			if err != nil {
+				return nil, nil, fmt.Errorf("md5 of copied range: %w", err)
+			}
+			partMd5 = sum
+		}
+	}
+
+	return dstChunks, partMd5, nil
+}
+
+// md5Zeros hashes size zero bytes without a volume read — a copied range
+// that overlaps no source chunk assembles to all zeros.
+func md5Zeros(size int64) []byte {
+	h := md5.New()
+	var zeros [1 << 16]byte
+	for size > 0 {
+		n := min(size, int64(len(zeros)))
+		h.Write(zeros[:n])
+		size -= n
+	}
+	return h.Sum(nil)
+}
+
+// copiedRangeMd5 streams the source range once and hashes its plaintext —
+// exactly the bytes the non-SSE part copy assembles on the destination.
+func (s3a *S3ApiServer) copiedRangeMd5(ctx context.Context, entry *filer_pb.Entry, startOffset, endOffset int64) ([]byte, error) {
+	size := endOffset - startOffset + 1
+	// The copy walks the chunks, so the hash must too: on an entry that also
+	// carries inline Content the stream helper would prefer Content instead.
+	chunked := &filer_pb.Entry{Chunks: entry.GetChunks()}
+	reader, err := s3a.getEncryptedStreamFromVolumes(ctx, chunked, startOffset, size)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, reader); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
 }
 
 // Helper methods for copy operations to avoid code duplication

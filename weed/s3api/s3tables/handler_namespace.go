@@ -36,10 +36,9 @@ func (h *S3TablesHandler) mayRepairOwnerlessBucket(r *http.Request) bool {
 
 // handleCreateNamespace creates a new namespace in a table bucket
 func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	glog.Errorf("S3Tables: handleCreateNamespace called")
+	glog.V(3).Infof("S3Tables: handleCreateNamespace called")
 	var req CreateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
-		glog.Errorf("S3Tables: handleCreateNamespace failed to read request body: %v", err)
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -140,6 +139,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 			return ErrAccessDenied
 		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
+			if !h.authorizeAbsentTarget(r, filerClient, "CreateNamespace", bucketName, namespaceName, "", "") {
+				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+				return ErrAccessDenied
+			}
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
@@ -481,7 +484,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespaces: %v", err))

@@ -659,6 +659,9 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
+				return h.absentTagTargetError(r, client, "TagResource", "not authorized to tag resource", req.ResourceARN, rType)
+			}
 			return err
 		}
 
@@ -793,6 +796,9 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
+				return h.absentTagTargetError(r, client, "ListTagsForResource", "not authorized to list tags for resource", req.ResourceARN, rType)
+			}
 			return err
 		}
 
@@ -913,6 +919,9 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
+				return h.absentTagTargetError(r, client, "UntagResource", "not authorized to untag resource", req.ResourceARN, rType)
+			}
 			return err
 		}
 
@@ -1015,6 +1024,22 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 
 	h.writeJSON(w, http.StatusOK, nil)
 	return nil
+}
+
+// absentTagTargetError resolves a tag operation when the resource's catalog
+// metadata did not load: a caller the operation would refuse gets its denial,
+// everyone else the same not-found an absent name gets.
+func (h *S3TablesHandler) absentTagTargetError(r *http.Request, client filer_pb.SeaweedFilerClient, operation, deniedMessage, resourceARN string, rType ResourceType) error {
+	var bucketName, namespace, name string
+	if rType == ResourceTypeTable {
+		bucketName, namespace, name, _ = parseTableFromARN(resourceARN)
+	} else {
+		bucketName, _ = parseBucketNameFromARN(resourceARN)
+	}
+	if !h.authorizeAbsentTarget(r, &singleClient{client}, operation, bucketName, namespace, name, resourceARN) {
+		return NewAuthError(operation, h.getAccountID(r), deniedMessage)
+	}
+	return filer_pb.ErrNotFound
 }
 
 // resolveResourcePath determines the resource path and extended attribute key from a resource ARN

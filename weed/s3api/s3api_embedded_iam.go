@@ -2594,53 +2594,19 @@ func (e *EmbeddedIamApi) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, val
 	return resp, nil
 }
 
-// handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
-// According to AWS documentation: "If you do not specify a user name, IAM determines the user name
-// implicitly based on the Amazon Web Services access key ID signing the request."
-// This function extracts the AccessKeyId from the SigV4 credential and looks up the corresponding
-// identity name in the credential store.
+// handleImplicitUsername adds the name of the authenticated caller to values
+// when 'UserName' is not specified, per AWS: "If you do not specify a user name,
+// IAM determines the user name implicitly based on the Amazon Web Services
+// access key ID signing the request." The name comes from the identity the
+// authentication middleware verified, which the request context carries; the
+// Authorization header itself is attacker-controlled and is never re-parsed.
 func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Values) {
-	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
+	if values.Get("UserName") != "" {
 		return
 	}
-	// Log presence of auth header without exposing sensitive signature material
-	glog.V(4).Infof("Authorization header present, extracting access key")
-	// Parse AWS SigV4 Authorization header format:
-	// "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/iam/aws4_request, ..."
-	s := strings.Split(r.Header["Authorization"][0], "Credential=")
-	if len(s) < 2 {
-		return
+	if name := s3_constants.GetIdentityNameFromContext(r); name != "" {
+		values.Set("UserName", name)
 	}
-	s = strings.Split(s[1], ",")
-	if len(s) < 1 {
-		return
-	}
-	s = strings.Split(s[0], "/")
-	if len(s) < 1 {
-		return
-	}
-	// s[0] is the AccessKeyId
-	accessKeyId := s[0]
-	if accessKeyId == "" {
-		return
-	}
-	// Nil-guard: ensure iam is initialized before lookup
-	if e.iam == nil {
-		glog.V(4).Infof("IAM not initialized, cannot look up access key")
-		return
-	}
-	// Look up the identity by access key to get the username
-	identity, _, found := e.iam.LookupByAccessKey(accessKeyId)
-	if !found {
-		// Mask access key in logs - show only first 4 chars
-		maskedKey := accessKeyId
-		if len(accessKeyId) > 4 {
-			maskedKey = accessKeyId[:4] + "***"
-		}
-		glog.V(4).Infof("Access key %s not found in credential store", maskedKey)
-		return
-	}
-	values.Set("UserName", identity.Name)
 }
 
 // iamSelfServiceActions are actions that users can perform on their own resources without admin rights.

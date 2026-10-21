@@ -23,7 +23,7 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, mode volume_server_pb.VolumeS
 		return 0, nil, []error{fmt.Errorf("EC volume id %d not found", vid)}
 	}
 	if err := s.cachedLookupEcShardLocations(ecv); err != nil {
-		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)}
+		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.masterAddress(), err)}
 	}
 	return s.scrubEcVolumeWalk(ecv, mode, forceDeletedNeedlesCheck)
 }
@@ -56,7 +56,7 @@ func (s *Store) ScrubEcVolumeMerged(merged *erasure_coding.MergedEcRuntimes, mod
 		}
 	}
 	if err := s.cachedLookupEcShardLocations(ecv); err != nil {
-		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)}
+		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.masterAddress(), err)}
 	}
 
 	files, shardInfos, errs := s.scrubEcVolumeWalk(ecv, mode, forceDeletedNeedlesCheck)

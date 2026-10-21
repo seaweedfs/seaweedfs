@@ -96,11 +96,6 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Cont
 		return nil, s3err.ErrAccessDenied
 	}
 
-	bucket := formValues.Get("bucket")
-	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
-		return nil, s3err.ErrAccessDenied
-	}
-
 	policy := formValues.Get("Policy")
 	if policy == "" {
 		return nil, s3err.ErrMissingFields

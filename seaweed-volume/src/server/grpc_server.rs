@@ -53,6 +53,12 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
 
+/// Mirrors Go's `isNotLeaderErr`: the master returns raft's NotLeaderError,
+/// which arrives as an Unknown-status message.
+fn is_not_leader_status(e: &Status) -> bool {
+    e.message().contains("Not current leader")
+}
+
 /// Deadline from the caller's `grpc-timeout` header (TimeoutValue +
 /// H|M|S|m|u|n unit, per the gRPC-over-HTTP2 spec). Tonic's GrpcTimeout layer
 /// drops an over-deadline handler future anyway; parsing it here lets a queued
@@ -344,22 +350,46 @@ impl VolumeGrpcService {
         is_readonly: bool,
     ) -> Result<(), Status> {
         // VolumeMarkReadonly mutates raft-replicated master topology, so it must
-        // reach the leader. Prefer the live leader the heartbeat is talking to
-        // (current_master_url), falling back to the static seed before the first
-        // heartbeat — mirrors store_ec.rs and Go's vs.GetMaster(). Sending it to
-        // the static seed fails "not current leader" after any master failover.
-        let master_url = {
-            let live = self.state.current_master_url.read().await.clone();
-            if !live.is_empty() {
-                live
-            } else {
-                self.state.master_url.clone()
-            }
-        };
+        // reach the leader the heartbeat confirmed. On "Not current leader",
+        // ask the seed masters who leads and retry there — mirrors Go's
+        // notifyMasterVolumeReadonly.
+        let master_url = self.state.current_master().await;
         if master_url.is_empty() {
-            return Ok(());
+            if !self.state.has_master {
+                return Ok(());
+            }
+            return Err(Status::unavailable("no master leader known"));
         }
-        let grpc_addr = parse_grpc_address(&master_url).map_err(|e| {
+        match self
+            .volume_mark_readonly_on_master(&master_url, info, is_readonly)
+            .await
+        {
+            Err(e) if is_not_leader_status(&e) => {
+                let leader = super::heartbeat::lookup_leader_from_peers(
+                    &self.state.master_urls,
+                    self.state.outgoing_grpc_tls.as_ref(),
+                )
+                .await
+                .ok_or_else(|| {
+                    Status::unavailable(format!(
+                        "master {} rejected mark-readonly and no peer named a leader",
+                        master_url
+                    ))
+                })?;
+                self.volume_mark_readonly_on_master(&leader, info, is_readonly)
+                    .await
+            }
+            result => result,
+        }
+    }
+
+    async fn volume_mark_readonly_on_master(
+        &self,
+        master_url: &str,
+        info: &MasterVolumeInfo,
+        is_readonly: bool,
+    ) -> Result<(), Status> {
+        let grpc_addr = parse_grpc_address(master_url).map_err(|e| {
             Status::internal(format!("invalid master address {}: {}", master_url, e))
         })?;
         let channel = connect_channel(
@@ -5776,7 +5806,8 @@ impl VolumeCopyJob {
             (&self.dest.data_base_name, self.dest.has_remote_dat);
         let mut preallocate_size: i64 = 0;
         if !has_remote_dat {
-            let grpc_addr = super::heartbeat::to_grpc_address(&state.master_url);
+            let master = state.current_master().await;
+            let grpc_addr = super::heartbeat::to_grpc_address(&master);
             // Race the master-configuration RPC against the caller's
             // response channel: a stalled master (or a slow leader
             // election) would otherwise hold the task and its .note
@@ -5801,7 +5832,7 @@ impl VolumeCopyJob {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("get master {} configuration: {}", state.master_url, e);
+                    tracing::warn!("get master {} configuration: {}", master, e);
                 }
             }
 

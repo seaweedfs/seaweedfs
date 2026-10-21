@@ -661,7 +661,10 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 // Returns s3err.ErrNone if allowed, or an error code if denied or on error.
 func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
 	if isAnonymousObjectRead(r) {
-		return s3a.authorizeAnonymousObjectRead(r, bucket, object, objectEntry)
+		// Refined like writeAnonymousAwareNotFound's masked miss, so a denied
+		// existing key and a missing key answer alike on a malformed name.
+		identity, _ := GetIdentityFromContext(r).(*Identity)
+		return refineDenialForBucketName(r, identity, s3a.authorizeAnonymousObjectRead(r, bucket, object, objectEntry))
 	}
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity
