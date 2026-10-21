@@ -121,6 +121,8 @@ func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
+		fh.Close()
+		ret.Reader = nil
 		return ret, fiErr
 	}
 	ret.ModTime = fi.ModTime().UTC().Unix()
