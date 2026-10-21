@@ -182,11 +182,11 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Tagging operations. The routes match ?tagging with an empty value only,
-	// so tagging=anything-else is not a tagging request and must fall through.
+	// Tagging operations. The routes match ?tagging whenever the key is
+	// present (gorilla/mux does not compare the value), so any value counts.
 	// A versionId retargets the request at a specific version, so the
 	// version-tagging action applies, not the current-object one.
-	if query.Has("tagging") && query.Get("tagging") == "" {
+	if query.Has("tagging") {
 		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
 		case http.MethodGet:

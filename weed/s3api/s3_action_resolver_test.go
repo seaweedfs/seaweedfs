@@ -133,8 +133,8 @@ func TestResolveS3Action_VersionTagging(t *testing.T) {
 		{"delete version tags", http.MethodDelete, "key", "tagging&versionId=v1", s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING},
 		{"empty versionId stays current", http.MethodGet, "key", "tagging&versionId=", s3_constants.S3_ACTION_GET_OBJECT_TAGGING},
 		{"bucket tagging ignores versionId", http.MethodGet, "", "tagging&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_TAGGING},
-		{"non-empty tagging is not tagging", http.MethodGet, "key", "tagging=x&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION},
-		{"non-empty tagging plain read", http.MethodGet, "key", "tagging=x", s3_constants.S3_ACTION_GET_OBJECT},
+		{"non-empty tagging is still tagging", http.MethodGet, "key", "tagging=x&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING},
+		{"non-empty tagging plain", http.MethodGet, "key", "tagging=x", s3_constants.S3_ACTION_GET_OBJECT_TAGGING},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
