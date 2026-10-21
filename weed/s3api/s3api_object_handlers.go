@@ -536,8 +536,9 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 		contentLength = int64(entry.Attributes.FileSize)
 	}
 	statusCode := http.StatusOK
-	if r.Method == http.MethodHead && r.Header.Get("Range") != "" && requestedPartNumber(r) == 0 {
-		// A ranged HEAD reports the range like GET does: 206 with its Content-Range and length
+	if r.Header.Get("Range") != "" && requestedPartNumber(r) == 0 {
+		// A ranged request answers like the object path does: 206 with its
+		// Content-Range and the range's length, served on GET, reported on HEAD.
 		totalSize := contentLength
 		offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
 		if rangeErr != nil {
@@ -547,6 +548,9 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 			contentLength = size
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 			statusCode = http.StatusPartialContent
+			if r.Method != http.MethodHead {
+				content = content[offset : offset+size]
+			}
 		}
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
@@ -566,7 +570,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 
 	// Write content
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 	if len(content) > 0 {
 		if _, err := w.Write(content); err != nil {
 			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
