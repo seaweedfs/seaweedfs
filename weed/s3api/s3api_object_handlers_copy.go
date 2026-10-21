@@ -3,11 +3,13 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -1479,7 +1481,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	// the source volume for compressed bytes, so a gzipped chunk is
 	// forwarded to the destination without anyone having to decompress.
 	if canStreamCopyChunk(chunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil); err != nil {
 			return nil, fmt.Errorf("stream chunk: %w", err)
 		}
 		return dstChunk, nil
@@ -1534,8 +1536,17 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	// part-size = chunk-size assemble pattern hits this branch.
 	if canStreamCopyChunk(originalChunk) {
 		isFullChunk := offsetInChunk == 0 && rangeChunk.Size == originalChunk.Size
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult); err != nil {
+		// A partial range stores different bytes than the source chunk, so
+		// its ETag has to be recomputed; a whole-chunk copy reuses it.
+		var digest hash.Hash
+		if !isFullChunk {
+			digest = md5.New()
+		}
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
+		}
+		if digest != nil {
+			dstChunk.ETag = base64.StdEncoding.EncodeToString(digest.Sum(nil))
 		}
 		return dstChunk, nil
 	}
