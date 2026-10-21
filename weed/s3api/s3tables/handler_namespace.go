@@ -11,7 +11,28 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+// errOwnerlessBucket marks a table bucket that has the marker but no
+// metadata: damaged, and answered with the operation's own denial rather than
+// letting the caller name itself the bucket's owner before any check runs.
+var errOwnerlessBucket = fmt.Errorf("table bucket has no owner metadata")
+
+// mayRepairOwnerlessBucket reports whether the caller may repair a bucket in
+// that state: the admin or a trusted internal handler. hasAdminAction also
+// answers s3tables:*, an operation grant, not administrator status.
+func (h *S3TablesHandler) mayRepairOwnerlessBucket(r *http.Request) bool {
+	if h.trusted || h.getAccountID(r) == s3_constants.AccountAdminId {
+		return true
+	}
+	for _, action := range getIdentityActions(r) {
+		if action == s3_constants.ACTION_ADMIN {
+			return true
+		}
+	}
+	return false
+}
 
 // handleCreateNamespace creates a new namespace in a table bucket
 func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
@@ -66,16 +87,29 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 				if entryResp.Entry == nil || !IsTableBucketEntry(entryResp.Entry) {
 					return filer_pb.ErrNotFound
 				}
-				bucketMetadata = tableBucketMetadata{
-					Name:           bucketName,
-					CreatedAt:      time.Now(),
-					OwnerAccountID: ownerAccountID,
+				if !h.mayRepairOwnerlessBucket(r) {
+					return errOwnerlessBucket
 				}
-				metadataBytes, err := json.Marshal(&bucketMetadata)
-				if err != nil {
-					return fmt.Errorf("failed to marshal bucket metadata: %w", err)
-				}
-				if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+				// Repair the marker-only entry under the entry lock so a
+				// creator finishing its own create in the meantime keeps its
+				// owner: adopt whatever metadata is there, write only when it
+				// is still absent.
+				if err := h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+					if data, ok := extended[ExtendedKeyMetadata]; ok {
+						return json.Unmarshal(data, &bucketMetadata)
+					}
+					bucketMetadata = tableBucketMetadata{
+						Name:           bucketName,
+						CreatedAt:      time.Now(),
+						OwnerAccountID: ownerAccountID,
+					}
+					metadataBytes, err := json.Marshal(&bucketMetadata)
+					if err != nil {
+						return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+					}
+					extended[ExtendedKeyMetadata] = metadataBytes
+					return nil
+				}); err != nil {
 					return err
 				}
 			} else {
@@ -101,6 +135,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	})
 
 	if err != nil {
+		if errors.Is(err, errOwnerlessBucket) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+			return ErrAccessDenied
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
