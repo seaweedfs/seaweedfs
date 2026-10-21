@@ -300,12 +300,12 @@ fn is_stopping(state: &VolumeServerState) -> bool {
     *state.is_stopping.read().unwrap()
 }
 
-/// Store the master lookups should go to in canonical http `host:port` form.
-/// The heartbeat calls this only for a master known to lead, mirroring Go's
-/// setCurrentMaster.
+/// Store the master lookups should go to, in the address form it was
+/// announced in — `host:port` or `host:port.grpcPort` — so an explicit gRPC
+/// port survives to the gRPC callers, mirroring Go's setCurrentMaster.
+/// The heartbeat calls this only for a master known to lead.
 async fn publish_current_master(state: &Arc<VolumeServerState>, master: &str) {
-    *state.current_master_url.write().await =
-        super::volume_server::to_http_address(master).into_owned();
+    *state.current_master_url.write().await = master.to_string();
 }
 
 fn duplicate_uuid_retry_delay(retry_count: u32) -> Duration {

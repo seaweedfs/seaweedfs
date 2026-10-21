@@ -376,7 +376,6 @@ impl VolumeGrpcService {
                         master_url
                     ))
                 })?;
-                let leader = super::volume_server::to_http_address(&leader).into_owned();
                 self.volume_mark_readonly_on_master(&leader, info, is_readonly)
                     .await
             }

@@ -95,8 +95,9 @@ pub struct VolumeServerState {
     /// Built once at construction so Ping admission stays O(1). Mirrors
     /// Go's `seedMasterSet` on `VolumeServer`.
     pub seed_master_set: std::collections::HashSet<String>,
-    /// Master this server takes as leader, in canonical http `host:port`
-    /// form. Empty until the heartbeat confirms one — a peer that answered a
+    /// Master this server takes as leader, in its announced
+    /// `host:port[.grpcPort]` form — callers pick http or gRPC form per use.
+    /// Empty until the heartbeat confirms one — a peer that answered a
     /// stream without naming a leader, or the leader a follower named — and
     /// cleared again when no master reports one. The heartbeat writes;
     /// admission and lookups read. Mirrors Go's `currentMaster` plus
@@ -143,7 +144,8 @@ pub struct VolumeServerState {
 
 impl VolumeServerState {
     /// The master lookups should go to: the leader the heartbeat confirmed,
-    /// or empty while none is known. Mirrors Go's `vs.getCurrentMaster()`.
+    /// or empty while none is known, in its announced `host:port[.grpcPort]`
+    /// form. Mirrors Go's `vs.getCurrentMaster()`.
     pub async fn current_master(&self) -> String {
         self.current_master_url.read().await.clone()
     }
@@ -217,7 +219,7 @@ impl VolumeServerState {
             return false;
         }
         let current = self.current_master_url.read().await.clone();
-        if !current.is_empty() && current == key {
+        if !current.is_empty() && to_http_address(&current) == key {
             return true;
         }
         self.seed_master_set.contains(&key)
