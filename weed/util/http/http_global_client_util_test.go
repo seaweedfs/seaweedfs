@@ -145,6 +145,9 @@ func TestReadErrorsDecodeGzipBody(t *testing.T) {
 	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
 		t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
 	}
+	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {
+		t.Errorf("GetAuthenticated: got %v, want %q", err, want)
+	}
 }
 
 func TestReadErrorWithoutBodyIsTheStatus(t *testing.T) {

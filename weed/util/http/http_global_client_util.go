@@ -119,6 +119,11 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 	recordReachable(request.URL.Host)
 	defer CloseResponse(response)
 
+	if response.StatusCode >= 400 {
+		retryable := response.StatusCode >= 500
+		return nil, retryable, statusError(url, response)
+	}
+
 	var reader io.ReadCloser
 	switch response.Header.Get("Content-Encoding") {
 	case "gzip":
@@ -131,10 +136,6 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 		reader = response.Body
 	}
 
-	if response.StatusCode >= 400 {
-		retryable := response.StatusCode >= 500
-		return nil, retryable, statusError(url, response)
-	}
 	b, err := io.ReadAll(reader)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
