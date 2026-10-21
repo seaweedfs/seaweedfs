@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -74,29 +75,26 @@ func TestPickForWriteCapOfTwoAndDisabled(t *testing.T) {
 		sizeTrackingVolume(3, 500, false),
 	}, dn)
 
-	picked := map[needle.VolumeId]bool{}
+	// the capped candidate set is deterministic even though the pick among
+	// them is weighted-random
+	if got := vl.fullestWritable(vl.writables); !slices.Equal(got, []needle.VolumeId{1, 2}) {
+		t.Fatalf("capped candidates %v, want [1 2]", got)
+	}
 	for i := 0; i < 40; i++ {
 		vid, _, _, _, err := vl.PickForWrite(1, &VolumeGrowOption{})
 		if err != nil {
 			t.Fatalf("PickForWrite: %v", err)
 		}
-		picked[vid] = true
-	}
-	if len(picked) != 2 || !picked[1] || !picked[2] {
-		t.Fatalf("capped pick spread to %v, want only volumes 1 and 2", picked)
+		if vid != needle.VolumeId(1) && vid != needle.VolumeId(2) {
+			t.Fatalf("capped pick reached volume %d, want one of 1,2", vid)
+		}
 	}
 
 	vl.maxWritableVolumes = 0
-	picked = map[needle.VolumeId]bool{}
-	for i := 0; i < 400; i++ {
-		vid, _, _, _, err := vl.PickForWrite(1, &VolumeGrowOption{})
-		if err != nil {
+	for i := 0; i < 40; i++ {
+		if _, _, _, _, err := vl.PickForWrite(1, &VolumeGrowOption{}); err != nil {
 			t.Fatalf("PickForWrite: %v", err)
 		}
-		picked[vid] = true
-	}
-	if len(picked) != 3 {
-		t.Fatalf("uncapped pick reached %v, want all three volumes", picked)
 	}
 }
 
