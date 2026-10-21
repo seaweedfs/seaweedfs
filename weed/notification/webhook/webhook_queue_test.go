@@ -653,3 +653,31 @@ func TestNamedTargets(t *testing.T) {
 		t.Errorf("SendMessage() error = %v", err)
 	}
 }
+
+// A disabled flat section keeps no target even when an endpoint is set —
+// the scaffold ships exactly that combination, and a named target must not
+// reactivate it.
+func TestBuildTargetsDisabledFlat(t *testing.T) {
+	cfg := &mapConfig{values: map[string]interface{}{
+		"notification.webhook": map[string]interface{}{
+			"enabled":  false,
+			"endpoint": "https://your-server.com/webhook",
+			"named": map[string]interface{}{
+				"enabled":  true,
+				"endpoint": "https://example.com/hook",
+			},
+		},
+		"notification.webhook.enabled":        false,
+		"notification.webhook.endpoint":       "https://your-server.com/webhook",
+		"notification.webhook.named.enabled":  true,
+		"notification.webhook.named.endpoint": "https://example.com/hook",
+	}}
+
+	targets, err := buildTargets(cfg, "notification.webhook.")
+	if err != nil {
+		t.Fatalf("buildTargets() error = %v", err)
+	}
+	if len(targets) != 1 || targets[0].name != "named" {
+		t.Fatalf("expected only the named target, got %v", targets)
+	}
+}

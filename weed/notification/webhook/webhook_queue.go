@@ -112,7 +112,7 @@ func namedTargetPrefixes(configuration util.Configuration, prefix string) []stri
 
 func buildTargets(configuration util.Configuration, prefix string) ([]*target, error) {
 	var prefixes []string
-	if configuration.GetBool(prefix+"enabled") || configuration.GetString(prefix+"endpoint") != "" {
+	if configuration.GetBool(prefix + "enabled") {
 		prefixes = append(prefixes, prefix)
 	}
 	prefixes = append(prefixes, namedTargetPrefixes(configuration, prefix)...)
