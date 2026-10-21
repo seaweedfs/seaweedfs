@@ -539,9 +539,10 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
-// SetMaxWritableVolumes caps how many of a collection's writable volumes
-// assignments are spread over; 0 means every writable volume is a candidate.
-// It only affects collections created afterwards, so call it before serving.
+// SetMaxWritableVolumes caps how many writable volumes in a volume layout
+// (collection + replica placement + ttl + disk type) assignments are spread
+// over; 0 means every writable volume is a candidate. It only affects
+// collections created afterwards, so call it before serving.
 func (t *Topology) SetMaxWritableVolumes(n int) {
 	t.maxWritableVolumes = n
 }
