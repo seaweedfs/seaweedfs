@@ -1757,7 +1757,15 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 			partMd5 = res.sum
 		}
 	} else if singleChunkCovers {
-		partMd5 = util.Base64Md5ToBytes(dstChunks[0].ETag)
+		if partMd5 = util.Base64Md5ToBytes(dstChunks[0].ETag); len(partMd5) != md5.Size {
+			// TUS and mount writes leave chunks without an ETag; hash the
+			// copied range when the inherited digest is missing or malformed.
+			sum, err := s3a.copiedRangeMd5(md5Ctx, entry, startOffset, endOffset)
+			if err != nil {
+				return nil, nil, fmt.Errorf("md5 of copied range: %w", err)
+			}
+			partMd5 = sum
+		}
 	}
 
 	return dstChunks, partMd5, nil

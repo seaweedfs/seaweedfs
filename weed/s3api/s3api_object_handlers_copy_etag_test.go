@@ -329,3 +329,35 @@ func TestCopyChunksForRangePreservesSourcePrecedence(t *testing.T) {
 		t.Errorf("overlap part Md5 = %x, want %x", partMd5, wantMd5)
 	}
 }
+
+// A whole-range chunk copy normally reuses the source chunk's ETag as the
+// part MD5; TUS and mount writes leave chunks without one, so the part has
+// to hash the copied bytes instead of saving an empty digest.
+func TestCopyChunksForRangeMissingChunkETag(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	fid := fmt.Sprintf("3,%016x%08x", 111, 212)
+	volume.stored[fid] = []byte("etagless")
+	entry := &filer_pb.Entry{
+		Name:       "src",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 8},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: fid, Offset: 0, Size: 8},
+		},
+	}
+
+	dstChunks, partMd5, err := s3a.copyChunksForRange(entry, 0, 7, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange: %v", err)
+	}
+	if len(dstChunks) != 1 {
+		t.Fatalf("copyChunksForRange returned %d chunks, want 1", len(dstChunks))
+	}
+	wantMd5 := md5.Sum([]byte("etagless"))
+	if !bytes.Equal(partMd5, wantMd5[:]) {
+		t.Errorf("part Md5 = %x, want %x (hashed copied range)", partMd5, wantMd5)
+	}
+}
