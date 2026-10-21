@@ -384,6 +384,16 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
+	if proto.Equal(oldDest, dest) && isDroppedLocalCopy(message.NewEntry) {
+		// The update dropped the local copy: remote.uncache, eviction under
+		// storage pressure, or remote.meta.sync pulling a newer remote
+		// version. Each clears the sync stamp, so shouldSendToRemote reads
+		// the entry as dirty when the remote mtime shares its second. The
+		// content is the object at this very key, and uploading the chunkless
+		// entry would replace it with zero bytes.
+		glog.V(2).Infof("skipping update of remote-only entry: %+v", resp)
+		return nil
+	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		// A renamed entry that holds no local data now (the snapshot was
@@ -486,6 +496,15 @@ func currentEntry(filerSource filer_pb.FilerClient, dir, name string) (*filer_pb
 // object: no local data, a RemoteEntry with a size.
 func isRemoteOnly(entry *filer_pb.Entry) bool {
 	return entry != nil && !filer.HasData(entry) && entry.IsInRemoteOnly()
+}
+
+// isDroppedLocalCopy reports a remote-only entry whose size is still the
+// remote object's: its local copy was dropped and the object describes it.
+// Uncache and eviction keep the size, and remote.meta.sync sets it from the
+// object. A truncate drops the chunks too but changes the size, and the
+// truncated content has to reach the remote.
+func isDroppedLocalCopy(entry *filer_pb.Entry) bool {
+	return isRemoteOnly(entry) && entry.GetAttributes().GetFileSize() == uint64(entry.RemoteEntry.RemoteSize)
 }
 
 // completeRemoteOnlyRename finishes a rename whose content exists only on the
