@@ -2,6 +2,7 @@ package leveldb
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -135,6 +136,18 @@ func TestInitializeDefaultOptions(t *testing.T) {
 	}
 	if opts.WriteBuffer != 16*1024*1024 {
 		t.Errorf("write buffer %d, want the 16MiB default", opts.WriteBuffer)
+	}
+}
+
+func TestScaledSaturates(t *testing.T) {
+	if got := scaled(math.MaxInt, 1<<20); got != math.MaxInt {
+		t.Errorf("expected saturation at %d, got %d", math.MaxInt, got)
+	}
+	if got := scaled(64, 1<<20); got != 64*1024*1024 {
+		t.Errorf("expected 64MiB, got %d", got)
+	}
+	if got := scaled(4, 1<<10); got != 4*1024 {
+		t.Errorf("expected 4KiB, got %d", got)
 	}
 }
 

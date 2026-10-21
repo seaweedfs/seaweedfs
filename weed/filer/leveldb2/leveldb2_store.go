@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"math"
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -56,18 +57,27 @@ func (store *LevelDB2Store) buildOptions() *opt.Options {
 		ReadOnly:           store.ReadOnly,
 	}
 	if store.blockCacheSizeMB > 0 {
-		opts.BlockCacheCapacity = store.blockCacheSizeMB * 1024 * 1024
+		opts.BlockCacheCapacity = scaled(store.blockCacheSizeMB, 1<<20)
 	}
 	if store.writeBufferSizeMB > 0 {
-		opts.WriteBuffer = store.writeBufferSizeMB * 1024 * 1024
+		opts.WriteBuffer = scaled(store.writeBufferSizeMB, 1<<20)
 	}
 	if store.blockSizeKB > 0 {
-		opts.BlockSize = store.blockSizeKB * 1024
+		opts.BlockSize = scaled(store.blockSizeKB, 1<<10)
 	}
 	if store.compactionTableSizeMB > 0 {
-		opts.CompactionTableSize = store.compactionTableSizeMB * 1024 * 1024
+		opts.CompactionTableSize = scaled(store.compactionTableSizeMB, 1<<20)
 	}
 	return opts
+}
+
+// scaled converts a size option to bytes, saturating instead of wrapping a
+// huge value into a negative int on 32-bit builds.
+func scaled(v, scale int) int {
+	if v > math.MaxInt/scale {
+		return math.MaxInt
+	}
+	return v * scale
 }
 
 func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
