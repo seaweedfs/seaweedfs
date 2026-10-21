@@ -20,6 +20,11 @@ const (
 	S3_ACTION_PUT_OBJECT_TAGGING    = "s3:PutObjectTagging"
 	S3_ACTION_DELETE_OBJECT_TAGGING = "s3:DeleteObjectTagging"
 
+	// Version-specific tagging operations (?tagging&versionId)
+	S3_ACTION_GET_OBJECT_VERSION_TAGGING    = "s3:GetObjectVersionTagging"
+	S3_ACTION_PUT_OBJECT_VERSION_TAGGING    = "s3:PutObjectVersionTagging"
+	S3_ACTION_DELETE_OBJECT_VERSION_TAGGING = "s3:DeleteObjectVersionTagging"
+
 	// Object retention and legal hold
 	S3_ACTION_GET_OBJECT_RETENTION  = "s3:GetObjectRetention"
 	S3_ACTION_PUT_OBJECT_RETENTION  = "s3:PutObjectRetention"
