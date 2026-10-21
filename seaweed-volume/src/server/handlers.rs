@@ -603,7 +603,7 @@ async fn batch_delete_file_ids(
             let locations = lookup_volume(
                 &state.http_client,
                 &state.outgoing_http_scheme,
-                &state.master_url,
+                &state.current_master().await,
                 volume_id,
             )
             .await
@@ -675,7 +675,7 @@ async fn do_replicated_request(
     let locations = lookup_volume(
         &state.http_client,
         &state.outgoing_http_scheme,
-        &state.master_url,
+        &state.current_master().await,
         vid,
     )
     .await
@@ -832,7 +832,7 @@ async fn proxy_or_redirect_to_target(
     let locations = match lookup_volume(
         &state.http_client,
         &state.outgoing_http_scheme,
-        &state.master_url,
+        &state.current_master().await,
         vid.0,
     )
     .await
@@ -1238,7 +1238,7 @@ async fn proxy_missing_volume(
     let query_string = uri.query().unwrap_or("").to_string();
     if is_proxied_query(&query_string)
         || state.read_mode == ReadMode::Local
-        || state.master_url.is_empty()
+        || state.current_master().await.is_empty()
     {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -1282,7 +1282,7 @@ async fn check_download_limit(
         // Go tries proxy to replica once before the wait loop
         // (checkDownloadLimit); it does not retry on each wakeup.
         let should_try_replica =
-            !is_proxied_query(&query_string) && !state.master_url.is_empty() && {
+            !is_proxied_query(&query_string) && !state.current_master().await.is_empty() && {
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
@@ -2960,7 +2960,7 @@ pub async fn post_handler(
 
     // Replicate to remote volume servers if this volume has replicas.
     // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
-    if !is_replicate && write_result.is_ok() && !state.master_url.is_empty() {
+    if !is_replicate && write_result.is_ok() && !state.current_master().await.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
             store
@@ -3358,7 +3358,7 @@ pub async fn delete_handler(
     };
 
     let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
-    if !is_replicate && delete_result.is_ok() && !state.master_url.is_empty() {
+    if !is_replicate && delete_result.is_ok() && !state.current_master().await.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
             store
@@ -4232,7 +4232,7 @@ async fn read_remote_chunk_needle(
     let locations = lookup_volume(
         &state.http_client,
         &state.outgoing_http_scheme,
-        &state.master_url,
+        &state.current_master().await,
         vid.0,
     )
     .await?;
@@ -6671,7 +6671,8 @@ mod tests {
         let s = Arc::get_mut(&mut state).unwrap();
         // Empty self_url makes `url.contains(self_url)` true for every peer.
         s.self_url = "198.51.100.8:8080".to_string();
-        s.master_url = master_url;
+        s.master_url = master_url.clone();
+        s.current_master_url = tokio::sync::RwLock::new(master_url);
         state
     }
 
