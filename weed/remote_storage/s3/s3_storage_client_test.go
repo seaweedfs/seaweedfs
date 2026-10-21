@@ -438,3 +438,24 @@ func TestIsNoSuchKey(t *testing.T) {
 	require.True(t, isNoSuchKey(fmt.Errorf("download: %w", awserr.New(awss3.ErrCodeNoSuchKey, "missing", nil))))
 	require.False(t, isNoSuchKey(awserr.New(awss3.ErrCodeNoSuchBucket, "missing", nil)))
 }
+
+func TestS3MakeResolvesEnvCredentialsWhenAnonymousDefault(t *testing.T) {
+	clearAWSCredentialEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-access")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	remoteClient, err := s3RemoteStorageMaker{}.Make(&remote_pb.RemoteConf{
+		Type:             "s3",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "http://localhost:8333",
+		S3ForcePathStyle: true,
+	})
+	require.NoError(t, err)
+
+	s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+	require.True(t, ok)
+	value, err := s3Client.Config.Credentials.Get()
+	require.NoError(t, err)
+	require.Equal(t, "env-access", value.AccessKeyID)
+	require.Equal(t, "env-secret", value.SecretAccessKey)
+}

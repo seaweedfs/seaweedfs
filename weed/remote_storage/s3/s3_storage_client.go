@@ -217,9 +217,22 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 		// names an AWS credential source, leave Credentials nil so the SDK
 		// default chain (env, web identity, container, shared profile) is used.
 		config.Credentials = credentials.AnonymousCredentials
+	} else if config.Credentials == nil && config.HTTPClient != nil {
+		// Remote credential providers (container endpoints, IMDS, web
+		// identity) fetch through this HTTP client; the guarded one is for the
+		// S3 endpoint and blocks the link-local credential endpoints, so the
+		// default chain resolves on an unguarded client.
+		credSess, err := session.NewSession(aws.NewConfig().WithHTTPClient(&http.Client{}))
+		if err != nil {
+			return nil, fmt.Errorf("create %s credential session: %w", opt.name, err)
+		}
+		config.Credentials = credSess.Config.Credentials
 	}
 
-	sess, err := session.NewSession(config)
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *config,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create %s session: %w", opt.name, err)
 	}
