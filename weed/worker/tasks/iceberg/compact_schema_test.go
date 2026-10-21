@@ -238,15 +238,15 @@ func TestMergeParquetFilesRequiredVsOptional(t *testing.T) {
 // values under the dropped field id, so the bin is refused.
 func TestMergeParquetFilesReaddedColumn(t *testing.T) {
 	for _, names := range [][]string{
-		{"narrow.parquet", "readded.parquet"},
-		{"readded.parquet", "narrow.parquet"},
+		{"narrow.parquet", "re-added.parquet"},
+		{"re-added.parquet", "narrow.parquet"},
 	} {
 		fs, client := startFakeFiler(t)
 		putDataFileRows(t, fs, "narrow.parquet", []narrowSchemaRow{{1, "a"}})
-		putDataFileRows(t, fs, "readded.parquet", []readdedNameSchemaRow{{2, "new-2"}})
+		putDataFileRows(t, fs, "re-added.parquet", []readdedNameSchemaRow{{2, "new-2"}})
 
 		_, _, err := mergeNamedFiles(t, client, names,
-			map[string]int64{"narrow.parquet": 1, "readded.parquet": 1}, nil, nil, false)
+			map[string]int64{"narrow.parquet": 1, "re-added.parquet": 1}, nil, nil, false)
 		if err == nil || !strings.Contains(err.Error(), "cannot merge files with different schemas") {
 			t.Errorf("merge of %v: %v, want schema mismatch", names, err)
 		}
@@ -536,11 +536,11 @@ func TestMergeParquetFilesEqualityDeleteAddedColumn(t *testing.T) {
 func TestMergeParquetFilesV3ReaddedColumn(t *testing.T) {
 	fs, client := startFakeFiler(t)
 	putDataFileRows(t, fs, "narrow.parquet", []narrowSchemaRow{{1, "a"}})
-	putDataFileRows(t, fs, "readded.parquet", []readdedNameSchemaRow{{2, "new-2"}})
+	putDataFileRows(t, fs, "re-added.parquet", []readdedNameSchemaRow{{2, "new-2"}})
 
 	_, _, err := mergeNamedFiles(t, client,
-		[]string{"narrow.parquet", "readded.parquet"},
-		map[string]int64{"narrow.parquet": 1, "readded.parquet": 1}, nil, nil, true)
+		[]string{"narrow.parquet", "re-added.parquet"},
+		map[string]int64{"narrow.parquet": 1, "re-added.parquet": 1}, nil, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "cannot merge files with different schemas") {
 		t.Fatalf("merge: %v, want schema mismatch", err)
 	}
