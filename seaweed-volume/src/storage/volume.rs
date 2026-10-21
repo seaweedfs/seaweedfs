@@ -4934,6 +4934,25 @@ impl Volume {
         self.current_dat_file_size()
     }
 
+    /// Disk space held by the local .dat file, or 0 when it is unknown. It
+    /// exceeds the file size when the file was preallocated with
+    /// `FALLOC_FL_KEEP_SIZE`.
+    pub fn dat_allocated_size(&self) -> u64 {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let io = self.io.read().unwrap();
+            io.dat_file
+                .as_ref()
+                .and_then(|f| f.metadata().ok())
+                .map_or(0, |m| m.blocks() * 512)
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    }
+
     /// Get the modification time of the .dat file as Unix seconds.
     pub fn dat_file_mod_time(&self) -> u64 {
         let io = self.io.read().unwrap();
