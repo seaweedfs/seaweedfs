@@ -34,6 +34,7 @@ type target struct {
 	filter *filter
 	client client
 	sem    chan struct{}
+	inbox  chan *message.Message
 }
 
 func newTarget(name string, cfg *config) (*target, error) {
@@ -42,6 +43,7 @@ func newTarget(name string, cfg *config) (*target, error) {
 		config: cfg,
 		filter: newFilter(cfg),
 		sem:    make(chan struct{}, cfg.nWorkers),
+		inbox:  make(chan *message.Message, cfg.bufferSize),
 	}
 	hClient, err := newHTTPClient(cfg)
 	if err != nil {
@@ -139,6 +141,7 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		return nil
 	}
 
+	var firstErr error
 	for _, t := range w.targets {
 		if t.filter != nil && !t.filter.shouldPublish(key, eventNotification) {
 			continue
@@ -151,11 +154,16 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		if err != nil {
 			return err
 		}
-		if err := w.queueChannel.Publish(t.topic(), wMsg); err != nil {
-			return err
+		wMsg.Metadata.Set("target", t.name)
+		select {
+		case t.inbox <- wMsg:
+		default:
+			if firstErr == nil {
+				firstErr = fmt.Errorf("webhook target %q buffer is full, dropping event for %s", t.name, key)
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
@@ -261,6 +269,8 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 			}
 			glog.Info("webhook pubsub worker stopped")
 		}()
+
+		go w.forwardTargetMessages(t)
 	}
 
 	// the queue context lives until every target's worker has stopped so the
@@ -271,6 +281,22 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 	}()
 
 	return nil
+}
+
+// forwardTargetMessages publishes each queued event to the target's topic in
+// order. It owns the potentially blocking Publish call so a saturated target
+// can neither stall the other targets nor the caller of SendMessage.
+func (w *Queue) forwardTargetMessages(t *target) {
+	for {
+		select {
+		case msg := <-t.inbox:
+			if err := w.queueChannel.Publish(t.topic(), msg); err != nil {
+				glog.Errorf("webhook target %q failed to publish message: %v", t.name, err)
+			}
+		case <-w.ctx.Done():
+			return
+		}
+	}
 }
 
 func (t *target) handleWebhook(msg *message.Message) error {
