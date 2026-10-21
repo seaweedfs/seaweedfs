@@ -1733,7 +1733,11 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 // exactly the bytes the non-SSE part copy assembles on the destination.
 func (s3a *S3ApiServer) copiedRangeMd5(ctx context.Context, entry *filer_pb.Entry, startOffset, endOffset int64) ([]byte, error) {
 	size := endOffset - startOffset + 1
-	reader, err := s3a.getEncryptedStreamFromVolumes(ctx, entry, startOffset, size)
+	// The copy walks the chunks, so the hash must too: on an entry that also
+	// carries inline Content the stream helper would prefer Content instead.
+	chunked := *entry
+	chunked.Content = nil
+	reader, err := s3a.getEncryptedStreamFromVolumes(ctx, &chunked, startOffset, size)
 	if err != nil {
 		return nil, err
 	}
