@@ -94,11 +94,11 @@ pub struct VolumeServerState {
     /// Built once at construction so Ping admission stays O(1). Mirrors
     /// Go's `seedMasterSet` on `VolumeServer`.
     pub seed_master_set: std::collections::HashSet<String>,
-    /// Current master this server is heartbeating with, in canonical http
-    /// `host:port` form. Empty when no heartbeat connection is active. The
-    /// heartbeat goroutine writes; admission reads — the lock keeps them
-    /// from racing on a leader change. Mirrors Go's `currentMaster` plus
-    /// `currentMasterLock`.
+    /// Master this server takes as leader, in canonical http `host:port`
+    /// form. Empty until the heartbeat confirms one — a peer that answered a
+    /// stream without naming a leader, or the leader a follower named. The
+    /// heartbeat writes; admission and lookups read. Mirrors Go's
+    /// `currentMaster` plus `currentMasterLock`.
     pub current_master_url: tokio::sync::RwLock<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
     pub self_url: String,

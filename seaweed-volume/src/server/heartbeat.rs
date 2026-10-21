@@ -258,6 +258,14 @@ fn is_stopping(state: &VolumeServerState) -> bool {
     *state.is_stopping.read().unwrap()
 }
 
+/// Store the master lookups should go to in canonical http `host:port` form.
+/// The heartbeat calls this only for a master known to lead, mirroring Go's
+/// setCurrentMaster.
+async fn publish_current_master(state: &Arc<VolumeServerState>, master: &str) {
+    *state.current_master_url.write().await =
+        super::volume_server::to_http_address(master).into_owned();
+}
+
 fn duplicate_uuid_retry_delay(retry_count: u32) -> Duration {
     Duration::from_secs((1u64 << retry_count) * 2)
 }
@@ -430,14 +438,6 @@ async fn do_heartbeat(
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
 
     info!("Heartbeat stream established with {}", grpc_addr);
-    // Publish the master we're now talking to in canonical http host:port
-    // form so Ping admission can recognise it once a leader change moves us
-    // off the seed list. Mirrors Go's vs.setCurrentMaster(masterAddress).
-    {
-        let normalised = super::volume_server::to_http_address(current_master).into_owned();
-        let mut guard = state.current_master_url.write().await;
-        *guard = normalised;
-    }
     if is_stopping(state) {
         state.is_heartbeating.store(false, Ordering::Relaxed);
         send_deregister_heartbeat(config, state, &tx).await;
@@ -451,6 +451,7 @@ async fn do_heartbeat(
     volume_tick.tick().await;
     ec_tick.tick().await;
 
+    let mut confirmed_leader = false;
     loop {
         tokio::select! {
             resp = response_stream.message() => {
@@ -502,10 +503,21 @@ async fn do_heartbeat(
                         if metrics_changed {
                             state.metrics_notify.notify_waiters();
                         }
-                        // Match Go: only redirect if leader is non-empty AND
-                        // different from the current master we're connected to.
-                        if !hb_resp.leader.is_empty() && current_master != hb_resp.leader {
-                            return Ok(Some(hb_resp.leader));
+                        if !hb_resp.leader.is_empty() {
+                            // Only a follower names the leader; publish it now
+                            // so lookups stop landing on this follower while
+                            // the loop reconnects. Mirrors Go.
+                            if super::volume_server::to_http_address(current_master)
+                                != super::volume_server::to_http_address(&hb_resp.leader)
+                            {
+                                publish_current_master(state, &hb_resp.leader).await;
+                                return Ok(Some(hb_resp.leader));
+                            }
+                        } else if !confirmed_leader {
+                            // The leader answers every new stream without naming
+                            // a leader, so this peer is the one lookups go to.
+                            confirmed_leader = true;
+                            publish_current_master(state, current_master).await;
                         }
                     }
                     Ok(None) => return Ok(None),
