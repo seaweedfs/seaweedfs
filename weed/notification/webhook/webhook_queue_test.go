@@ -619,8 +619,10 @@ func TestNamedTargets(t *testing.T) {
 				"endpoint": "https://example.com/never",
 			},
 		},
+		"notification.webhook.file_ingress.enabled":             true,
 		"notification.webhook.file_ingress.endpoint":            serverA.URL,
 		"notification.webhook.file_ingress.path_prefixes":       []string{"/data/"},
+		"notification.webhook.metadata_extractor.enabled":       true,
 		"notification.webhook.metadata_extractor.endpoint":      serverB.URL,
 		"notification.webhook.metadata_extractor.path_prefixes": []string{"/repository/"},
 	}}

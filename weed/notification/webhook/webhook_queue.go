@@ -97,14 +97,14 @@ func namedTargetPrefixes(configuration util.Configuration, prefix string) []stri
 	}
 	var prefixes []string
 	for k, v := range mg.GetStringMap(strings.TrimSuffix(prefix, ".")) {
-		sub, ok := v.(map[string]interface{})
-		if !ok {
+		if _, ok := v.(map[string]interface{}); !ok {
 			continue
 		}
-		if enabled, _ := sub["enabled"].(bool); !enabled {
+		p := prefix + k + "."
+		if !configuration.GetBool(p + "enabled") {
 			continue
 		}
-		prefixes = append(prefixes, prefix+k+".")
+		prefixes = append(prefixes, p)
 	}
 	sort.Strings(prefixes)
 	return prefixes
