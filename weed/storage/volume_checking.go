@@ -263,9 +263,14 @@ var errTailNotTorn = errors.New("not a torn tail")
 // the client was answered. So a complete needle is never dropped: every
 // complete needle in the tail (its header, body, checksum, timestamp and
 // padding inside the file, its CRC valid, its append timestamp later than the
-// needle before it) gets the .idx entry the volume server would have written
-// (a size 0 record as resolveEmptyTailRecords reads it), in .dat order, and
-// the .idx is synced. Only what follows the last complete
+// needle before it) gets the .idx entry the volume server would have written,
+// in .dat order, and the .idx is synced. A size 0 record is indexed at size 0,
+// the same live entry the write path publishes for a write with no data. A
+// delete appends the identical record, so a recovered size 0 record can also
+// be a delete whose key then reads back as an empty object rather than
+// not-found -- the two cannot be told apart, and resurrecting an empty
+// placeholder beats a wrong tombstone, which drops an acknowledged write's
+// object entirely. Only what follows the last complete
 // needle and is itself incomplete is cut: fewer bytes than a header, a record
 // running past the end of the file, or a last record whose bytes are damaged
 // (its CRC fails or its body does not parse); the .dat is synced after the
@@ -334,9 +339,6 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 	}
 	reindexed := len(entries) / types.NeedleMapEntrySize
 	if reindexed > 0 {
-		if err := resolveEmptyTailRecords(indexFile, entries); err != nil {
-			return 0, 0, err
-		}
 		if err := appendIndexEntries(indexFile, entries, indexSize); err != nil {
 			return 0, 0, err
 		}
@@ -400,48 +402,6 @@ func readTailNeedle(datFile backend.BackendStorageFile, version needle.Version, 
 	return n, nil
 }
 
-// resolveEmptyTailRecords turns the size 0 entries among the re-indexed ones
-// into what the volume server indexed them as. A delete and a write with no
-// data both append a size 0 record; a delete is indexed as a tombstone, an
-// empty write with size 0. A delete is only appended for a needle that is
-// live, so a size 0 record of a needle that is not live (absent or deleted in
-// the .idx and in the tail before it) is an empty write and keeps size 0. One
-// of a live needle is indexed as a tombstone, as weed fix and the backup's
-// index regeneration read a size 0 record.
-func resolveEmptyTailRecords(indexFile io.ReaderAt, entries []byte) error {
-	live := make(map[types.NeedleId]bool)
-	for i := 0; i < len(entries); i += types.NeedleMapEntrySize {
-		if key, _, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize]); size == 0 {
-			live[key] = false
-		}
-	}
-	if len(live) == 0 {
-		return nil
-	}
-	if err := idx.WalkIndexFile(indexFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if _, ok := live[key]; ok {
-			live[key] = !offset.IsZero() && !size.IsDeleted()
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("scan index: %v", err)
-	}
-	for i := 0; i < len(entries); i += types.NeedleMapEntrySize {
-		key, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
-		wasLive, tracked := live[key]
-		if !tracked {
-			continue
-		}
-		if size == 0 && wasLive {
-			copy(entries[i:], needle_map.ToBytes(key, offset, types.TombstoneFileSize))
-			live[key] = false
-			continue
-		}
-		live[key] = true
-	}
-	return nil
-}
-
 // walkUnindexedDatTail walks the needles from start to fileSize and returns
 // the .idx entries of the complete ones, and the offset from which the rest is
 // an incomplete last record (fileSize when there is none). It fails with
@@ -480,8 +440,9 @@ func walkUnindexedDatTail(datFile backend.BackendStorageFile, version needle.Ver
 			return nil, 0, fmt.Errorf("record %v at %d was appended at %d, not after %d: %w", n.Id, at, n.AppendAtNs, lastAppendAtNs, errTailNotTorn)
 		}
 		lastAppendAtNs = n.AppendAtNs
-		// a size 0 record is a delete or an empty write: resolveEmptyTailRecords
-		// tells them apart
+		// A size 0 record is a delete or an empty write; the two append the
+		// identical record, so it is indexed at size 0 the way the write path
+		// indexes an empty write.
 		entries = append(entries, needle_map.ToBytes(n.Id, types.ToOffset(at), header.Size)...)
 		at = end
 	}

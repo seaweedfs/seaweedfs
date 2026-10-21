@@ -156,6 +156,20 @@ func assertNotReadable(t *testing.T, v *Volume, id uint64) {
 	}
 }
 
+// A recovered size 0 record indexes as a live empty needle: a delete and a
+// write with no data append the identical record, so the repair cannot tell
+// them apart and indexes the entry the write path would have written.
+func assertEmpty(t *testing.T, v *Volume, id uint64) {
+	t.Helper()
+	n := &needle.Needle{Id: types.Uint64ToNeedleId(id)}
+	if _, err := v.readNeedle(n, nil, nil); err != nil {
+		t.Fatalf("read needle %d: %v", id, err)
+	}
+	if len(n.Data) != 0 {
+		t.Fatalf("needle %d reads back %d bytes, want an empty needle", id, len(n.Data))
+	}
+}
+
 func writes(ids ...uint64) []tornOp {
 	ops := make([]tornOp, len(ids))
 	for i, id := range ids {
@@ -173,6 +187,7 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 		wantSize  func(f *tornFixture) int64 // .dat size after the repair
 		reindexed int
 		readable  []uint64
+		empty     []uint64 // readable as an empty live needle
 		absent    []uint64
 	}{
 		{name: "one complete unindexed needle is re-indexed",
@@ -183,10 +198,14 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 			ops: writes(1, 2, 3, 4, 5), unindexed: 2,
 			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 2,
 			readable: []uint64{1, 2, 3, 4, 5}},
-		{name: "an unindexed delete is re-indexed as a tombstone",
+		{name: "an unindexed delete is re-indexed as an empty live needle",
 			ops: append(writes(1, 2, 3), tornOp{id: 2, del: true}), unindexed: 1,
 			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 1,
-			readable: []uint64{1, 3}, absent: []uint64{2}},
+			readable: []uint64{1, 3}, empty: []uint64{2}},
+		{name: "an unindexed empty write of a live id stays an empty needle",
+			ops: append(writes(1, 2, 3), tornOp{id: 2, empty: true}), unindexed: 1,
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 1,
+			readable: []uint64{1, 3}, empty: []uint64{2}},
 		{name: "a partial header is cut",
 			ops: writes(1, 2, 3, 4), unindexed: 1,
 			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.starts[3]+7) },
@@ -223,11 +242,11 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 		{name: "an unindexed write and delete of the same id are re-indexed in order",
 			ops: append(writes(1, 2, 3), tornOp{id: 3, del: true}), unindexed: 2,
 			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 2,
-			readable: []uint64{1, 2}, absent: []uint64{3}},
+			readable: []uint64{1, 2}, empty: []uint64{3}},
 		{name: "an unindexed empty write and its delete are re-indexed in order",
 			ops: append(writes(1, 2), tornOp{id: 3, empty: true}, tornOp{id: 3, del: true}), unindexed: 2,
 			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 2,
-			readable: []uint64{1, 2}, absent: []uint64{3}},
+			readable: []uint64{1, 2}, empty: []uint64{3}},
 		{name: "a partial needle after an indexed tombstone is cut",
 			ops: append(append(writes(1, 2, 3), tornOp{id: 2, del: true}), tornOp{id: 4}), unindexed: 1,
 			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.midRecord(4)) },
@@ -255,6 +274,9 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 			}
 			for _, id := range tc.readable {
 				assertReadable(t, v, f.written[id])
+			}
+			for _, id := range tc.empty {
+				assertEmpty(t, v, id)
 			}
 			for _, id := range tc.absent {
 				assertNotReadable(t, v, id)
