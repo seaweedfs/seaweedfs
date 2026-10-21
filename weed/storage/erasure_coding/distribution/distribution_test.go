@@ -60,16 +60,36 @@ func TestCalculateDistribution(t *testing.T) {
 	assert.Equal(t, 4, dist.TargetShardsPerRack)
 	assert.Equal(t, 4, dist.TargetShardsPerNode)
 	assert.Equal(t, 9, dist.MaxShardsPerDC)
-	assert.Equal(t, 6, dist.MaxShardsPerRack)
-	assert.Equal(t, 6, dist.MaxShardsPerNode)
+	assert.Equal(t, 4, dist.MaxShardsPerRack)
+	assert.Equal(t, 4, dist.MaxShardsPerNode)
 
 	expected := "EC Configuration: 10+4 (total: 14, can lose: 4)\n" +
 		"Replication: replication=110 (DCs:2, Racks/DC:2, Nodes/Rack:1)\n" +
 		"Distribution Plan:\n" +
 		"  Data Centers: 2 (target 7 shards each, max 9)\n" +
-		"  Racks per DC: 2 (target 4 shards each, max 6)\n" +
-		"  Nodes per Rack: 1 (target 4 shards each, max 6)\n"
+		"  Racks per DC: 2 (target 4 shards each, max 4)\n" +
+		"  Nodes per Rack: 1 (target 4 shards each, max 4)\n"
 	assert.Equal(t, expected, dist.Summary())
+}
+
+// The reported max may not exceed the loss budget at a survivable level:
+// 8+4 over "200" lets a domain drift to 7 of 12 shards, but losing that domain
+// would leave 5 < 8 — capping the max at the budget keeps SURVIVABLE true.
+func TestCalculateDistributionMaxWithinLossBudget(t *testing.T) {
+	ec, err := NewECConfig(8, 4)
+	require.NoError(t, err)
+	rep, err := NewReplicationConfigFromString("200")
+	require.NoError(t, err)
+	dist := CalculateDistribution(ec, rep)
+
+	assert.Equal(t, 4, dist.TargetShardsPerDC)
+	assert.Equal(t, 4, dist.MaxShardsPerDC)
+	assert.Equal(t, 4, dist.MaxShardsPerRack)
+	assert.Equal(t, 4, dist.MaxShardsPerNode)
+
+	// a level whose even share already exceeds the budget keeps the slack bound
+	dist = CalculateDistribution(DefaultECConfig(), rep)
+	assert.Equal(t, 6, dist.MaxShardsPerDC) // even 5 > 4: DC loss is not survivable anyway
 }
 
 func TestCalculateDistributionSingleDomain(t *testing.T) {

@@ -43,9 +43,9 @@ func CalculateDistribution(ec ECConfig, rep ReplicationConfig) *ECDistribution {
 		TargetShardsPerDC:   evenShare(total, dcUnits),
 		TargetShardsPerRack: evenShare(total, rackUnits),
 		TargetShardsPerNode: evenShare(total, nodeUnits),
-		MaxShardsPerDC:      maxShare(total, dcUnits),
-		MaxShardsPerRack:    maxShare(total, rackUnits),
-		MaxShardsPerNode:    maxShare(total, nodeUnits),
+		MaxShardsPerDC:      maxShare(total, dcUnits, ec.CanLoseShards()),
+		MaxShardsPerRack:    maxShare(total, rackUnits, ec.CanLoseShards()),
+		MaxShardsPerNode:    maxShare(total, nodeUnits, ec.CanLoseShards()),
 	}
 }
 
@@ -56,14 +56,18 @@ func evenShare(total, units int) int {
 
 // maxShare bounds how many shards a single failure domain may hold: the even
 // share plus the slack that would pad the total to the next multiple of the
-// unit count.
-func maxShare(total, units int) int {
+// unit count. When the even share is survivable on its own, the loss budget
+// caps the bound so the fault tolerance report stays true even at the max.
+func maxShare(total, units, lossBudget int) int {
 	if units < 1 {
 		units = 1
 	}
 	m := ceilDivide(total, units) + units - total%units
 	if m > total {
-		return total
+		m = total
+	}
+	if evenShare(total, units) <= lossBudget && m > lossBudget {
+		m = lossBudget
 	}
 	return m
 }
