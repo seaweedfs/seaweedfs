@@ -39,7 +39,6 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	glog.V(3).Infof("S3Tables: handleCreateNamespace called")
 	var req CreateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
-		glog.Errorf("S3Tables: handleCreateNamespace failed to read request body: %v", err)
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}

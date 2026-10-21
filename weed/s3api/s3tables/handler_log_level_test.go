@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // captureLogs swaps the two log sinks for recorders and restores them when the test ends.
@@ -75,5 +77,47 @@ func TestStatusRecorderUnwrapsForResponseController(t *testing.T) {
 	}
 	if sw.Unwrap() == nil {
 		t.Fatal("Unwrap must return the wrapped writer")
+	}
+}
+
+// A malformed CreateNamespace body is answered with a 400; neither the
+// dispatcher nor the handler itself may log it at ERROR.
+func TestMalformedCreateNamespaceIsNotLoggedAsError(t *testing.T) {
+	refusals, serverErrors := captureLogs(t)
+
+	before := glog.Stats.Error.Lines()
+	glog.Errorf("S3Tables test: positive control for the ERROR line counter")
+	if glog.Stats.Error.Lines() != before+1 {
+		t.Fatal("the ERROR line counter did not see a direct glog.Errorf") // positive control
+	}
+
+	h := NewS3TablesHandler()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not json"))
+	req.Header.Set("X-Amz-Target", "S3Tables.CreateNamespace")
+	rec := httptest.NewRecorder()
+	before = glog.Stats.Error.Lines()
+	h.HandleRequest(rec, req, nil)
+	errorLines := glog.Stats.Error.Lines() - before
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a malformed body must be refused with 400, got %d", rec.Code)
+	}
+	if errorLines != 0 || len(*serverErrors) != 0 {
+		t.Fatalf("a 400 refusal was logged at ERROR: %d direct line(s), dispatcher %v", errorLines, *serverErrors)
+	}
+	if len(*refusals) != 1 || !strings.Contains((*refusals)[0], "CreateNamespace refused") {
+		t.Fatalf("the refusal must still be logged once (at V(1)), got %v", *refusals)
+	}
+}
+
+// The recorder must not claim to flush a writer that cannot.
+func TestStatusRecorderFlushFollowsTheWrappedWriter(t *testing.T) {
+	type plainWriter struct{ http.ResponseWriter }
+	sw := &statusRecorder{ResponseWriter: plainWriter{httptest.NewRecorder()}}
+	if err := http.NewResponseController(sw).Flush(); !errors.Is(err, http.ErrNotSupported) {
+		t.Fatalf("Flush through a recorder over a non-flushing writer: %v, want ErrNotSupported", err)
+	}
+	rec := httptest.NewRecorder()
+	if err := http.NewResponseController(&statusRecorder{ResponseWriter: rec}).Flush(); err != nil || !rec.Flushed {
+		t.Fatalf("Flush through a recorder over a flushing writer: err=%v flushed=%v", err, rec.Flushed) // positive control
 	}
 }

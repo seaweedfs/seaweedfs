@@ -268,14 +268,9 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return s.ResponseWriter.Write(b)
 }
 
-// Unwrap lets http.NewResponseController reach the underlying writer.
+// Unwrap lets http.NewResponseController reach the underlying writer, so it
+// flushes (or reports ErrNotSupported) exactly as that writer does.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
-
-func (s *statusRecorder) Flush() {
-	if f, ok := s.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
 
 // Principal/authorization helpers
 
