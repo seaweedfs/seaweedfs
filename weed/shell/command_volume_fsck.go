@@ -362,10 +362,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				}
 				select {
 				case outputChan <- &Item{
-					vid:     chunk.Fid.VolumeId,
-					fileKey: chunk.Fid.FileKey,
-					cookie:  chunk.Fid.Cookie,
-					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+					vid:        chunk.Fid.VolumeId,
+					fileKey:    chunk.Fid.FileKey,
+					cookie:     chunk.Fid.Cookie,
+					path:       util.NewFullPath(entry.Dir, entry.Entry.Name),
+					hardLinkId: entry.Entry.GetHardLinkId(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -375,26 +376,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		},
 		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
-			var purgeWg sync.WaitGroup
-			purgePaths := make(chan util.FullPath, 128)
+			var queuePurge func(purgeItem)
+			var finishPurge func()
 			if purgeAbsent {
-				workers := *c.purgeConcurrency
-				if workers < 1 {
-					workers = 1
-				}
-				for w := 0; w < workers; w++ {
-					purgeWg.Add(1)
-					go func() {
-						defer purgeWg.Done()
-						for path := range purgePaths {
-							c.httpDelete(path)
-						}
-					}()
-				}
-				defer func() {
-					close(purgePaths)
-					purgeWg.Wait()
-				}()
+				queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
+				defer finishPurge()
 			}
 			for item := range outputChan {
 				i := item.(*Item)
@@ -423,7 +409,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
 						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
-						purgePaths <- i.path
+						queuePurge(purgeItem{path: i.path, hardLinkId: i.hardLinkId})
 					}
 				}
 			}
@@ -638,10 +624,11 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 }
 
 type Item struct {
-	vid     uint32
-	fileKey uint64
-	cookie  uint32
-	path    util.FullPath
+	vid        uint32
+	fileKey    uint64
+	cookie     uint32
+	path       util.FullPath
+	hardLinkId []byte
 }
 
 // lockedWriter serializes concurrent writers — the traversal, the consumer,
@@ -720,6 +707,47 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		return
 	}
 	return nil
+}
+
+type purgeItem struct {
+	path       util.FullPath
+	hardLinkId []byte
+}
+
+// startPurgeWorkers fans deletes across at least one worker and returns a
+// queue function plus a finish function that closes the channels and waits
+// for in-flight deletes. Paths that share a hard link id always land on the
+// same worker, so their shared hard-link counter updates stay serialized —
+// concurrent deletes of the same id could both read count N and write N-1,
+// leaving the shared record behind after every path is gone.
+func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(purgeItem), finish func()) {
+	if workers < 1 {
+		workers = 1
+	}
+	chans := make([]chan purgeItem, workers)
+	var wg sync.WaitGroup
+	for w := range chans {
+		chans[w] = make(chan purgeItem, 128)
+		wg.Add(1)
+		go func(ch <-chan purgeItem) {
+			defer wg.Done()
+			for it := range ch {
+				deleteFn(it.path)
+			}
+		}(chans[w])
+	}
+	return func(it purgeItem) {
+			key := []byte(it.path)
+			if len(it.hardLinkId) > 0 {
+				key = it.hardLinkId
+			}
+			chans[int(uint32(util.HashToInt32(key)))%workers] <- it
+		}, func() {
+			for _, ch := range chans {
+				close(ch)
+			}
+			wg.Wait()
+		}
 }
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
