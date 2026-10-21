@@ -482,7 +482,12 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			key := s3_constants.NormalizeObjectKey(object.Key)
 			if key == "" {
 				// A key of only slashes can never name a stored entry; like a
-				// missing key the delete is an idempotent no-op.
+				// missing key the delete is an idempotent no-op, and a
+				// conditional delete has no target to match.
+				if object.ETag != "" {
+					deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrNoSuchKey, object.Key, object.VersionId))
+					continue
+				}
 				deletedCount++
 				if !deleteObjects.Quiet {
 					deletedObjects = append(deletedObjects, ObjectIdentifier{Key: object.Key, VersionId: object.VersionId})
