@@ -175,9 +175,12 @@ func awsCredentialSourceConfigured() bool {
 	for _, name := range []string{
 		"AWS_ACCESS_KEY_ID",
 		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
 		"AWS_WEB_IDENTITY_TOKEN_FILE",
 		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
 		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+		"AWS_SHARED_CREDENTIALS_FILE",
+		"AWS_CONFIG_FILE",
 	} {
 		if os.Getenv(name) != "" {
 			return true
