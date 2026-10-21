@@ -54,6 +54,19 @@ func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAd
 	return leader, nil
 }
 
+// refreshLeaderFromPeers publishes the leader the configured masters report,
+// so lookups stop going to a master the heartbeat just lost while the loop
+// retries. Without an answer within timeout the last known leader stays.
+func (vs *VolumeServer) refreshLeaderFromPeers(timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	leader, err := vs.lookupRaftLeaderMaster(ctx)
+	if err != nil {
+		return
+	}
+	vs.setCurrentMaster(leader)
+}
+
 func isContextDoneErr(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -75,7 +88,8 @@ func (vs *VolumeServer) getCurrentMaster() pb.ServerAddress {
 
 // setCurrentMaster updates vs.currentMaster under a write lock. The
 // heartbeat goroutine calls this only with a master known to be the leader:
-// one that answered a heartbeat as leader, or the one a follower named.
+// one that answered a heartbeat as leader, or the one a follower named, on
+// the heartbeat stream or, after the stream failed, in its configuration.
 func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
 	vs.currentMasterLock.Lock()
 	vs.currentMaster = master
@@ -136,7 +150,11 @@ func (vs *VolumeServer) heartbeat() {
 				} else {
 					// Regular error, reset duplicate retry count
 					duplicateRetryCount = 0
-					time.Sleep(vs.pulsePeriod)
+					// The lookup spends part of the retry delay rather than
+					// adding to it.
+					retryAt := time.Now().Add(vs.pulsePeriod)
+					vs.refreshLeaderFromPeers(vs.pulsePeriod)
+					time.Sleep(time.Until(retryAt))
 				}
 
 				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()

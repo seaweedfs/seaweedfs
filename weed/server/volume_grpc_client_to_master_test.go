@@ -237,3 +237,45 @@ func TestHeartbeatToLeaderPublishesItAndResendsFromSendLoop(t *testing.T) {
 		t.Fatal("heartbeat did not stop")
 	}
 }
+
+// After the heartbeat loses its master, lookups move to the leader the other
+// masters report instead of dialing the lost one until a new stream answers.
+func TestRefreshLeaderFromPeersPublishesReportedLeader(t *testing.T) {
+	const leader = pb.ServerAddress("leader.example.com:9333.19333")
+	peer := startFakeMasterServerForLeaderLookup(t, &fakeLeaderConfigServer{leader: string(leader)})
+	vs := &VolumeServer{
+		SeedMasterNodes: []pb.ServerAddress{peer},
+		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:           &storage.Store{Ip: "127.0.0.1", Port: 8080},
+	}
+	vs.store.MasterFn = vs.getCurrentMaster
+	vs.setCurrentMaster("lost.example.com:9333.19333")
+
+	vs.refreshLeaderFromPeers(5 * time.Second)
+
+	if got := vs.getCurrentMaster(); got != leader {
+		t.Fatalf("currentMaster = %q, want reported leader %q", string(got), string(leader))
+	}
+	if got := vs.store.MasterFn(); got != leader {
+		t.Fatalf("store master = %q, want %q", string(got), string(leader))
+	}
+}
+
+// Mid-election no master names a leader; the last known one stays rather
+// than an address nobody vouched for.
+func TestRefreshLeaderFromPeersKeepsLastLeaderWithoutAnswer(t *testing.T) {
+	peer := startFakeMasterServerForLeaderLookup(t, &fakeLeaderConfigServer{})
+	vs := &VolumeServer{
+		SeedMasterNodes: []pb.ServerAddress{peer},
+		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:           &storage.Store{Ip: "127.0.0.1", Port: 8080},
+	}
+	last := pb.ServerAddress("last.example.com:9333.19333")
+	vs.setCurrentMaster(last)
+
+	vs.refreshLeaderFromPeers(5 * time.Second)
+
+	if got := vs.getCurrentMaster(); got != last {
+		t.Fatalf("currentMaster = %q, want unchanged %q", string(got), string(last))
+	}
+}
