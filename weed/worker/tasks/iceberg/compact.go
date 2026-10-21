@@ -962,7 +962,7 @@ func readEqualityDeleteFile(
 	reader := parquet.NewReader(bytes.NewReader(data))
 	defer reader.Close()
 
-	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema)
+	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolve columns in %s: %w", filePath, err)
 	}
@@ -1018,7 +1018,12 @@ func equalityKeyValue(row parquet.Row, idx int) parquet.Value {
 }
 
 // resolveEqualityColIndices maps Iceberg field IDs to Parquet column indices.
-func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema) ([]int, error) {
+// A file carrying field ids resolves by id, so a column renamed since the
+// file was written still matches; one without ids falls back to the Iceberg
+// name. allowMissing reads a column the file lacks as null (-1 marks it in
+// the key): for data files only — an equality-delete file always carries
+// its equality columns, so a missing one stays an error there.
+func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema, allowMissing bool) ([]int, error) {
 	if len(fieldIDs) == 0 {
 		return nil, nil
 	}
@@ -1027,6 +1032,14 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 	for i, col := range pqSchema.Columns() {
 		colNameToIdx[strings.Join(col, ".")] = i
 	}
+	idToIdx := make(map[int]int)
+	for _, f := range pqSchema.Fields() {
+		if f.Leaf() && f.ID() > 0 {
+			if idx, ok := colNameToIdx[f.Name()]; ok {
+				idToIdx[f.ID()] = idx
+			}
+		}
+	}
 
 	indices := make([]int, len(fieldIDs))
 	for i, fid := range fieldIDs {
@@ -1034,11 +1047,14 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 		if !ok {
 			return nil, fmt.Errorf("field ID %d not found in iceberg schema", fid)
 		}
-		idx, ok := colNameToIdx[field.Name]
+		idx, ok := idToIdx[fid]
+		if !ok && len(idToIdx) == 0 {
+			idx, ok = colNameToIdx[field.Name]
+		}
 		if !ok {
 			// An optional column added to the table after this file was
 			// written reads as null there (-1 marks it in the key).
-			if !field.Required {
+			if allowMissing && !field.Required {
 				indices[i] = -1
 				continue
 			}
@@ -1325,7 +1341,7 @@ func resolveEqualityDeleteGroupsForSchema(
 
 	resolved := make([]resolvedEqDeleteGroup, 0, len(eqDeleteGroups))
 	for _, g := range eqDeleteGroups {
-		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
+		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema, true)
 		if err != nil {
 			return nil, err
 		}

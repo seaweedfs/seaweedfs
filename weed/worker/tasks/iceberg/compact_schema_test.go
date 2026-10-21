@@ -531,6 +531,103 @@ func TestMergeParquetFilesEqualityDeleteAddedColumn(t *testing.T) {
 	})
 }
 
+// A column renamed after its files were written still carries its field id,
+// so an equality delete on it resolves the column by id and removes only the
+// rows it names — the old name looking absent must not turn every key null.
+func TestMergeParquetFilesEqualityDeleteRenamedColumn(t *testing.T) {
+	// The table renamed name (field id 2) to label; every file still spells
+	// the old name.
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Type: iceberg.PrimitiveTypes.Int64, Name: "id", Required: true},
+		iceberg.NestedField{ID: 2, Type: iceberg.PrimitiveTypes.String, Name: "label", Required: false},
+	)
+	type eqDeleteRow struct {
+		Name string `parquet:"name,id(2)"`
+	}
+
+	fs, client := startFakeFiler(t)
+	putDataFileRows(t, fs, "a.parquet", []narrowSchemaRow{{1, "a"}, {2, "b"}, {3, "c"}})
+	putDataFileRows(t, fs, "b.parquet", []narrowSchemaRow{{4, "d"}})
+
+	var eqBuf bytes.Buffer
+	eqWriter := parquet.NewWriter(&eqBuf, parquet.SchemaOf(new(eqDeleteRow)))
+	if err := eqWriter.Write(&eqDeleteRow{"b"}); err != nil {
+		t.Fatalf("write eq delete: %v", err)
+	}
+	if err := eqWriter.Close(); err != nil {
+		t.Fatalf("close eq writer: %v", err)
+	}
+	fs.putEntry("/buckets/test-bucket/ns/tbl/data", "eq-del.parquet", &filer_pb.Entry{
+		Name: "eq-del.parquet", Content: eqBuf.Bytes(),
+	})
+
+	eqDfb, err := iceberg.NewDataFileBuilder(*iceberg.UnpartitionedSpec, iceberg.EntryContentEqDeletes,
+		"data/eq-del.parquet", iceberg.ParquetFile, map[int]any{}, nil, nil, 1, int64(eqBuf.Len()))
+	if err != nil {
+		t.Fatalf("build eq delete: %v", err)
+	}
+	eqDfb.EqualityFieldIDs([]int{2})
+	snapID := int64(1)
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+
+	eqGroups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
+		[]iceberg.ManifestEntry{eqEntry}, schema)
+	if err != nil {
+		t.Fatalf("collectEqualityDeletes: %v", err)
+	}
+
+	merged, count, err := mergeNamedFiles(t, client,
+		[]string{"a.parquet", "b.parquet"},
+		map[string]int64{"a.parquet": 3, "b.parquet": 1}, eqGroups, schema, false)
+	if err != nil {
+		t.Fatalf("mergeParquetFiles: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("merged %d rows, want 3", count)
+	}
+	checkMergedRows(t, merged, [][]any{
+		{int64(1), "a"},
+		{int64(3), "c"},
+		{int64(4), "d"},
+	})
+}
+
+// An equality-delete file that lacks its equality column is refused rather
+// than read as null keys: the spec requires equality deletes to carry the
+// columns they name, so the missing-column fallback is for data files only.
+func TestEqualityDeleteFileMissingColumn(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	type otherRow struct {
+		Other string `parquet:"other,id(9)"`
+	}
+	var eqBuf bytes.Buffer
+	eqWriter := parquet.NewWriter(&eqBuf, parquet.SchemaOf(new(otherRow)))
+	if err := eqWriter.Write(&otherRow{"x"}); err != nil {
+		t.Fatalf("write eq delete: %v", err)
+	}
+	if err := eqWriter.Close(); err != nil {
+		t.Fatalf("close eq writer: %v", err)
+	}
+	fs.putEntry("/buckets/test-bucket/ns/tbl/data", "eq-del.parquet", &filer_pb.Entry{
+		Name: "eq-del.parquet", Content: eqBuf.Bytes(),
+	})
+
+	eqDfb, err := iceberg.NewDataFileBuilder(*iceberg.UnpartitionedSpec, iceberg.EntryContentEqDeletes,
+		"data/eq-del.parquet", iceberg.ParquetFile, map[int]any{}, nil, nil, 1, int64(eqBuf.Len()))
+	if err != nil {
+		t.Fatalf("build eq delete: %v", err)
+	}
+	eqDfb.EqualityFieldIDs([]int{2})
+	snapID := int64(1)
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+
+	_, err = collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
+		[]iceberg.ManifestEntry{eqEntry}, newAddedColumnSchema())
+	if err == nil {
+		t.Fatal("collectEqualityDeletes: want an error for a missing equality column")
+	}
+}
+
 // The v3 merge matches files on the first file's columns; the re-added
 // column is refused there too.
 func TestMergeParquetFilesV3ReaddedColumn(t *testing.T) {
