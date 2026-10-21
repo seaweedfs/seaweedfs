@@ -637,3 +637,36 @@ func TestCheckVersionReadGrant(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone,
 		s3a.checkVersionReadGrant(attrsReq("no-policy-bucket"), "no-policy-bucket", "key", "v1", nil))
 }
+
+// Presigned-URL credentials ride along on the synthesized version-read
+// request, so an s3:authType=REST-QUERY-STRING policy condition decides the
+// recheck the same way it decided the real request.
+func TestCheckVersionReadGrantPreservesQueryAuth(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+		iam:          &IdentityAccessManagement{},
+	}
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Principal": "*",
+			"Action": "s3:*",
+			"Resource": ["arn:aws:s3:::qs-bucket", "arn:aws:s3:::qs-bucket/*"],
+			"Condition": {"StringEquals": {"s3:authType": "REST-QUERY-STRING"}}
+		}]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("qs-bucket", policyJSON))
+
+	presigned := httptest.NewRequest(http.MethodGet,
+		"/qs-bucket/key?attributes&versionId=v1&AWSAccessKeyId=AK&Signature=sig&Expires=9999999999", nil)
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(presigned, "qs-bucket", "key", "v1", nil))
+
+	keyReq := objectKeyPolicyRequest(presigned, http.MethodGet, "qs-bucket", "key", "v1")
+	q := keyReq.URL.Query()
+	assert.Equal(t, "AK", q.Get("AWSAccessKeyId"))
+	assert.Equal(t, "v1", q.Get("versionId"))
+	assert.False(t, q.Has("attributes"))
+}
