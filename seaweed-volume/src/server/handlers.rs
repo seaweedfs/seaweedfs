@@ -2960,7 +2960,9 @@ pub async fn post_handler(
 
     // Replicate to remote volume servers if this volume has replicas.
     // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
-    if !is_replicate && write_result.is_ok() && !state.current_master().await.is_empty() {
+    // No leader-known gate: when the lookup cannot run, the write must fail
+    // rather than be acknowledged on fewer copies than required.
+    if !is_replicate && write_result.is_ok() {
         let needs_replication = {
             let store = state.store.read().unwrap();
             store
@@ -3358,7 +3360,7 @@ pub async fn delete_handler(
     };
 
     let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
-    if !is_replicate && delete_result.is_ok() && !state.current_master().await.is_empty() {
+    if !is_replicate && delete_result.is_ok() {
         let needs_replication = {
             let store = state.store.read().unwrap();
             store
