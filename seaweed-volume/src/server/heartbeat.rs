@@ -268,22 +268,32 @@ async fn refresh_leader_from_peers(
     state: &Arc<VolumeServerState>,
     timeout: Duration,
 ) {
-    let lookup = async {
-        for master_addr in &config.master_addresses {
-            let grpc_addr = to_grpc_address(master_addr);
-            if let Ok(resp) =
-                try_get_master_configuration(&grpc_addr, state.outgoing_grpc_tls.as_ref()).await
-                && !resp.leader.is_empty()
-            {
-                return Some(resp.leader);
-            }
-        }
-        None
-    };
+    let lookup = lookup_leader_from_peers(
+        &config.master_addresses,
+        state.outgoing_grpc_tls.as_ref(),
+    );
     match tokio::time::timeout(timeout, lookup).await {
         Ok(Some(leader)) => publish_current_master(state, &leader).await,
         _ => state.current_master_url.write().await.clear(),
     }
+}
+
+/// Ask each seed master for the raft leader and return the first answer, or
+/// None when none replies with one. Mirrors Go's
+/// `operation.LookupRaftLeaderMaster`.
+pub async fn lookup_leader_from_peers(
+    master_addrs: &[String],
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Option<String> {
+    for master_addr in master_addrs {
+        let grpc_addr = to_grpc_address(master_addr);
+        if let Ok(resp) = try_get_master_configuration(&grpc_addr, tls).await
+            && !resp.leader.is_empty()
+        {
+            return Some(resp.leader);
+        }
+    }
+    None
 }
 
 fn is_stopping(state: &VolumeServerState) -> bool {
