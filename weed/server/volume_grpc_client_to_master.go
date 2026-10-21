@@ -74,7 +74,8 @@ func (vs *VolumeServer) getCurrentMaster() pb.ServerAddress {
 }
 
 // setCurrentMaster updates vs.currentMaster under a write lock. The
-// heartbeat goroutine calls this whenever it (re)connects to a master.
+// heartbeat goroutine calls this only with a master known to be the leader:
+// one that answered a heartbeat as leader, or the one a follower named.
 func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
 	vs.currentMasterLock.Lock()
 	vs.currentMaster = master
@@ -122,7 +123,6 @@ func (vs *VolumeServer) heartbeat() {
 				time.Sleep(3 * time.Second)
 				master = newLeader
 			}
-			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
 			if err != nil {
 				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
@@ -141,7 +141,6 @@ func (vs *VolumeServer) heartbeat() {
 
 				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
 				newLeader = ""
-				vs.store.MasterAddress = ""
 			} else {
 				// Successful connection, reset retry count
 				duplicateRetryCount = 0
@@ -180,11 +179,14 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		return "", err
 	}
 	glog.V(0).Infof("Heartbeat to: %v", masterAddress)
-	vs.setCurrentMaster(masterAddress)
 
 	doneChan := make(chan error, 1)
+	// The receiver asks for a fresh heartbeat here rather than sending it,
+	// since a gRPC stream allows only one sender at a time.
+	resendChan := make(chan struct{}, 1)
 
 	go func() {
+		confirmedLeader := false
 		for {
 			in, err := stream.Recv()
 			if err != nil {
@@ -231,9 +233,9 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 			if volumeOptsChanged {
 				if vs.store.MaybeAdjustVolumeMax() {
-					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.getCurrentMaster(), err)
-						return
+					select {
+					case resendChan <- struct{}{}:
+					default:
 					}
 				}
 			}
@@ -245,13 +247,22 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				vs.store.RequestFullVolumeList()
 			}
 			if in.GetLeader() != "" {
-				current := vs.getCurrentMaster()
-				if !current.Equals(pb.ServerAddress(in.GetLeader())) {
-					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), current)
-					newLeader = pb.ServerAddress(in.GetLeader())
+				// Only a follower names the leader. Publish the named leader right
+				// away, so lookups stop landing on this follower while the loop
+				// reconnects.
+				leader := pb.ServerAddress(in.GetLeader())
+				if !masterAddress.Equals(leader) {
+					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", leader, masterAddress)
+					vs.setCurrentMaster(leader)
+					newLeader = leader
 					doneChan <- nil
 					return
 				}
+			} else if !confirmedLeader {
+				// The leader answers every new heartbeat stream without naming a
+				// leader, so this peer is the one lookups should go to.
+				confirmedLeader = true
+				vs.setCurrentMaster(masterAddress)
 			}
 		}
 	}()
@@ -357,6 +368,11 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				return "", err
+			}
+		case <-resendChan:
+			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case <-volumeTickChan.C:
