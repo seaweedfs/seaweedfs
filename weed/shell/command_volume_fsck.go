@@ -63,6 +63,7 @@ type commandVolumeFsck struct {
 	tempFolder                string
 	verbose                   *bool
 	forcePurging              *bool
+	purgeConcurrency          *int
 	skipEcVolumes             *bool
 	findMissingChunksInFiler  *bool
 	verifyNeedle              *bool
@@ -117,6 +118,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
+	c.purgeConcurrency = fsckCommand.Int("purgeConcurrency", 16, "parallel filer deletes for -reallyDeleteFilerEntries")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Hour, "only include entries on volume servers before this cutoff time to check orphan chunks")
 	modifyTimeAgo := fsckCommand.Duration("modifyTimeAgo", 0, "only include entries after this modify time to check orphan chunks")
@@ -373,6 +375,27 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		},
 		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
+			var purgeWg sync.WaitGroup
+			purgePaths := make(chan util.FullPath, 128)
+			if purgeAbsent {
+				workers := *c.purgeConcurrency
+				if workers < 1 {
+					workers = 1
+				}
+				for w := 0; w < workers; w++ {
+					purgeWg.Add(1)
+					go func() {
+						defer purgeWg.Done()
+						for path := range purgePaths {
+							c.httpDelete(path)
+						}
+					}()
+				}
+				defer func() {
+					close(purgePaths)
+					purgeWg.Wait()
+				}()
+			}
 			for item := range outputChan {
 				i := item.(*Item)
 				if f, ok := files[i.vid]; ok {
@@ -400,7 +423,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
 						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
-						c.httpDelete(i.path)
+						purgePaths <- i.path
 					}
 				}
 			}
