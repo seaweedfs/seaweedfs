@@ -492,7 +492,7 @@ func TestEvaluateRequest(t *testing.T) {
 			want: &CORSResponse{
 				AllowOrigin:      "http://example.com",
 				AllowMethods:     "GET",
-				ExposeHeaders:    "ETag, Content-Length, Content-Type, Last-Modified, Content-Range, x-amz-request-id, x-amz-version-id, *",
+				ExposeHeaders:    "ETag, Content-Length, Content-Type, Last-Modified, Content-Range, x-amz-request-id, x-amz-version-id, x-amz-tagging-count, *",
 				AllowCredentials: true,
 			},
 			wantErr: false,

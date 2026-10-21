@@ -288,6 +288,7 @@ var defaultExposeHeaders = []string{
 	"Content-Range",
 	"x-amz-request-id",
 	"x-amz-version-id",
+	"x-amz-tagging-count",
 }
 
 // formatExposeHeaders formats the exposed headers slice into a comma-separated string.
