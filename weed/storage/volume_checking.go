@@ -286,7 +286,9 @@ var errTailNotTorn = errors.New("not a torn tail")
 // complete needle in the tail (its header, body, checksum, timestamp and
 // padding inside the file, its CRC valid, its append timestamp later than the
 // needle before it) gets the .idx entry the volume server would have written,
-// in .dat order, and the .idx is synced. A size 0 record is indexed at size 0,
+// in .dat order; the .dat is synced first so the rows never become durable
+// ahead of the records they name, and the .idx is synced after. A size 0
+// record is indexed at size 0,
 // the same live entry the write path publishes for a write with no data. A
 // delete appends the identical record, so a recovered size 0 record can also
 // be a delete whose key then reads back as an empty object rather than
@@ -374,6 +376,12 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 	}
 	reindexed := len(entries) / types.NeedleMapEntrySize
 	if reindexed > 0 {
+		// The new .idx rows must not become durable before the .dat records
+		// they name: a power loss between the two would leave the .idx
+		// pointing past the end of the .dat.
+		if err := v.DataBackend.Sync(); err != nil {
+			return 0, 0, fmt.Errorf("sync %s before re-indexing: %v", v.FileName(".dat"), err)
+		}
 		if err := appendIndexEntries(indexFile, entries, indexSize); err != nil {
 			return 0, 0, err
 		}
