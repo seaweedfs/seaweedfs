@@ -155,7 +155,11 @@ pub async fn run_heartbeat_with_state(
                 }
                 PostAction::SleepPulse => {
                     new_leader = None;
-                    tokio::time::sleep(pulse).await;
+                    // The lookup spends part of the retry delay rather than
+                    // adding to it.
+                    let retry_at = tokio::time::Instant::now() + pulse;
+                    refresh_leader_from_peers(&config, &state, pulse).await;
+                    tokio::time::sleep_until(retry_at).await;
                 }
             }
 
@@ -254,8 +258,54 @@ pub async fn try_get_master_configuration(
     Ok(resp.into_inner())
 }
 
+/// Publish the leader the configured masters report, so lookups stop going
+/// to the master the heartbeat just lost while the loop retries. Without an
+/// answer inside `timeout` the published master is cleared: the lost master
+/// is dead or no longer leader, and a follower answers lookups from its own
+/// cache rather than refusing them. Mirrors Go's refreshLeaderFromPeers.
+async fn refresh_leader_from_peers(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    timeout: Duration,
+) {
+    let lookup = lookup_leader_from_peers(
+        &config.master_addresses,
+        state.outgoing_grpc_tls.as_ref(),
+    );
+    match tokio::time::timeout(timeout, lookup).await {
+        Ok(Some(leader)) => publish_current_master(state, &leader).await,
+        _ => state.current_master_url.write().await.clear(),
+    }
+}
+
+/// Ask each seed master for the raft leader and return the first answer, or
+/// None when none replies with one. Mirrors Go's
+/// `operation.LookupRaftLeaderMaster`.
+pub async fn lookup_leader_from_peers(
+    master_addrs: &[String],
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Option<String> {
+    for master_addr in master_addrs {
+        let grpc_addr = to_grpc_address(master_addr);
+        if let Ok(resp) = try_get_master_configuration(&grpc_addr, tls).await
+            && !resp.leader.is_empty()
+        {
+            return Some(resp.leader);
+        }
+    }
+    None
+}
+
 fn is_stopping(state: &VolumeServerState) -> bool {
     *state.is_stopping.read().unwrap()
+}
+
+/// Store the master lookups should go to, in the address form it was
+/// announced in — `host:port` or `host:port.grpcPort` — so an explicit gRPC
+/// port survives to the gRPC callers, mirroring Go's setCurrentMaster.
+/// The heartbeat calls this only for a master known to lead.
+async fn publish_current_master(state: &Arc<VolumeServerState>, master: &str) {
+    *state.current_master_url.write().await = master.to_string();
 }
 
 fn duplicate_uuid_retry_delay(retry_count: u32) -> Duration {
@@ -430,14 +480,6 @@ async fn do_heartbeat(
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
 
     info!("Heartbeat stream established with {}", grpc_addr);
-    // Publish the master we're now talking to in canonical http host:port
-    // form so Ping admission can recognise it once a leader change moves us
-    // off the seed list. Mirrors Go's vs.setCurrentMaster(masterAddress).
-    {
-        let normalised = super::volume_server::to_http_address(current_master).into_owned();
-        let mut guard = state.current_master_url.write().await;
-        *guard = normalised;
-    }
     if is_stopping(state) {
         state.is_heartbeating.store(false, Ordering::Relaxed);
         send_deregister_heartbeat(config, state, &tx).await;
@@ -451,13 +493,31 @@ async fn do_heartbeat(
     volume_tick.tick().await;
     ec_tick.tick().await;
 
+    let mut confirmed_leader = false;
     loop {
         tokio::select! {
             resp = response_stream.message() => {
                 match resp {
                     Ok(Some(hb_resp)) => {
-                        // Match Go ordering: DuplicatedUuids first, then volume
-                        // options, then leader redirect.
+                        // A reply names the leader or comes from it, so it
+                        // settles where lookups go before anything else on the
+                        // reply is handled: a follower reply carries no other
+                        // fields, and a leader stays the lookup target even
+                        // when it rejects this registration. Mirrors Go.
+                        if !hb_resp.leader.is_empty() {
+                            if super::volume_server::to_http_address(current_master)
+                                != super::volume_server::to_http_address(&hb_resp.leader)
+                            {
+                                publish_current_master(state, &hb_resp.leader).await;
+                                return Ok(Some(hb_resp.leader));
+                            }
+                        } else if !confirmed_leader {
+                            // The leader answers every new stream without
+                            // naming a leader, so this peer is the one lookups
+                            // go to.
+                            confirmed_leader = true;
+                            publish_current_master(state, current_master).await;
+                        }
                         if !hb_resp.duplicated_uuids.is_empty() {
                             let uuids = hb_resp.duplicated_uuids.clone();
                             let duplicate_dirs = off_runtime(config, state, move |_, state| {
@@ -501,11 +561,6 @@ async fn do_heartbeat(
                         );
                         if metrics_changed {
                             state.metrics_notify.notify_waiters();
-                        }
-                        // Match Go: only redirect if leader is non-empty AND
-                        // different from the current master we're connected to.
-                        if !hb_resp.leader.is_empty() && current_master != hb_resp.leader {
-                            return Ok(Some(hb_resp.leader));
                         }
                     }
                     Ok(None) => return Ok(None),

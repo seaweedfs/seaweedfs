@@ -78,7 +78,7 @@ func rewindShardLocationsRefresh(ecVolume *erasure_coding.EcVolume, d time.Durat
 func TestCachedLookupEcShardLocationsRefreshesAfterAFailedRead(t *testing.T) {
 	master, masterAddr := startCountingMaster(t)
 	store := &Store{
-		MasterAddress:  masterAddr,
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	ecVolume := &erasure_coding.EcVolume{
@@ -127,7 +127,7 @@ func TestCachedLookupEcShardLocationsRefreshesAfterAFailedRead(t *testing.T) {
 func TestCachedLookupEcShardLocationsSettlesAfterRefresh(t *testing.T) {
 	master, masterAddr := startCountingMaster(t)
 	store := &Store{
-		MasterAddress:  masterAddr,
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	ecVolume := &erasure_coding.EcVolume{
@@ -257,7 +257,7 @@ func TestReadOneEcShardIntervalMarksTheMapAfterADirectReadFails(t *testing.T) {
 func TestCachedLookupEcShardLocationsKeepsAMarkRaisedDuringTheLookup(t *testing.T) {
 	master, masterAddr := startCountingMaster(t)
 	store := &Store{
-		MasterAddress:  masterAddr,
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	ecVolume := &erasure_coding.EcVolume{
@@ -295,7 +295,7 @@ func TestCachedLookupEcShardLocationsKeepsAMarkRaisedDuringTheLookup(t *testing.
 func TestCachedLookupEcShardLocationsKeepsTheMarkWhenTheLookupFails(t *testing.T) {
 	master, masterAddr := startCountingMaster(t)
 	store := &Store{
-		MasterAddress:  masterAddr,
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	ecVolume := &erasure_coding.EcVolume{

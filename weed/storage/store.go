@@ -61,14 +61,25 @@ type ReadOption struct {
 	ReadBufferSize int
 }
 
+// masterAddress returns the master to ask for volume and shard locations, or
+// "" while no leader is known.
+func (s *Store) masterAddress() pb.ServerAddress {
+	if s.MasterFn == nil {
+		return ""
+	}
+	return s.MasterFn()
+}
+
 /*
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       pb.ServerAddress
+	// MasterFn reports the master the volume server currently takes as leader.
+	// The heartbeat loop owns that answer; the store only reads it.
+	MasterFn            func() pb.ServerAddress
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64      // read from the master
-	preallocate         atomic.Bool // read from the master
+	volumeSizeLimit     atomic.Uint64 // read from the master
+	preallocate         atomic.Bool   // read from the master
 	Ip                  string
 	Port                int
 	GrpcPort            int
@@ -1302,11 +1313,11 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 }
 
 func (s *Store) SetVolumeSizeLimit(x uint64) {
-	atomic.StoreUint64(&s.volumeSizeLimit, x)
+	s.volumeSizeLimit.Store(x)
 }
 
 func (s *Store) GetVolumeSizeLimit() uint64 {
-	return atomic.LoadUint64(&s.volumeSizeLimit)
+	return s.volumeSizeLimit.Load()
 }
 
 func (s *Store) SetPreallocate(x bool) {

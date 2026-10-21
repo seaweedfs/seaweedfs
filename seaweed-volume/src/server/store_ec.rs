@@ -1139,16 +1139,9 @@ async fn cached_lookup_ec_shard_locations(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
 ) -> io::Result<HashMap<ShardId, Vec<String>>> {
-    let master = {
-        let live = state.current_master_url.read().await.clone();
-        if !live.is_empty() {
-            live
-        } else {
-            state.master_url.clone()
-        }
-    };
+    let master = state.current_master().await;
     if master.is_empty() {
-        return Err(io::Error::other("no master configured for ec shard lookup"));
+        return Err(io::Error::other("no master leader known for ec shard lookup"));
     }
 
     let grpc_addr =
