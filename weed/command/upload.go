@@ -123,12 +123,33 @@ func runUpload(cmd *Command, args []string) bool {
 			MaxMB:       *upload.maxMB,
 		}
 		results := make([][]operation.SubmitResult, len(filePaths))
+		ready := make([]chan struct{}, len(filePaths))
+		for index := range ready {
+			ready[index] = make(chan struct{})
+		}
+		printDone := make(chan bool, 1)
+		go func() {
+			failed := false
+			for index := range ready {
+				<-ready[index]
+				bytes, _ := json.Marshal(results[index])
+				fmt.Println(string(bytes))
+				for _, r := range results[index] {
+					if r.Error != "" {
+						failed = true
+					}
+				}
+			}
+			printDone <- failed
+		}()
+
 		sem := make(chan struct{}, concurrency)
 		var wg sync.WaitGroup
 		for index, filePath := range filePaths {
 			sem <- struct{}{}
 			wg.Add(1)
 			go func(index int, filePath string) {
+				defer close(ready[index])
 				defer wg.Done()
 				defer func() { <-sem }()
 				parts, e := operation.NewFileParts([]string{filePath})
@@ -148,18 +169,7 @@ func runUpload(cmd *Command, args []string) bool {
 			}(index, filePath)
 		}
 		wg.Wait()
-
-		failed := false
-		for _, fileResults := range results {
-			bytes, _ := json.Marshal(fileResults)
-			fmt.Println(string(bytes))
-			for _, r := range fileResults {
-				if r.Error != "" {
-					failed = true
-				}
-			}
-		}
-		if failed {
+		if <-printDone {
 			return false
 		}
 	} else {
