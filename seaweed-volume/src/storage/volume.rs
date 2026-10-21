@@ -4185,8 +4185,10 @@ impl Volume {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let (was_no_write_or_delete, was_no_write_can_delete) = self.no_write_flags();
-        // Remote-tiered volumes must stay no_write_can_delete regardless of marks.
-        let no_write_can_delete = was_no_write_can_delete && self.has_remote_file();
+        // A remote-tiered volume keeps the delete-only mode a load derives: its
+        // .dat cannot take appends, so "writable" resolves to can-delete rather
+        // than advertising writable with no local data file.
+        let no_write_can_delete = self.has_remote_file();
         self.no_write.store(
             if no_write_can_delete {
                 NO_WRITE_CAN_DELETE
@@ -9774,6 +9776,29 @@ mod tests {
         assert!(v.has_remote_file());
         assert!(v.is_no_write_or_delete());
         assert!(!v.is_no_write_can_delete());
+    }
+
+    /// A refused tiered volume keeps OR_DELETE without CAN_DELETE; marking it
+    /// writable must resolve to the delete-only mode a load derives — the
+    /// remote .dat cannot take appends — not drop every protection.
+    #[test]
+    fn test_set_writable_on_a_refused_tiered_volume_stays_delete_only() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        v.super_block.write().unwrap().replica_placement =
+            crate::storage::super_block::ReplicaPlacement::from_string("001").unwrap();
+        v.set_no_write_or_delete(true);
+
+        v.update_remote_files(|files| files.push(Default::default()))
+            .unwrap();
+        assert!(v.is_no_write_or_delete());
+
+        v.set_writable().unwrap();
+
+        assert!(v.is_read_only());
+        assert!(!v.no_write_flags().0);
+        assert!(v.no_write_flags().1);
     }
 
     // Tier-down clears the remote mode and publishes the volume as writable. The
