@@ -78,8 +78,8 @@ type Store struct {
 	// The heartbeat loop owns that answer; the store only reads it.
 	MasterFn            func() pb.ServerAddress
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64      // read from the master
-	preallocate         atomic.Bool // read from the master
+	volumeSizeLimit     atomic.Uint64 // read from the master
+	preallocate         atomic.Bool   // read from the master
 	Ip                  string
 	Port                int
 	GrpcPort            int
@@ -1313,11 +1313,11 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 }
 
 func (s *Store) SetVolumeSizeLimit(x uint64) {
-	atomic.StoreUint64(&s.volumeSizeLimit, x)
+	s.volumeSizeLimit.Store(x)
 }
 
 func (s *Store) GetVolumeSizeLimit() uint64 {
-	return atomic.LoadUint64(&s.volumeSizeLimit)
+	return s.volumeSizeLimit.Load()
 }
 
 func (s *Store) SetPreallocate(x bool) {
