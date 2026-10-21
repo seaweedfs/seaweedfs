@@ -318,7 +318,7 @@ func (t *target) handleWebhook(msg *message.Message) error {
 	}
 
 	if err := t.client.sendMessage(webhookMsg); err != nil {
-		glog.Errorf("failed to send message to webhook %s: %v", webhookMsg.Key, err)
+		glog.Errorf("webhook target %q failed to send message for %s: %v", t.name, webhookMsg.Key, err)
 		return err
 	}
 
@@ -344,10 +344,12 @@ func (w *Queue) logDeadLetterMessages() error {
 					continue
 				}
 				key := "unknown"
+				targetName := ""
 				if msg.Metadata != nil {
 					if keyValue, exists := msg.Metadata["key"]; exists {
 						key = keyValue
 					}
+					targetName = msg.Metadata["target"]
 				}
 				payload := ""
 				if msg.Payload != nil {
@@ -358,7 +360,7 @@ func (w *Queue) logDeadLetterMessages() error {
 						payload = n.String()
 					}
 				}
-				glog.Errorf("received dead letter message: %s, key: %s", payload, key)
+				glog.Errorf("received dead letter message: %s, key: %s, target: %s", payload, key, targetName)
 			case <-w.ctx.Done():
 				return
 			}
