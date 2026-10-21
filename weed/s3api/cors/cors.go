@@ -277,38 +277,42 @@ func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 	return response
 }
 
+// defaultExposeHeaders are emitted alongside "*" so credentialed CORS requests
+// can read standard response headers ("*" is treated literally when credentials
+// are included, per the Fetch spec).
+var defaultExposeHeaders = []string{
+	"ETag",
+	"Content-Length",
+	"Content-Type",
+	"Last-Modified",
+	"Content-Range",
+	"x-amz-request-id",
+	"x-amz-version-id",
+}
+
 // formatExposeHeaders formats the exposed headers slice into a comma-separated string.
-// If the wildcard "*" is specified in rule.ExposeHeaders, standard S3 response headers
-// are included so that credentialed CORS requests (Access-Control-Allow-Credentials: true)
-// can access headers, since W3C/Fetch CORS does not treat "*" as a wildcard for credentialed requests.
 func formatExposeHeaders(exposeHeaders []string) string {
-	if len(exposeHeaders) == 0 {
-		return ""
-	}
 	var headers []string
 	hasWildcard := false
+	seen := map[string]bool{}
 	for _, h := range exposeHeaders {
 		if h == "*" {
 			hasWildcard = true
-		} else if !containsString(headers, h) {
+			continue
+		}
+		if lower := strings.ToLower(h); !seen[lower] {
+			seen[lower] = true
 			headers = append(headers, h)
 		}
 	}
 	if hasWildcard {
-		defaultHeaders := []string{
-			"ETag",
-			"Content-Length",
-			"Content-Type",
-			"Last-Modified",
-			"Content-Range",
-			"x-amz-request-id",
-			"x-amz-version-id",
-		}
-		for _, h := range defaultHeaders {
-			if !containsString(headers, h) {
+		for _, h := range defaultExposeHeaders {
+			if lower := strings.ToLower(h); !seen[lower] {
+				seen[lower] = true
 				headers = append(headers, h)
 			}
 		}
+		headers = append(headers, "*")
 	}
 	return strings.Join(headers, ", ")
 }
