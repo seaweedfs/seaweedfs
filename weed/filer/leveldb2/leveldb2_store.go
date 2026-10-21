@@ -46,7 +46,26 @@ func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration, pr
 	store.writeBufferSizeMB = configuration.GetInt(prefix + "write_buffer_size_mb")
 	store.blockSizeKB = configuration.GetInt(prefix + "block_size_kb")
 	store.compactionTableSizeMB = configuration.GetInt(prefix + "compaction_table_size_mb")
+	if err := store.validateSizeOptions(); err != nil {
+		return err
+	}
 	return store.initialize(dir, 8)
+}
+
+// validateSizeOptions rejects sizes too large to convert to bytes without
+// overflowing int on this platform.
+func (store *LevelDB2Store) validateSizeOptions() error {
+	for name, kv := range map[string][2]int{
+		"block_cache_size_mb":      {store.blockCacheSizeMB, 1 << 20},
+		"write_buffer_size_mb":     {store.writeBufferSizeMB, 1 << 20},
+		"block_size_kb":            {store.blockSizeKB, 1 << 10},
+		"compaction_table_size_mb": {store.compactionTableSizeMB, 1 << 20},
+	} {
+		if kv[0] > math.MaxInt/kv[1] {
+			return fmt.Errorf("leveldb2 option %s=%d overflows int", name, kv[0])
+		}
+	}
+	return nil
 }
 
 func (store *LevelDB2Store) buildOptions() *opt.Options {
@@ -57,27 +76,18 @@ func (store *LevelDB2Store) buildOptions() *opt.Options {
 		ReadOnly:           store.ReadOnly,
 	}
 	if store.blockCacheSizeMB > 0 {
-		opts.BlockCacheCapacity = scaled(store.blockCacheSizeMB, 1<<20)
+		opts.BlockCacheCapacity = store.blockCacheSizeMB * 1024 * 1024
 	}
 	if store.writeBufferSizeMB > 0 {
-		opts.WriteBuffer = scaled(store.writeBufferSizeMB, 1<<20)
+		opts.WriteBuffer = store.writeBufferSizeMB * 1024 * 1024
 	}
 	if store.blockSizeKB > 0 {
-		opts.BlockSize = scaled(store.blockSizeKB, 1<<10)
+		opts.BlockSize = store.blockSizeKB * 1024
 	}
 	if store.compactionTableSizeMB > 0 {
-		opts.CompactionTableSize = scaled(store.compactionTableSizeMB, 1<<20)
+		opts.CompactionTableSize = store.compactionTableSizeMB * 1024 * 1024
 	}
 	return opts
-}
-
-// scaled converts a size option to bytes, saturating instead of wrapping a
-// huge value into a negative int on 32-bit builds.
-func scaled(v, scale int) int {
-	if v > math.MaxInt/scale {
-		return math.MaxInt
-	}
-	return v * scale
 }
 
 func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {

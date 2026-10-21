@@ -2,7 +2,8 @@ package leveldb
 
 import (
 	"context"
-	"math"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -139,15 +140,17 @@ func TestInitializeDefaultOptions(t *testing.T) {
 	}
 }
 
-func TestScaledSaturates(t *testing.T) {
-	if got := scaled(math.MaxInt, 1<<20); got != math.MaxInt {
-		t.Errorf("expected saturation at %d, got %d", math.MaxInt, got)
+func TestInitializeRejectsOversizedOption(t *testing.T) {
+	if strconv.IntSize != 32 {
+		t.Skip("int can hold any MiB value on 64-bit")
 	}
-	if got := scaled(64, 1<<20); got != 64*1024*1024 {
-		t.Errorf("expected 64MiB, got %d", got)
-	}
-	if got := scaled(4, 1<<10); got != 4*1024 {
-		t.Errorf("expected 4KiB, got %d", got)
+	store := &LevelDB2Store{}
+	err := store.Initialize(fakeConfiguration{
+		"leveldb2.dir":                  t.TempDir(),
+		"leveldb2.write_buffer_size_mb": 1 << 11,
+	}, "leveldb2.")
+	if err == nil || !strings.Contains(err.Error(), "write_buffer_size_mb") {
+		t.Fatalf("expected overflow rejection, got %v", err)
 	}
 }
 
