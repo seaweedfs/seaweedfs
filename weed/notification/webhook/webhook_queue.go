@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -211,6 +212,7 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 	}
 	w.queueChannel = gochannel.NewGoChannel(pubSubConfig, logger)
 
+	var wg sync.WaitGroup
 	for _, t := range targets {
 		// One router per target so each keeps its own retry/backoff settings.
 		// Handlers subscribe to the target's own topic, so a message is
@@ -251,17 +253,22 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 			t.handleWebhook,
 		)
 
+		wg.Add(1)
 		go func() {
-			// cancels the queue context so the dead letter logger exists in case context not canceled by the shutdown signal already
-			defer w.cancel()
-
+			defer wg.Done()
 			if err := router.Run(w.ctx); err != nil && !errors.Is(err, context.Canceled) {
 				glog.Errorf("webhook pubsub worker stopped with error: %v", err)
 			}
-
 			glog.Info("webhook pubsub worker stopped")
 		}()
 	}
+
+	// the queue context lives until every target's worker has stopped so the
+	// dead letter logger keeps running while any of them is still up
+	go func() {
+		wg.Wait()
+		w.cancel()
+	}()
 
 	return nil
 }
