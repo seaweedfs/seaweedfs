@@ -120,13 +120,20 @@ func (store *IamGrpcStore) CreateAccessKey(ctx context.Context, username string,
 }
 
 func (store *IamGrpcStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.DeleteAccessKey(ctx, &iam_pb.DeleteAccessKeyRequest{
 			Username:  username,
 			AccessKey: accessKey,
 		})
 		return err
 	})
+	// The filer-side handler returns gRPC NotFound when the user or the key is
+	// absent; translate back to the sentinel so callers can use
+	// errors.Is(err, credential.ErrAccessKeyNotFound) uniformly across stores.
+	if err != nil && status.Code(err) == codes.NotFound {
+		return credential.ErrAccessKeyNotFound
+	}
+	return err
 }
 
 // AttachUserPolicy attaches a managed policy to a user by policy name
