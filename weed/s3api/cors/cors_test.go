@@ -475,6 +475,29 @@ func TestEvaluateRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "wildcard expose headers expands for credentialed responses",
+			config: &CORSConfiguration{
+				CORSRules: []CORSRule{
+					{
+						AllowedOrigins: []string{"http://example.com"},
+						AllowedMethods: []string{"GET"},
+						ExposeHeaders:  []string{"*"},
+					},
+				},
+			},
+			corsReq: &CORSRequest{
+				Origin: "http://example.com",
+				Method: "GET",
+			},
+			want: &CORSResponse{
+				AllowOrigin:      "http://example.com",
+				AllowMethods:     "GET",
+				ExposeHeaders:    "ETag, Content-Length, Content-Type, Last-Modified, Content-Range, x-amz-request-id, x-amz-version-id",
+				AllowCredentials: true,
+			},
+			wantErr: false,
+		},
+		{
 			name:   "request without origin",
 			config: config,
 			corsReq: &CORSRequest{
