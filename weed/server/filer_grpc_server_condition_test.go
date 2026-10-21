@@ -420,6 +420,21 @@ func TestDeleteEntryConditionEnforced(t *testing.T) {
 		t.Fatal("rejected delete must leave the entry")
 	}
 
+	// the race this precondition exists for: a rewrite in the same mtime
+	// second passes if_not_modified_after but not the exact entry version
+	fs, store = newServer()
+	sameSecond := &filer.Entry{
+		FullPath: "/test/obj",
+		Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Atime: time.Unix(1700000000, 0), Mode: 0644, FileSize: 100},
+		Chunks:   []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 9, Cookie: 9}, Size: 100}},
+	}
+	if _, err := fs.DeleteEntry(context.Background(), del(sameSecond)); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("same-second rewrite: want FailedPrecondition, got %v", err)
+	}
+	if store.entries["/test/obj"] == nil {
+		t.Fatal("rejected delete must leave the entry")
+	}
+
 	fs, store = newServer()
 	if _, err := fs.DeleteEntry(context.Background(), del(store.entries["/test/obj"])); err != nil {
 		t.Fatalf("current entry should delete: %v", err)
