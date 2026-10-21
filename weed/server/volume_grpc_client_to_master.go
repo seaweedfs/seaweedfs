@@ -215,6 +215,28 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				doneChan <- err
 				return
 			}
+			// A reply names the leader or comes from it, so it settles where
+			// lookups go before anything else on the reply is handled: a
+			// follower reply carries no other fields, and a leader stays the
+			// lookup target even when it rejects this registration.
+			if in.GetLeader() != "" {
+				// Only a follower names the leader. Publish the named leader right
+				// away, so lookups stop landing on this follower while the loop
+				// reconnects.
+				leader := pb.ServerAddress(in.GetLeader())
+				if !masterAddress.Equals(leader) {
+					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", leader, masterAddress)
+					vs.setCurrentMaster(leader)
+					newLeader = leader
+					doneChan <- nil
+					return
+				}
+			} else if !confirmedLeader {
+				// The leader answers every new heartbeat stream without naming a
+				// leader, so this peer is the one lookups should go to.
+				confirmedLeader = true
+				vs.setCurrentMaster(masterAddress)
+			}
 			if len(in.DuplicatedUuids) > 0 {
 				var duplicateDir []string
 				for _, loc := range vs.store.Locations {
@@ -267,24 +289,6 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			if in.GetResendFullVolumeList() {
 				glog.V(0).Infof("master %s asked for the full volume list", masterAddress)
 				vs.store.RequestFullVolumeList()
-			}
-			if in.GetLeader() != "" {
-				// Only a follower names the leader. Publish the named leader right
-				// away, so lookups stop landing on this follower while the loop
-				// reconnects.
-				leader := pb.ServerAddress(in.GetLeader())
-				if !masterAddress.Equals(leader) {
-					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", leader, masterAddress)
-					vs.setCurrentMaster(leader)
-					newLeader = leader
-					doneChan <- nil
-					return
-				}
-			} else if !confirmedLeader {
-				// The leader answers every new heartbeat stream without naming a
-				// leader, so this peer is the one lookups should go to.
-				confirmedLeader = true
-				vs.setCurrentMaster(masterAddress)
 			}
 		}
 	}()

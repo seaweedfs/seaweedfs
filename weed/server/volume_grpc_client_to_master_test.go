@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -261,6 +262,39 @@ func TestHeartbeatToLeaderPublishesItAndResendsFromSendLoop(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("heartbeat did not stop")
+	}
+}
+
+// duplicateUUIDMaster answers every heartbeat the way a leader holding a stale
+// registration does: a duplicate-uuid response and nothing else.
+type duplicateUUIDMaster struct {
+	master_pb.UnimplementedSeaweedServer
+}
+
+func (m *duplicateUUIDMaster) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
+	for {
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(&master_pb.HeartbeatResponse{DuplicatedUuids: []string{"uuid-1"}}); err != nil {
+			return err
+		}
+	}
+}
+
+// A leader that rejects the registration over duplicate uuids still answers
+// lookups, so it is published before the retry error goes out.
+func TestHeartbeatPublishesLeaderBeforeDuplicateUuidError(t *testing.T) {
+	masterAddr := startFakeMasterServerForLeaderLookup(t, &duplicateUUIDMaster{})
+	vs := newHeartbeatTestVolumeServer(t)
+	vs.setCurrentMaster("previous.example.com:9333.19333")
+
+	_, err := vs.doHeartbeatWithRetry(masterAddr, vs.grpcDialOption, time.Hour, 0)
+	if err == nil || !strings.Contains(err.Error(), "duplicate UUIDs") {
+		t.Fatalf("err = %v, want duplicate UUIDs", err)
+	}
+	if got := vs.getCurrentMaster(); got != masterAddr {
+		t.Fatalf("currentMaster = %q, want the answering leader %q", got, masterAddr)
 	}
 }
 
