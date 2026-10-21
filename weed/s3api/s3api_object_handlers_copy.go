@@ -1674,11 +1674,25 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	}
 
 	// The part's Attributes.Md5 must cover the copied range in byte order,
-	// and md5 cannot combine per-chunk digests. With more than one chunk the
-	// concurrent copies cannot feed a single ordered hash, so the source
-	// range is hashed by a second, ordered stream that runs beside them.
+	// and md5 cannot combine per-chunk digests. A single chunk's own digest
+	// is the answer only when it supplies the whole range; anything else —
+	// several chunks, or gaps a sparse source zero-fills — needs an ordered
+	// pass the concurrent copies cannot feed, so a second stream of the
+	// source range hashes beside them.
+	partSize := endOffset - startOffset + 1
+	singleChunkCovers := len(relevantChunks) == 1 &&
+		relevantChunks[0].Offset == 0 && int64(relevantChunks[0].Size) == partSize
+
+	var partMd5 []byte
 	var partMd5Ch chan partMd5Result
-	if len(relevantChunks) > 1 {
+	switch {
+	case singleChunkCovers:
+		// resolved below from the copied chunk's own digest
+	case len(entry.GetChunks()) == 0:
+		// no chunks to read at all: the part is partSize zero bytes (the
+		// stream helper returns empty for a chunkless entry, not zero-fill)
+		partMd5 = md5Zeros(partSize)
+	default:
 		partMd5Ch = make(chan partMd5Result, 1)
 		go func() {
 			sum, err := s3a.copiedRangeMd5(context.Background(), entry, startOffset, endOffset)
@@ -1713,20 +1727,30 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 		}
 	}
 
-	var partMd5 []byte
 	if partMd5Ch != nil {
-		// A failed hash pass leaves the part without a stored MD5 rather
-		// than failing a copy whose bytes are already on the volumes.
 		if res := <-partMd5Ch; res.err != nil {
-			glog.Warningf("copyChunksForRange: md5 of copied range: %v", res.err)
+			return nil, nil, fmt.Errorf("md5 of copied range: %w", res.err)
 		} else {
 			partMd5 = res.sum
 		}
-	} else if len(dstChunks) == 1 {
+	} else if singleChunkCovers {
 		partMd5 = util.Base64Md5ToBytes(dstChunks[0].ETag)
 	}
 
 	return dstChunks, partMd5, nil
+}
+
+// md5Zeros hashes size zero bytes without a volume read — a copied range
+// that overlaps no source chunk assembles to all zeros.
+func md5Zeros(size int64) []byte {
+	h := md5.New()
+	var zeros [1 << 16]byte
+	for size > 0 {
+		n := min(size, int64(len(zeros)))
+		h.Write(zeros[:n])
+		size -= n
+	}
+	return h.Sum(nil)
 }
 
 // copiedRangeMd5 streams the source range once and hashes its plaintext —

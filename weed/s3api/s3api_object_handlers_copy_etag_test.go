@@ -235,3 +235,51 @@ func TestCopyChunksForRangeCopiedETags(t *testing.T) {
 		t.Errorf("inner-range part Md5 = %x, want %x", innerMd5, wantInnerMd5)
 	}
 }
+
+// A range over a sparse source zero-fills the gaps, so the part MD5 has to
+// hash the logical range — not just the one chunk that overlaps it.
+func TestCopyChunksForRangeSparseETags(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	fid := fmt.Sprintf("3,%016x%08x", 105, 206)
+	volume.stored[fid] = []byte("abc")
+	sum := md5.Sum([]byte("abc"))
+	entry := &filer_pb.Entry{
+		Name: "sparse",
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: 6,
+		},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: fid, Offset: 3, Size: 3, ETag: base64.StdEncoding.EncodeToString(sum[:])},
+		},
+	}
+
+	// bytes 0-5 read as "\x00\x00\x00abc"; the part MD5 must cover the zeros too.
+	dstChunks, partMd5, err := s3a.copyChunksForRange(entry, 0, 5, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange sparse: %v", err)
+	}
+	if len(dstChunks) != 1 || dstChunks[0].Offset != 3 {
+		t.Fatalf("sparse copy chunks = %+v, want one chunk at offset 3", dstChunks)
+	}
+	wantMd5 := md5.Sum([]byte("\x00\x00\x00abc"))
+	if !bytes.Equal(partMd5, wantMd5[:]) {
+		t.Errorf("sparse part Md5 = %x, want %x (zero-filled range)", partMd5, wantMd5)
+	}
+
+	// A range over a pure hole copies nothing but still reads as zeros.
+	holeChunks, holeMd5, err := s3a.copyChunksForRange(entry, 0, 2, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange hole: %v", err)
+	}
+	if len(holeChunks) != 0 {
+		t.Fatalf("hole copy returned %d chunks, want 0", len(holeChunks))
+	}
+	wantHoleMd5 := md5.Sum([]byte{0, 0, 0})
+	if !bytes.Equal(holeMd5, wantHoleMd5[:]) {
+		t.Errorf("hole part Md5 = %x, want %x (all zeros)", holeMd5, wantHoleMd5)
+	}
+}
