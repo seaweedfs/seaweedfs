@@ -489,8 +489,25 @@ async fn do_heartbeat(
             resp = response_stream.message() => {
                 match resp {
                     Ok(Some(hb_resp)) => {
-                        // Match Go ordering: DuplicatedUuids first, then volume
-                        // options, then leader redirect.
+                        // A reply names the leader or comes from it, so it
+                        // settles where lookups go before anything else on the
+                        // reply is handled: a follower reply carries no other
+                        // fields, and a leader stays the lookup target even
+                        // when it rejects this registration. Mirrors Go.
+                        if !hb_resp.leader.is_empty() {
+                            if super::volume_server::to_http_address(current_master)
+                                != super::volume_server::to_http_address(&hb_resp.leader)
+                            {
+                                publish_current_master(state, &hb_resp.leader).await;
+                                return Ok(Some(hb_resp.leader));
+                            }
+                        } else if !confirmed_leader {
+                            // The leader answers every new stream without
+                            // naming a leader, so this peer is the one lookups
+                            // go to.
+                            confirmed_leader = true;
+                            publish_current_master(state, current_master).await;
+                        }
                         if !hb_resp.duplicated_uuids.is_empty() {
                             let uuids = hb_resp.duplicated_uuids.clone();
                             let duplicate_dirs = off_runtime(config, state, move |_, state| {
@@ -534,22 +551,6 @@ async fn do_heartbeat(
                         );
                         if metrics_changed {
                             state.metrics_notify.notify_waiters();
-                        }
-                        if !hb_resp.leader.is_empty() {
-                            // Only a follower names the leader; publish it now
-                            // so lookups stop landing on this follower while
-                            // the loop reconnects. Mirrors Go.
-                            if super::volume_server::to_http_address(current_master)
-                                != super::volume_server::to_http_address(&hb_resp.leader)
-                            {
-                                publish_current_master(state, &hb_resp.leader).await;
-                                return Ok(Some(hb_resp.leader));
-                            }
-                        } else if !confirmed_leader {
-                            // The leader answers every new stream without naming
-                            // a leader, so this peer is the one lookups go to.
-                            confirmed_leader = true;
-                            publish_current_master(state, current_master).await;
                         }
                     }
                     Ok(None) => return Ok(None),
