@@ -277,16 +277,28 @@ func (store *AbstractSqlStore) scanOneTable(ctx context.Context, tx *sql.Tx, t s
 		data      []byte
 	}
 	cursorHash, cursorName := int64(math.MinInt64), ""
+	firstPage := true
 	for {
 		var page []row
+		if t.cachedOnly && firstPage {
+			// A missing table can only be met by the first page read: once a
+			// row came back the tx holds the table against a drop. On
+			// PostgreSQL the failed query aborts the transaction, so the skip
+			// needs a savepoint to roll back to before the next table's read.
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT seaweed_scan_bucket"); err != nil {
+				return fmt.Errorf("scan table %s: %v", t.table, err)
+			}
+		}
 		sqlText, args := store.GetSqlScanPage(t.table, cursorHash, cursorName, scanPageSize)
 		rows, err := tx.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			if t.cachedOnly && isMissingTableError(err) {
+				tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT seaweed_scan_bucket")
 				return nil // a cached-only name whose table was dropped meanwhile
 			}
 			return missingTableOr(err, t.table, fmt.Sprintf("scan table %s", t.table))
 		}
+		firstPage = false
 		if err := func() error {
 			defer rows.Close()
 			for rows.Next() {
