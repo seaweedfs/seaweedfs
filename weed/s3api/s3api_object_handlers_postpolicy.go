@@ -82,7 +82,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Verify policy signature.
 	identity, errCode := s3a.iam.doesPolicySignatureMatch(formValues)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
 	}
 	if identity != nil {
@@ -140,7 +140,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	// Authorize the object like the PUT path; the coarse Write check above does not consult the bucket policy.
 	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
 	}
 
@@ -362,10 +362,24 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 }
 
 // Check to see if Policy is signed correctly, returning the signing identity.
+// The identity's Write permission on the bucket is checked only once the
+// signature verifies, as on the header-signed path, so a form that fails
+// verification learns nothing about the key's permissions. A verified identity
+// that may not write is returned with ErrAccessDenied.
 func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var errCode s3err.ErrorCode
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
-		return iam.doesPolicySignatureV2Match(formValues)
+		identity, errCode = iam.doesPolicySignatureV2Match(formValues)
+	} else {
+		identity, errCode = iam.doesPolicySignatureV4Match(formValues)
 	}
-	return iam.doesPolicySignatureV4Match(formValues)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	if !identity.CanDo(s3_constants.ACTION_WRITE, formValues.Get("bucket"), "") {
+		return identity, s3err.ErrAccessDenied
+	}
+	return identity, s3err.ErrNone
 }

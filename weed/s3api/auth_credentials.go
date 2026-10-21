@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -1680,6 +1681,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		// succeeds but authZ denies, so the denied request still audits its
 		// requester; a failed authN resolves no identity at all.
 		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
+		errCode = refineDenialForBucketName(r, identity, errCode)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
@@ -1719,12 +1721,46 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 			}
 		}
 
+		errCode = refineDenialForBucketName(r, identity, errCode)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
 
 		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
+}
+
+// refineDenialForBucketName answers 400 InvalidBucketName, as AWS S3 does,
+// when an authenticated caller is denied on a bucket whose name breaks the S3
+// naming rules. The rules are public and the answer depends on the name alone,
+// so it tells the caller nothing about which buckets exist. Authentication
+// failures (no identity resolved) and every other answer are left unchanged.
+func refineDenialForBucketName(r *http.Request, identity *Identity, errCode s3err.ErrorCode) s3err.ErrorCode {
+	if errCode != s3err.ErrAccessDenied || identity == nil {
+		return errCode
+	}
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if bucket == "" {
+		return errCode
+	}
+	if !isASCIIBucketName(bucket) || s3bucket.VerifyS3BucketName(bucket) != nil {
+		return s3err.ErrInvalidBucketName
+	}
+	return errCode
+}
+
+// isASCIIBucketName reports whether name uses only the characters S3 allows
+// in a bucket name. VerifyS3BucketName checks with unicode.IsLower and
+// unicode.IsNumber, which also accept letters such as 'ü' and digits such as
+// '²' that S3 refuses.
+func isASCIIBucketName(name string) bool {
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // recordIdentityInContext stores the authenticated identity, its name and its

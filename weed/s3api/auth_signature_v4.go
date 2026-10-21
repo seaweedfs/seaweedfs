@@ -858,11 +858,6 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 		return nil, s3err.ErrAccessDenied
 	}
 
-	bucket := formValues.Get("bucket")
-	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
-		return nil, s3err.ErrAccessDenied
-	}
-
 	// Get signing key.
 	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
 
