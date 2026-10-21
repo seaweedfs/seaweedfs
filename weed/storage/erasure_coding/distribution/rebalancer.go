@@ -83,14 +83,6 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 			DestNode:   dst,
 			Reason:     fmt.Sprintf("%s balance: %s above target", level, domain),
 		})
-		switch {
-		case src.DataCenter != dst.DataCenter:
-			plan.MovesAcrossDC++
-		case src.Rack != dst.Rack:
-			plan.MovesAcrossRack++
-		default:
-			plan.MovesWithinRack++
-		}
 	}
 
 	moveOut := func(level, srcDomain string, srcNodes, dstNodes []*TopologyNode) bool {
@@ -228,7 +220,37 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 			func(string) []string { return nodeIDs })
 	}
 
-	plan.TotalMoves = len(plan.Moves)
+	// A copy of a shard moves at most once per level, and each finer level only
+	// moves it deeper inside the domain the previous level sent it to, so its
+	// moves form a chain from the first source to the final destination.
+	// Collapse each chain into one transfer — intermediate hops would copy the
+	// shard over the network only to move it again. Chains are keyed by where
+	// the copy sits, so duplicate copies of a shard still move independently.
+	pending := make(map[ShardLocation]int)
+	moves := plan.Moves[:0]
+	for _, m := range plan.Moves {
+		key := ShardLocation{ShardID: m.ShardID, NodeID: m.SourceNode.NodeID}
+		if i, ok := pending[key]; ok {
+			delete(pending, key)
+			moves[i].DestNode = m.DestNode
+			pending[ShardLocation{ShardID: m.ShardID, NodeID: m.DestNode.NodeID}] = i
+			continue
+		}
+		pending[ShardLocation{ShardID: m.ShardID, NodeID: m.DestNode.NodeID}] = len(moves)
+		moves = append(moves, m)
+	}
+	plan.Moves = moves
+	for _, m := range moves {
+		switch {
+		case m.SourceNode.DataCenter != m.DestNode.DataCenter:
+			plan.MovesAcrossDC++
+		case m.SourceNode.Rack != m.DestNode.Rack:
+			plan.MovesAcrossRack++
+		default:
+			plan.MovesWithinRack++
+		}
+	}
+	plan.TotalMoves = len(moves)
 	return plan, nil
 }
 

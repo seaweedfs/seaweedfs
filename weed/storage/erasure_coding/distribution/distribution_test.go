@@ -399,6 +399,36 @@ func TestPlanRebalanceSkipsBlockedSource(t *testing.T) {
 	assert.Equal(t, 5, plan.Analysis.ShardsByDC["dcD"])
 }
 
+// A shard that dc-level balancing lands on a node can be shed again at rack or
+// node level; its moves must collapse to one transfer to the final holder.
+func TestPlanRebalanceCollapsesChainedMoves(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 20))
+	a.AddNode(makeNode("c1", "dcB", "rB2", 20))
+	a.AddNode(makeNode("c2", "dcB", "rB2", 20))
+	a.AddNode(makeNode("c3", "dcB", "rB2", 20))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	moved := make(map[int]string)
+	for _, m := range plan.Moves {
+		_, twice := moved[m.ShardID]
+		assert.False(t, twice, "shard %d moves more than once", m.ShardID)
+		moved[m.ShardID] = m.DestNode.NodeID
+		assert.Contains(t, m.DestNode.ShardIDs, m.ShardID)
+	}
+	assert.Equal(t, 7, plan.TotalMoves)
+	assert.Equal(t, 7, plan.MovesAcrossDC)
+	// shard 12 reached b1 through c1 in simulation; the plan moves it directly
+	assert.Equal(t, "b1", moved[12])
+	assert.Equal(t, []int{13, 9, 12}, plan.Analysis.AllNodes["b1"].ShardIDs)
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
