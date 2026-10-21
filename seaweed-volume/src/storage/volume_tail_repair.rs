@@ -9,9 +9,12 @@
 //! not, although the client was answered. So a complete needle is never
 //! dropped: every complete needle in the tail gets the .idx entry the volume
 //! server would have written, in .dat order, and only an incomplete last
-//! record is cut.
+//! record is cut. A size 0 record is indexed at size 0, the same live entry
+//! the write path publishes for an empty write: a delete appends the
+//! identical record, so the two cannot be told apart, and resurrecting an
+//! empty placeholder beats a wrong tombstone, which drops an acknowledged
+//! write's object entirely.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -19,7 +22,6 @@ use std::path::Path;
 
 use tracing::warn;
 
-use crate::storage::idx;
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
@@ -153,11 +155,10 @@ impl Volume {
             )));
         }
 
-        let (mut entries, cut_at) =
+        let (entries, cut_at) =
             self.walk_unindexed_dat_tail(io, version, start, file_size, anchor.append_at_ns)?;
         let reindexed = entries.len() / NEEDLE_MAP_ENTRY_SIZE;
         if reindexed > 0 {
-            Self::resolve_empty_tail_records(&idx_file, &mut entries)?;
             Self::append_index_entries(&mut idx_file, &entries, idx_size)?;
         }
         let mut cut = 0i64;
@@ -286,66 +287,15 @@ impl Volume {
                 )));
             }
             last_append_at_ns = n.append_at_ns;
-            // a size 0 record is a delete or an empty write:
-            // resolve_empty_tail_records tells them apart
+            // A size 0 record is a delete or an empty write; the two append
+            // the identical record, so it is indexed at size 0 the way the
+            // write path indexes an empty write.
             let mut entry = [0u8; NEEDLE_MAP_ENTRY_SIZE];
             idx_entry_to_bytes(&mut entry, n.id, Offset::from_actual_offset(at), size);
             entries.extend_from_slice(&entry);
             at = end;
         }
         Ok((entries, file_size))
-    }
-
-    /// Turn the size 0 entries among the re-indexed ones into what the
-    /// volume server indexed them as: a delete is a tombstone, an empty
-    /// write keeps size 0. A delete is only appended for a needle that is
-    /// live, so a size 0 record of a needle that is not live (absent or
-    /// deleted in the .idx and in the tail before it) is an empty write.
-    /// Mirrors Go's resolveEmptyTailRecords.
-    fn resolve_empty_tail_records(
-        idx_file: &File,
-        entries: &mut [u8],
-    ) -> Result<(), TailRepairError> {
-        let mut live: HashMap<NeedleId, bool> = HashMap::new();
-        for chunk in entries.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>().0.iter() {
-            let (key, _, size) = idx_entry_from_bytes(chunk);
-            if size.0 == 0 {
-                live.insert(key, false);
-            }
-        }
-        if live.is_empty() {
-            return Ok(());
-        }
-        let mut reader = io::BufReader::new(idx_file);
-        idx::walk_index_file(&mut reader, 0, |key, offset, size| {
-            if let Some(was_live) = live.get_mut(&key) {
-                *was_live = !offset.is_zero() && !size.is_deleted();
-            }
-            Ok(())
-        })
-        .map_err(|e| {
-            TailRepairError::Failed(VolumeError::Io(io::Error::new(
-                e.kind(),
-                format!("scan index: {e}"),
-            )))
-        })?;
-        for chunk in entries
-            .as_chunks_mut::<NEEDLE_MAP_ENTRY_SIZE>()
-            .0
-            .iter_mut()
-        {
-            let (key, offset, size) = idx_entry_from_bytes(chunk);
-            let Some(was_live) = live.get(&key).copied() else {
-                continue;
-            };
-            if size.0 == 0 && was_live {
-                idx_entry_to_bytes(chunk, key, offset, TOMBSTONE_FILE_SIZE);
-                live.insert(key, false);
-                continue;
-            }
-            live.insert(key, true);
-        }
-        Ok(())
     }
 
     /// Write entries at the end (at) of the .idx and sync it. A failed write
@@ -389,6 +339,7 @@ impl Volume {
 mod tests {
     use super::*;
     use crate::storage::needle_map::NeedleMapKind;
+    use std::collections::HashMap;
     use crate::storage::volume::VolumeSpec;
     use tempfile::TempDir;
 
@@ -572,6 +523,24 @@ mod tests {
         );
     }
 
+    /// A recovered size 0 record indexes as a live empty needle: a delete
+    /// and a write with no data append the identical record, so the repair
+    /// cannot tell them apart and indexes the entry the write path would
+    /// have written.
+    fn assert_empty(v: &Volume, id: u64) {
+        let mut n = Needle {
+            id: NeedleId(id),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n)
+            .unwrap_or_else(|e| panic!("read needle {id}: {e}"));
+        assert!(
+            n.data.is_empty(),
+            "needle {id} reads back {} bytes, want an empty needle",
+            n.data.len()
+        );
+    }
+
     fn writes(ids: &[u64]) -> Vec<Op> {
         ids.iter().map(|id| Op::Write(*id)).collect()
     }
@@ -584,6 +553,7 @@ mod tests {
         want_dat_size: fn(&TornFixture) -> i64,
         reindexed: usize,
         readable: &'static [u64],
+        empty: &'static [u64], // readable as an empty live needle
         absent: &'static [u64],
     }
 
@@ -598,6 +568,7 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 1,
                 readable: &[1, 2, 3, 4],
+                empty: &[],
                 absent: &[],
             },
             RepairCase {
@@ -608,10 +579,11 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 2,
                 readable: &[1, 2, 3, 4, 5],
+                empty: &[],
                 absent: &[],
             },
             RepairCase {
-                name: "an unindexed delete is re-indexed as a tombstone",
+                name: "an unindexed delete is re-indexed as an empty live needle",
                 ops: {
                     let mut ops = writes(&[1, 2, 3]);
                     ops.push(Op::Del(2));
@@ -622,7 +594,23 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 1,
                 readable: &[1, 3],
-                absent: &[2],
+                empty: &[2],
+                absent: &[],
+            },
+            RepairCase {
+                name: "an unindexed empty write of a live id stays an empty needle",
+                ops: {
+                    let mut ops = writes(&[1, 2, 3]);
+                    ops.push(Op::Empty(2));
+                    ops
+                },
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[1, 3],
+                empty: &[2],
+                absent: &[],
             },
             RepairCase {
                 name: "a partial header is cut",
@@ -632,6 +620,7 @@ mod tests {
                 want_dat_size: |f| f.starts[3],
                 reindexed: 0,
                 readable: &[1, 2, 3],
+                empty: &[],
                 absent: &[4],
             },
             RepairCase {
@@ -642,6 +631,7 @@ mod tests {
                 want_dat_size: |f| f.starts[3],
                 reindexed: 0,
                 readable: &[1, 2, 3],
+                empty: &[],
                 absent: &[4],
             },
             RepairCase {
@@ -652,6 +642,7 @@ mod tests {
                 want_dat_size: |f| f.starts[4],
                 reindexed: 1,
                 readable: &[1, 2, 3, 4],
+                empty: &[],
                 absent: &[5],
             },
             RepairCase {
@@ -662,6 +653,7 @@ mod tests {
                 want_dat_size: |f| f.starts[3],
                 reindexed: 0,
                 readable: &[1, 2, 3],
+                empty: &[],
                 absent: &[4],
             },
             RepairCase {
@@ -672,6 +664,7 @@ mod tests {
                 want_dat_size: |f| f.starts[3],
                 reindexed: 0,
                 readable: &[1, 2, 3],
+                empty: &[],
                 absent: &[4],
             },
             RepairCase {
@@ -686,6 +679,7 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 1,
                 readable: &[1, 2, 3],
+                empty: &[],
                 absent: &[],
             },
             RepairCase {
@@ -701,6 +695,7 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 1,
                 readable: &[1, 2],
+                empty: &[],
                 absent: &[],
             },
             RepairCase {
@@ -715,7 +710,8 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 2,
                 readable: &[1, 2],
-                absent: &[3],
+                empty: &[3],
+                absent: &[],
             },
             RepairCase {
                 name: "an unindexed empty write and its delete are re-indexed in order",
@@ -730,7 +726,8 @@ mod tests {
                 want_dat_size: |f| f.end,
                 reindexed: 2,
                 readable: &[1, 2],
-                absent: &[3],
+                empty: &[3],
+                absent: &[],
             },
             RepairCase {
                 name: "a partial needle after an indexed tombstone is cut",
@@ -745,6 +742,7 @@ mod tests {
                 want_dat_size: |f| f.starts[4],
                 reindexed: 0,
                 readable: &[1, 3],
+                empty: &[],
                 absent: &[2, 4],
             },
         ];
@@ -777,6 +775,9 @@ mod tests {
                 );
                 for &id in tc.readable {
                     assert_readable(&v, id, &f.written[&id]);
+                }
+                for &id in tc.empty {
+                    assert_empty(&v, id);
                 }
                 for &id in tc.absent {
                     assert_not_readable(&v, id);
