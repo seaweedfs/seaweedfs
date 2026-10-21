@@ -1790,9 +1790,8 @@ func (s3a *S3ApiServer) copiedRangeMd5(ctx context.Context, entry *filer_pb.Entr
 	size := endOffset - startOffset + 1
 	// The copy walks the chunks, so the hash must too: on an entry that also
 	// carries inline Content the stream helper would prefer Content instead.
-	chunked := *entry
-	chunked.Content = nil
-	reader, err := s3a.getEncryptedStreamFromVolumes(ctx, &chunked, startOffset, size)
+	chunked := &filer_pb.Entry{Chunks: entry.GetChunks()}
+	reader, err := s3a.getEncryptedStreamFromVolumes(ctx, chunked, startOffset, size)
 	if err != nil {
 		return nil, err
 	}
