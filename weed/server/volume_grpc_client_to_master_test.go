@@ -139,6 +139,46 @@ func waitForCurrentMaster(t *testing.T, vs *VolumeServer, want pb.ServerAddress)
 	}
 }
 
+// heartbeatRun is one doHeartbeatWithRetry call running in the background.
+type heartbeatRun struct {
+	done   chan heartbeatResult // receives the call's result once
+	exited chan struct{}
+	stop   func()
+}
+
+type heartbeatResult struct {
+	newLeader pb.ServerAddress
+	err       error
+}
+
+// startHeartbeat runs doHeartbeatWithRetry against master until it returns or
+// is stopped. Its cleanup stops the heartbeat and waits for it, and runs before
+// the cleanups registered earlier, so a failed assertion cannot leave the stream
+// open for the fake master's GracefulStop to wait on.
+func startHeartbeat(t *testing.T, vs *VolumeServer, master pb.ServerAddress) *heartbeatRun {
+	t.Helper()
+	var stopOnce sync.Once
+	run := &heartbeatRun{
+		done:   make(chan heartbeatResult, 1),
+		exited: make(chan struct{}),
+		stop:   func() { stopOnce.Do(func() { close(vs.stopChan) }) },
+	}
+	go func() {
+		defer close(run.exited)
+		newLeader, err := vs.doHeartbeatWithRetry(master, vs.grpcDialOption, time.Hour, 0)
+		run.done <- heartbeatResult{newLeader, err}
+	}()
+	t.Cleanup(func() {
+		run.stop()
+		select {
+		case <-run.exited:
+		case <-time.After(5 * time.Second):
+			t.Error("heartbeat did not stop")
+		}
+	})
+	return run
+}
+
 // A follower must never become the master lookups go to: until it names the
 // leader the previous one stays, and then the named leader takes over before
 // the heartbeat loop has reconnected.
@@ -157,19 +197,9 @@ func TestHeartbeatToFollowerPublishesNamedLeaderOnly(t *testing.T) {
 	t.Cleanup(release)
 
 	vs := newHeartbeatTestVolumeServer(t)
-	t.Cleanup(func() { close(vs.stopChan) })
 	previous := pb.ServerAddress("previous.example.com:9333.19333")
 	vs.setCurrentMaster(previous)
-
-	type result struct {
-		newLeader pb.ServerAddress
-		err       error
-	}
-	done := make(chan result, 1)
-	go func() {
-		newLeader, err := vs.doHeartbeatWithRetry(followerAddr, vs.grpcDialOption, time.Hour, 0)
-		done <- result{newLeader, err}
-	}()
+	run := startHeartbeat(t, vs, followerAddr)
 
 	select {
 	case <-follower.heartbeats:
@@ -185,7 +215,7 @@ func TestHeartbeatToFollowerPublishesNamedLeaderOnly(t *testing.T) {
 	release()
 
 	select {
-	case r := <-done:
+	case r := <-run.done:
 		if r.err != nil {
 			t.Fatalf("heartbeat: %v", r.err)
 		}
@@ -207,11 +237,7 @@ func TestHeartbeatToLeaderPublishesItAndResendsFromSendLoop(t *testing.T) {
 	leaderAddr := startFakeMasterServerForLeaderLookup(t, leader)
 
 	vs := newHeartbeatTestVolumeServer(t)
-	done := make(chan error, 1)
-	go func() {
-		_, err := vs.doHeartbeatWithRetry(leaderAddr, vs.grpcDialOption, time.Hour, 0)
-		done <- err
-	}()
+	run := startHeartbeat(t, vs, leaderAddr)
 
 	waitForCurrentMaster(t, vs, leaderAddr)
 	if got := vs.store.MasterFn(); got != leaderAddr {
@@ -227,11 +253,11 @@ func TestHeartbeatToLeaderPublishesItAndResendsFromSendLoop(t *testing.T) {
 		}
 	}
 
-	close(vs.stopChan)
+	run.stop()
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("heartbeat: %v", err)
+	case r := <-run.done:
+		if r.err != nil {
+			t.Fatalf("heartbeat: %v", r.err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("heartbeat did not stop")
