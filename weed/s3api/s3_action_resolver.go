@@ -166,15 +166,23 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// ACL operations
+	// ACL operations. A versionId retargets the request at a specific
+	// version, so the version ACL action applies, not the current-object one.
 	if query.Has("acl") {
+		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
 		case http.MethodGet, http.MethodHead:
+			if versioned {
+				return s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_ACL
 			}
 			return s3_constants.S3_ACTION_GET_BUCKET_ACL
 		case http.MethodPut:
+			if versioned {
+				return s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_ACL
 			}

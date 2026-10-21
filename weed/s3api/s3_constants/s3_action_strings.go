@@ -15,6 +15,10 @@ const (
 	S3_ACTION_GET_OBJECT_ACL = "s3:GetObjectAcl"
 	S3_ACTION_PUT_OBJECT_ACL = "s3:PutObjectAcl"
 
+	// Version-specific ACL operations (?acl&versionId)
+	S3_ACTION_GET_OBJECT_VERSION_ACL = "s3:GetObjectVersionAcl"
+	S3_ACTION_PUT_OBJECT_VERSION_ACL = "s3:PutObjectVersionAcl"
+
 	// Object tagging operations
 	S3_ACTION_GET_OBJECT_TAGGING    = "s3:GetObjectTagging"
 	S3_ACTION_PUT_OBJECT_TAGGING    = "s3:PutObjectTagging"

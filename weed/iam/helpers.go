@@ -115,6 +115,7 @@ var baseS3ActionMap = map[string]string{
 	"DeleteBucketTagging":        s3_constants.ACTION_TAGGING,
 	// ACL operations
 	"PutObjectAcl":        s3_constants.ACTION_WRITE_ACP,
+	"PutObjectVersionAcl": s3_constants.ACTION_WRITE_ACP,
 	"GetObjectAcl":        s3_constants.ACTION_READ_ACP,
 	"GetObjectVersionAcl": s3_constants.ACTION_READ_ACP,
 	"PutBucketAcl":        s3_constants.ACTION_WRITE_ACP,

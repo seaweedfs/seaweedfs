@@ -146,6 +146,35 @@ func TestResolveS3Action_VersionTagging(t *testing.T) {
 	}
 }
 
+// An ACL request carrying versionId targets a specific version and must
+// resolve to the version ACL action so a grant limited to the current-object
+// action cannot reach historical versions.
+func TestResolveS3Action_VersionAcl(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		object string
+		query  string
+		want   string
+	}{
+		{"get current acl", http.MethodGet, "key", "acl", s3_constants.S3_ACTION_GET_OBJECT_ACL},
+		{"put current acl", http.MethodPut, "key", "acl", s3_constants.S3_ACTION_PUT_OBJECT_ACL},
+		{"get version acl", http.MethodGet, "key", "acl&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL},
+		{"head version acl", http.MethodHead, "key", "acl&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL},
+		{"put version acl", http.MethodPut, "key", "acl&versionId=v1", s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL},
+		{"empty versionId stays current", http.MethodGet, "key", "acl&versionId=", s3_constants.S3_ACTION_GET_OBJECT_ACL},
+		{"bucket acl ignores versionId", http.MethodGet, "", "acl&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_ACL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_READ, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // Bucket subresources registered with ACTION_ADMIN must resolve to their own
 // S3 actions so a policy granting one of them does not need s3:*, and so no
 // broader grant sweeps them in.
