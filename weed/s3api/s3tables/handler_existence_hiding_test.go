@@ -211,3 +211,123 @@ func TestDeniedTableWritesDoNotRevealViews(t *testing.T) {
 		})
 	}
 }
+
+// A caller without a grant must get the same answer whether a list target
+// exists or not, and whether the bucket behind it exists at all.
+func TestAbsentListTargetsMatchDeniedAnswers(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	missing := s3tablestest.Start(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	for _, tc := range []struct {
+		name      string
+		fs        *s3tablestest.MemFiler
+		operation string
+		denied    interface{}
+		request   interface{}
+	}{
+		{"ListTables missing namespace", existing, "ListTables",
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}},
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ghost"}}},
+		{"ListTables missing bucket", missing, "ListTables",
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}},
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}},
+		{"ListTables missing bucket, all namespaces", missing, "ListTables",
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}},
+			&ListTablesRequest{TableBucketARN: mustBucketARN(t)}},
+		{"ListViews missing namespace", existing, "ListViews",
+			&ListViewsRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}},
+			&ListViewsRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ghost"}}},
+		{"CreateNamespace missing bucket", missing, "CreateNamespace",
+			&CreateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"newns"}},
+			&CreateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"newns"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			denied := runUnauthorizedRequest(t, manager, existing, tc.operation, tc.denied)
+			assert.Equal(t, 403, denied.status)
+			got := runUnauthorizedRequest(t, manager, tc.fs, tc.operation, tc.request)
+			assert.Equal(t, denied, got)
+		})
+	}
+}
+
+// A denied tag operation and the same operation on a missing table must answer
+// alike; a granted caller still gets the truthful not-found.
+func TestAbsentTagTargetsMatchDeniedAnswers(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	existingARN, err := BuildTableARN(DefaultRegion, DefaultAccountID, renameTestBucket, "ns", "t")
+	require.NoError(t, err)
+	missingARN, err := BuildTableARN(DefaultRegion, DefaultAccountID, renameTestBucket, "ns", "ghost")
+	require.NoError(t, err)
+
+	requestFor := func(operation, arn string) interface{} {
+		switch operation {
+		case "TagResource":
+			return &TagResourceRequest{ResourceARN: arn, Tags: map[string]string{"k": "v"}}
+		case "UntagResource":
+			return &UntagResourceRequest{ResourceARN: arn, TagKeys: []string{"k"}}
+		}
+		return &ListTagsForResourceRequest{ResourceARN: arn}
+	}
+
+	for _, operation := range []string{"TagResource", "ListTagsForResource", "UntagResource"} {
+		t.Run(operation, func(t *testing.T) {
+			denied := runUnauthorizedRequest(t, manager, existing, operation, requestFor(operation, existingARN))
+			assert.Equal(t, 403, denied.status)
+			got := runUnauthorizedRequest(t, manager, existing, operation, requestFor(operation, missingARN))
+			assert.Equal(t, denied, got)
+		})
+	}
+}
+
+// A directory that holds a plain S3 bucket name is not a table bucket: every
+// caller gets the same 404 an absent name gets, not a 500 that reveals the
+// name resolves in the filer.
+func TestPlainBucketReadsAsAbsent(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+	existing.Put(TablesPath, "plainbkt", nil)
+
+	plainARN, err := BuildBucketARN(DefaultRegion, DefaultAccountID, "plainbkt")
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		operation string
+		request   interface{}
+	}{
+		{"GetTableBucket", &GetTableBucketRequest{TableBucketARN: plainARN}},
+		{"ListNamespaces", &ListNamespacesRequest{TableBucketARN: plainARN}},
+	} {
+		t.Run(tc.operation, func(t *testing.T) {
+			got := runUnauthorizedRequest(t, manager, existing, tc.operation, tc.request)
+			assert.Equal(t, 404, got.status)
+			assert.Equal(t, ErrCodeNoSuchBucket, got.body.Type)
+		})
+	}
+}
+
+// A caller with an identity-level grant still learns that a name is absent.
+func TestGrantedCallerLearnsAbsence(t *testing.T) {
+	missing := s3tablestest.Start(t)
+	manager := NewManager()
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	got := runRequestAs(t, manager, missing, "ListTables", &ListTablesRequest{
+		TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}},
+		[]string{"s3tables:ListTables"})
+	assert.Equal(t, 200, got.status)
+
+	missingTableARN, err := BuildTableARN(DefaultRegion, DefaultAccountID, renameTestBucket, "ns", "ghost")
+	require.NoError(t, err)
+	got = runRequestAs(t, manager, missing, "ListTagsForResource",
+		&ListTagsForResourceRequest{ResourceARN: missingTableARN},
+		[]string{"s3tables:ListTagsForResource"})
+	assert.Equal(t, 404, got.status)
+	assert.Equal(t, ErrCodeNoSuchTable, got.body.Type)
+}
