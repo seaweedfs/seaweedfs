@@ -522,6 +522,11 @@ message DeleteEntryRequest {
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
     bool keep_remote_object = 10;
+    // Optional precondition evaluated against the current entry atomically with
+    // the delete, under the filer's per-path lock. The caller must route the
+    // key's writes to this entry's owner filer for the check to be authoritative.
+    WriteCondition condition = 11;
+    bool is_moved = 12;            // set on a forwarded request so the owner applies it locally
 }
 
 message DeleteEntryResponse {
