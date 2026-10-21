@@ -473,13 +473,11 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 		if err != nil {
 			return nil, fmt.Errorf("failed to read source volume file status: %w", err)
 		}
-		if attempt == 0 {
-			t.expireAtSec = fileStatus.GetExpireAtSec()
-			if t.expireAtSec == 0 {
-				// Volume servers that predate the top-level field still carry the
-				// expiry in the nested .vif once SaveVolumeInfo has stamped it.
-				t.expireAtSec = fileStatus.GetVolumeInfo().GetExpireAtSec()
-			}
+		t.expireAtSec = fileStatus.GetExpireAtSec()
+		if t.expireAtSec == 0 {
+			// Volume servers that predate the top-level field still carry the
+			// expiry in the nested .vif once SaveVolumeInfo has stamped it.
+			t.expireAtSec = fileStatus.GetVolumeInfo().GetExpireAtSec()
 		}
 
 		t.GetLogger().WithFields(map[string]interface{}{
