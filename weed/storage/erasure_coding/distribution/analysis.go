@@ -53,9 +53,10 @@ func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
 }
 
 // rackKey qualifies a rack name with its data center: rack names are only
-// unique within a DC, so two DCs can both hold a "rack1".
+// unique within a DC, so two DCs can both hold a "rack1". NUL separates the
+// parts so a "/" inside either name cannot merge distinct racks.
 func rackKey(dc, rack string) string {
-	return dc + "/" + rack
+	return dc + "\x00" + rack
 }
 
 // Finalize computes topology statistics after all nodes and shards are added.

@@ -122,7 +122,7 @@ func TestTopologyAnalysis(t *testing.T) {
 	assert.Equal(t, 3, a.ShardsByDC["dc1"])
 	assert.Equal(t, 0, a.ShardsByDC["dc2"])
 	assert.Equal(t, []string{"r1"}, a.DCToRacks["dc1"])
-	assert.Equal(t, []int{0, 1, 2}, a.RackToShards["dc1/r1"])
+	assert.Equal(t, []int{0, 1, 2}, a.RackToShards[rackKey("dc1", "r1")])
 }
 
 // Shards may be registered either through TopologyNode.ShardIDs or through
@@ -150,8 +150,20 @@ func TestTopologyAnalysisSameRackNameAcrossDCs(t *testing.T) {
 
 	assert.Equal(t, 2, a.TotalDCs)
 	assert.Equal(t, 2, a.TotalRacks)
-	assert.Equal(t, 2, a.ShardsByRack["dc1/rack1"])
-	assert.Equal(t, 1, a.ShardsByRack["dc2/rack1"])
+	assert.Equal(t, 2, a.ShardsByRack[rackKey("dc1", "rack1")])
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("dc2", "rack1")])
+}
+
+// A "/" inside a data-center or rack name must not merge distinct racks.
+func TestTopologyAnalysisSlashInNames(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "a", "b/c", 5, 0))
+	a.AddNode(makeNode("n2", "a/b", "c", 5, 1))
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalRacks)
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("a", "b/c")])
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("a/b", "c")])
 }
 
 func TestPlanRebalanceAcrossDCs(t *testing.T) {
@@ -170,8 +182,8 @@ func TestPlanRebalanceAcrossDCs(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 7, plan.MovesAcrossDC)
-	assert.Equal(t, 7, a.ShardsByDC["dcA"])
-	assert.Equal(t, 7, a.ShardsByDC["dcB"])
+	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcA"])
+	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcB"])
 
 	// parity shards (10-13) move before data shards
 	assert.True(t, plan.Moves[0].ShardID >= 10)
@@ -191,8 +203,8 @@ func TestPlanRebalanceAcrossRacks(t *testing.T) {
 
 	assert.Equal(t, 2, plan.TotalMoves)
 	assert.Equal(t, 2, plan.MovesAcrossRack)
-	assert.Equal(t, 2, a.ShardsByRack["dc1/r1"])
-	assert.Equal(t, 2, a.ShardsByRack["dc1/r2"])
+	assert.Equal(t, 2, plan.Analysis.ShardsByRack[rackKey("dc1", "r1")])
+	assert.Equal(t, 2, plan.Analysis.ShardsByRack[rackKey("dc1", "r2")])
 	// parity-first ordering: shards 3 then 2 move out of r1
 	assert.Equal(t, 3, plan.Moves[0].ShardID)
 	assert.Equal(t, 2, plan.Moves[1].ShardID)
@@ -211,9 +223,9 @@ func TestPlanRebalanceWithinRack(t *testing.T) {
 
 	assert.Equal(t, 2, plan.TotalMoves)
 	assert.Equal(t, 2, plan.MovesWithinRack)
-	assert.Equal(t, 2, a.ShardsByNode["n1"])
-	assert.Equal(t, 2, a.ShardsByNode["n2"])
-	assert.Equal(t, []int{3, 2}, a.AllNodes["n2"].ShardIDs)
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{3, 2}, plan.Analysis.AllNodes["n2"].ShardIDs)
 }
 
 func TestPlanRebalanceRespectsFreeSlots(t *testing.T) {
@@ -226,9 +238,9 @@ func TestPlanRebalanceRespectsFreeSlots(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, plan.TotalMoves, "only one slot is free on the destination")
-	assert.Equal(t, 3, a.ShardsByNode["n1"])
-	assert.Equal(t, 1, a.ShardsByNode["n2"])
-	assert.Equal(t, 0, a.AllNodes["n2"].FreeSlots)
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, 0, plan.Analysis.AllNodes["n2"].FreeSlots)
 }
 
 func TestPlanRebalanceNoopWhenBalanced(t *testing.T) {
@@ -257,9 +269,9 @@ func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	require.NoError(t, err)
 
 	// n2 already holds 3, so the balancing move brings a different shard
-	assert.Equal(t, 3, a.ShardsByNode["n1"])
-	assert.Equal(t, 2, a.ShardsByNode["n2"])
-	assert.Equal(t, []int{3, 2}, a.AllNodes["n2"].ShardIDs)
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{3, 2}, plan.Analysis.AllNodes["n2"].ShardIDs)
 	for _, move := range plan.Moves {
 		assert.NotContains(t, move.DestNode.ShardIDs[:len(move.DestNode.ShardIDs)-1], move.ShardID,
 			"shard %d must not be moved onto a node already holding it", move.ShardID)
