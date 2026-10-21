@@ -382,3 +382,49 @@ func TestUpdateEntryConditionEnforced(t *testing.T) {
 		t.Fatalf("update not applied, mtime %d", got)
 	}
 }
+
+// The DeleteEntry handler enforces the precondition under the per-path lock: a
+// stale expected version fails with FailedPrecondition and the entry survives,
+// the stored version deletes it.
+func TestDeleteEntryConditionEnforced(t *testing.T) {
+	newServer := func() (*FilerServer, *renameTestStore) {
+		store := newRenameTestStore()
+		store.entries["/test/obj"] = &filer.Entry{
+			FullPath: "/test/obj",
+			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Atime: time.Unix(1700000000, 0), Mode: 0644, FileSize: 100},
+			Chunks:   []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 100}},
+		}
+		f := newRenameTestFiler(t, store)
+		return &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}, store
+	}
+
+	entryEqual := func(stored *filer.Entry) *filer_pb.WriteCondition {
+		return one(&filer_pb.WriteCondition_Clause{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: stored.ToProtoEntry(),
+		})
+	}
+	del := func(expected *filer.Entry) *filer_pb.DeleteEntryRequest {
+		return &filer_pb.DeleteEntryRequest{
+			Directory: "/test", Name: "obj",
+			Condition: entryEqual(expected),
+		}
+	}
+
+	fs, store := newServer()
+	stale := &filer.Entry{FullPath: "/test/obj", Attr: filer.Attr{Inode: 1, Mtime: time.Unix(1699999999, 0), Mode: 0644}}
+	if _, err := fs.DeleteEntry(context.Background(), del(stale)); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("stale expected entry: want FailedPrecondition, got %v", err)
+	}
+	if store.entries["/test/obj"] == nil {
+		t.Fatal("rejected delete must leave the entry")
+	}
+
+	fs, store = newServer()
+	if _, err := fs.DeleteEntry(context.Background(), del(store.entries["/test/obj"])); err != nil {
+		t.Fatalf("current entry should delete: %v", err)
+	}
+	if store.entries["/test/obj"] != nil {
+		t.Fatal("delete not applied")
+	}
+}

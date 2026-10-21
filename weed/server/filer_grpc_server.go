@@ -1041,13 +1041,59 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).InfofCtx(ctx, "DeleteEntry %v", req)
 
+	fullpath := util.JoinPath(req.Directory, req.Name)
+
+	// A conditional delete is a read-then-write that the per-path lock below
+	// only makes atomic on this filer. Route it to the entry's ring owner so
+	// one filer's lock arbitrates every writer cluster-wide; is_moved bounds
+	// this to one hop.
+	routed := conditionIsSet(req.Condition)
+	if !req.IsMoved && routed {
+		var ownerResp *filer_pb.DeleteEntryResponse
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(owner pb.ServerAddress) error {
+			glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
+			req.IsMoved = true
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				forwarded, e := client.DeleteEntry(ctx, req)
+				if e != nil {
+					return e
+				}
+				ownerResp = forwarded
+				return nil
+			})
+		})
+		if handled {
+			if forwardErr != nil {
+				return &filer_pb.DeleteEntryResponse{}, forwardErr
+			}
+			return ownerResp, nil
+		}
+	} else if req.IsMoved && routed {
+		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(util.FullPath(fullpath)))); err != nil {
+			return &filer_pb.DeleteEntryResponse{}, err
+		}
+	}
+
 	// A delete queues the entry's chunks for deletion, so it must not
 	// interleave with a conditional update's check-then-write on the same
 	// path: the update would pass its precondition and then resurrect fids
 	// that are already on the deletion queue.
-	fullpath := util.JoinPath(req.Directory, req.Name)
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
+	if conditionIsSet(req.Condition) {
+		current, findErr := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.DeleteEntryResponse{}, fmt.Errorf("DeleteEntry condition check %s: %w", fullpath, findErr)
+		}
+		if findErr == filer_pb.ErrNotFound {
+			current = nil
+		}
+		if !writeConditionSatisfied(req.Condition, current) {
+			glog.V(3).InfofCtx(ctx, "DeleteEntry %s: precondition failed: %v", fullpath, req.Condition)
+			return &filer_pb.DeleteEntryResponse{}, status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
+		}
+	}
 
 	if req.KeepRemoteObject {
 		ctx = filer.WithKeepRemoteObject(ctx)
