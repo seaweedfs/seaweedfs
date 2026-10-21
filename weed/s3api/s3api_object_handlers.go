@@ -536,7 +536,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 		contentLength = int64(entry.Attributes.FileSize)
 	}
 	statusCode := http.StatusOK
-	if r.Method == http.MethodHead && r.Header.Get("Range") != "" {
+	if r.Method == http.MethodHead && r.Header.Get("Range") != "" && requestedPartNumber(r) == 0 {
 		// A ranged HEAD reports the range like GET does: 206 with its Content-Range and length
 		totalSize := contentLength
 		offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
