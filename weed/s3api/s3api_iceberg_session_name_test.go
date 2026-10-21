@@ -2,11 +2,16 @@ package s3api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -49,4 +54,45 @@ func TestVendTableCredentialsReadsTheKeyFromTheContext(t *testing.T) {
 	ctx := s3_constants.SetAccessKeyIdInContext(context.Background(), sharedKeyA)
 	assert.Equal(t, sharedKeyA, s3_constants.AccessKeyIdFromContext(ctx))
 	assert.Equal(t, "", s3_constants.AccessKeyIdFromContext(context.Background()))
+}
+
+// VendTableCredentials mints a real session from the caller's key: the session
+// name ends with the key's tag and the token carries the key id.
+func TestVendTableCredentialsRecordsTheCallersKey(t *testing.T) {
+	mgr := newTestIAMManager(t)
+	require.NoError(t, mgr.CreateRole(context.Background(), "", "IcebergTableAccess", &integration.RoleDefinition{
+		RoleName: "IcebergTableAccess",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{{
+				Effect:    "Allow",
+				Principal: map[string]interface{}{"Federated": icebergVendedCredentialsProvider},
+				Action:    []string{"sts:AssumeRoleWithCredentials"},
+			}},
+		},
+	}))
+	iam := newSharedIdentityIAM()
+	iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+	s3a := &S3ApiServer{iam: iam}
+	s3a.SetIcebergCredentialRole("arn:aws:iam::role/IcebergTableAccess", 3600)
+
+	for _, key := range []string{sharedKeyA, sharedKeyB, ""} {
+		ctx := context.Background()
+		if key != "" {
+			// As the catalog's auth does: the holder is installed, the verifier records into it.
+			r := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/", nil))
+			s3_constants.RecordAccessKeyId(r.Context(), key)
+			ctx = r.Context()
+		}
+		creds, err := s3a.VendTableCredentials(ctx, "shared-user", "warehouse", "ns/t", false)
+		require.NoError(t, err)
+		require.NotNil(t, creds)
+		info, err := s3a.stsService().ValidateSessionToken(context.Background(), creds.SessionToken)
+		require.NoError(t, err)
+		assert.Equal(t, key, info.SourceAccessKeyId, "key %q", key)
+		assert.Equal(t, icebergSessionName("shared-user", "warehouse", "ns/t", key), info.SessionName, "key %q", key)
+		if key != "" {
+			assert.Contains(t, info.SessionName, icebergSessionKeyTag(key))
+		}
+	}
 }
