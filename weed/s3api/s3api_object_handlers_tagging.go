@@ -87,7 +87,11 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_TAGGING, entry.Extended, "GetObjectTaggingHandler"); errCode != s3err.ErrNone {
+	action := s3_constants.S3_ACTION_GET_OBJECT_TAGGING
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectTaggingHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
@@ -185,7 +189,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
-		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.S3_ACTION_PUT_OBJECT_TAGGING, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+		putAction := s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
+		if versionId != "" {
+			putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+		}
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, putAction, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
@@ -206,7 +214,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_PUT_OBJECT_TAGGING, entry.Extended, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+	putAction := s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
+	if versionId != "" {
+		putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, putAction, entry.Extended, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
@@ -313,7 +325,11 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
-		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+		deleteAction := s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
+		if versionId != "" {
+			deleteAction = s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+		}
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, deleteAction, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
@@ -335,7 +351,11 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING, entry.Extended, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+	deleteAction := s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
+	if versionId != "" {
+		deleteAction = s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, deleteAction, entry.Extended, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
