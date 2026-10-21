@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -358,6 +359,63 @@ func TestCopyObjectPartInlineContent(t *testing.T) {
 	var partEntry *filer_pb.Entry
 	for key, e := range filerImpl.entries {
 		if strings.Contains(key, "u1") {
+			partEntry = e
+		}
+	}
+	if partEntry == nil || len(partEntry.Chunks) == 0 {
+		t.Fatalf("no part entry with chunks stored: %+v", filerImpl.entries)
+	}
+	found := false
+	for _, stored := range volume.stored {
+		if bytes.Contains(stored, content[2:6]) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("destination volume does not hold the copied content bytes")
+	}
+}
+
+// The handler must route an inline-Content source away from the raw chunk
+// copy — CopyObjectPartHandler has to send it through the plaintext stream
+// path or the part lands as zeros.
+func TestCopyObjectPartHandlerInlineContent(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	util_http.InitGlobalHttpClient()
+
+	content := []byte("inline-content")
+	uploadID := s3a.generateUploadID("dst")
+	filerImpl.entries["/buckets/b"] = &filer_pb.Entry{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	filerImpl.entries["/buckets/b/src"] = &filer_pb.Entry{
+		Name:       "src",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Content:    content,
+	}
+	filerImpl.entries["/buckets/b/.uploads/"+uploadID] = &filer_pb.Entry{
+		Name:        uploadID,
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("dst")},
+	}
+
+	r := httptest.NewRequest(http.MethodPut, "/b/dst?partNumber=1&uploadId="+uploadID, nil)
+	r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dst"})
+	r.Header.Set("X-Amz-Copy-Source", "/b/src")
+	r.Header.Set("x-amz-copy-source-range", "bytes=2-5")
+	w := httptest.NewRecorder()
+	s3a.CopyObjectPartHandler(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CopyObjectPartHandler = %d %s, want 200", w.Code, w.Body.String())
+	}
+	wantMd5 := fmt.Sprintf("%x", md5.Sum(content[2:6]))
+	if !strings.Contains(w.Body.String(), wantMd5) {
+		t.Errorf("response %q does not contain copied-range ETag %q", w.Body.String(), wantMd5)
+	}
+	var partEntry *filer_pb.Entry
+	for key, e := range filerImpl.entries {
+		if strings.Contains(key, uploadID) && !e.IsDirectory {
 			partEntry = e
 		}
 	}
