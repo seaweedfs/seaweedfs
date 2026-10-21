@@ -397,7 +397,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		if cleanupErr := s.deleteMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
 			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after update failure: %v", newMetadataLocation, cleanupErr)
 		}
-		glog.Errorf("Iceberg: CommitTable UpdateTable error: %v", err)
+		logManagerError("CommitTable UpdateTable", err)
 		writeManagerError(w, err)
 		return
 	}

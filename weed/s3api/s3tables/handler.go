@@ -127,6 +127,10 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 
 	glog.V(3).Infof("S3Tables: handling operation %s", operation)
 
+	// the status the handler answers decides how its error is logged (logRequestError)
+	sw := &statusRecorder{ResponseWriter: w}
+	w = sw
+
 	var err error
 	switch operation {
 	// Table Bucket operations
@@ -223,9 +227,50 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if err != nil {
-		glog.Errorf("S3Tables: error handling %s: %v", operation, err)
+		logRequestError(operation, sw.status, err)
 	}
 }
+
+// A refusal the handler answered with a 4xx (access denied, not authorized,
+// not found, already exists, not empty) is the API working as intended, not a
+// server fault; it is logged at V(1). A 5xx, or an error returned without any
+// status written, stays at ERROR.
+var (
+	logClientRefusal = func(format string, args ...interface{}) { glog.V(1).Infof(format, args...) }
+	logServerError   = glog.Errorf
+)
+
+func logRequestError(operation string, status int, err error) {
+	if status >= 400 && status < 500 {
+		logClientRefusal("S3Tables: %s refused (%d): %v", operation, status, err)
+		return
+	}
+	logServerError("S3Tables: error handling %s: %v", operation, err)
+}
+
+// statusRecorder remembers the first status written through it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.NewResponseController reach the underlying writer, so it
+// flushes (or reports ErrNotSupported) exactly as that writer does.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // Principal/authorization helpers
 

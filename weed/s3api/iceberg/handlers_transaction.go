@@ -109,7 +109,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")
 				return
 			}
-			glog.Errorf("Iceberg: CommitTransaction UpdateTable error: %v", err)
+			logManagerError("CommitTransaction UpdateTable", err)
 			writeManagerError(w, err)
 			return
 		}
