@@ -944,8 +944,13 @@ func TestRequestObjectTagCondition(t *testing.T) {
 		{"last value of a repeated key counts", "", "", nil, "department=sales&department=engineering", PolicyResultAllow},
 		{"earlier value of a repeated key is ignored", "", "", nil, "department=engineering&department=sales", PolicyResultIndeterminate},
 		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header counts with an unrelated query parameter", "", "?foo=bar", nil, "department=engineering", PolicyResultAllow},
+		{"header counts on a Signature V2 presigned PUT", "", "?AWSAccessKeyId=k&Signature=s&Expires=1", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a renameObject subresource", "", "?renameObject", nil, "department=engineering", PolicyResultIndeterminate},
 		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "department=engineering", PolicyResultIndeterminate},
 		{"header counts on a copy that replaces tags", "", "", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a multipart copy that replaces tags", "", "?partNumber=1&uploadId=x", replaceHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy with a lone partNumber", "", "?partNumber=1", replaceHeaders, "department=engineering", PolicyResultAllow},
 		{"header counts on a multipart create", "POST", "?uploads", nil, "department=engineering", PolicyResultAllow},
 		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
 		{"header is ignored on multipart completion", "POST", "?uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
@@ -1015,19 +1020,21 @@ func TestRequestObjectTagConditionDeny(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		target   string
 		tagging  string
 		expected PolicyEvaluationResult
 	}{
-		{"required tag passes", "department=engineering", PolicyResultAllow},
-		{"other value is denied", "department=sales", PolicyResultDeny},
-		{"missing tag is denied", "project=alpha", PolicyResultDeny},
-		{"repeated key ending in another value is denied", "department=engineering&department=sales", PolicyResultDeny},
-		{"malformed header is denied", "department=engineering&%zz", PolicyResultDeny},
+		{"required tag passes", "", "department=engineering", PolicyResultAllow},
+		{"other value is denied", "", "department=sales", PolicyResultDeny},
+		{"missing tag is denied", "", "project=alpha", PolicyResultDeny},
+		{"repeated key ending in another value is denied", "", "department=engineering&department=sales", PolicyResultDeny},
+		{"malformed header is denied", "", "department=engineering&%zz", PolicyResultDeny},
+		{"unrelated query parameter does not hide the tag", "?foo=bar", "department=sales", PolicyResultDeny},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-object", nil)
+			req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-object"+tt.target, nil)
 			req.Header.Set(s3_constants.AmzObjectTagging, tt.tagging)
 
 			args := &PolicyEvaluationArgs{
