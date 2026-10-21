@@ -278,10 +278,12 @@ func (h *S3TablesHandler) handleListViews(w http.ResponseWriter, r *http.Request
 		bucketPath := GetTableBucketPath(bucketName)
 		var nsMeta namespaceMetadata
 		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &nsMeta); err != nil {
+		nsFound := err == nil
+		if nsFound {
+			if err := json.Unmarshal(data, &nsMeta); err != nil {
+				return err
+			}
+		} else if !absentEntry(err) {
 			return err
 		}
 
@@ -291,7 +293,11 @@ func (h *S3TablesHandler) handleListViews(w http.ResponseWriter, r *http.Request
 		}
 		bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 		if !h.authorizeViewOp(r, "ListViews", h.getAccountID(r), nsMeta.OwnerAccountID, bucketMeta.OwnerAccountID, namespacePolicy, bucketPolicy, bucketARN, bucketName, namespaceName, "", bucketTags) {
-			return ErrAccessDenied
+			// An empty list would reveal the namespace is absent; only a
+			// caller that may learn absence proceeds to it.
+			if nsFound || !h.mayLearnAbsence(r, "ListViews", bucketName) {
+				return ErrAccessDenied
+			}
 		}
 
 		views, paginationToken, err = h.listViewsInNamespace(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxViews)
@@ -637,25 +643,27 @@ func (h *S3TablesHandler) loadAuthContext(r *http.Request, filerClient FilerClie
 			if e := json.Unmarshal(data, &bucketMetadata); e != nil {
 				return fmt.Errorf("failed to unmarshal bucket metadata: %w", e)
 			}
-		} else if !errors.Is(e, ErrAttributeNotFound) {
+		} else if !absentEntry(e) {
 			return fmt.Errorf("failed to fetch bucket metadata: %w", e)
 		}
 
 		policyData, e := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyPolicy)
 		if e == nil {
 			resourcePolicy = string(policyData)
-		} else if !errors.Is(e, ErrAttributeNotFound) {
+		} else if !absentEntry(e) {
 			return fmt.Errorf("failed to fetch resource policy: %w", e)
 		}
 
 		policyData, e = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 		if e == nil {
 			bucketPolicy = string(policyData)
-		} else if !errors.Is(e, ErrAttributeNotFound) {
+		} else if !absentEntry(e) {
 			return fmt.Errorf("failed to fetch bucket policy: %w", e)
 		}
 		if tags, e := h.readTags(r.Context(), client, bucketPath); e != nil {
-			return e
+			if !absentEntry(e) {
+				return e
+			}
 		} else if tags != nil {
 			bucketTags = tags
 		}
