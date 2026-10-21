@@ -481,3 +481,52 @@ func TestVacuumStalledVolumeServerReleasesGuard(t *testing.T) {
 		})
 	}
 }
+
+// A replica tiered to remote storage is never compacted by a vacuum, not even
+// on an explicit request with a zero threshold: its .dat is the remote object.
+// volume.tier.compact is the way to reclaim its garbage.
+func TestVacuumSkipsTieredReplica(t *testing.T) {
+	fake := &fakeVacuumServer{
+		checks: map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{
+			1: {GarbageRatio: 0.9},
+			2: {GarbageRatio: 0.9},
+		},
+	}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn", map[string]uint32{"": 10})
+	newVolumeInfo := func(vid needle.VolumeId, remote string) storage.VolumeInfo {
+		return storage.VolumeInfo{
+			Id:                vid,
+			Size:              1 << 20,
+			Collection:        "c",
+			ReadOnly:          remote != "",
+			ModifiedAtSecond:  time.Now().Unix(),
+			Version:           needle.GetCurrentVersion(),
+			ReplicaPlacement:  &super_block.ReplicaPlacement{},
+			Ttl:               needle.EMPTY_TTL,
+			RemoteStorageName: remote,
+		}
+	}
+	vl := topo.GetVolumeLayout("c", &super_block.ReplicaPlacement{}, needle.EMPTY_TTL, types.ToDiskType(""))
+	volumes := []storage.VolumeInfo{newVolumeInfo(1, "s3.default"), newVolumeInfo(2, "")}
+	dn.UpdateVolumes(volumes)
+	for _, v := range volumes {
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	c := NewCollection("c", topo.volumeSizeLimit, false)
+	for _, vid := range []needle.VolumeId{1, 2} {
+		vl.accessLock.RLock()
+		ll := vl.vid2location[vid].Copy()
+		vl.accessLock.RUnlock()
+		topo.vacuumOneVolumeId(dialOption, vl, c, 0, ll, vid, 0, false)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.committed) != 1 || fake.committed[0] != 2 {
+		t.Fatalf("committed %v, want only the local volume 2", fake.committed) // volume 2 is the positive control
+	}
+}

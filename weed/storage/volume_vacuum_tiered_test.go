@@ -30,7 +30,8 @@ func TestCompactRefusesTieredVolume(t *testing.T) {
 		_, err := v.deleteNeedle2(newRandomNeedle(uint64(i)))
 		require.NoError(t, err)
 	}
-	require.Greater(t, v.garbageLevel(), 0.3, "precondition: a ratio a vacuum would select")
+	garbage := v.garbageLevel()
+	require.Greater(t, garbage, 0.0, "precondition: the deletes left garbage")
 
 	require.ErrorContains(t, v.CompactByIndex(nil), "tiered")
 	require.ErrorContains(t, v.CompactByVolumeData(nil), "tiered")
@@ -42,17 +43,25 @@ func TestCompactRefusesTieredVolume(t *testing.T) {
 	s := &Store{Locations: []*DiskLocation{loc}}
 	ratio, _, err := s.CheckCompactVolume(vid)
 	require.NoError(t, err)
-	require.Zero(t, ratio, "a tiered volume reports nothing to reclaim")
+	// volume.tier.compact reads this ratio while the volume is still remote to
+	// decide whether to download and compact it; vacuum selection skips tiered
+	// volumes by their remote storage name instead.
+	require.Equal(t, garbage, ratio, "a tiered volume reports its real garbage ratio")
 }
 
 // A volume tiered while its compaction copy ran (keeping the local .dat) must
 // not commit: the reload would read the remote object, which has the old
 // layout, through the compacted index.
 func TestCommitCompactRefusesVolumeTieredDuringCopy(t *testing.T) {
+	t.Run("memory", func(t *testing.T) { testCommitCompactRefusesVolumeTieredDuringCopy(t, NeedleMapInMemory) })
+	t.Run("leveldb", func(t *testing.T) { testCommitCompactRefusesVolumeTieredDuringCopy(t, NeedleMapLevelDb) })
+}
+
+func testCommitCompactRefusesVolumeTieredDuringCopy(t *testing.T, kind NeedleMapKind) {
 	b := newLocalDirBackend(t)
 	registerTestBackend(t, b)
 	dir := t.TempDir()
-	v, err := NewVolume(dir, dir, "", 35, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := NewVolume(dir, dir, "", 35, kind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	require.NoError(t, err)
 	defer v.Close()
 
@@ -70,6 +79,10 @@ func TestCommitCompactRefusesVolumeTieredDuringCopy(t *testing.T) {
 	}
 	require.NoError(t, v.CompactByIndex(nil))
 	require.True(t, util.FileExists(v.FileName(".cpd")))
+	require.NotNil(t, v.tmpNm, "precondition: the copy left its temporary needle map")
+	if kind == NeedleMapLevelDb {
+		require.True(t, util.FileExists(v.FileName(".cpldb")), "precondition: the copy left its temporary LevelDB")
+	}
 
 	// tier the volume up, keeping the local .dat
 	diskFile, ok := v.DataBackend.(*backend.DiskFile)
@@ -87,6 +100,8 @@ func TestCommitCompactRefusesVolumeTieredDuringCopy(t *testing.T) {
 	require.ErrorContains(t, v.CommitCompact(), "tiered")
 	require.False(t, util.FileExists(v.FileName(".cpd")))
 	require.False(t, util.FileExists(v.FileName(".cpx")))
+	require.False(t, util.FileExists(v.FileName(".cpldb")), "the temporary LevelDB is left on disk")
+	require.Nil(t, v.tmpNm, "the temporary needle map is kept")
 	for i := uint64(4); i <= 6; i++ {
 		got := &needle.Needle{Id: types.Uint64ToNeedleId(i), Cookie: 7}
 		_, err := v.readNeedle(got, nil, nil)

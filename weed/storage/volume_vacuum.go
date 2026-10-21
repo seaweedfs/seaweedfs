@@ -199,9 +199,14 @@ func (v *Volume) CommitCompact() error {
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
 	if v.HasRemoteFile() {
 		// The volume was tiered after the copy started: the reload would read
-		// the remote object through the compacted index. Drop the copy.
-		for _, ext := range []string{".cpd", ".cpx"} {
-			if e := os.Remove(v.FileName(ext)); e != nil && !os.IsNotExist(e) {
+		// the remote object through the compacted index. Drop the copy and its
+		// temporary needle map; no later vacuum of this volume would.
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+		for _, ext := range []string{".cpd", ".cpx", ".cpldb"} {
+			if e := os.RemoveAll(v.FileName(ext)); e != nil {
 				glog.V(0).Infof("remove %s: %v", v.FileName(ext), e)
 			}
 		}
