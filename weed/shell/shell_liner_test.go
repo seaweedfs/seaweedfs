@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeCommand struct {
@@ -41,6 +42,24 @@ func TestProcessEachCmdReturnsErrors(t *testing.T) {
 	exit, err = processEachCmd("   ", nil)
 	if exit || err != nil {
 		t.Errorf("blank input must be a no-op, got exit=%v err=%v", exit, err)
+	}
+}
+
+func TestRunShellConnectTimeout(t *testing.T) {
+	masters := "127.0.0.1:1"
+	filerGroup := ""
+
+	start := time.Now()
+	err := RunShell(ShellOptions{
+		Masters:        &masters,
+		FilerGroup:     &filerGroup,
+		ConnectTimeout: 200 * time.Millisecond,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot connect to master") {
+		t.Fatalf("expected a master connection timeout, got: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("RunShell should give up near the connect timeout, took %v", elapsed)
 	}
 }
 
