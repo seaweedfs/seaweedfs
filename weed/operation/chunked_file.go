@@ -118,7 +118,7 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 	case http.StatusPartialContent:
 		break
 	default:
-		return written, fmt.Errorf("Read chunk needle error: [%d] %s", resp.StatusCode, fileUrl)
+		return written, util_http.StatusError(fileUrl, resp)
 
 	}
 	return io.Copy(w, resp.Body)
