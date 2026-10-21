@@ -159,21 +159,57 @@ func TestImplicitUserNameUsesVerifiedIdentity(t *testing.T) {
 	mac.Write([]byte(sts))
 	sig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	q := url.Values{"AWSAccessKeyId": {"AKIAIOSFODNN7EXAMPLE"}, "Expires": {expires}, "Signature": {sig}}
+
+	post := func(t *testing.T, body string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/?"+q.Encode(), strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIATESTFAKEADMIN0001/20261021/us-east-1/iam/aws4_request, SignedHeaders=host, Signature=00")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		t.Logf("%d %s", resp.StatusCode, b)
+		return resp.StatusCode, string(b)
+	}
+
 	for _, action := range []string{"ListAccessKeys", "CreateAccessKey", "GetUser"} {
 		t.Run(action, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodPost, server.URL+"/?"+q.Encode(), strings.NewReader("Action="+action+"&Version=2010-05-08"))
-			require.NoError(t, err)
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIATESTFAKEADMIN0001/20261021/us-east-1/iam/aws4_request, SignedHeaders=host, Signature=00")
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			defer resp.Body.Close()
-			body, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			t.Logf("%s: %d %s", action, resp.StatusCode, body)
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.NotContains(t, string(body), "iam_admin")
-			assert.Contains(t, string(body), "power_user")
+			code, body := post(t, "Action="+action+"&Version=2010-05-08")
+			assert.Equal(t, http.StatusOK, code)
+			assert.NotContains(t, body, "iam_admin")
+			assert.Contains(t, body, "power_user")
 		})
 	}
+
+	// ListUserPolicies is not self-service: a caller without IAM rights is
+	// denied whichever name the implicit resolution lands on.
+	t.Run("ListUserPolicies", func(t *testing.T) {
+		code, body := post(t, "Action=ListUserPolicies&Version=2010-05-08")
+		assert.Equal(t, http.StatusForbidden, code)
+		assert.NotContains(t, body, "iam_admin")
+	})
+
+	// A write aimed at the header-named admin's key resolves to the verified
+	// caller instead: the key is not power_user's, so it is not found.
+	t.Run("UpdateAccessKey", func(t *testing.T) {
+		code, body := post(t, "Action=UpdateAccessKey&AccessKeyId=AKIATESTFAKEADMIN0001&Status=Inactive&Version=2010-05-08")
+		assert.Equal(t, http.StatusNotFound, code)
+		assert.Contains(t, body, "NoSuchEntity")
+	})
+
+	t.Run("DeleteAccessKey", func(t *testing.T) {
+		code, _ := post(t, "Action=DeleteAccessKey&AccessKeyId=AKIATESTFAKEADMIN0001&Version=2010-05-08")
+		assert.Equal(t, http.StatusOK, code)
+	})
+
+	// The admin key the junk header named is untouched: still present and active.
+	resp := postSignedIamAction(t, server.URL, "AKIATESTFAKEADMIN0001", "testAdminSecretFake0000000000000000000000",
+		"", "Action=ListAccessKeys&Version=2010-05-08")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "AKIATESTFAKEADMIN0001")
+	assert.Contains(t, string(body), "<Status>Active</Status>")
 }
