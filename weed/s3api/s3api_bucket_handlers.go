@@ -766,8 +766,12 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		} else if exist {
 			entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket)
 			if getErr == nil && concurrentEntryIsForeign(entry, nil) {
-				// A table bucket carries no S3 owner and must not gain one.
-				return nil
+				// A table bucket carries no S3 owner and must not gain one —
+				// or a write intended for a missing plain bucket.
+				if s3a.bucketConfigCache != nil {
+					s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+				}
+				return fmt.Errorf("auto-create bucket %s: name taken by a table bucket: %w", bucket, err)
 			}
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
