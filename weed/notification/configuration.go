@@ -26,7 +26,7 @@ func LoadConfiguration(config *util.ViperProxy, prefix string) {
 		return
 	}
 
-	validateOneEnabledQueue(config)
+	validateOneEnabledQueue(config, prefix)
 
 	for _, queue := range MessageQueues {
 		if config.GetBool(prefix + queue.GetName() + ".enabled") {
@@ -42,10 +42,10 @@ func LoadConfiguration(config *util.ViperProxy, prefix string) {
 
 }
 
-func validateOneEnabledQueue(config *util.ViperProxy) {
+func validateOneEnabledQueue(config *util.ViperProxy, prefix string) {
 	enabledQueue := ""
 	for _, queue := range MessageQueues {
-		if config.GetBool(queue.GetName() + ".enabled") {
+		if config.GetBool(prefix + queue.GetName() + ".enabled") {
 			if enabledQueue == "" {
 				enabledQueue = queue.GetName()
 			} else {
