@@ -51,6 +51,11 @@ var (
 // S3 gateway, whose remote-mount read paths dial the mounted endpoint directly.
 const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only entry accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints."
 
+// allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
+// object-key character instead of normalizing it to '/'. Repeated '//' in a
+// key still collapses: a filer entry name cannot contain an empty segment.
+const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
+
 type FilerOptions struct {
 	masters                   *pb.ServerDiscovery
 	mastersString             *string
@@ -173,6 +178,7 @@ func init() {
 	filerS3Options.cacheSizeMB = cmdFiler.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	filerS3Options.readerCacheSizeMB = cmdFiler.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
