@@ -356,6 +356,7 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 | `aws:SecureTransport` | Require HTTPS |
 | `aws:CurrentTime` | Time-based access control |
 | `s3:ExistingObjectTag/<key>` | Tag-based access control for existing objects |
+| `s3:RequestObjectTag/<key>` | Tag conditions on the tags a PUT request sets |
 | Wildcard Patterns | Support for `*` and `?` in actions and resources |
 | Principal Matching | `*`, account IDs, and user ARNs |
 
@@ -363,7 +364,6 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 
 | Feature | GitHub Issue |
 |---------|--------------|
-| `s3:RequestObjectTag/<key>` | For tag conditions on PUT requests |
 | `s3:RequestObjectTagKeys` | Check which tag keys are in request |
 | `s3:x-amz-content-sha256` | Content hash condition |
 | `s3:x-amz-server-side-encryption` | SSE condition |

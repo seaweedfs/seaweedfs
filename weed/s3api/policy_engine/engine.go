@@ -3,6 +3,7 @@ package policy_engine
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -439,6 +441,10 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
 	// passed to EvaluatePolicy, not extracted from the request.
 
+	for key, value := range requestObjectTags(r) {
+		values[RequestObjectTagPrefix+key] = []string{value}
+	}
+
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
 		values["s3:delimiter"] = []string{delimiter}
@@ -494,6 +500,35 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	}
 
 	return values
+}
+
+// requestObjectTags returns the tags that X-Amz-Tagging will store on the
+// object, or nil when the handler takes its tags from somewhere else.
+func requestObjectTags(r *http.Request) map[string]string {
+	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
+	if tagging == "" {
+		return nil
+	}
+	// PutObjectTagging reads the tags from the body, and a copy keeps the
+	// source's tags unless the directive is REPLACE.
+	if r.URL.Query().Has("tagging") {
+		return nil
+	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" && r.Header.Get(s3_constants.AmzObjectTaggingDirective) != "REPLACE" {
+		return nil
+	}
+	// A malformed header is rejected by the handler with InvalidTag.
+	parsed, err := url.ParseQuery(tagging)
+	if err != nil {
+		return nil
+	}
+	// putToFiler rejects a repeated key, but CopyObject stores its last
+	// value, so that is the one the policy has to see.
+	tags := make(map[string]string, len(parsed))
+	for key, vals := range parsed {
+		tags[key] = vals[len(vals)-1]
+	}
+	return tags
 }
 
 // IsMultipartContinuationAction returns true for actions that do not carry
