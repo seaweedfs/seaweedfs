@@ -210,7 +210,8 @@ func (l *lineageLayout) mapperFor(input *parquet.Schema, src lineageSource) (*li
 			next++
 			continue
 		}
-		if base >= len(l.baseFields) || f.Name() != l.baseFields[base].Name() || !parquet.EqualNodes(f, l.baseFields[base]) {
+		if base >= len(l.baseFields) || f.Name() != l.baseFields[base].Name() || !parquet.EqualNodes(f, l.baseFields[base]) ||
+			!fieldIDsAgree(f, l.baseFields[base]) {
 			return nil, fmt.Errorf("cannot merge files with different schemas")
 		}
 		for i := 0; i < n; i++ {

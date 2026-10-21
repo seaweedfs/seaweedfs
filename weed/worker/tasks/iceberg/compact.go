@@ -962,7 +962,7 @@ func readEqualityDeleteFile(
 	reader := parquet.NewReader(bytes.NewReader(data))
 	defer reader.Close()
 
-	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema)
+	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolve columns in %s: %w", filePath, err)
 	}
@@ -993,24 +993,37 @@ func readEqualityDeleteFile(
 // buildEqualityKey builds a composite string key from specific column values
 // in a row. Each value is serialized as "kind:length:value" to avoid ambiguity
 // between types (e.g., int 123 vs string "123") and to prevent collisions from
-// values containing separator characters.
+// values containing separator characters. A negative column index is a field
+// the file lacks: the value there is null.
 func buildEqualityKey(row parquet.Row, colIndices []int) string {
 	if len(colIndices) == 1 {
-		v := row[colIndices[0]]
+		v := equalityKeyValue(row, colIndices[0])
 		s := v.String()
 		return fmt.Sprintf("%d:%d:%s", v.Kind(), len(s), s)
 	}
 	var b strings.Builder
 	for _, idx := range colIndices {
-		v := row[idx]
+		v := equalityKeyValue(row, idx)
 		s := v.String()
 		fmt.Fprintf(&b, "%d:%d:%s", v.Kind(), len(s), s)
 	}
 	return b.String()
 }
 
+func equalityKeyValue(row parquet.Row, idx int) parquet.Value {
+	if idx < 0 {
+		return parquet.NullValue()
+	}
+	return row[idx]
+}
+
 // resolveEqualityColIndices maps Iceberg field IDs to Parquet column indices.
-func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema) ([]int, error) {
+// A file carrying field ids resolves by id, so a column renamed since the
+// file was written still matches; one without ids falls back to the Iceberg
+// name. allowMissing reads a column the file lacks as null (-1 marks it in
+// the key): for data files only — an equality-delete file always carries
+// its equality columns, so a missing one stays an error there.
+func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema, allowMissing bool) ([]int, error) {
 	if len(fieldIDs) == 0 {
 		return nil, nil
 	}
@@ -1019,6 +1032,14 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 	for i, col := range pqSchema.Columns() {
 		colNameToIdx[strings.Join(col, ".")] = i
 	}
+	idToIdx := make(map[int]int)
+	for _, f := range pqSchema.Fields() {
+		if f.Leaf() && f.ID() > 0 {
+			if idx, ok := colNameToIdx[f.Name()]; ok {
+				idToIdx[f.ID()] = idx
+			}
+		}
+	}
 
 	indices := make([]int, len(fieldIDs))
 	for i, fid := range fieldIDs {
@@ -1026,8 +1047,17 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 		if !ok {
 			return nil, fmt.Errorf("field ID %d not found in iceberg schema", fid)
 		}
-		idx, ok := colNameToIdx[field.Name]
+		idx, ok := idToIdx[fid]
+		if !ok && len(idToIdx) == 0 {
+			idx, ok = colNameToIdx[field.Name]
+		}
 		if !ok {
+			// An optional column added to the table after this file was
+			// written reads as null there (-1 marks it in the key).
+			if allowMissing && !field.Required {
+				indices[i] = -1
+				continue
+			}
 			return nil, fmt.Errorf("column %q (field ID %d) not found in parquet schema", field.Name, fid)
 		}
 		indices[i] = idx
@@ -1090,6 +1120,86 @@ func mergeParquetFiles(
 	rowGroupRows int64,
 	lineage bool,
 ) ([]byte, int64, error) {
+	// On a v1/v2 table the writer's schema is chosen before any row is
+	// written: the union of the bin's file schemas by field id, so a bin of
+	// progressively wider files merges in one pass instead of restarting
+	// (and rewriting every earlier file) on each wider one. The v3 merge
+	// keeps the first file's columns plus the lineage columns.
+	var target *parquet.Schema
+	if !lineage {
+		var err error
+		if target, err = binWriterSchema(ctx, filerClient, bucketName, dataPath, entries); err != nil {
+			return nil, 0, err
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		out, rows, err := mergeParquetFilesInto(ctx, filerClient, bucketName, dataPath, entries, positionDeletes,
+			eqDeleteGroups, icebergSchema, rowGroupRows, lineage, target)
+		var wider *widerSchemaError
+		if errors.As(err, &wider) && attempt < len(entries) {
+			target = wider.schema
+			continue
+		}
+		return out, rows, err
+	}
+}
+
+// binWriterSchema is the writer schema for a v1/v2 bin-pack merge: the union
+// of the files' schemas by field id. Only each file's footer is read to learn
+// its schema; the merge then downloads each file once. Files whose schemas
+// cannot union (no field ids, nested or repeated columns, a field id or name
+// carrying different types) merge only under the old rule — every file's
+// schema equal to the first — and the bin is refused as before otherwise.
+func binWriterSchema(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+) (*parquet.Schema, error) {
+	var union schemaUnion
+	var first *parquet.Schema
+	unionable, allEqual := true, true
+	for _, entry := range entries {
+		source := entry.DataFile().FilePath()
+		schema, err := parquetSchemaByIcebergPath(ctx, filerClient, bucketName, dataPath, source)
+		if err != nil {
+			return nil, fmt.Errorf("schema of %s: %w", source, err)
+		}
+		if schema == nil {
+			return nil, fmt.Errorf("no parquet schema found in %s", source)
+		}
+		if first == nil {
+			first = schema
+		} else if !schemasEqual(first, schema) {
+			allEqual = false
+		}
+		if unionable {
+			unionable = union.fold(schema, source) == nil
+		}
+		if !unionable && !allEqual {
+			return nil, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", source)
+		}
+	}
+	if !unionable || first == nil {
+		return nil, nil // every file spells the first file's schema
+	}
+	return union.schema(first.Name(), first), nil
+}
+
+// mergeParquetFilesInto merges with target as the writer's schema on a v1/v2
+// table (nil: the first file's).
+func mergeParquetFilesInto(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+	positionDeletes map[string][]int64,
+	eqDeleteGroups []equalityDeleteGroup,
+	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
+	lineage bool,
+	target *parquet.Schema,
+) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
 	}
@@ -1122,6 +1232,30 @@ func mergeParquetFiles(
 			return nil, 0, fmt.Errorf("schema of %s: %w", entries[0].DataFile().FilePath(), err)
 		}
 		outputSchema = layout.schema
+	} else if target != nil {
+		outputSchema = target
+	}
+
+	// joins is how one file enters the merge on a v1/v2 table: converted into
+	// the writer's schema when that covers it, with its equality-delete
+	// columns resolved on its own schema.
+	joins := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (parquet.Conversion, []resolvedEqDeleteGroup, error) {
+		if layout != nil {
+			return nil, resolvedEqGroups, nil // a v3 merge matches files with their lineage columns set aside
+		}
+		source := entry.DataFile().FilePath()
+		conv, err := evolvedFileConversion(outputSchema, reader.Schema(), source)
+		if err != nil {
+			return nil, nil, err
+		}
+		if schemasEqual(parquetSchema, reader.Schema()) {
+			return conv, resolvedEqGroups, nil
+		}
+		groups, err := resolveEqualityDeleteGroupsForSchema(reader.Schema(), eqDeleteGroups, icebergSchema)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve equality columns in %s: %w", source, err)
+		}
+		return conv, groups, nil
 	}
 
 	var outputBuf bytes.Buffer
@@ -1129,7 +1263,17 @@ func mergeParquetFiles(
 
 	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
 		source := entry.DataFile().FilePath()
-		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, resolvedEqGroups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
+		conv, groups, err := joins(reader, entry)
+		if err != nil {
+			reader.Close()
+			return 0, err
+		}
+		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, groups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
+			if conv != nil {
+				if _, err := conv.Convert(filtered); err != nil {
+					return fmt.Errorf("convert rows from %s: %w", source, err)
+				}
+			}
 			if _, err := writer.WriteRows(filtered); err != nil {
 				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
@@ -1161,13 +1305,6 @@ func mergeParquetFiles(
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
-		// A v3 merge matches files with their lineage columns set aside.
-		if layout == nil && !schemasEqual(parquetSchema, reader.Schema()) {
-			reader.Close()
-			writer.Close()
-			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
-		}
-
 		rowsWritten, err := drainReader(reader, entry)
 		if err != nil {
 			writer.Close()
@@ -1200,7 +1337,7 @@ func resolveEqualityDeleteGroupsForSchema(
 
 	resolved := make([]resolvedEqDeleteGroup, 0, len(eqDeleteGroups))
 	for _, g := range eqDeleteGroups {
-		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
+		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema, true)
 		if err != nil {
 			return nil, err
 		}
@@ -1429,7 +1566,8 @@ func compactRandomSuffix() string {
 	return hex.EncodeToString(b)
 }
 
-// schemasEqual compares two parquet schemas structurally.
+// schemasEqual compares two parquet schemas structurally, and their Iceberg
+// field ids wherever both carry them.
 func schemasEqual(a, b *parquet.Schema) bool {
 	if a == b {
 		return true
@@ -1437,7 +1575,32 @@ func schemasEqual(a, b *parquet.Schema) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return parquet.EqualNodes(a, b)
+	return parquet.EqualNodes(a, b) && fieldIDsAgree(a, b)
+}
+
+// fieldIDsAgree reports whether two structurally equal nodes carry the same
+// Iceberg field id at every position where both carry one. parquet-go's
+// EqualNodes ignores field ids, so a column dropped and re-added under the
+// same name and type (a new field id) looked like the old one, and a merge
+// filed the old values under the new field, or the live values under the
+// dropped one.
+func fieldIDsAgree(a, b parquet.Node) bool {
+	if a.ID() > 0 && b.ID() > 0 && a.ID() != b.ID() {
+		return false
+	}
+	if a.Leaf() || b.Leaf() {
+		return a.Leaf() == b.Leaf()
+	}
+	fa, fb := a.Fields(), b.Fields()
+	if len(fa) != len(fb) {
+		return false
+	}
+	for i := range fa {
+		if fa[i].Name() != fb[i].Name() || !fieldIDsAgree(fa[i], fb[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureFilerDir ensures a directory exists in the filer.
