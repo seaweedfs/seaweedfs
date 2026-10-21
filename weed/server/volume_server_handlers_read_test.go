@@ -1,10 +1,30 @@
 package weed_server
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestInternalErrorWritesTheReadError(t *testing.T) {
+	readErr := errors.New("invalid CRC for needle 2a (got 0a1b2c3d, want 4e5f6071), data on disk corrupted: needle data corrupted")
+	w := httptest.NewRecorder()
+	InternalError(w, httptest.NewRequest(http.MethodGet, "/1,abc", nil), readErr)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", w.Code)
+	}
+	if body := strings.TrimSpace(w.Body.String()); body != `{"error":"`+readErr.Error()+`"}` {
+		t.Fatalf("body %q", body)
+	}
+
+	w = httptest.NewRecorder()
+	InternalError(w, httptest.NewRequest(http.MethodGet, "/1,abc", nil), nil)
+	if w.Code != http.StatusInternalServerError || w.Body.Len() != 0 {
+		t.Fatalf("without an error: status %d body %q, want a bare 500", w.Code, w.Body.String())
+	}
+}
 
 // A HEAD only attempts a metadata-only read, like a GET: a needle up to
 // PagedReadLimit is read whole. Demanding metadata only would turn that one

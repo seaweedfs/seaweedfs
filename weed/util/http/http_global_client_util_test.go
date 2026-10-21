@@ -92,6 +92,49 @@ func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	}
 }
 
+func TestReadErrorsCarryTheServerMessage(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"invalid CRC for needle 2a (got 0a1b2c3d, want 4e5f6071), data on disk corrupted: needle data corrupted"}`))
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error: invalid CRC for needle 2a (got 0a1b2c3d, want 4e5f6071), data on disk corrupted: needle data corrupted"
+
+	if _, err := ReadUrl(context.Background(), server.URL, nil, false, true, 0, 0, make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("ReadUrl: got %v, want %q", err, want)
+	}
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
+	}
+	if _, _, err := ReadUrlAsReaderCloser(server.URL, "", ""); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsReaderCloser: got %v, want %q", err, want)
+	}
+	if _, _, err := readUrlDirectToBuffer(context.Background(), server.URL, "", make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("readUrlDirectToBuffer: got %v, want %q", err, want)
+	}
+	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {
+		t.Errorf("GetAuthenticated: got %v, want %q", err, want)
+	}
+}
+
+func TestReadErrorWithoutBodyIsTheStatus(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error"
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("got %v, want %q", err, want)
+	}
+}
+
 func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
