@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,4 +75,35 @@ func TestMarkTieredDeletableRefusesAVolumePastIoErrorTolerance(t *testing.T) {
 	v.clearIoError() // positive control: below the tolerance it is made deletable
 	require.True(t, v.MarkTieredDeletable())
 	require.False(t, v.noWriteOrDelete)
+}
+
+// DeleteVolumeNeedle reads the read-only flags under noWriteLock, so a delete
+// that races the tier upload's flag change is not a data race (run with -race).
+func TestDeleteVolumeNeedleRacesMarkTieredDeletable(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	v, _ := tierUpVolumeLive(t, t.TempDir(), 85, b)
+	defer v.Close()
+	v.noWriteOrDelete = true
+	location := newTestLocation(10, false, 0)
+	location.SetVolume(85, v)
+	s := &Store{Locations: []*DiskLocation{location}}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			v.MarkTieredDeletable()
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		_, _ = s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1000)})
+	}
+	<-done
+
+	// Positive control: once deletable, a delete of a live needle goes through.
+	size, err := s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1)})
+	require.NoError(t, err)
+	require.NotZero(t, size)
 }
