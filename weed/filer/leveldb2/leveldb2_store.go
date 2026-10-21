@@ -28,6 +28,11 @@ type LevelDB2Store struct {
 	dbs      []*leveldb.DB
 	dbCount  int
 	ReadOnly bool
+
+	blockCacheSizeMB      int
+	writeBufferSizeMB     int
+	blockSizeKB           int
+	compactionTableSizeMB int
 }
 
 func (store *LevelDB2Store) GetName() string {
@@ -36,7 +41,33 @@ func (store *LevelDB2Store) GetName() string {
 
 func (store *LevelDB2Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
 	dir := configuration.GetString(prefix + "dir")
+	store.blockCacheSizeMB = configuration.GetInt(prefix + "block_cache_size_mb")
+	store.writeBufferSizeMB = configuration.GetInt(prefix + "write_buffer_size_mb")
+	store.blockSizeKB = configuration.GetInt(prefix + "block_size_kb")
+	store.compactionTableSizeMB = configuration.GetInt(prefix + "compaction_table_size_mb")
 	return store.initialize(dir, 8)
+}
+
+func (store *LevelDB2Store) buildOptions() *opt.Options {
+	opts := &opt.Options{
+		BlockCacheCapacity: 32 * 1024 * 1024,         // default value is 8MiB
+		WriteBuffer:        16 * 1024 * 1024,         // default value is 4MiB
+		Filter:             filter.NewBloomFilter(8), // false positive rate 0.02
+		ReadOnly:           store.ReadOnly,
+	}
+	if store.blockCacheSizeMB > 0 {
+		opts.BlockCacheCapacity = store.blockCacheSizeMB * 1024 * 1024
+	}
+	if store.writeBufferSizeMB > 0 {
+		opts.WriteBuffer = store.writeBufferSizeMB * 1024 * 1024
+	}
+	if store.blockSizeKB > 0 {
+		opts.BlockSize = store.blockSizeKB * 1024
+	}
+	if store.compactionTableSizeMB > 0 {
+		opts.CompactionTableSize = store.compactionTableSizeMB * 1024 * 1024
+	}
+	return opts
 }
 
 func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
@@ -46,12 +77,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
 
-	opts := &opt.Options{
-		BlockCacheCapacity: 32 * 1024 * 1024,         // default value is 8MiB
-		WriteBuffer:        16 * 1024 * 1024,         // default value is 4MiB
-		Filter:             filter.NewBloomFilter(8), // false positive rate 0.02
-		ReadOnly:           store.ReadOnly,
-	}
+	opts := store.buildOptions()
 
 	for d := 0; d < dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
