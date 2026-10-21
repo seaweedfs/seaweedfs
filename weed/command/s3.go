@@ -337,7 +337,8 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	router := mux.NewRouter().SkipClean(true)
 	var localFilerSocket string
-	if s3opt.localFilerSocket != nil {
+	// The filer only listens on its local socket outside Windows.
+	if s3opt.localFilerSocket != nil && runtime.GOOS != "windows" {
 		localFilerSocket = *s3opt.localFilerSocket
 	}
 	var s3ApiServer *s3api.S3ApiServer
