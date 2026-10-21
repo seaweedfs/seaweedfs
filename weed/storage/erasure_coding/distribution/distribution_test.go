@@ -122,7 +122,7 @@ func TestTopologyAnalysis(t *testing.T) {
 	assert.Equal(t, 3, a.ShardsByDC["dc1"])
 	assert.Equal(t, 0, a.ShardsByDC["dc2"])
 	assert.Equal(t, []string{"r1"}, a.DCToRacks["dc1"])
-	assert.Equal(t, []int{0, 1, 2}, a.RackToShards["r1"])
+	assert.Equal(t, []int{0, 1, 2}, a.RackToShards["dc1/r1"])
 }
 
 // Shards may be registered either through TopologyNode.ShardIDs or through
@@ -138,6 +138,20 @@ func TestTopologyAnalysisAddShardLocation(t *testing.T) {
 	assert.Equal(t, 2, a.TotalShards)
 	assert.Equal(t, 2, a.ShardsByNode["n1"])
 	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+}
+
+// Rack names are only unique within a DC, so dc1/rack1 and dc2/rack1 are
+// distinct domains.
+func TestTopologyAnalysisSameRackNameAcrossDCs(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "rack1", 5, 0, 1))
+	a.AddNode(makeNode("n2", "dc2", "rack1", 5, 2))
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalDCs)
+	assert.Equal(t, 2, a.TotalRacks)
+	assert.Equal(t, 2, a.ShardsByRack["dc1/rack1"])
+	assert.Equal(t, 1, a.ShardsByRack["dc2/rack1"])
 }
 
 func TestPlanRebalanceAcrossDCs(t *testing.T) {
@@ -177,8 +191,8 @@ func TestPlanRebalanceAcrossRacks(t *testing.T) {
 
 	assert.Equal(t, 2, plan.TotalMoves)
 	assert.Equal(t, 2, plan.MovesAcrossRack)
-	assert.Equal(t, 2, a.ShardsByRack["r1"])
-	assert.Equal(t, 2, a.ShardsByRack["r2"])
+	assert.Equal(t, 2, a.ShardsByRack["dc1/r1"])
+	assert.Equal(t, 2, a.ShardsByRack["dc1/r2"])
 	// parity-first ordering: shards 3 then 2 move out of r1
 	assert.Equal(t, 3, plan.Moves[0].ShardID)
 	assert.Equal(t, 2, plan.Moves[1].ShardID)

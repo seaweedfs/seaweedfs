@@ -19,7 +19,7 @@ func NewTopologyAnalysis() *TopologyAnalysis {
 // holds for the volume being analyzed.
 func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
 	a.AllNodes[node.NodeID] = node
-	a.RackToNodes[node.Rack] = append(a.RackToNodes[node.Rack], node)
+	a.RackToNodes[rackKey(node.DataCenter, node.Rack)] = append(a.RackToNodes[rackKey(node.DataCenter, node.Rack)], node)
 	if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
 		a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
 	}
@@ -41,15 +41,21 @@ func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
 		return
 	}
 	a.ShardsByDC[loc.DataCenter]++
-	a.ShardsByRack[loc.Rack]++
+	a.ShardsByRack[rackKey(loc.DataCenter, loc.Rack)]++
 	a.ShardsByNode[loc.NodeID]++
 	a.DCToShards[loc.DataCenter] = append(a.DCToShards[loc.DataCenter], loc.ShardID)
-	a.RackToShards[loc.Rack] = append(a.RackToShards[loc.Rack], loc.ShardID)
+	a.RackToShards[rackKey(loc.DataCenter, loc.Rack)] = append(a.RackToShards[rackKey(loc.DataCenter, loc.Rack)], loc.ShardID)
 	a.NodeToShards[loc.NodeID] = append(a.NodeToShards[loc.NodeID], loc.ShardID)
 	a.TotalShards++
 	if node, ok := a.AllNodes[loc.NodeID]; ok && !contains(node.ShardIDs, loc.ShardID) {
 		node.ShardIDs = append(node.ShardIDs, loc.ShardID)
 	}
+}
+
+// rackKey qualifies a rack name with its data center: rack names are only
+// unique within a DC, so two DCs can both hold a "rack1".
+func rackKey(dc, rack string) string {
+	return dc + "/" + rack
 }
 
 // Finalize computes topology statistics after all nodes and shards are added.

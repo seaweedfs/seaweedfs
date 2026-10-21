@@ -58,14 +58,14 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 		dst.FreeSlots--
 		analysis.ShardsByDC[src.DataCenter]--
 		analysis.ShardsByDC[dst.DataCenter]++
-		analysis.ShardsByRack[src.Rack]--
-		analysis.ShardsByRack[dst.Rack]++
+		analysis.ShardsByRack[rackKey(src.DataCenter, src.Rack)]--
+		analysis.ShardsByRack[rackKey(dst.DataCenter, dst.Rack)]++
 		analysis.ShardsByNode[src.NodeID]--
 		analysis.ShardsByNode[dst.NodeID]++
 		analysis.DCToShards[src.DataCenter] = removeShard(analysis.DCToShards[src.DataCenter], shardID)
 		analysis.DCToShards[dst.DataCenter] = append(analysis.DCToShards[dst.DataCenter], shardID)
-		analysis.RackToShards[src.Rack] = removeShard(analysis.RackToShards[src.Rack], shardID)
-		analysis.RackToShards[dst.Rack] = append(analysis.RackToShards[dst.Rack], shardID)
+		analysis.RackToShards[rackKey(src.DataCenter, src.Rack)] = removeShard(analysis.RackToShards[rackKey(src.DataCenter, src.Rack)], shardID)
+		analysis.RackToShards[rackKey(dst.DataCenter, dst.Rack)] = append(analysis.RackToShards[rackKey(dst.DataCenter, dst.Rack)], shardID)
 		analysis.NodeToShards[src.NodeID] = removeShard(analysis.NodeToShards[src.NodeID], shardID)
 		analysis.NodeToShards[dst.NodeID] = append(analysis.NodeToShards[dst.NodeID], shardID)
 		plan.Moves = append(plan.Moves, ShardMove{
@@ -144,20 +144,28 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 	}
 
 	dcList := sortedKeys(analysis.DCToRacks)
+	dcRackKeys := func(dc string) []string {
+		racks := analysis.DCToRacks[dc]
+		keys := make([]string, 0, len(racks))
+		for _, rack := range racks {
+			keys = append(keys, rackKey(dc, rack))
+		}
+		return keys
+	}
 	totalShards := 0
 	for _, dc := range dcList {
-		totalShards += shardCount(analysis.DCToRacks[dc], analysis.RackToNodes)
+		totalShards += shardCount(dcRackKeys(dc), analysis.RackToNodes)
 	}
-	dcCount := func(dc string) int { return shardCount(analysis.DCToRacks[dc], analysis.RackToNodes) }
+	dcCount := func(dc string) int { return shardCount(dcRackKeys(dc), analysis.RackToNodes) }
 	balance("dc", dcList, dcCount, ceilDivide(totalShards, len(dcList)),
-		func(dc string) []*TopologyNode { return nodesOfRacks(analysis.DCToRacks[dc], analysis.RackToNodes) },
+		func(dc string) []*TopologyNode { return nodesOfRacks(dcRackKeys(dc), analysis.RackToNodes) },
 		func(string) []string { return dcList })
 
 	for _, dc := range dcList {
 		racks := analysis.DCToRacks[dc]
-		rackCount := func(rack string) int { return shardCount([]string{rack}, analysis.RackToNodes) }
+		rackCount := func(rack string) int { return shardCount([]string{rackKey(dc, rack)}, analysis.RackToNodes) }
 		balance("rack", racks, rackCount, ceilDivide(dcCount(dc), len(racks)),
-			func(rack string) []*TopologyNode { return analysis.RackToNodes[rack] },
+			func(rack string) []*TopologyNode { return analysis.RackToNodes[rackKey(dc, rack)] },
 			func(string) []string { return racks })
 	}
 
