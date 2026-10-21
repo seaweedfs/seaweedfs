@@ -10,6 +10,7 @@ import (
 	"github.com/apache/iceberg-go/table"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
+	"github.com/parquet-go/parquet-go/format"
 )
 
 // unsetDefaultCRS makes an input file declare the default CRS as no CRS at
@@ -151,5 +152,72 @@ func TestDefaultCRSUnsetForNestedGeometry(t *testing.T) {
 	}](bytes.NewReader(out), int64(len(out)))
 	if err != nil || len(got) != 1 || got[0].ID != 1 {
 		t.Errorf("the rewritten file reads %v, %v", got, err)
+	}
+}
+
+// footerGeometryCRSs is the CRS of every GEOMETRY element in the footer, by
+// schema element index and name.
+func footerGeometryCRSs(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	f, err := parquet.OpenFile(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	out := map[string]string{}
+	for i, el := range f.Metadata().Schema {
+		if g, ok := el.LogicalType.Value.(*format.GeometryType); ok {
+			out[fmt.Sprintf("%d:%s", i, el.Name)] = g.CRS
+		}
+	}
+	return out
+}
+
+// A file without field ids is matched to the table by name: through the
+// LIST and MAP wrapper groups too, which Iceberg's field names leave out.
+func TestDefaultCRSUnsetWithoutFieldIDs(t *testing.T) {
+	geom := func() parquet.Node { return parquet.Optional(parquet.Geometry("")) }
+	element := func(id int, typ iceberg.Type) *iceberg.ListType {
+		return &iceberg.ListType{ElementID: id, Element: typ, ElementRequired: false}
+	}
+	cases := []struct {
+		name    string
+		parquet parquet.Group
+		iceberg []iceberg.NestedField
+	}{
+		{"top level", parquet.Group{"id": parquet.Int(64), "geom": geom()},
+			[]iceberg.NestedField{{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true}, {ID: 2, Name: "geom", Type: iceberg.GeometryType{}}}},
+		{"list", parquet.Group{"shapes": parquet.Optional(parquet.List(geom()))},
+			[]iceberg.NestedField{{ID: 1, Name: "shapes", Type: element(2, iceberg.GeometryType{})}}},
+		{"list of structs", parquet.Group{"items": parquet.Optional(parquet.List(parquet.Group{"geom": geom()}))},
+			[]iceberg.NestedField{{ID: 1, Name: "items", Type: element(2, &iceberg.StructType{FieldList: []iceberg.NestedField{{ID: 3, Name: "geom", Type: iceberg.GeometryType{}}}})}}},
+		{"map", parquet.Group{"attrs": parquet.Optional(parquet.Map(parquet.String(), geom()))},
+			[]iceberg.NestedField{{ID: 1, Name: "attrs", Type: &iceberg.MapType{KeyID: 2, KeyType: iceberg.PrimitiveTypes.String, ValueID: 3, ValueType: iceberg.GeometryType{}}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			w := parquet.NewGenericWriter[any](&buf, parquet.NewSchema("table", tc.parquet))
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before := footerGeometryCRSs(t, buf.Bytes())
+			if len(before) != 1 {
+				t.Fatalf("setup: geometry columns %v, want one", before)
+			}
+			for path, crs := range before {
+				if crs != iceberg.DefaultGeoCRS {
+					t.Fatalf("setup: %s declares %q; the control is the spelled-out default", path, crs)
+				}
+			}
+			out, changed, err := withDefaultGeometryCRSUnset(buf.Bytes(), iceberg.NewSchema(0, tc.iceberg...))
+			if err != nil || !changed {
+				t.Fatalf("changed %v, %v", changed, err)
+			}
+			for path, crs := range footerGeometryCRSs(t, out) {
+				if crs != "" {
+					t.Errorf("%s declares CRS %q, want none", path, crs)
+				}
+			}
+		})
 	}
 }

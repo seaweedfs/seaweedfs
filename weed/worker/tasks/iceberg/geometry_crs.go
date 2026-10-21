@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/apache/iceberg-go"
+	"github.com/parquet-go/parquet-go/deprecated"
 	"github.com/parquet-go/parquet-go/encoding/thrift"
 	"github.com/parquet-go/parquet-go/format"
 )
@@ -116,28 +117,81 @@ func typeHasDefaultCRSGeometry(t iceberg.Type) bool {
 	return false
 }
 
-// schemaElementPaths is each flattened schema element's path from the root
-// (the root's is empty): the footer lists the tree depth first, every group
-// followed by its num_children children.
+// schemaElementPaths is each flattened schema element's Iceberg field path
+// from the root (the root's is empty): the footer lists the tree depth first,
+// every group followed by its num_children children. The repeated group of a
+// LIST or MAP is not an Iceberg field, so it takes its parent's path; under it
+// a list's element is named "element" and a map's two children "key" and
+// "value", as Iceberg names them, whatever the writer called them.
 func schemaElementPaths(elements []format.SchemaElement) [][]string {
 	paths := make([][]string, len(elements))
-	var walk func(i int, parent []string) int
-	walk = func(i int, parent []string) int {
-		if i >= len(elements) {
-			return i
-		}
-		var path []string
-		if i > 0 {
-			path = append(append([]string{}, parent...), elements[i].Name)
-		}
-		paths[i] = path
-		next := i + 1
-		children := int(elements[i].NumChildren.V)
-		for c := 0; c < children && next < len(elements); c++ {
-			next = walk(next, path)
+	var walk func(i int, path []string) int
+	// children walks the n children of a group whose own path is path,
+	// naming the k-th by name(k) when name is set.
+	children := func(next, n int, path []string, name func(k int, el *format.SchemaElement) string) int {
+		for c := 0; c < n && next < len(elements); c++ {
+			child := path
+			if name != nil {
+				child = append(append([]string{}, path...), name(c, &elements[next]))
+			} else {
+				child = append(append([]string{}, path...), elements[next].Name)
+			}
+			next = walk(next, child)
 		}
 		return next
 	}
+	walk = func(i int, path []string) int {
+		if i >= len(elements) {
+			return i
+		}
+		paths[i] = path
+		el := &elements[i]
+		n := int(el.NumChildren.V)
+		if n != 1 || i+1 >= len(elements) {
+			return children(i+1, n, path, nil)
+		}
+		repeated := &elements[i+1]
+		if rt, ok := repeated.RepetitionType.Get(); !ok || rt != format.Repeated {
+			return children(i+1, n, path, nil)
+		}
+		switch {
+		case isListAnnotated(el):
+			// A repeated group of one field wraps the element, unless its
+			// name marks the legacy form where the group is the element.
+			if rn := int(repeated.NumChildren.V); rn == 1 && repeated.Name != "array" && repeated.Name != el.Name+"_tuple" {
+				paths[i+1] = path
+				return children(i+2, 1, path, func(int, *format.SchemaElement) string { return "element" })
+			}
+			return children(i+1, 1, path, func(int, *format.SchemaElement) string { return "element" })
+		case isMapAnnotated(el):
+			if int(repeated.NumChildren.V) == 2 {
+				paths[i+1] = path
+				return children(i+2, 2, path, func(k int, _ *format.SchemaElement) string {
+					if k == 0 {
+						return "key"
+					}
+					return "value"
+				})
+			}
+		}
+		return children(i+1, n, path, nil)
+	}
 	walk(0, nil)
 	return paths
+}
+
+func isListAnnotated(el *format.SchemaElement) bool {
+	if _, ok := el.LogicalType.Value.(*format.ListType); ok {
+		return true
+	}
+	ct, ok := el.ConvertedType.Get()
+	return ok && ct == deprecated.List
+}
+
+func isMapAnnotated(el *format.SchemaElement) bool {
+	if _, ok := el.LogicalType.Value.(*format.MapType); ok {
+		return true
+	}
+	ct, ok := el.ConvertedType.Get()
+	return ok && (ct == deprecated.Map || ct == deprecated.MapKeyValue)
 }
