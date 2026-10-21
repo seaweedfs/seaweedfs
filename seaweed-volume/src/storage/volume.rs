@@ -1733,9 +1733,16 @@ impl Volume {
             // CheckVolumeDataIntegrity ahead of the needle map load. Only a
             // volume about to load writable is repaired.
             if !self.has_remote_file() && self.no_write_flags() == (false, false) {
+                // An empty .idx gets the same repair: every check below
+                // skips an empty index on its own, so a tail the repair
+                // cannot explain there fails the load like in Go rather
+                // than warn and load writable.
+                let idx_empty = fs::metadata(self.file_name(".idx"))
+                    .map(|m| m.len() == 0)
+                    .unwrap_or(false);
                 match self.repair_unindexed_dat_tail(io) {
                     Ok(()) => {}
-                    Err(e) if e.is_not_torn() => warn!(
+                    Err(e) if e.is_not_torn() && !idx_empty => warn!(
                         volume_id = self.id.0,
                         error = %e,
                         "unindexed .dat tail not repaired"

@@ -83,7 +83,12 @@ impl Volume {
     ///
     /// Runs ahead of the index load so the re-indexed rows land in the
     /// needle map and inside its append offset. Only a volume about to load
-    /// writable is repaired; the caller checks the no-write flags. Nothing
+    /// writable is repaired; the caller checks the no-write flags. A crash
+    /// after the very first append leaves the needle past an index with no
+    /// entry at all: the walk then starts at the first record past the
+    /// superblock with no anchor needle and no append timestamp to compare
+    /// against, and a tail it cannot explain fails the load like any other
+    /// repair failure, since every later check skips an empty index. Nothing
     /// is changed when the tail is anything but what an interrupted append
     /// leaves, and the integrity check that follows then marks the volume
     /// read-only exactly as before.
@@ -97,7 +102,7 @@ impl Volume {
             return Ok(());
         }
         let idx_size = fs::metadata(&idx_path).map(|m| m.len()).unwrap_or(0) as i64;
-        if idx_size == 0 || idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+        if idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
             // a partial .idx entry is left alone, as today
             return Ok(());
         }
@@ -115,48 +120,63 @@ impl Volume {
             .write(true)
             .open(&idx_path)
             .map_err(|e| TailRepairError::OpenIndex(VolumeError::Io(e)))?;
-        let tail_entry_pos =
-            self.find_dat_tail_entry_offset(io, &mut idx_file, idx_size, version)?;
-        if tail_entry_pos < 0 {
-            // pre-allocated / all-zero index, no anchor to repair past
-            return Ok(());
-        }
-        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
-        idx_file.seek(SeekFrom::Start(tail_entry_pos as u64))?;
-        idx_file.read_exact(&mut buf)?;
-        let (key, offset, size) = idx_entry_from_bytes(&buf);
-        if offset.is_zero() {
-            return Ok(());
-        }
-        let start = needle_disk_end(offset, size, version);
-        if start >= file_size {
-            // the .dat ends at the last needle (clean), or the index
-            // references bytes the .dat does not have: not a torn tail
-            return Ok(());
-        }
 
-        // Anchor: the needle at the highest indexed offset must be the one
-        // its entry describes, whole and with a valid CRC.
-        let on_disk_size = if size.is_deleted() { Size(0) } else { size };
-        let anchor = self
-            .read_tail_needle(io, offset.to_actual_offset(), on_disk_size, version)
-            .map_err(|e| {
-                TailRepairError::NotTorn(format!(
-                    "last indexed needle {key} at {}: {e}",
-                    offset.to_actual_offset()
-                ))
-            })?;
-        if anchor.id != key {
-            return Err(TailRepairError::NotTorn(format!(
-                "needle at {} is id {:?}, its index entry says id {:?}",
-                offset.to_actual_offset(),
-                anchor.id,
-                key
-            )));
+        let mut last_append_at_ns = 0u64;
+        let start = if idx_size == 0 {
+            // The index holds no row at all, so no entry can anchor the
+            // walk: it starts at the first record past the superblock.
+            // Mirrors Go's tailEntryPos < 0.
+            self.super_block().block_size() as i64
+        } else {
+            let tail_entry_pos =
+                self.find_dat_tail_entry_offset(io, &mut idx_file, idx_size, version)?;
+            if tail_entry_pos < 0 {
+                // pre-allocated / all-zero index, no anchor to repair past
+                return Ok(());
+            }
+            let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+            idx_file.seek(SeekFrom::Start(tail_entry_pos as u64))?;
+            idx_file.read_exact(&mut buf)?;
+            let (key, offset, size) = idx_entry_from_bytes(&buf);
+            if offset.is_zero() {
+                return Ok(());
+            }
+            let start = needle_disk_end(offset, size, version);
+            if start >= file_size {
+                // the .dat ends at the last needle (clean), or the index
+                // references bytes the .dat does not have: not a torn tail
+                return Ok(());
+            }
+
+            // Anchor: the needle at the highest indexed offset must be the one
+            // its entry describes, whole and with a valid CRC.
+            let on_disk_size = if size.is_deleted() { Size(0) } else { size };
+            let anchor = self
+                .read_tail_needle(io, offset.to_actual_offset(), on_disk_size, version)
+                .map_err(|e| {
+                    TailRepairError::NotTorn(format!(
+                        "last indexed needle {key} at {}: {e}",
+                        offset.to_actual_offset()
+                    ))
+                })?;
+            if anchor.id != key {
+                return Err(TailRepairError::NotTorn(format!(
+                    "needle at {} is id {:?}, its index entry says id {:?}",
+                    offset.to_actual_offset(),
+                    anchor.id,
+                    key
+                )));
+            }
+            last_append_at_ns = anchor.append_at_ns;
+            start
+        };
+        if start >= file_size {
+            // no record past the superblock: nothing to index
+            return Ok(());
         }
 
         let (entries, cut_at) =
-            self.walk_unindexed_dat_tail(io, version, start, file_size, anchor.append_at_ns)?;
+            self.walk_unindexed_dat_tail(io, version, start, file_size, last_append_at_ns)?;
         let reindexed = entries.len() / NEEDLE_MAP_ENTRY_SIZE;
         if reindexed > 0 {
             Self::append_index_entries(&mut idx_file, &entries, idx_size)?;
@@ -557,6 +577,13 @@ mod tests {
         absent: &'static [u64],
     }
 
+    struct ReadOnlyCase {
+        name: &'static str,
+        ops: Vec<Op>,
+        unindexed: usize,
+        damage: fn(&TornFixture),
+    }
+
     #[test]
     fn volume_load_repairs_unindexed_dat_tail() {
         let cases = vec![
@@ -802,16 +829,180 @@ mod tests {
         }
     }
 
+    /// An empty index can hide writes a crash stranded in the .dat: the
+    /// writable index loader creates the .idx before the first needle
+    /// append, so a crash after that append leaves a volume whose data
+    /// nothing indexes. The same repair runs from the first record past
+    /// the superblock.
+    #[test]
+    fn volume_load_repairs_tail_past_empty_index() {
+        let cases = vec![
+            RepairCase {
+                name: "the only write is re-indexed",
+                ops: writes(&[7]),
+                unindexed: 1,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 1,
+                readable: &[7],
+                empty: &[],
+                absent: &[],
+            },
+            RepairCase {
+                name: "every write is re-indexed",
+                ops: writes(&[1, 2, 3]),
+                unindexed: 3,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 3,
+                readable: &[1, 2, 3],
+                empty: &[],
+                absent: &[],
+            },
+            RepairCase {
+                name: "an unindexed delete is re-indexed as an empty live needle",
+                ops: {
+                    let mut ops = writes(&[1, 2, 3]);
+                    ops.push(Op::Del(2));
+                    ops
+                },
+                unindexed: 4,
+                damage: None,
+                want_dat_size: |f| f.end,
+                reindexed: 4,
+                readable: &[1, 3],
+                empty: &[2],
+                absent: &[],
+            },
+            RepairCase {
+                name: "a complete needle is re-indexed and the partial one after it cut",
+                ops: writes(&[1, 2]),
+                unindexed: 2,
+                damage: Some(|f| f.truncate_dat(f.mid_record(1))),
+                want_dat_size: |f| f.starts[1],
+                reindexed: 1,
+                readable: &[1],
+                empty: &[],
+                absent: &[2],
+            },
+            RepairCase {
+                name: "a last needle with a bad CRC is cut",
+                ops: writes(&[1, 2]),
+                unindexed: 2,
+                damage: Some(|f| f.flip_data_byte(f.starts[1])),
+                want_dat_size: |f| f.starts[1],
+                reindexed: 1,
+                readable: &[1],
+                empty: &[],
+                absent: &[2],
+            },
+        ];
+        for tc in cases {
+            let f = build_fixture(&tc.ops, tc.unindexed);
+            if let Some(damage) = tc.damage {
+                damage(&f);
+            }
+
+            {
+                let v = open_volume(&f.dir);
+                assert!(
+                    !v.is_read_only(),
+                    "{}: volume with an unindexed .dat tail loaded read-only",
+                    tc.name
+                );
+                assert_eq!(
+                    f.dat_size(),
+                    (tc.want_dat_size)(&f),
+                    "{}: .dat size after load",
+                    tc.name
+                );
+                assert_eq!(
+                    f.idx_size(),
+                    tc.reindexed as i64 * NEEDLE_MAP_ENTRY_SIZE as i64,
+                    "{}: .idx size after load ({} entries re-indexed)",
+                    tc.name,
+                    tc.reindexed
+                );
+                for &id in tc.readable {
+                    assert_readable(&v, id, &f.written[&id]);
+                }
+                for &id in tc.empty {
+                    assert_empty(&v, id);
+                }
+                for &id in tc.absent {
+                    assert_not_readable(&v, id);
+                }
+            }
+
+            // the repaired volume reloads clean, and keeps what it indexed
+            let v = open_volume(&f.dir);
+            assert!(
+                !v.is_read_only(),
+                "{}: repaired volume loaded read-only on the next load",
+                tc.name
+            );
+            for &id in tc.readable {
+                assert_readable(&v, id, &f.written[&id]);
+            }
+            for &id in tc.empty {
+                assert_empty(&v, id);
+            }
+        }
+    }
+
+    /// A .dat an interrupted append does not explain, over an index with no
+    /// rows at all, loads the volume read-only: the checks that would
+    /// quarantine it otherwise all skip an empty index.
+    #[test]
+    fn volume_load_keeps_unexplained_tail_past_empty_index_read_only() {
+        let cases = vec![
+            ReadOnlyCase {
+                name: "zero bytes where the next record would be (id 0)",
+                ops: writes(&[1, 2]),
+                unindexed: 2,
+                damage: |f| {
+                    let mut file = OpenOptions::new().append(true).open(f.dat_path()).unwrap();
+                    file.write_all(&[0u8; 64]).unwrap();
+                },
+            },
+            ReadOnlyCase {
+                name: "a damaged record more data follows",
+                ops: writes(&[1, 2]),
+                unindexed: 2,
+                damage: |f| f.flip_data_byte(f.starts[0]),
+            },
+        ];
+        for tc in cases {
+            let f = build_fixture(&tc.ops, tc.unindexed);
+            (tc.damage)(&f);
+            let (dat_before, idx_before) = (f.dat_size(), f.idx_size());
+            assert_eq!(idx_before, 0, "fixture did not leave an empty .idx");
+
+            let v = open_volume(&f.dir);
+            assert!(
+                v.is_read_only(),
+                "{}: volume with an unexplained tail past an empty index loaded writable",
+                tc.name
+            );
+            assert_eq!(
+                f.dat_size(),
+                dat_before,
+                "{}: .dat changed on load",
+                tc.name
+            );
+            assert_eq!(
+                f.idx_size(),
+                idx_before,
+                "{}: .idx changed on load",
+                tc.name
+            );
+        }
+    }
+
     /// Every tail an interrupted append does not explain is left exactly as
     /// it is, and the volume loads read-only as before.
     #[test]
     fn volume_load_keeps_unexplained_tail_read_only() {
-        struct ReadOnlyCase {
-            name: &'static str,
-            ops: Vec<Op>,
-            unindexed: usize,
-            damage: fn(&TornFixture),
-        }
         let cases = vec![
             ReadOnlyCase {
                 name: "the last indexed needle's id differs from its entry",
