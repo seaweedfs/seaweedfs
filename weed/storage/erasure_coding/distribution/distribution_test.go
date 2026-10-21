@@ -322,5 +322,6 @@ func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 func TestCalculateDistributionZeroReplication(t *testing.T) {
 	dist := CalculateDistribution(DefaultECConfig(), ReplicationConfig{})
 	assert.Equal(t, 14, dist.TargetShardsPerDC)
-	assert.NotPanics(t, func() { dist.Summary(); dist.FaultToleranceAnalysis() })
+	assert.Contains(t, dist.Summary(), "Data Centers: 1")
+	assert.NotPanics(t, func() { dist.FaultToleranceAnalysis() })
 }

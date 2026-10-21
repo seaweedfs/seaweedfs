@@ -31,9 +31,12 @@ type ECDistribution struct {
 // replication policy describes.
 func CalculateDistribution(ec ECConfig, rep ReplicationConfig) *ECDistribution {
 	total := ec.TotalShards()
-	dcUnits := max(rep.MinDataCenters, 1)
-	rackUnits := dcUnits * max(rep.MinRacksPerDC, 1)
-	nodeUnits := rackUnits * max(rep.MinNodesPerRack, 1)
+	rep.MinDataCenters = max(rep.MinDataCenters, 1)
+	rep.MinRacksPerDC = max(rep.MinRacksPerDC, 1)
+	rep.MinNodesPerRack = max(rep.MinNodesPerRack, 1)
+	dcUnits := rep.MinDataCenters
+	rackUnits := dcUnits * rep.MinRacksPerDC
+	nodeUnits := rackUnits * rep.MinNodesPerRack
 	return &ECDistribution{
 		ECConfig:            ec,
 		ReplicationConfig:   rep,
