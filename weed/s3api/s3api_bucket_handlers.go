@@ -765,7 +765,11 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
 		} else if exist {
 			entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket)
-			if getErr == nil && concurrentEntryIsForeign(entry, nil) {
+			if getErr != nil {
+				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+				return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, getErr))
+			}
+			if concurrentEntryIsForeign(entry, nil) {
 				// A table bucket carries no S3 owner and must not gain one —
 				// or a write intended for a missing plain bucket.
 				if s3a.bucketConfigCache != nil {
@@ -776,23 +780,19 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
 			// we'll set it here to ensure consistency.
-			if getErr == nil {
-				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
-					// No owner set, assign current admin as owner
-					setBucketOwner(r)(entry)
-					if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
-						glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
-					} else {
-						glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
-						if owner := bucketEntryOwner(entry); owner != "" {
-							if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
-								glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
-							}
+			if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
+				// No owner set, assign current admin as owner
+				setBucketOwner(r)(entry)
+				if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
+					glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
+				} else {
+					glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
+					if owner := bucketEntryOwner(entry); owner != "" {
+						if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
+							glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
 						}
 					}
 				}
-			} else {
-				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
 			}
 			// Remove bucket from negative cache — it exists now
 			if s3a.bucketConfigCache != nil {
