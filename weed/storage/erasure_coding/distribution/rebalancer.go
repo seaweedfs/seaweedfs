@@ -85,26 +85,32 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 	}
 
 	moveOut := func(level, srcDomain string, srcNodes, dstNodes []*TopologyNode) bool {
-		var dst *TopologyNode
-		for _, n := range dstNodes {
-			if n.FreeSlots > 0 && (dst == nil || nodeLess(n, dst)) {
-				dst = n
-			}
-		}
-		if dst == nil {
-			return false
-		}
 		var shardIDs []int
 		for _, n := range srcNodes {
 			shardIDs = append(shardIDs, n.ShardIDs...)
 		}
 		for _, shardID := range r.ecConfig.SortShardsParityFirst(shardIDs) {
-			for _, src := range srcNodes {
-				if contains(src.ShardIDs, shardID) {
-					recordMove(shardID, src, dst, level, srcDomain)
-					return true
+			var src *TopologyNode
+			for _, n := range srcNodes {
+				if contains(n.ShardIDs, shardID) {
+					src = n
+					break
 				}
 			}
+			if src == nil {
+				continue
+			}
+			var dst *TopologyNode
+			for _, n := range dstNodes {
+				if n.FreeSlots > 0 && !contains(n.ShardIDs, shardID) && (dst == nil || nodeLess(n, dst)) {
+					dst = n
+				}
+			}
+			if dst == nil {
+				continue
+			}
+			recordMove(shardID, src, dst, level, srcDomain)
+			return true
 		}
 		return false
 	}
