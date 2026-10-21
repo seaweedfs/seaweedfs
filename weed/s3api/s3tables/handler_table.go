@@ -515,11 +515,14 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketTags := map[string]string{}
 
 			// Fetch namespace metadata and policy
+			targetAbsent := false
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 			if err != nil {
-				return err // Not Found handled by caller
-			}
-			if err := json.Unmarshal(data, &nsMeta); err != nil {
+				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+					return err
+				}
+				targetAbsent = true
+			} else if err := json.Unmarshal(data, &nsMeta); err != nil {
 				return err
 			}
 
@@ -527,7 +530,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
 			if err == nil {
 				namespacePolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !errors.Is(err, ErrAttributeNotFound) && !errors.Is(err, filer_pb.ErrNotFound) {
 				return fmt.Errorf("failed to fetch namespace policy: %w", err)
 			}
 
@@ -537,6 +540,8 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				if err := json.Unmarshal(data, &bucketMeta); err != nil {
 					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 				}
+			} else if errors.Is(err, filer_pb.ErrNotFound) {
+				targetAbsent = true
 			} else if !errors.Is(err, ErrAttributeNotFound) {
 				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
@@ -544,13 +549,22 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !errors.Is(err, ErrAttributeNotFound) && !errors.Is(err, filer_pb.ErrNotFound) {
 				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return fmt.Errorf("failed to read bucket tags: %w", err)
+				if !errors.Is(err, filer_pb.ErrNotFound) {
+					return fmt.Errorf("failed to read bucket tags: %w", err)
+				}
 			} else if tags != nil {
 				bucketTags = tags
+			}
+
+			if targetAbsent {
+				if !h.authorizeAbsentTarget(r, &singleClient{client}, "ListTables", bucketName, namespaceName, "", "") {
+					return ErrAccessDenied
+				}
+				return filer_pb.ErrNotFound
 			}
 
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
@@ -583,7 +597,13 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 			if err != nil {
-				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+				}
+				if !h.authorizeAbsentTarget(r, &singleClient{client}, "ListTables", bucketName, "", "", "") {
+					return ErrAccessDenied
+				}
+				return filer_pb.ErrNotFound
 			}
 			if err := json.Unmarshal(data, &bucketMeta); err != nil {
 				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)

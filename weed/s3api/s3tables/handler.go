@@ -459,6 +459,59 @@ func isAuthError(err error) bool {
 	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
 }
 
+// authorizeAbsentTarget reports whether the caller may learn the target
+// resolved to nothing, so a caller without a grant gets the same response a
+// denied existing target would give. The bucket named by the target still
+// applies whatever metadata and policy load; with nothing readable to
+// evaluate, only an identity-level grant on the operation, the admin, or a
+// default-allow deployment passes.
+func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient FilerClient, operation, bucketName, namespace, name, resourceARN string) bool {
+	principal := h.getAccountID(r)
+	if principal == "" {
+		return false
+	}
+
+	var bucketOwner, bucketPolicy string
+	var bucketTags map[string]string
+	if bucketName != "" {
+		bucketPath := GetTableBucketPath(bucketName)
+		_ = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			if data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata); err == nil {
+				var meta tableBucketMetadata
+				if json.Unmarshal(data, &meta) == nil {
+					bucketOwner = meta.OwnerAccountID
+				}
+			}
+			if policy, err := h.readPolicy(r, client, bucketPath); err == nil {
+				bucketPolicy = policy
+			}
+			bucketTags, _ = h.readTags(r.Context(), client, bucketPath)
+			return nil
+		})
+	}
+
+	bucketARN := h.generateTableBucketARN(bucketOwner, bucketName)
+	ctx := &PolicyContext{
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespace,
+		TableName:        name,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  getIdentityActions(r),
+		DefaultAllow:     h.defaultAllowFor(r),
+	}
+	if resourceARN != "" &&
+		matchesDenyStatement(operation, principal, bucketPolicy, resourceARN, ctx) {
+		return false
+	}
+	if CheckTableOrBucketPermission(operation, principal, "", "", resourceARN,
+		bucketOwner, bucketPolicy, bucketARN, ctx) {
+		return true
+	}
+	return bucketOwner == "" && checkPermission(operation, principal, "", "", resourceARN, ctx)
+}
+
 func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (map[string]string, error) {
 	data, err := h.getExtendedAttribute(ctx, client, path, ExtendedKeyTags)
 	if err != nil {

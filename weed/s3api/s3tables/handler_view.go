@@ -279,7 +279,13 @@ func (h *S3TablesHandler) handleListViews(w http.ResponseWriter, r *http.Request
 		var nsMeta namespaceMetadata
 		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 		if err != nil {
-			return err
+			if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+				return err
+			}
+			if !h.authorizeAbsentTarget(r, &singleClient{client}, "ListViews", bucketName, namespaceName, "", "") {
+				return ErrAccessDenied
+			}
+			return filer_pb.ErrNotFound
 		}
 		if err := json.Unmarshal(data, &nsMeta); err != nil {
 			return err
