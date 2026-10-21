@@ -221,8 +221,13 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 		// Remote credential providers (container endpoints, IMDS, web
 		// identity) fetch through this HTTP client; the guarded one is for the
 		// S3 endpoint and blocks the link-local credential endpoints, so the
-		// default chain resolves on an unguarded client.
-		credSess, err := session.NewSession(aws.NewConfig().WithHTTPClient(&http.Client{}))
+		// default chain resolves on an unguarded client. Shared config stays
+		// enabled so web identity and profiles resolve here too, and the
+		// region carries over so STS can sign assume-role requests.
+		credSess, err := session.NewSessionWithOptions(session.Options{
+			Config:            aws.Config{Region: config.Region, HTTPClient: &http.Client{}},
+			SharedConfigState: session.SharedConfigEnable,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("create %s credential session: %w", opt.name, err)
 		}

@@ -85,6 +85,30 @@ func TestS3MakeUsesDefaultCredentialChainWhenKeysAreEmptyAndSourceIsConfigured(t
 	}
 }
 
+// A caller that pins a custom http.Client still gets the default chain, so
+// remote providers resolve on an unguarded client while S3 requests use the
+// pinned one.
+func TestS3MakeResolvesEnvCredentialsWithCustomHTTPClient(t *testing.T) {
+	clearAWSCredentialEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-access")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	remoteClient, err := MakeWithHTTPClient(&remote_pb.RemoteConf{
+		Type:             "s3",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "http://localhost:8333",
+		S3ForcePathStyle: true,
+	}, &http.Client{})
+	require.NoError(t, err)
+
+	s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+	require.True(t, ok)
+	require.NotSame(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+	value, err := s3Client.Config.Credentials.Get()
+	require.NoError(t, err)
+	require.Equal(t, "env-access", value.AccessKeyID)
+}
+
 func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
 	maker := s3RemoteStorageMaker{}
 	conf := &remote_pb.RemoteConf{
