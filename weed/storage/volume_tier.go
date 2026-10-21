@@ -111,6 +111,9 @@ func (v *Volume) MarkTieredDeletable() bool {
 	// this change and stays.
 	v.noWriteLock.Lock()
 	defer v.noWriteLock.Unlock()
+	if !v.HasRemoteFile() {
+		return false
+	}
 	if ioErr, ioCount, quarantined := v.getIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
 		return false
 	}

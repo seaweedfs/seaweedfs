@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,19 @@ func TestMarkTieredDeletable(t *testing.T) {
 	w.markIoQuarantined()
 	require.False(t, w.MarkTieredDeletable())
 	require.True(t, w.noWriteOrDelete, "an I/O quarantine is not the tier upload's to lift")
+}
+
+// MarkTieredDeletable is only for a tiered volume: a stray call on a local
+// volume must not pin it read-only-can-delete.
+func TestMarkTieredDeletableLeavesANonTieredVolume(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 86, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	require.NoError(t, err)
+	defer v.Close()
+
+	require.False(t, v.MarkTieredDeletable())
+	require.False(t, v.noWriteOrDelete)
+	require.False(t, v.noWriteCanDelete)
 }
 
 // A heartbeat that quarantines the volume while MarkTieredDeletable waits for

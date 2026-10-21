@@ -4322,6 +4322,9 @@ impl Volume {
         {
             return false;
         }
+        if !self.has_remote_file() {
+            return false;
+        }
         // Go takes noWriteLock around the quarantine check and the flag
         // change; here a compare-exchange gives the same ordering — a
         // heartbeat refusal landing between the check and the swap fails the
