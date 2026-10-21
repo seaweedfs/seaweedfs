@@ -65,7 +65,9 @@ func RunShell(options ShellOptions) error {
 	ctx := context.Background()
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	reconnectCtx, cancelReconnect := context.WithCancel(ctx)
+	defer cancelReconnect()
+	go commandEnv.MasterClient.KeepConnectedToMaster(reconnectCtx)
 	if commandEnv.MasterClient.GetMaster(connectCtx) == "" {
 		err := fmt.Errorf("cannot connect to master %s within %s", *options.Masters, connectTimeout)
 		fmt.Fprintln(os.Stderr, err)
