@@ -210,7 +210,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// The filer ops below each retry, and a failover walk runs the whole set
 	// once per filer, so the backoff comes out of one allowance held here.
 	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+	if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
@@ -479,7 +479,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(validationCode, object.Key, object.VersionId))
 				continue
 			}
-			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
+			if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object.Key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
 				continue
 			}

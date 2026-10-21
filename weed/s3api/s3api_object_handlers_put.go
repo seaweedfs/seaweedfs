@@ -112,7 +112,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
 		return
 	}
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+	if isVerify, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object); err != nil || (isVerify && !volumeVerifyPutAllowed(r, object)) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
@@ -991,7 +991,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 			glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
 			err := filer_pb.CreateEntry(context.Background(), client, req)
-			if errors.Is(err, filer_pb.ErrExistingIsDirectory) && !isReservedDirectoryName(entry.Name) {
+			// A verification key in a table bucket never becomes a prefix
+			// object: the directory it meets is a namespace, created after the
+			// handler looked.
+			if errors.Is(err, filer_pb.ErrExistingIsDirectory) && !isReservedDirectoryName(entry.Name) &&
+				!(isVolumeVerifyKey(object) && s3a.isTableBucket(bucket)) {
 				// Other keys are nested under this one. S3 keys are flat, so the key is
 				// stored on the directory they live under rather than refused.
 				entry.MarkPrefixObject()
