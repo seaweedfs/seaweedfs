@@ -29,7 +29,7 @@ func LoadConfiguration(config *util.ViperProxy, prefix string) {
 	validateOneEnabledQueue(config, prefix)
 
 	for _, queue := range MessageQueues {
-		if config.GetBool(prefix + queue.GetName() + ".enabled") {
+		if queueEnabled(config, prefix, queue) {
 			if err := queue.Initialize(config, prefix+queue.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize notification for %s: %+v",
 					queue.GetName(), err)
@@ -42,10 +42,26 @@ func LoadConfiguration(config *util.ViperProxy, prefix string) {
 
 }
 
+// queueEnabled reports whether a queue is switched on — by the flat
+// "<prefix><name>.enabled" flag or, for queues accepting named sub-instances
+// ([notification.<queue>.<target>]), by any enabled subconfig.
+func queueEnabled(config util.Configuration, prefix string, queue MessageQueue) bool {
+	key := prefix + queue.GetName() + "."
+	if config.GetBool(key + "enabled") {
+		return true
+	}
+	if q, ok := queue.(interface {
+		HasEnabledSubconfig(util.Configuration, string) bool
+	}); ok {
+		return q.HasEnabledSubconfig(config, key)
+	}
+	return false
+}
+
 func validateOneEnabledQueue(config *util.ViperProxy, prefix string) {
 	enabledQueue := ""
 	for _, queue := range MessageQueues {
-		if config.GetBool(prefix + queue.GetName() + ".enabled") {
+		if queueEnabled(config, prefix, queue) {
 			if enabledQueue == "" {
 				enabledQueue = queue.GetName()
 			} else {

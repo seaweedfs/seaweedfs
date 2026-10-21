@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -22,22 +24,112 @@ func init() {
 	notification.MessageQueues = append(notification.MessageQueues, &Queue{})
 }
 
+// target is one webhook endpoint with its own filter, http client and
+// concurrency budget. The flat [notification.webhook] section is the unnamed
+// target; each enabled [notification.webhook.<name>] subsection adds another.
+type target struct {
+	name   string
+	config *config
+	filter *filter
+	client client
+	sem    chan struct{}
+}
+
+func newTarget(name string, cfg *config) (*target, error) {
+	t := &target{
+		name:   name,
+		config: cfg,
+		filter: newFilter(cfg),
+		sem:    make(chan struct{}, cfg.nWorkers),
+	}
+	hClient, err := newHTTPClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webhook http client: %w", err)
+	}
+	t.client = hClient
+	return t, nil
+}
+
+func (t *target) topic() string {
+	if t.name == "" {
+		return pubSubTopicName
+	}
+	return pubSubTopicName + "_" + t.name
+}
+
+func (t *target) handlerName() string {
+	if t.name == "" {
+		return "webhook_handler"
+	}
+	return "webhook_handler_" + t.name
+}
+
 type Queue struct {
-	router       *message.Router
+	routers      []*message.Router
 	queueChannel *gochannel.GoChannel
-	config       *config
-	client       client
-	filter       *filter
+	targets      []*target
 
 	ctx    context.Context
 	cancel context.CancelFunc
-
-	// Semaphore for controlling concurrent webhook requests
-	sem chan struct{}
 }
 
 func (w *Queue) GetName() string {
 	return queueName
+}
+
+// HasEnabledSubconfig reports whether any [notification.webhook.<name>]
+// subsection is enabled, so the queue activates on named targets even when the
+// flat [notification.webhook] section is absent.
+func (w *Queue) HasEnabledSubconfig(configuration util.Configuration, prefix string) bool {
+	return len(namedTargetPrefixes(configuration, prefix)) > 0
+}
+
+// stringMapConfig is implemented by *util.ViperProxy; anything narrower simply
+// gets no named-target discovery.
+type stringMapConfig interface {
+	GetStringMap(key string) map[string]interface{}
+}
+
+func namedTargetPrefixes(configuration util.Configuration, prefix string) []string {
+	mg, ok := configuration.(stringMapConfig)
+	if !ok {
+		return nil
+	}
+	var prefixes []string
+	for k, v := range mg.GetStringMap(strings.TrimSuffix(prefix, ".")) {
+		sub, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if enabled, _ := sub["enabled"].(bool); !enabled {
+			continue
+		}
+		prefixes = append(prefixes, prefix+k+".")
+	}
+	sort.Strings(prefixes)
+	return prefixes
+}
+
+func buildTargets(configuration util.Configuration, prefix string) ([]*target, error) {
+	var prefixes []string
+	if configuration.GetBool(prefix+"enabled") || configuration.GetString(prefix+"endpoint") != "" {
+		prefixes = append(prefixes, prefix)
+	}
+	prefixes = append(prefixes, namedTargetPrefixes(configuration, prefix)...)
+
+	var targets []*target
+	for _, p := range prefixes {
+		cfg := newConfigWithDefaults(configuration, p)
+		if err := cfg.validate(); err != nil {
+			return nil, err
+		}
+		t, err := newTarget(strings.TrimSuffix(strings.TrimPrefix(p, prefix), "."), cfg)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	return targets, nil
 }
 
 func (w *Queue) SendMessage(key string, msg proto.Message) error {
@@ -46,21 +138,23 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		return nil
 	}
 
-	if w.filter != nil && !w.filter.shouldPublish(key, eventNotification) {
-		return nil
+	for _, t := range w.targets {
+		if t.filter != nil && !t.filter.shouldPublish(key, eventNotification) {
+			continue
+		}
+		m := newWebhookMessage(key, msg)
+		if m == nil {
+			continue
+		}
+		wMsg, err := m.toWaterMillMessage()
+		if err != nil {
+			return err
+		}
+		if err := w.queueChannel.Publish(t.topic(), wMsg); err != nil {
+			return err
+		}
 	}
-
-	m := newWebhookMessage(key, msg)
-	if m == nil {
-		return nil
-	}
-
-	wMsg, err := m.toWaterMillMessage()
-	if err != nil {
-		return err
-	}
-
-	return w.queueChannel.Publish(pubSubTopicName, wMsg)
+	return nil
 }
 
 func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
@@ -78,105 +172,104 @@ func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
 }
 
 func (w *Queue) Initialize(configuration util.Configuration, prefix string) error {
-	c := newConfigWithDefaults(configuration, prefix)
-
-	if err := c.validate(); err != nil {
+	targets, err := buildTargets(configuration, prefix)
+	if err != nil {
 		return err
 	}
+	if len(targets) == 0 {
+		return fmt.Errorf("webhook endpoint is required")
+	}
 
-	return w.initialize(c)
+	return w.initialize(targets)
 }
 
-func (w *Queue) initialize(cfg *config) error {
+func (w *Queue) initialize(targets []*target) error {
 	w.ctx, w.cancel = context.WithCancel(context.Background())
-	w.config = cfg
-	w.filter = newFilter(cfg)
+	w.targets = targets
 
-	// Initialize semaphore for controlling concurrent webhook requests
-	w.sem = make(chan struct{}, cfg.nWorkers)
-
-	hClient, err := newHTTPClient(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create webhook http client: %w", err)
-	}
-	w.client = hClient
-
-	if err = w.setupWatermillQueue(cfg); err != nil {
+	if err := w.setupWatermillQueue(targets); err != nil {
 		return fmt.Errorf("failed to setup watermill queue: %w", err)
 	}
-	if err = w.logDeadLetterMessages(); err != nil {
+	if err := w.logDeadLetterMessages(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (w *Queue) setupWatermillQueue(cfg *config) error {
+func (w *Queue) setupWatermillQueue(targets []*target) error {
 	logger := watermill.NewStdLogger(false, false)
+	bufferSize := 0
+	for _, t := range targets {
+		if t.config.bufferSize > bufferSize {
+			bufferSize = t.config.bufferSize
+		}
+	}
 	pubSubConfig := gochannel.Config{
-		OutputChannelBuffer: int64(cfg.bufferSize),
+		OutputChannelBuffer: int64(bufferSize),
 		Persistent:          false,
 	}
 	w.queueChannel = gochannel.NewGoChannel(pubSubConfig, logger)
 
-	router, err := message.NewRouter(
-		message.RouterConfig{
-			CloseTimeout: 60 * time.Second,
-		},
-		logger,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create router: %w", err)
-	}
-	w.router = router
+	for _, t := range targets {
+		// One router per target so each keeps its own retry/backoff settings.
+		// Handlers subscribe to the target's own topic, so a message is
+		// delivered to an endpoint exactly once per matching target.
+		router, err := message.NewRouter(
+			message.RouterConfig{
+				CloseTimeout: 60 * time.Second,
+			},
+			logger,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create router: %w", err)
+		}
+		w.routers = append(w.routers, router)
 
-	retryMiddleware := middleware.Retry{
-		MaxRetries:          cfg.maxRetries,
-		InitialInterval:     time.Duration(cfg.backoffSeconds) * time.Second,
-		MaxInterval:         time.Duration(cfg.maxBackoffSeconds) * time.Second,
-		Multiplier:          2.0,
-		RandomizationFactor: 0.3,
-		Logger:              logger,
-	}.Middleware
+		retryMiddleware := middleware.Retry{
+			MaxRetries:          t.config.maxRetries,
+			InitialInterval:     time.Duration(t.config.backoffSeconds) * time.Second,
+			MaxInterval:         time.Duration(t.config.maxBackoffSeconds) * time.Second,
+			Multiplier:          2.0,
+			RandomizationFactor: 0.3,
+			Logger:              logger,
+		}.Middleware
 
-	poisonQueue, err := middleware.PoisonQueue(w.queueChannel, deadLetterTopic)
-	if err != nil {
-		return fmt.Errorf("failed to create poison queue: %w", err)
-	}
-
-	router.AddPlugin(plugin.SignalsHandler)
-	router.AddMiddleware(retryMiddleware, poisonQueue)
-
-	// Add a single handler to avoid duplicate message delivery.
-	// With gochannel's default behavior, each handler call creates
-	// a separate subscription, and all subscriptions receive their own copy of each message.
-	// Using a single handler ensures each webhook is sent only once.
-	// Concurrency is controlled via semaphore in handleWebhook based on nWorkers config.
-	router.AddConsumerHandler(
-		"webhook_handler",
-		pubSubTopicName,
-		w.queueChannel,
-		w.handleWebhook,
-	)
-
-	go func() {
-		// cancels the queue context so the dead letter logger exists in case context not canceled by the shutdown signal already
-		defer w.cancel()
-
-		if err := router.Run(w.ctx); err != nil && !errors.Is(err, context.Canceled) {
-			glog.Errorf("webhook pubsub worker stopped with error: %v", err)
+		poisonQueue, err := middleware.PoisonQueue(w.queueChannel, deadLetterTopic)
+		if err != nil {
+			return fmt.Errorf("failed to create poison queue: %w", err)
 		}
 
-		glog.Info("webhook pubsub worker stopped")
-	}()
+		router.AddPlugin(plugin.SignalsHandler)
+		router.AddMiddleware(retryMiddleware, poisonQueue)
+
+		t := t
+		router.AddConsumerHandler(
+			t.handlerName(),
+			t.topic(),
+			w.queueChannel,
+			t.handleWebhook,
+		)
+
+		go func() {
+			// cancels the queue context so the dead letter logger exists in case context not canceled by the shutdown signal already
+			defer w.cancel()
+
+			if err := router.Run(w.ctx); err != nil && !errors.Is(err, context.Canceled) {
+				glog.Errorf("webhook pubsub worker stopped with error: %v", err)
+			}
+
+			glog.Info("webhook pubsub worker stopped")
+		}()
+	}
 
 	return nil
 }
 
-func (w *Queue) handleWebhook(msg *message.Message) error {
+func (t *target) handleWebhook(msg *message.Message) error {
 	// Acquire semaphore slot (blocks if at capacity)
-	w.sem <- struct{}{}
-	defer func() { <-w.sem }()
+	t.sem <- struct{}{}
+	defer func() { <-t.sem }()
 
 	var n filer_pb.EventNotification
 	if err := proto.Unmarshal(msg.Payload, &n); err != nil {
@@ -191,7 +284,7 @@ func (w *Queue) handleWebhook(msg *message.Message) error {
 		Notification: &n,
 	}
 
-	if err := w.client.sendMessage(webhookMsg); err != nil {
+	if err := t.client.sendMessage(webhookMsg); err != nil {
 		glog.Errorf("failed to send message to webhook %s: %v", webhookMsg.Key, err)
 		return err
 	}

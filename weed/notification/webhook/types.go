@@ -3,7 +3,6 @@ package webhook
 import (
 	"fmt"
 	"net/url"
-	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -29,12 +28,6 @@ const (
 func (e eventType) valid() bool {
 	return notification.ValidEventType(string(e))
 }
-
-var (
-	pubSubHandlerNameTemplate = func(n int) string {
-		return "webhook_handler_" + strconv.Itoa(n)
-	}
-)
 
 type client interface {
 	sendMessage(message *webhookMessage) error
