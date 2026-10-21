@@ -121,7 +121,7 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
-		return nil, retryable, statusError(url, response)
+		return nil, retryable, StatusError(url, response)
 	}
 
 	var reader io.ReadCloser
@@ -335,7 +335,7 @@ func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCom
 	defer CloseResponse(r)
 
 	if r.StatusCode >= 400 {
-		return 0, statusError(fileUrl, r)
+		return 0, StatusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -415,7 +415,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 			return false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return retryable, statusError(fileUrl, r)
+		return retryable, StatusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -505,7 +505,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		err = statusError(fileUrl, r)
+		err = StatusError(fileUrl, r)
 		CloseResponse(r)
 		return nil, nil, err
 	}
@@ -525,9 +525,9 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 	return r, reader, nil
 }
 
-// statusError adds the message a server writes into the body of a failed
+// StatusError adds the message a server writes into the body of a failed
 // request, such as a volume server CRC mismatch, to the status line.
-func statusError(fileUrl string, r *http.Response) error {
+func StatusError(fileUrl string, r *http.Response) error {
 	var reader io.Reader = r.Body
 	if r.Header.Get("Content-Encoding") == "gzip" {
 		if gz, err := gzip.NewReader(r.Body); err == nil {
@@ -807,7 +807,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 			return 0, false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return 0, retryable, statusError(fileUrl, r)
+		return 0, retryable, StatusError(fileUrl, r)
 	}
 
 	// Read directly into the buffer without intermediate copying
