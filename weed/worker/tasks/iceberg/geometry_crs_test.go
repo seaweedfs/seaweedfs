@@ -221,3 +221,31 @@ func TestDefaultCRSUnsetWithoutFieldIDs(t *testing.T) {
 		})
 	}
 }
+
+// The footer is replaced inside the file's own buffer: a compacted file can be
+// as large as the target file size, and a copy of it would double the memory
+// the rewrite needs.
+func TestDefaultCRSUnsetReusesBuffer(t *testing.T) {
+	data := writeGeoParquet(t, []geoRow{{1, wkbPoint(1, 2)}, {2, wkbPoint(3, 4)}}, "")
+	if crs, ok := footerGeometryCRS(t, data, "geom"); !ok || crs != iceberg.DefaultGeoCRS {
+		t.Fatalf("setup: CRS %q (geometry %v); the control is the spelled-out default", crs, ok)
+	}
+	first := &data[0]
+	out, changed, err := withDefaultGeometryCRSUnset(data, geoTestSchema(iceberg.GeometryType{}))
+	if err != nil || !changed {
+		t.Fatalf("changed %v, %v", changed, err)
+	}
+	if &out[0] != first {
+		t.Errorf("the rewrite copied the file into a new buffer")
+	}
+	if crs, ok := footerGeometryCRS(t, out, "geom"); !ok || crs != "" {
+		t.Errorf("geometry declares CRS %q (geometry %v), want none", crs, ok)
+	}
+	got, err := parquet.Read[struct {
+		ID   int64  `parquet:"id"`
+		Geom []byte `parquet:"geom,optional"`
+	}](bytes.NewReader(out), int64(len(out)))
+	if err != nil || len(got) != 2 || got[1].ID != 2 || !bytes.Equal(got[1].Geom, wkbPoint(3, 4)) {
+		t.Errorf("the rewritten file reads %v, %v", got, err)
+	}
+}

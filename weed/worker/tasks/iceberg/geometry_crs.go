@@ -32,7 +32,8 @@ var parquetMagic = []byte("PAR1")
 // column whose Iceberg type has the default CRS left unset in the footer, and
 // whether anything changed. A file that needs no change comes back as it was;
 // so does one whose footer cannot be read (encrypted, not Parquet), with an
-// error.
+// error. A changed file is written into data's buffer when it fits, so the
+// caller uses the result in place of data.
 func withDefaultGeometryCRSUnset(data []byte, schema *iceberg.Schema) ([]byte, bool, error) {
 	if schema == nil || !hasDefaultCRSGeometry(schema) {
 		return data, false, nil
@@ -80,8 +81,14 @@ func withDefaultGeometryCRSUnset(data []byte, schema *iceberg.Schema) ([]byte, b
 	if err != nil {
 		return data, false, fmt.Errorf("encode footer: %w", err)
 	}
-	out := make([]byte, 0, footerStart+len(footer)+8)
-	out = append(out, data[:footerStart]...)
+	// The new footer is written over the old one in data's own buffer when it
+	// fits, as it does when a CRS is removed: the file is as large as a
+	// compaction target, and copying it would double the memory it takes.
+	out := data[:footerStart]
+	if cap(data) < footerStart+len(footer)+8 {
+		out = make([]byte, footerStart, footerStart+len(footer)+8)
+		copy(out, data[:footerStart])
+	}
 	out = append(out, footer...)
 	out = binary.LittleEndian.AppendUint32(out, uint32(len(footer)))
 	out = append(out, parquetMagic...)
