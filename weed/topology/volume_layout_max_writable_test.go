@@ -99,3 +99,31 @@ func TestPickForWriteCapOfTwoAndDisabled(t *testing.T) {
 		t.Fatalf("uncapped pick reached %v, want all three volumes", picked)
 	}
 }
+
+// The cap applies inside the requested location: with cap 1, a write naming
+// dc2 must still find dc2's writable volume even though the fullest is in dc1.
+func TestPickForWriteCapWithinRequestedLocation(t *testing.T) {
+	topo := NewTopology("mw", nil, 32*1024, 5, false)
+	topo.SetMaxWritableVolumes(1)
+	dn1 := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "", "", map[string]uint32{"": 100})
+	dn2 := topo.GetOrCreateDataCenter("dc2").GetOrCreateRack("rack2").
+		GetOrCreateDataNode("127.0.0.2", 8080, 18080, "", "", map[string]uint32{"": 100})
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		sizeTrackingVolume(1, 30000, false), // fullest, in dc1
+	}, dn1)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		sizeTrackingVolume(2, 1000, false), // in dc2
+	}, dn2)
+
+	vid, _, _, _, err := vl.PickForWrite(1, &VolumeGrowOption{DataCenter: "dc2"})
+	if err != nil {
+		t.Fatalf("PickForWrite dc2: %v", err)
+	}
+	if vid != needle.VolumeId(2) {
+		t.Fatalf("picked volume %d, want dc2's volume 2", vid)
+	}
+}

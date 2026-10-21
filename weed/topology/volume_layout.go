@@ -645,19 +645,42 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	writables := vl.writables
-	if vl.maxWritableVolumes > 0 && len(writables) > vl.maxWritableVolumes {
-		writables = vl.fullestWritable(writables)
-	}
-	lenWriters := len(writables)
+	lenWriters := len(vl.writables)
 	if lenWriters <= 0 {
 		return 0, 0, nil, true, fmt.Errorf("%s", NoWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
+		writables := vl.writables
+		if vl.maxWritableVolumes > 0 && len(writables) > vl.maxWritableVolumes {
+			writables = vl.fullestWritable(writables)
+		}
 		vid, locationList = vl.pickWeightedByRemaining(writables)
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
 		}
+		return vid, count, locationList.Copy(), false, nil
+	}
+
+	if vl.maxWritableVolumes > 0 {
+		// The cap must hold inside the requested location, so collect every
+		// matching writable before narrowing to the fullest.
+		var matches []needle.VolumeId
+		for _, writableVolumeId := range vl.writables {
+			volumeLocationList := vl.vid2location[writableVolumeId]
+			for _, dn := range volumeLocationList.list {
+				if dn.matchesLocation(option) {
+					matches = append(matches, writableVolumeId)
+					break
+				}
+			}
+		}
+		if len(matches) == 0 {
+			return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", NoWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
+		}
+		if len(matches) > vl.maxWritableVolumes {
+			matches = vl.fullestWritable(matches)
+		}
+		vid, locationList = vl.weightedPick(matches)
 		return vid, count, locationList.Copy(), false, nil
 	}
 
@@ -667,7 +690,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	found := 0
 	start := rand.IntN(lenWriters)
 	for i := 0; i < lenWriters && found < pickSampleSize; i++ {
-		writableVolumeId := writables[(start+i)%lenWriters]
+		writableVolumeId := vl.writables[(start+i)%lenWriters]
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
 			if !dn.matchesLocation(option) {
