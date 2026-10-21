@@ -76,7 +76,7 @@ func RunShell(options ShellOptions) error {
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(connectCtx, false, func(client master_pb.SeaweedClient) error {
+		listErr := commandEnv.MasterClient.WithClient(connectCtx, false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(connectCtx, &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 				FilerGroup: *options.FilerGroup,
@@ -92,6 +92,8 @@ func RunShell(options ShellOptions) error {
 		})
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
+		} else if listErr != nil {
+			fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *options.Masters, listErr)
 		}
 		if options.Debug {
 			if len(filers) > 0 {
