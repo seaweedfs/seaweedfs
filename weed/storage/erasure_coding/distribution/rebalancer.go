@@ -239,8 +239,39 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 		pending[ShardLocation{ShardID: m.ShardID, NodeID: m.DestNode.NodeID}] = len(moves)
 		moves = append(moves, m)
 	}
-	plan.Moves = moves
+	// Order the collapsed moves so each destination has a free slot when its
+	// move is applied: a chain's final destination may only gain a slot from a
+	// later move's departure, so the early position the collapse kept can be
+	// wrong. Emit every move whose destination has room first; a source gains
+	// its slot back as soon as its move is emitted.
+	free := make(map[string]int)
+	for _, n := range sim.AllNodes {
+		free[n.NodeID] = n.FreeSlots
+	}
 	for _, m := range moves {
+		free[m.DestNode.NodeID]++
+		free[m.SourceNode.NodeID]--
+	}
+	ordered := make([]ShardMove, 0, len(moves))
+	for len(moves) > 0 {
+		kept := moves[:0]
+		for _, m := range moves {
+			if free[m.DestNode.NodeID] > 0 {
+				free[m.DestNode.NodeID]--
+				free[m.SourceNode.NodeID]++
+				ordered = append(ordered, m)
+			} else {
+				kept = append(kept, m)
+			}
+		}
+		if len(kept) == len(moves) {
+			ordered = append(ordered, kept...)
+			break
+		}
+		moves = kept
+	}
+	plan.Moves = ordered
+	for _, m := range ordered {
 		switch {
 		case m.SourceNode.DataCenter != m.DestNode.DataCenter:
 			plan.MovesAcrossDC++
@@ -250,7 +281,7 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 			plan.MovesWithinRack++
 		}
 	}
-	plan.TotalMoves = len(moves)
+	plan.TotalMoves = len(ordered)
 	return plan, nil
 }
 

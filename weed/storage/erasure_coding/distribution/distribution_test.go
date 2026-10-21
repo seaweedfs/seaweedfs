@@ -429,6 +429,50 @@ func TestPlanRebalanceCollapsesChainedMoves(t *testing.T) {
 	assert.Equal(t, []int{13, 9, 12}, plan.Analysis.AllNodes["b1"].ShardIDs)
 }
 
+// A collapsed move must not be scheduled before the departures that free its
+// destination: applying the plan in order may never target a full node.
+func TestPlanRebalanceMovesRespectSlots(t *testing.T) {
+	ec, err := NewECConfig(20, 4)
+	require.NoError(t, err)
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 10))
+	a.AddNode(makeNode("b2", "dcB", "rB1", 0, 20, 21, 22, 23))
+	a.AddNode(makeNode("c1", "dcB", "rB2", 10, 17, 18, 19))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(ec, rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	free := make(map[string]int)
+	for _, n := range a.AllNodes {
+		free[n.NodeID] = n.FreeSlots
+	}
+	firstDeparture, firstArrival := -1, -1
+	for i, m := range plan.Moves {
+		assert.Greater(t, free[m.DestNode.NodeID], 0, "move %d targets a full node", i)
+		free[m.DestNode.NodeID]--
+		free[m.SourceNode.NodeID]++
+		if m.DestNode.NodeID == "b2" && firstArrival < 0 {
+			firstArrival = i
+		}
+		if m.SourceNode.NodeID == "b2" && firstDeparture < 0 {
+			firstDeparture = i
+		}
+	}
+	moved := make(map[int]string)
+	for _, m := range plan.Moves {
+		moved[m.ShardID] = m.DestNode.NodeID
+	}
+	// shard 16 reaches full-at-start b2 through b1; the plan moves it directly,
+	// but only after the departures that free b2's slots
+	assert.Equal(t, "b2", moved[16])
+	assert.Equal(t, "c1", moved[23])
+	assert.Greater(t, firstArrival, firstDeparture)
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
