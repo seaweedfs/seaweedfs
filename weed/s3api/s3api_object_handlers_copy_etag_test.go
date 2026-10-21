@@ -375,6 +375,40 @@ func TestCopyObjectPartInlineContent(t *testing.T) {
 	}
 }
 
+// An empty part must carry the empty-body MD5 on the stored entry too, so
+// ListParts and complete's composite ETag see the same digest CopyPartResult
+// reported.
+func TestWriteEmptyCopyPartStoresMd5(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	etag, code := s3a.writeEmptyCopyPart("b", "u1", 3)
+	if code != s3err.ErrNone {
+		t.Fatalf("writeEmptyCopyPart: %v", code)
+	}
+	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
+	if etag != emptyMD5Hex {
+		t.Fatalf("writeEmptyCopyPart etag = %q, want %q", etag, emptyMD5Hex)
+	}
+	var partEntry *filer_pb.Entry
+	for key, e := range filerImpl.entries {
+		if strings.Contains(key, "u1") {
+			partEntry = e
+		}
+	}
+	if partEntry == nil {
+		t.Fatalf("no part entry stored: %+v", filerImpl.entries)
+	}
+	if got := string(partEntry.Extended[s3_constants.ExtETagKey]); got != emptyMD5Hex {
+		t.Errorf("stored ExtETagKey = %q, want %q", got, emptyMD5Hex)
+	}
+	if got := fmt.Sprintf("%x", partEntry.Attributes.Md5); got != emptyMD5Hex {
+		t.Errorf("stored Attributes.Md5 = %q, want %q", got, emptyMD5Hex)
+	}
+}
+
 // A whole-range chunk copy normally reuses the source chunk's ETag as the
 // part MD5; TUS and mount writes leave chunks without one, so the part has
 // to hash the copied bytes instead of saving an empty digest.
