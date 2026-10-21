@@ -17,7 +17,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestVolumeFsckCanPurgeDirectory(t *testing.T) {
@@ -104,6 +107,22 @@ func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	}
 	if req.IfNotModifiedAfter > 0 && entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
 		return &filer_pb.DeleteEntryResponse{}, nil
+	}
+	// mirror the real filer: an entry unequal to the condition's expected
+	// version fails with FailedPrecondition. Both sides go through the
+	// stored-entry normalization FromPbEntry applies (e.g. atime <- mtime)
+	// and the chunk canonicalization BeforeEntrySerialization applies.
+	normalize := func(e *filer_pb.Entry) *filer_pb.Entry {
+		c := proto.Clone(e).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(c.Chunks)
+		return filer.FromPbEntry("", c).ToProtoEntry()
+	}
+	for _, clause := range req.GetCondition().GetClauses() {
+		if clause.Kind == filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			if !proto.Equal(normalize(entry), normalize(clause.ExpectedEntry)) {
+				return nil, status.Error(codes.FailedPrecondition, "precondition failed")
+			}
+		}
 	}
 	for path := range s.entries {
 		if strings.HasPrefix(path, fullPath+"/") {
