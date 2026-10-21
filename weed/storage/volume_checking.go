@@ -145,7 +145,25 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), err)
 	}
 	if indexSize == 0 {
-		return 0, nil
+		if v.noWriteOrDelete || v.noWriteCanDelete {
+			return 0, nil
+		}
+		// An empty index can hide writes a crash stranded in the .dat: the
+		// writable index loader creates the .idx before the first needle
+		// append, so a crash after that append leaves a volume whose data
+		// nothing indexes — and every check below skips an empty index. The
+		// same repair runs from the first record past the superblock; a tail
+		// it cannot explain fails the check, since an unaccounted-for .dat
+		// must not load writable either.
+		if _, _, err = repairUnindexedDatTail(v, indexFile, 0, -1); err != nil {
+			return 0, fmt.Errorf("CheckVolumeDataIntegrity %s: repair unindexed .dat tail: %v", indexFile.Name(), err)
+		}
+		if indexSize, err = verifyIndexFileIntegrity(indexFile); err != nil {
+			return 0, fmt.Errorf("verifyIndexFileIntegrity %s after re-indexing failed: %v", indexFile.Name(), err)
+		}
+		if indexSize == 0 {
+			return 0, nil
+		}
 	}
 	// The deeper-than-tail structural check (every (offset + actual size)
 	// fits inside .dat) lives in volume.load(): it reads
@@ -258,7 +276,11 @@ var errTailNotTorn = errors.New("not a torn tail")
 // A write appends the needle to the .dat, then its entry to the .idx, then
 // answers the client. A process killed between the first two steps leaves a
 // needle, or part of one, past the end of the needle at the highest indexed
-// offset. After a power loss the order on disk is whatever the page cache
+// offset; a crash after the very first append leaves it past an index with
+// no entry at all, which tailEntryPos < 0 marks: the walk then starts at the
+// first record past the superblock with no anchor needle and no append
+// timestamp to compare against. After a power loss the order on disk is
+// whatever the page cache
 // flushed: a complete needle can survive whose .idx entry did not, although
 // the client was answered. So a complete needle is never dropped: every
 // complete needle in the tail (its header, body, checksum, timestamp and
@@ -298,18 +320,45 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 		// does not name its needle's position on its own
 		return 0, 0, nil
 	}
-	entry, err := readIndexEntryAtOffset(indexFile, tailEntryPos)
-	if err != nil {
-		return 0, 0, fmt.Errorf("read index entry at %d: %v", tailEntryPos, err)
+	var start int64
+	var lastAppendAtNs uint64
+	if tailEntryPos < 0 {
+		// The index holds no row at all, so no entry can anchor the walk:
+		// it starts at the first record past the superblock.
+		start = int64(v.SuperBlock.BlockSize())
+	} else {
+		entry, err := readIndexEntryAtOffset(indexFile, tailEntryPos)
+		if err != nil {
+			return 0, 0, fmt.Errorf("read index entry at %d: %v", tailEntryPos, err)
+		}
+		key, offset, size := idx.IdxFileEntry(entry)
+		if offset.IsZero() {
+			return 0, 0, nil
+		}
+		start = needleDiskEnd(offset, size, version)
+		if start >= datSize {
+			// the .dat ends at the last needle (clean), or the index references
+			// bytes the .dat does not have: not a torn tail, not ours to fix
+			return 0, 0, nil
+		}
+
+		// Anchor: the needle at the highest indexed offset must be the one its
+		// entry describes, whole and with a valid CRC.
+		onDiskSize := size
+		if size.IsDeleted() {
+			onDiskSize = 0
+		}
+		anchor, err := readTailNeedle(v.DataBackend, version, offset.ToActualOffset(), onDiskSize)
+		if err != nil {
+			return 0, 0, fmt.Errorf("last indexed needle %v at %d: %v: %w", key, offset.ToActualOffset(), err, errTailNotTorn)
+		}
+		if anchor.Id != key {
+			return 0, 0, fmt.Errorf("needle at %d is id %v, its index entry says id %v: %w", offset.ToActualOffset(), anchor.Id, key, errTailNotTorn)
+		}
+		lastAppendAtNs = anchor.AppendAtNs
 	}
-	key, offset, size := idx.IdxFileEntry(entry)
-	if offset.IsZero() {
-		return 0, 0, nil
-	}
-	start := needleDiskEnd(offset, size, version)
 	if start >= datSize {
-		// the .dat ends at the last needle (clean), or the index references
-		// bytes the .dat does not have: not a torn tail, not ours to fix
+		// no record past the superblock: nothing to index
 		return 0, 0, nil
 	}
 	// The backend rounds its size up to the needle alignment; the walk needs
@@ -319,21 +368,7 @@ func repairUnindexedDatTail(v *Volume, indexFile *os.File, indexSize int64, tail
 		fileSize = st.Size()
 	}
 
-	// Anchor: the needle at the highest indexed offset must be the one its
-	// entry describes, whole and with a valid CRC.
-	onDiskSize := size
-	if size.IsDeleted() {
-		onDiskSize = 0
-	}
-	anchor, err := readTailNeedle(v.DataBackend, version, offset.ToActualOffset(), onDiskSize)
-	if err != nil {
-		return 0, 0, fmt.Errorf("last indexed needle %v at %d: %v: %w", key, offset.ToActualOffset(), err, errTailNotTorn)
-	}
-	if anchor.Id != key {
-		return 0, 0, fmt.Errorf("needle at %d is id %v, its index entry says id %v: %w", offset.ToActualOffset(), anchor.Id, key, errTailNotTorn)
-	}
-
-	entries, cutAt, err := walkUnindexedDatTail(v.DataBackend, version, start, fileSize, anchor.AppendAtNs)
+	entries, cutAt, err := walkUnindexedDatTail(v.DataBackend, version, start, fileSize, lastAppendAtNs)
 	if err != nil {
 		return 0, 0, err
 	}

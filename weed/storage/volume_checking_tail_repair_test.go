@@ -302,6 +302,132 @@ func TestVolumeLoadRepairsUnindexedDatTail(t *testing.T) {
 	}
 }
 
+// An empty index can hide writes a crash stranded in the .dat: the writable
+// index loader creates the .idx before the first needle append, so a crash
+// after that append leaves a volume whose data nothing indexes. The same
+// repair runs from the first record past the superblock.
+func TestVolumeLoadRepairsTailPastEmptyIndex(t *testing.T) {
+	cases := []struct {
+		name      string
+		ops       []tornOp
+		damage    func(t *testing.T, f *tornFixture)
+		wantSize  func(f *tornFixture) int64 // .dat size after the repair
+		reindexed int
+		readable  []uint64
+		empty     []uint64
+		absent    []uint64
+	}{
+		{name: "the only write is re-indexed",
+			ops:      writes(7),
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 1,
+			readable: []uint64{7}},
+		{name: "every write is re-indexed",
+			ops:      writes(1, 2, 3),
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 3,
+			readable: []uint64{1, 2, 3}},
+		{name: "an unindexed delete is re-indexed as an empty live needle",
+			ops:      append(writes(1, 2, 3), tornOp{id: 2, del: true}),
+			wantSize: func(f *tornFixture) int64 { return f.end }, reindexed: 4,
+			readable: []uint64{1, 3}, empty: []uint64{2}},
+		{name: "a complete needle is re-indexed and the partial one after it cut",
+			ops:      writes(1, 2),
+			damage:   func(t *testing.T, f *tornFixture) { f.truncateDat(t, f.midRecord(1)) },
+			wantSize: func(f *tornFixture) int64 { return f.starts[1] }, reindexed: 1,
+			readable: []uint64{1}, absent: []uint64{2}},
+		{name: "a last needle with a bad CRC is cut",
+			ops:      writes(1, 2),
+			damage:   func(t *testing.T, f *tornFixture) { f.flipDataByte(t, f.starts[1]) },
+			wantSize: func(f *tornFixture) int64 { return f.starts[1] }, reindexed: 1,
+			readable: []uint64{1}, absent: []uint64{2}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := buildTornFixture(t, tc.ops, len(tc.ops))
+			if tc.damage != nil {
+				tc.damage(t, f)
+			}
+
+			v := newTornTailTestVolume(t, f.dir)
+			defer v.Close()
+			if v.noWriteOrDelete || v.noWriteCanDelete {
+				t.Fatal("volume with an unindexed .dat tail loaded read-only")
+			}
+			if got, want := fileSize(t, f.datName), tc.wantSize(f); got != want {
+				t.Fatalf(".dat is %d bytes after load, want %d", got, want)
+			}
+			if got, want := fileSize(t, f.idxName), int64(tc.reindexed)*types.NeedleMapEntrySize; got != want {
+				t.Fatalf(".idx is %d bytes after load, want %d (%d entries re-indexed)", got, want, tc.reindexed)
+			}
+			for _, id := range tc.readable {
+				assertReadable(t, v, f.written[id])
+			}
+			for _, id := range tc.empty {
+				assertEmpty(t, v, id)
+			}
+			for _, id := range tc.absent {
+				assertNotReadable(t, v, id)
+			}
+			v.Close()
+
+			// the repaired volume reloads clean, and keeps what it indexed
+			v2 := newTornTailTestVolume(t, f.dir)
+			defer v2.Close()
+			if v2.noWriteOrDelete {
+				t.Fatal("repaired volume loaded read-only on the next load")
+			}
+			for _, id := range tc.readable {
+				assertReadable(t, v2, f.written[id])
+			}
+			for _, id := range tc.empty {
+				assertEmpty(t, v2, id)
+			}
+		})
+	}
+}
+
+// An .dat an interrupted append does not explain, over an index with no rows
+// at all, loads the volume read-only: the checks that would quarantine it
+// otherwise all skip an empty index.
+func TestVolumeLoadKeepsUnexplainedTailPastEmptyIndexReadOnly(t *testing.T) {
+	cases := []struct {
+		name   string
+		damage func(t *testing.T, f *tornFixture)
+	}{
+		{name: "zero bytes where the first record would be (id 0)",
+			damage: func(t *testing.T, f *tornFixture) {
+				file, err := os.OpenFile(f.datName, os.O_RDWR|os.O_APPEND, 0644)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer file.Close()
+				if _, err := file.Write(make([]byte, 64)); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "a damaged record more data follows",
+			damage: func(t *testing.T, f *tornFixture) { f.flipDataByte(t, f.starts[0]) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := buildTornFixture(t, writes(1, 2), 2)
+			tc.damage(t, f)
+			datBefore, idxBefore := fileSize(t, f.datName), fileSize(t, f.idxName)
+
+			v := newTornTailTestVolume(t, f.dir)
+			defer v.Close()
+			if !v.noWriteOrDelete {
+				t.Fatal("volume with an unexplained tail past an empty index loaded writable")
+			}
+			if got := fileSize(t, f.datName); got != datBefore {
+				t.Fatalf(".dat changed from %d to %d bytes", datBefore, got)
+			}
+			if got := fileSize(t, f.idxName); got != idxBefore {
+				t.Fatalf(".idx changed from %d to %d bytes", idxBefore, got)
+			}
+		})
+	}
+}
+
 // Every tail an interrupted append does not explain is left exactly as it is,
 // and the volume loads read-only as before.
 func TestVolumeLoadKeepsUnexplainedTailReadOnly(t *testing.T) {
