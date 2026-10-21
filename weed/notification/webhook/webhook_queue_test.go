@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -593,11 +594,14 @@ func (m *mapConfig) GetStringMap(key string) map[string]interface{} {
 }
 
 func TestNamedTargets(t *testing.T) {
+	var hitsA, hitsB atomic.Int32
 	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer serverA.Close()
 	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer serverB.Close()
@@ -648,11 +652,28 @@ func TestNamedTargets(t *testing.T) {
 	}
 	defer closeQueueForTest(q)
 
+	time.Sleep(200 * time.Millisecond)
+
 	msg := &filer_pb.EventNotification{
 		NewEntry: &filer_pb.Entry{Name: "f.txt"},
 	}
-	if err := q.SendMessage("/data/f.txt", msg); err != nil {
-		t.Errorf("SendMessage() error = %v", err)
+	for _, key := range []string{"/data/f.txt", "/repository/f.txt", "/elsewhere/f.txt"} {
+		if err := q.SendMessage(key, msg); err != nil {
+			t.Errorf("SendMessage(%q) error = %v", key, err)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && (hitsA.Load() == 0 || hitsB.Load() == 0) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if got := hitsA.Load(); got != 1 {
+		t.Errorf("expected file_ingress to receive 1 event, got %d", got)
+	}
+	if got := hitsB.Load(); got != 1 {
+		t.Errorf("expected metadata_extractor to receive 1 event, got %d", got)
 	}
 }
 
