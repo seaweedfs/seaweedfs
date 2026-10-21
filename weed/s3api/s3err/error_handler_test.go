@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,6 +53,33 @@ func TestWriteErrorResponseDrainsRequestBodyBeforeWriting(t *testing.T) {
 	assert.Len(t, rr.readDeadlines, 2)
 	assert.False(t, rr.readDeadlines[0].IsZero())
 	assert.True(t, rr.readDeadlines[1].IsZero())
+}
+
+func TestWriteResponseOmitsBodyWhenNotAllowed(t *testing.T) {
+	payload := []byte("<Error><Code>NoSuchKey</Code></Error>")
+	for _, tc := range []struct {
+		name              string
+		method            string
+		status            int
+		wantContentLength string
+	}{
+		{"head request", http.MethodHead, http.StatusNotFound, strconv.Itoa(len(payload))},
+		{"no content", http.MethodGet, http.StatusNoContent, ""},
+		{"not modified", http.MethodGet, http.StatusNotModified, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "/bucket/object", nil)
+			rr := httptest.NewRecorder()
+			WriteResponse(rr, req, tc.status, payload, MimeXML)
+			assert.Empty(t, rr.Body.String())
+			assert.Equal(t, tc.wantContentLength, rr.Header().Get("Content-Length"))
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+	rr := httptest.NewRecorder()
+	WriteResponse(rr, req, http.StatusOK, payload, MimeXML)
+	assert.Equal(t, string(payload), rr.Body.String())
 }
 
 func extractRequestIDFromBody(body string) string {
