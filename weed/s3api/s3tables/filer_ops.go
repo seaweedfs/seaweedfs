@@ -262,6 +262,14 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	return data, nil
 }
 
+// absentEntry reports whether err means there is no usable catalog entry at
+// the path: nothing is there, or what is there carries none of the attributes
+// the operation keys on (a plain S3 bucket holding the name, a directory left
+// without metadata).
+func absentEntry(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound)
+}
+
 // loadNamespaceMetadata resolves a namespace to its metadata. A directory that
 // carries no namespace metadata is not a namespace, so a missing attribute
 // reports the same absence as a missing entry and every caller tests one
