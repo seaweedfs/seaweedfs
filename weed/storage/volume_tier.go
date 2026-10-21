@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -125,7 +126,18 @@ func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFi
 	files := v.volumeInfo.GetFiles()
 	v.volumeInfo.Files = append(files, remoteFile)
 	if err := v.SaveVolumeInfo(); err != nil {
-		v.volumeInfo.Files = files
+		// A NotCrashDurableError means the rename committed: the .vif names
+		// the copy, so keep the entry and serve from the copy, and still
+		// report the error so the caller keeps the local .dat. Any other
+		// failure left the old .vif in place.
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			v.volumeInfo.Files = files
+			return fmt.Errorf("save remote file info: %w", err)
+		}
+		if loadErr := v.loadRemoteFileLocked(); loadErr != nil {
+			return fmt.Errorf("save remote file info: %w; load remote file: %v", err, loadErr)
+		}
 		return fmt.Errorf("save remote file info: %w", err)
 	}
 	return v.loadRemoteFileLocked()
@@ -138,6 +150,9 @@ func (v *Volume) SaveVolumeInfo() error {
 		v.volumeInfo.ExpireAtSec = expireAtSec
 	}
 
-	return volume_info.SaveVolumeInfo(tierFileName, v.volumeInfo)
+	return saveVolumeInfoFile(tierFileName, v.volumeInfo)
 
 }
+
+// saveVolumeInfoFile writes a .vif; tests replace it to inject failures.
+var saveVolumeInfoFile = volume_info.SaveVolumeInfo
