@@ -18,6 +18,7 @@
 package s3api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/subtle"
@@ -68,7 +69,7 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return iam.doesPresignV2SignatureMatch(r)
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.Header) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	accessKey := formValues.Get("AWSAccessKeyId")
 	if accessKey == "" {
@@ -113,6 +114,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 	if !compareSignatureV2(signature, calculateSignatureV2(policy, cred.SecretKey)) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 

@@ -19,6 +19,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -407,6 +408,10 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	if matchedHost != "" {
+		// The key of the credential that verified: the audit log and the
+		// catalog's vended sessions name it (never a key re-read from the request).
+		// Recorded before the retarget check so that refusal names it too.
+		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
 			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
 				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
@@ -414,9 +419,6 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 				return nil, nil, "", nil, s3err.ErrAccessDenied
 			}
 		}
-		// The key of the credential that verified: the audit log and the
-		// catalog's vended sessions name it (never a key re-read from the request).
-		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
@@ -833,7 +835,7 @@ func parseSignedHeaderList(signedHeadersValue string) ([]string, s3err.ErrorCode
 	return signedHeaders, s3err.ErrNone
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	// Parse credential tag.
 	credHeader, err := parseCredentialHeader("Credential=" + formValues.Get("X-Amz-Credential"))
@@ -876,6 +878,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 

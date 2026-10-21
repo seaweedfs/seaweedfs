@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -80,7 +81,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify policy signature.
-	identity, errCode := s3a.iam.doesPolicySignatureMatch(formValues)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -362,10 +363,11 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 }
 
 // Check to see if Policy is signed correctly, returning the signing identity.
-func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) (*Identity, s3err.ErrorCode) {
+// The verified form's access key is recorded in ctx's identity holder.
+func (iam *IdentityAccessManagement) doesPolicySignatureMatch(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
-		return iam.doesPolicySignatureV2Match(formValues)
+		return iam.doesPolicySignatureV2Match(ctx, formValues)
 	}
-	return iam.doesPolicySignatureV4Match(formValues)
+	return iam.doesPolicySignatureV4Match(ctx, formValues)
 }
