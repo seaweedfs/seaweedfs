@@ -4300,21 +4300,53 @@ impl Volume {
         }
         f(&mut self.volume_info.write().unwrap().files);
         let mut io = self.io.write().unwrap();
-        self.refresh_remote_write_mode(&mut io)
+        self.refresh_remote_write_mode(&mut io, true)
+    }
+
+    /// Go's MarkTieredDeletable: a live tier-up lifts the upload-time
+    /// read-only mark, except on a replicated volume — the shell copies the
+    /// uploaded replica's .idx and .vif to the other replicas after the
+    /// upload, and a tombstone written before that copy would reach one
+    /// replica only — or under an I/O quarantine, which is not the tier
+    /// upload's to lift. A refused volume keeps its flags until the next
+    /// load, as the Go volume does.
+    fn mark_tiered_deletable(&self) -> bool {
+        if self
+            .super_block
+            .read()
+            .unwrap()
+            .replica_placement
+            .has_replication()
+        {
+            return false;
+        }
+        if self.should_quarantine() {
+            return false;
+        }
+        self.no_write.store(NO_WRITE_CAN_DELETE, Ordering::Release);
+        true
     }
 
     /// Recompute the Go-style write/delete mode from the current remote tier
     /// state, and bring the needle map in line with it — a volume that stops
     /// being remote also stops using the read-only sorted index.
     ///
+    /// `live` is a tier transition on a running volume: the promotion then
+    /// goes through mark_tiered_deletable, Go's MarkTieredDeletable, while a
+    /// load promotes every tiered volume unconditionally as Go's load() does.
+    ///
     /// If the map cannot be rebuilt the volume is pinned read-only rather than
     /// published as writable with an index that rejects every put; a restart
     /// recovers it.
-    fn refresh_remote_write_mode(&self, io: &mut VolumeIo) -> Result<(), VolumeError> {
+    fn refresh_remote_write_mode(&self, io: &mut VolumeIo, live: bool) -> Result<(), VolumeError> {
         let has_remote = self.has_remote_file();
         if has_remote {
             // remote-tiered: no writes, deletes allowed
-            self.no_write.store(NO_WRITE_CAN_DELETE, Ordering::Release);
+            if !live {
+                self.no_write.store(NO_WRITE_CAN_DELETE, Ordering::Release);
+            } else {
+                self.mark_tiered_deletable();
+            }
         } else if !self.volume_info.read().unwrap().read_only_can_delete {
             // only clear the remoteness-derived flag, not an operator mark
             self.set_no_write_flag(NO_WRITE_CAN_DELETE, false);
@@ -4363,7 +4395,7 @@ impl Volume {
                     }
                 }
                 *self.volume_info.write().unwrap() = pb_info;
-                self.refresh_remote_write_mode(io)?;
+                self.refresh_remote_write_mode(io, false)?;
                 {
                     let mut vi = self.volume_info.write().unwrap();
                     if vi.version == 0 {
@@ -4394,7 +4426,7 @@ impl Volume {
                     self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
                 }
                 *self.volume_info.write().unwrap() = pb_info;
-                self.refresh_remote_write_mode(io)?;
+                self.refresh_remote_write_mode(io, false)?;
                 {
                     let mut vi = self.volume_info.write().unwrap();
                     if vi.version == 0 {
@@ -9699,6 +9731,49 @@ mod tests {
             "dropping the last remote reference publishes the volume as writable"
         );
         assert!(!v.is_no_write_or_delete());
+    }
+
+    /// Go's MarkTieredDeletable leaves a replicated volume's upload-time
+    /// read-only mark alone: the shell still has to copy the uploaded
+    /// replica's .idx to the others, and a tombstone written before that copy
+    /// would reach one replica only.
+    #[test]
+    fn test_update_remote_files_keeps_a_replicated_volume_refusing_deletes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        v.super_block.write().unwrap().replica_placement =
+            crate::storage::super_block::ReplicaPlacement::from_string("001").unwrap();
+        v.set_no_write_or_delete(true); // the shell's pre-upload mark
+
+        v.update_remote_files(|files| files.push(Default::default()))
+            .unwrap();
+
+        assert!(v.has_remote_file());
+        assert!(
+            v.is_no_write_or_delete(),
+            "a replicated volume keeps refusing deletes until its next load"
+        );
+        assert!(!v.is_no_write_can_delete());
+    }
+
+    /// An I/O quarantine is not the tier upload's to lift: a live tier-up
+    /// leaves a quarantined volume's read-only mark alone, as Go's
+    /// MarkTieredDeletable does.
+    #[test]
+    fn test_update_remote_files_keeps_an_io_quarantine() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        v.set_no_write_or_delete(true);
+        v.mark_io_quarantined();
+
+        v.update_remote_files(|files| files.push(Default::default()))
+            .unwrap();
+
+        assert!(v.has_remote_file());
+        assert!(v.is_no_write_or_delete());
+        assert!(!v.is_no_write_can_delete());
     }
 
     // Tier-down clears the remote mode and publishes the volume as writable. The
