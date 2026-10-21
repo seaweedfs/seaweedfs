@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -348,6 +349,16 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 		wc.ContentType = entry.Attributes.Mime
 	}
 	wc.ContentEncoding = remote_storage.EntryContentEncoding(entry)
+	// A Writer reserves a buffer of ChunkSize bytes (16 MiB by default) so a
+	// failed request can be retried. An object below that size takes a buffer
+	// of its own size plus one 256 KiB unit, the SDK's granularity: a burst of
+	// small uploads in flight does not hold 16 MiB each, every upload keeps
+	// its retry buffer, and the object stays below ChunkSize so it goes in one
+	// request rather than a resumable session. The size counts the chunks,
+	// not only the attribute, which some write paths leave at zero.
+	if size := filer.FileSize(entry); size < uint64(googleapi.DefaultUploadChunkSize) {
+		wc.ChunkSize = int((size/googleapi.MinUploadChunkSize + 1) * googleapi.MinUploadChunkSize)
+	}
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
