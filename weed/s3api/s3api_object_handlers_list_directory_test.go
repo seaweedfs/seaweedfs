@@ -65,12 +65,11 @@ func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 	assert.Empty(t, seenFiles, "No files should be seen, only the directory")
 }
 
-// TestEmptyDirectorySurfacedAsMarker reproduces the hadoop-aws / Spark case where a
-// real but empty directory (created via mount, mkdir or the filer API, so it has no
-// MIME) must be visible to S3 clients that detect directories by listing under the
-// "<dir>/" prefix. Under a delimiter it is reported as a CommonPrefix, which the
-// probe accepts, instead of a key a client might try to read.
-func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
+// TestEmptyDirectoryListsNothingUnderOwnPrefix pins the listing of an empty
+// directory (created via mount, mkdir or the filer API, or left behind by
+// deleted objects) under its own "<dir>/" prefix: both the recursive and the
+// delimited probe answer empty, matching AWS S3.
+func TestEmptyDirectoryListsNothingUnderOwnPrefix(t *testing.T) {
 	s3a := &S3ApiServer{
 		option: &S3ApiServerOption{BucketsPath: "/buckets"},
 	}
@@ -87,20 +86,16 @@ func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
 		},
 	}
 
-	// Mirrors the getFileStatus probe: prefix "logs/" with delimiter "/".
-	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
-	var seen []*filer_pb.Entry
-	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "logs", delimiter: "/", bucket: "test"}, cursor,
-		func(dir string, entry *filer_pb.Entry) {
-			seen = append(seen, entry)
-		})
+	for _, delimiter := range []string{"", "/"} {
+		cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+		var seen []*filer_pb.Entry
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "logs", delimiter: delimiter, bucket: "test"}, cursor,
+			func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, entry)
+			})
 
-	assert.NoError(t, err)
-	if assert.Len(t, seen, 1, "empty directory must be surfaced under the logs/ prefix") {
-		assert.True(t, cursor.emitDirAsCommonPrefix,
-			"a delimited probe reports the empty directory as a common prefix")
-		assert.Empty(t, seen[0].Attributes.Mime,
-			"the entry must not be dressed as a directory key object")
+		assert.NoError(t, err)
+		assert.Empty(t, seen, "an empty directory's own prefix must list nothing (delimiter=%q)", delimiter)
 	}
 }
 
@@ -185,10 +180,11 @@ func TestEmptyDirectoryHiddenInFlatListing(t *testing.T) {
 	assert.Equal(t, []string{"foo"}, seen, "flat listing must hide the empty directory and return only real objects")
 }
 
-// A trailing-slash delimited listing of an empty directory reports the
-// directory as a CommonPrefix, not as a Contents key: clients that treat
-// every returned key as an object (e.g. lock listings) skip prefixes.
-func TestEmptyDirectoryListedAsCommonPrefix(t *testing.T) {
+// A delimited listing of an empty directory's own prefix enumerates children,
+// so it must answer empty like AWS S3: no Contents key and no CommonPrefix
+// equal to the request prefix. Clients that treat every returned key as an
+// object (Pulumi's lock listing, for one) must not see the leftover directory.
+func TestEmptyDirectoryDelimitedListingIsEmpty(t *testing.T) {
 	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
 		"/buckets/test": {
 			{Name: "locks", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: ""}},
@@ -208,6 +204,5 @@ func TestEmptyDirectoryListedAsCommonPrefix(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, response.Contents, "an empty directory is not a readable key")
-	require.Len(t, response.CommonPrefixes, 1)
-	assert.Equal(t, "locks/", response.CommonPrefixes[0].Prefix)
+	assert.Empty(t, response.CommonPrefixes, "an empty directory names no prefix of its own")
 }

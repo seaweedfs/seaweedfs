@@ -540,18 +540,6 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				}
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
-					if cursor.emitDirAsCommonPrefix {
-						cursor.emitDirAsCommonPrefix = false
-						dirPrefix := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
-						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: dirPrefix,
-						})
-						cursor.maxKeys--
-						lastEntryWasCommonPrefix = true
-						lastCommonPrefix = dirPrefix
-						lastPrefixNullBackers, lastPrefixConfirmed = nil, true
-						return
-					}
 					if originalPrefix != "" {
 						normalizedPrefix := strings.TrimPrefix(strings.TrimSuffix(originalPrefix, "/"), "/")
 						if normalizedPrefix != "" {
@@ -806,9 +794,6 @@ type ListingCursor struct {
 	// resolvePendingNulls settles trailing null objects whose .versions sibling
 	// has not streamed yet before a page is declared full.
 	resolvePendingNulls func() error
-	// emitDirAsCommonPrefix marks the next directory entry passed to the entry
-	// callback for reporting as a CommonPrefix rather than a Contents key.
-	emitDirAsCommonPrefix bool
 	// prefixObjectKeyOnly limits the next prefix-object entry passed to the entry
 	// callback to its plain key; its "<name>/" CommonPrefix is deferred to the
 	// directory's own block position.
@@ -1024,25 +1009,15 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		}
 		isKeyObject := e.IsDirectoryKeyObject() && !e.IsPrefixObject()
 		if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-			// A trailing-slash prefix (e.g. "logs/") names one directory and asks
-			// whether it exists, so a real but empty directory must be reported for
-			// that probe.
-			explicitDirProbe := cursor.prefixEndsOnDelimiter
-			if cursor.prefixEndsOnDelimiter {
-				cursor.prefixEndsOnDelimiter = false
-			}
+			// A trailing-slash prefix names one directory; walk only it, then stop.
+			cursor.prefixEndsOnDelimiter = false
 			if isKeyObject && blockKey > marker {
 				// Directory key objects (created via PutObject with trailing "/")
 				// appear as regular keys in recursive listing mode.
 				eachEntryFn(dir, emitEntry)
 			}
-			// Recurse into subdirectory to list any children, noting whether the
-			// subtree produced any entries.
-			childEmitted := false
-			subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + e.Name, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, func(d string, ent *filer_pb.Entry) {
-				childEmitted = true
-				eachEntryFn(d, ent)
-			})
+			// Recurse into subdirectory to list any children.
+			subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + e.Name, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
 			if subErr != nil {
 				return fmt.Errorf("doListFilerEntries2: %w", subErr)
 			}
@@ -1051,26 +1026,6 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				// The recursion starved on quota before listing the subtree;
 				// keep a resume position that re-enters it.
 				cursor.isTruncated = true
-			}
-			// A real but empty directory (created out of band via mount, mkdir or
-			// the filer API, so it carries no MIME) is otherwise invisible to S3
-			// clients that detect directories by listing it under its own "<dir>/"
-			// prefix. Answer that explicit probe so tools like hadoop-aws can find
-			// the directory: a delimited listing reports it as a CommonPrefix --
-			// a real key in Contents would look like an object a client can read --
-			// while a recursive listing keeps the directory marker key it used.
-			// Plain listings are left untouched, so empty directories left behind
-			// by deleted objects are not shown as keys.
-			// A directory that still holds version history no longer names anything,
-			// so it gets no marker either.
-			if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && e.Attributes != nil &&
-				!s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor) {
-				if delimiter == "/" {
-					cursor.emitDirAsCommonPrefix = true
-				} else {
-					emitEntry.Attributes.Mime = s3_constants.FolderMimeType
-				}
-				eachEntryFn(dir, emitEntry)
 			}
 			// println("doListFilerEntries2 dir", dir+"/"+e.Name, "subNextMarker", subNextMarker)
 			if cursor.isTruncated || matchedPrefixDir {
