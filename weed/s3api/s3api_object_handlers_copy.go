@@ -1685,6 +1685,9 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	singleChunkCovers := len(relevantChunks) == 1 &&
 		relevantChunks[0].Offset == 0 && int64(relevantChunks[0].Size) == partSize
 
+	md5Ctx, cancelMd5 := context.WithCancel(context.Background())
+	defer cancelMd5()
+
 	var partMd5 []byte
 	var partMd5Ch chan partMd5Result
 	switch {
@@ -1697,7 +1700,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	default:
 		partMd5Ch = make(chan partMd5Result, 1)
 		go func() {
-			sum, err := s3a.copiedRangeMd5(context.Background(), entry, startOffset, endOffset)
+			sum, err := s3a.copiedRangeMd5(md5Ctx, entry, startOffset, endOffset)
 			partMd5Ch <- partMd5Result{sum, err}
 		}()
 	}
