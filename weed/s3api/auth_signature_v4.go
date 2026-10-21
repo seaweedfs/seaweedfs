@@ -496,6 +496,18 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		return nil, nil, s3err.ErrExpiredToken
 	}
 
+	// A session the table catalog vended for a static access key is bound to
+	// that key, as a role session is bound to its role's ID: deleting or
+	// deactivating the key, or deleting or disabling its identity, ends the
+	// session at its next request instead of at its expiry.
+	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.SourceAccessKeyId != "" {
+		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.SourceAccessKeyId); errCode != s3err.ErrNone {
+			glog.V(2).Infof("vended STS session %s: identity %q or the access key it was vended for is gone, disabled or inactive",
+				sessionInfo.SessionId, sessionInfo.ExternalUserId)
+			return nil, nil, errCode
+		}
+	}
+
 	// Validate required credential fields
 	if sessionInfo.Credentials.SecretAccessKey == "" {
 		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
@@ -552,6 +564,33 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
+}
+
+// vendedSessionKeyLive answers ErrNone while owner is a known, enabled
+// identity holding accessKey as an active, unexpired credential, and
+// ErrInvalidAccessKeyID (as for an unknown key) otherwise. The vendor applies
+// the same rule before binding a session to a key, so it never binds one that
+// would be refused on its first request. One map lookup under the read lock.
+func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey string) s3err.ErrorCode {
+	if owner == "" || accessKey == "" {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	identity, ok := iam.nameToIdentity[owner]
+	if !ok || identity == nil || identity.Disabled {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	for _, credential := range identity.Credentials {
+		if credential == nil || credential.AccessKey != accessKey {
+			continue
+		}
+		if credential.Status == iamAccessKeyStatusInactive || credential.isCredentialExpired() {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		return s3err.ErrNone
+	}
+	return s3err.ErrInvalidAccessKeyID
 }
 
 // calculateAndVerifySignature contains the core logic for creating the canonical request,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // icebergVendedCredentialsProvider names the origin recorded on sessions the
@@ -40,8 +41,11 @@ type VendedCredentials struct {
 //
 // The access key the caller authenticated with (from ctx) is recorded in the
 // session: a short hash of it ends the session name, so the audit log's
-// requester_arn tells apart the holders of several keys on one identity, and
-// the key id itself is carried in the session token.
+// requester_arn tells apart the holders of several keys on one identity. When
+// the caller is a stored identity holding that key, the key id is also carried
+// in the session token, binding the session to it: the session ends when the
+// key is deleted or deactivated, or its identity removed or disabled
+// (validateSTSSessionToken).
 func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error) {
 	if s3a.icebergCredentialRole == "" {
 		return nil, nil
@@ -65,12 +69,19 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 
 	accessKey := s3_constants.AccessKeyIdFromContext(ctx)
 	request := &sts.AssumeRoleForPrincipalRequest{
-		RoleArn:           s3a.icebergCredentialRole,
-		Principal:         principal,
-		RoleSessionName:   icebergSessionName(principal, bucket, prefix, accessKey),
-		ProviderName:      icebergVendedCredentialsProvider,
-		Policy:            &policy,
-		SourceAccessKeyId: accessKey,
+		RoleArn:         s3a.icebergCredentialRole,
+		Principal:       principal,
+		RoleSessionName: icebergSessionName(principal, bucket, prefix, accessKey),
+		ProviderName:    icebergVendedCredentialsProvider,
+		Policy:          &policy,
+	}
+	// Bind the session to the caller's key only when the caller is a stored
+	// identity holding it: a caller that signed with another STS session's key,
+	// or an OIDC user, is not in the identity table, and binding its session
+	// would refuse every request made with it. Such a session stays unbound
+	// and lasts until it expires, as before.
+	if accessKey != "" && s3a.iam != nil && s3a.iam.vendedSessionKeyLive(principal, accessKey) == s3err.ErrNone {
+		request.SourceAccessKeyId = accessKey
 	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration
