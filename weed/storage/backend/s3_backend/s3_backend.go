@@ -3,6 +3,7 @@ package s3_backend
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -63,7 +64,7 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.httpOptions = httpOptions{
 		disableHTTP2:    util.ParseBool(configuration.GetString(configPrefix+"disable_http2"), false),
 		maxConnsPerHost: parseNonNegative(configuration.GetString(configPrefix+"max_connections"), "max_connections"),
-		idleConnTimeout: time.Duration(parseNonNegative(configuration.GetString(configPrefix+"idle_connection_timeout_seconds"), "idle_connection_timeout_seconds")) * time.Second,
+		idleConnTimeout: parseIdleConnTimeout(configuration.GetString(configPrefix + "idle_connection_timeout_seconds")),
 	}
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
@@ -119,6 +120,21 @@ func parseNonNegative(value, name string) int {
 	}
 	glog.Warningf("invalid %s value %q, using the default", name, value)
 	return 0
+}
+
+// maxIdleConnTimeoutSeconds is the largest number of seconds a time.Duration
+// can hold.
+const maxIdleConnTimeoutSeconds = math.MaxInt64 / int64(time.Second)
+
+// parseIdleConnTimeout reads idle_connection_timeout_seconds; empty, invalid
+// or too large to represent as a time.Duration means 0 (the default).
+func parseIdleConnTimeout(value string) time.Duration {
+	seconds := parseNonNegative(value, "idle_connection_timeout_seconds")
+	if int64(seconds) > maxIdleConnTimeoutSeconds {
+		glog.Warningf("idle_connection_timeout_seconds %q is out of range, using the default", value)
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {

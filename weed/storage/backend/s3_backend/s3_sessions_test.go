@@ -1,7 +1,10 @@
 package s3_backend
 
 import (
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +96,32 @@ func TestParseNonNegative(t *testing.T) {
 	}{{"", 0}, {"0", 0}, {"12", 12}, {"-1", 0}, {"x", 0}} {
 		if got := parseNonNegative(c.in, "test"); got != c.want {
 			t.Errorf("parseNonNegative(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestS3BackendIdleTimeoutOverflowFallsBackToDefault(t *testing.T) {
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	for i, c := range []struct {
+		in   string
+		want time.Duration
+	}{
+		{strconv.FormatInt(maxSeconds, 10), time.Duration(maxSeconds) * time.Second},
+		{strconv.FormatInt(maxSeconds+1, 10), 0},
+		{"10000000000", 0},
+	} {
+		s, err := newS3BackendStorage(testProperties{
+			"endpoint":                        "http://127.0.0.1:4",
+			"idle_connection_timeout_seconds": c.in,
+		}, "", "idle-overflow-"+strconv.Itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.httpOptions.idleConnTimeout != c.want {
+			t.Errorf("idle_connection_timeout_seconds=%s: timeout %v, want %v", c.in, s.httpOptions.idleConnTimeout, c.want)
+		}
+		if got := s.ToProperties()["idle_connection_timeout_seconds"]; strings.HasPrefix(got, "-") {
+			t.Errorf("idle_connection_timeout_seconds=%s: ToProperties exports %s", c.in, got)
 		}
 	}
 }
