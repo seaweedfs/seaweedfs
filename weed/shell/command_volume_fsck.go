@@ -36,6 +36,8 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -768,8 +770,8 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 		if mtime <= 0 || mtime >= time.Now().Add(-directoryQuietPeriod).Unix() {
 			continue
 		}
-		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
-			if !errors.Is(err, filer.ErrNonEmptyFolder) {
+		if err := c.deleteEmptyDirectory(dir, entry); err != nil {
+			if status.Code(err) != codes.FailedPrecondition && !errors.Is(err, filer.ErrNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
 			continue
@@ -778,16 +780,20 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 	}
 }
 
-// deleteEmptyDirectory deletes dir unless it changed since it was looked up at mtime,
+// deleteEmptyDirectory deletes dir unless it changed since entry was looked up,
 // so a directory promoted to an S3 object meanwhile survives. The delete is not
 // recursive, leaving the filer to reject a directory that is not empty.
-func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64) error {
+func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, entry *filer_pb.Entry) error {
 	parent, name := dir.DirAndName()
 	return c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:          parent,
 			Name:               name,
-			IfNotModifiedAfter: mtime,
+			IfNotModifiedAfter: entry.Attributes.GetMtime(),
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: entry,
+			}}},
 		})
 		if err != nil {
 			return err
