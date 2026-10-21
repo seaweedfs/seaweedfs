@@ -29,6 +29,10 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -144,6 +148,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -280,6 +288,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
