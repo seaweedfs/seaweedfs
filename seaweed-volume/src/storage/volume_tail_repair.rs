@@ -1145,4 +1145,71 @@ mod tests {
         assert_eq!(fs::metadata(&dat_path).unwrap().len(), dat_before);
         assert_eq!(fs::metadata(&idx_path).unwrap().len(), idx_before);
     }
+
+    /// A canDelete volume still appends a tombstone record on every delete,
+    /// so it can tear a tail the same way: it is repaired and keeps taking
+    /// deletes. Mirrors Go's TestVolumeLoadRepairsTailOnCanDeleteVolume.
+    #[test]
+    fn volume_load_repairs_tail_on_can_delete_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut last_data = Vec::new();
+        {
+            let v = open_volume(&dir);
+            for id in [1u64, 2, 99] {
+                let mut n = new_needle(id);
+                v.write_needle(&mut n, true, false).unwrap();
+                last_data = n.data.clone();
+            }
+            v.set_read_only_persist(true, true).unwrap();
+        }
+        let idx_path = format!("{dir}/1.idx");
+        let idx_len = fs::metadata(&idx_path).unwrap().len();
+        OpenOptions::new()
+            .write(true)
+            .open(&idx_path)
+            .unwrap()
+            .set_len(idx_len - NEEDLE_MAP_ENTRY_SIZE as u64)
+            .unwrap();
+
+        let v = open_volume(&dir);
+        assert!(
+            !v.is_no_write_or_delete() && v.is_no_write_can_delete(),
+            "canDelete volume with a torn tail did not load canDelete after the repair"
+        );
+        assert_readable(&v, 99, &last_data);
+    }
+
+    /// A torn record whose header advertises a positive size smaller than
+    /// the body's own 4-byte data-size field is damaged, not decodable: the
+    /// decoder's range check rejects it, and as the last record it is cut.
+    /// Mirrors Go's TestVolumeLoadCutsDamagedSmallSizeTailOnCanDeleteVolume.
+    #[test]
+    fn volume_load_cuts_damaged_small_size_tail() {
+        let f = build_fixture(&writes(&[1, 2, 3]), 1);
+        let mut record = vec![0u8; get_actual_size(Size(2), VERSION_3) as usize];
+        Cookie(0xabcd).to_bytes(&mut record[0..COOKIE_SIZE]);
+        NeedleId(7).to_bytes(&mut record[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
+        Size(2).to_bytes(
+            &mut record[COOKIE_SIZE + NEEDLE_ID_SIZE..NEEDLE_HEADER_SIZE],
+        );
+        OpenOptions::new()
+            .append(true)
+            .open(f.dat_path())
+            .unwrap()
+            .write_all(&record)
+            .unwrap();
+
+        let v = open_volume(&f.dir);
+        assert!(
+            !v.is_read_only(),
+            "damaged tail record loaded the volume read-only"
+        );
+        assert_not_readable(&v, 7);
+        assert_eq!(
+            f.dat_size(),
+            f.end,
+            "damaged tail was not cut"
+        );
+    }
 }

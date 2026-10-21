@@ -1732,7 +1732,9 @@ impl Volume {
             // offset. Mirrors Go running repairUnindexedDatTail inside
             // CheckVolumeDataIntegrity ahead of the needle map load. Only a
             // volume about to load writable is repaired.
-            if !self.has_remote_file() && self.no_write_flags() == (false, false) {
+            // A no_write_can_delete volume still appends tombstone records on
+            // delete, so it tears tails the same way and gets the same repair.
+            if !self.has_remote_file() && !self.no_write_flags().0 {
                 // An empty .idx gets the same repair: every check below
                 // skips an empty index on its own, so a tail the repair
                 // cannot explain there fails the load like in Go rather
