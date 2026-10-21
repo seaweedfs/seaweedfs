@@ -238,7 +238,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		glog.V(2).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
 		if v.HasRemoteFile() {
 			// maybe temporary network problem
-			glog.Errorf("readSuperBlock remote volume %d: %v", v.Id, err)
+			logRemoteSuperBlockErr(v.Id, err)
 			err = nil
 		}
 	} else {
@@ -433,4 +433,12 @@ func datFileLoadError(fileName string, err error) error {
 		return fmt.Errorf("load data file %s: %v", fileName, err)
 	}
 	return fmt.Errorf("cannot load volume data %s: %v", fileName, err)
+}
+
+var logRemoteSuperBlockFault = glog.Errorf
+
+func logRemoteSuperBlockErr(id needle.VolumeId, err error) {
+	if err != nil {
+		logRemoteSuperBlockFault("readSuperBlock remote volume %d: %v", id, err)
+	}
 }

@@ -68,6 +68,33 @@ func TestMarkVolumeWritable_ReopensPersistedReadOnly(t *testing.T) {
 	}
 }
 
+// A remote-tiered volume marked writable keeps the delete-only mode load()
+// derives — the remote .dat cannot take appends, so "writable" resolves to
+// can-delete even when the mark left noWriteOrDelete without noWriteCanDelete.
+func TestMarkVolumeWritableOnATieredVolumeKeepsDeletesOnly(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	v, _ := tierUpVolumeLive(t, t.TempDir(), 86, b)
+	defer v.Close()
+	// the upload-time mark as a refused MarkTieredDeletable leaves it
+	v.noWriteOrDelete = true
+	v.noWriteCanDelete = false
+
+	location := newTestLocation(10, false, 0)
+	location.SetVolume(86, v)
+	s := &Store{Locations: []*DiskLocation{location}}
+	if err := s.MarkVolumeWritable(86); err != nil {
+		t.Fatalf("mark writable: %v", err)
+	}
+
+	readOnly, orDelete, canDelete, _ := v.ReadOnlyReasons()
+	if orDelete || !canDelete || !readOnly {
+		t.Fatalf("a tiered volume resolves writable to delete-only, got readOnly=%v orDelete=%v canDelete=%v",
+			readOnly, orDelete, canDelete)
+	}
+}
+
 // reopenIdxForWrite must be a no-op when the volume already has a writable
 // needle map — otherwise repeated MarkVolumeWritable calls would churn the
 // index file handle for no reason.

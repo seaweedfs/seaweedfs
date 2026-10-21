@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -330,4 +331,46 @@ func TestGrantedCallerLearnsAbsence(t *testing.T) {
 		[]string{"s3tables:ListTagsForResource"})
 	assert.Equal(t, 404, got.status)
 	assert.Equal(t, ErrCodeNoSuchTable, got.body.Type)
+}
+
+// A request ARN that names a foreign account still resolves to the local
+// names, so the absent-target answer must match the denial the canonical ARN
+// gets; otherwise a reformatted ARN restores the existence oracle.
+func TestAbsentTagTargetDenySurvivesForeignAccountARN(t *testing.T) {
+	fs, manager := startRenameManager(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	bucketMeta, _ := json.Marshal(tableBucketMetadata{Name: renameTestBucket, OwnerAccountID: DefaultAccountID})
+	fs.Put(TablesPath, renameTestBucket, map[string][]byte{
+		ExtendedKeyTableBucket: []byte("{}"),
+		ExtendedKeyMetadata:    bucketMeta,
+		ExtendedKeyPolicy: []byte(fmt.Sprintf(
+			`{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":%q}]}`,
+			mustBucketARN(t)+"/table/*")),
+	})
+
+	foreignARN := func(table string) string {
+		return fmt.Sprintf("arn:aws:s3tables:%s:999999999999:bucket/%s/table/ns/%s",
+			DefaultRegion, renameTestBucket, table)
+	}
+	requestFor := func(operation, arn string) interface{} {
+		switch operation {
+		case "TagResource":
+			return &TagResourceRequest{ResourceARN: arn, Tags: map[string]string{"k": "v"}}
+		case "UntagResource":
+			return &UntagResourceRequest{ResourceARN: arn, TagKeys: []string{"k"}}
+		}
+		return &ListTagsForResourceRequest{ResourceARN: arn}
+	}
+
+	for _, operation := range []string{"TagResource", "ListTagsForResource", "UntagResource"} {
+		t.Run(operation, func(t *testing.T) {
+			actions := []string{"s3tables:" + operation}
+			denied := runRequestAs(t, manager, fs, operation, requestFor(operation, foreignARN("t")), actions)
+			assert.Equal(t, 403, denied.status)
+			got := runRequestAs(t, manager, fs, operation, requestFor(operation, foreignARN("ghost")), actions)
+			assert.Equal(t, denied, got)
+		})
+	}
 }

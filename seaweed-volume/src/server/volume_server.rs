@@ -86,7 +86,8 @@ pub struct VolumeServerState {
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation,
     /// allowing arbitrary (incl. loopback / link-local / metadata) hosts.
     pub allow_untrusted_remote_endpoints: bool,
-    /// First master address for volume lookups (e.g., "localhost:9333").
+    /// First configured master address (e.g., "localhost:9333"). A seed, not a
+    /// lookup target: lookups go to `current_master_url`.
     pub master_url: String,
     /// Seed master addresses for UI rendering.
     pub master_urls: Vec<String>,
@@ -94,10 +95,12 @@ pub struct VolumeServerState {
     /// Built once at construction so Ping admission stays O(1). Mirrors
     /// Go's `seedMasterSet` on `VolumeServer`.
     pub seed_master_set: std::collections::HashSet<String>,
-    /// Current master this server is heartbeating with, in canonical http
-    /// `host:port` form. Empty when no heartbeat connection is active. The
-    /// heartbeat goroutine writes; admission reads — the lock keeps them
-    /// from racing on a leader change. Mirrors Go's `currentMaster` plus
+    /// Master this server takes as leader, in its announced
+    /// `host:port[.grpcPort]` form — callers pick http or gRPC form per use.
+    /// Empty until the heartbeat confirms one — a peer that answered a
+    /// stream without naming a leader, or the leader a follower named — and
+    /// cleared again when no master reports one. The heartbeat writes;
+    /// admission and lookups read. Mirrors Go's `currentMaster` plus
     /// `currentMasterLock`.
     pub current_master_url: tokio::sync::RwLock<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
@@ -140,6 +143,13 @@ pub struct VolumeServerState {
 }
 
 impl VolumeServerState {
+    /// The master lookups should go to: the leader the heartbeat confirmed,
+    /// or empty while none is known, in its announced `host:port[.grpcPort]`
+    /// form. Mirrors Go's `vs.getCurrentMaster()`.
+    pub async fn current_master(&self) -> String {
+        self.current_master_url.read().await.clone()
+    }
+
     /// Check if the server is in maintenance mode; return gRPC error if so.
     pub fn check_maintenance(&self) -> Result<(), tonic::Status> {
         if self.maintenance.load(Ordering::Relaxed) {
@@ -209,7 +219,7 @@ impl VolumeServerState {
             return false;
         }
         let current = self.current_master_url.read().await.clone();
-        if !current.is_empty() && current == key {
+        if !current.is_empty() && to_http_address(&current) == key {
             return true;
         }
         self.seed_master_set.contains(&key)

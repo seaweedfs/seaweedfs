@@ -87,7 +87,7 @@ func TestCopyChunksReadOnlyIsAccessDenied(t *testing.T) {
 		t.Fatalf("copyChunks err %v maps to %v, want %v", err, code, s3err.ErrAccessDenied)
 	}
 
-	_, err = s3a.copyChunksForRange(entry, 0, 7, "/buckets/b/dst")
+	_, _, err = s3a.copyChunksForRange(entry, 0, 7, "/buckets/b/dst")
 	if code := s3a.mapCopyErrorToS3Error(err); code != s3err.ErrAccessDenied {
 		t.Fatalf("copyChunksForRange err %v maps to %v, want %v", err, code, s3err.ErrAccessDenied)
 	}

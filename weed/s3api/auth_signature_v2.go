@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -92,11 +91,6 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
-		return nil, s3err.ErrAccessDenied
-	}
-
-	bucket := formValues.Get("bucket")
-	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return nil, s3err.ErrAccessDenied
 	}
 
