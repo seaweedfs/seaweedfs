@@ -133,7 +133,7 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
-		return nil, retryable, statusError(url, response.Status, reader)
+		return nil, retryable, statusError(url, response)
 	}
 	b, err := io.ReadAll(reader)
 	if err != nil {
@@ -334,7 +334,7 @@ func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCom
 	defer CloseResponse(r)
 
 	if r.StatusCode >= 400 {
-		return 0, statusError(fileUrl, r.Status, r.Body)
+		return 0, statusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -414,7 +414,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 			return false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return retryable, statusError(fileUrl, r.Status, r.Body)
+		return retryable, statusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -504,7 +504,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		err = statusError(fileUrl, r.Status, r.Body)
+		err = statusError(fileUrl, r)
 		CloseResponse(r)
 		return nil, nil, err
 	}
@@ -526,8 +526,14 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 
 // statusError adds the message a server writes into the body of a failed
 // request, such as a volume server CRC mismatch, to the status line.
-func statusError(fileUrl, status string, r io.Reader) error {
-	body, _ := io.ReadAll(io.LimitReader(r, 1024))
+func statusError(fileUrl string, r *http.Response) error {
+	var reader io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		if gz, err := gzip.NewReader(r.Body); err == nil {
+			reader = gz
+		}
+	}
+	body, _ := io.ReadAll(io.LimitReader(reader, 1024))
 	msg := strings.TrimSpace(string(body))
 	var m struct {
 		Error string `json:"error"`
@@ -536,9 +542,9 @@ func statusError(fileUrl, status string, r io.Reader) error {
 		msg = m.Error
 	}
 	if msg == "" {
-		return fmt.Errorf("%s: %s", fileUrl, status)
+		return fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
-	return fmt.Errorf("%s: %s: %s", fileUrl, status, msg)
+	return fmt.Errorf("%s: %s: %s", fileUrl, r.Status, msg)
 }
 
 func CloseResponse(resp *http.Response) {
@@ -800,7 +806,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 			return 0, false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return 0, retryable, statusError(fileUrl, r.Status, r.Body)
+		return 0, retryable, statusError(fileUrl, r)
 	}
 
 	// Read directly into the buffer without intermediate copying

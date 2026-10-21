@@ -1,6 +1,8 @@
 package http
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +120,30 @@ func TestReadErrorsCarryTheServerMessage(t *testing.T) {
 	}
 	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {
 		t.Errorf("GetAuthenticated: got %v, want %q", err, want)
+	}
+}
+
+func TestReadErrorsDecodeGzipBody(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write([]byte(`{"error":"invalid CRC for needle 2a"}`))
+		_ = gz.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error: invalid CRC for needle 2a"
+	if _, err := ReadUrl(context.Background(), server.URL, nil, false, true, 0, 0, make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("ReadUrl: got %v, want %q", err, want)
+	}
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
 	}
 }
 
