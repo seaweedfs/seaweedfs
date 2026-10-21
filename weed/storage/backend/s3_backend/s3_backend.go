@@ -3,6 +3,7 @@ package s3_backend
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ type S3BackendStorage struct {
 	forcePathStyle        bool
 	uploadConcurrency     int
 	downloadConcurrency   int
+	httpOptions           httpOptions
 	conn                  s3iface.S3API
 }
 
@@ -59,11 +61,16 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.forcePathStyle = util.ParseBool(configuration.GetString(configPrefix+"force_path_style"), true)
 	s.uploadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"upload_concurrency"), defaultUploadConcurrency)
 	s.downloadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"download_concurrency"), defaultDownloadConcurrency)
+	s.httpOptions = httpOptions{
+		disableHTTP2:    util.ParseBool(configuration.GetString(configPrefix+"disable_http2"), false),
+		maxConnsPerHost: parseNonNegative(configuration.GetString(configPrefix+"max_connections"), "max_connections"),
+		idleConnTimeout: parseIdleConnTimeout(configuration.GetString(configPrefix + "idle_connection_timeout_seconds")),
+	}
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
 	}
 
-	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint, s.forcePathStyle)
+	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint, s.forcePathStyle, s.httpOptions)
 
 	glog.V(0).Infof("created backend storage s3.%s for region %s bucket %s", s.id, s.region, s.bucket)
 	return
@@ -80,6 +87,9 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["force_path_style"] = util.BoolToString(s.forcePathStyle)
 	m["upload_concurrency"] = strconv.Itoa(s.uploadConcurrency)
 	m["download_concurrency"] = strconv.Itoa(s.downloadConcurrency)
+	m["disable_http2"] = util.BoolToString(s.httpOptions.disableHTTP2)
+	m["max_connections"] = strconv.Itoa(s.httpOptions.maxConnsPerHost)
+	m["idle_connection_timeout_seconds"] = strconv.FormatInt(int64(s.httpOptions.idleConnTimeout/time.Second), 10)
 	return m
 }
 
@@ -97,6 +107,42 @@ func parseConcurrency(value string, def int) int {
 	}
 	glog.Warningf("invalid concurrency value %q, using default %d", value, def)
 	return def
+}
+
+// parseNonNegative reads an optional non-negative integer setting; empty or
+// invalid means 0 (the default).
+func parseNonNegative(value, name string) int {
+	if value == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(value); err == nil && n >= 0 {
+		return n
+	}
+	glog.Warningf("invalid %s value %q, using the default", name, value)
+	return 0
+}
+
+// maxIdleConnTimeoutSeconds is the largest number of seconds a time.Duration
+// can hold.
+const maxIdleConnTimeoutSeconds = math.MaxInt64 / int64(time.Second)
+
+// parseIdleConnTimeout reads idle_connection_timeout_seconds; empty, invalid
+// or too large to represent as a time.Duration means 0 (the default). It
+// parses 64-bit seconds so the range is the same on 32-bit platforms.
+func parseIdleConnTimeout(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds < 0 {
+		glog.Warningf("invalid idle_connection_timeout_seconds value %q, using the default", value)
+		return 0
+	}
+	if seconds > maxIdleConnTimeoutSeconds {
+		glog.Warningf("idle_connection_timeout_seconds %q is out of range, using the default", value)
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
