@@ -268,10 +268,8 @@ async fn refresh_leader_from_peers(
     state: &Arc<VolumeServerState>,
     timeout: Duration,
 ) {
-    let lookup = lookup_leader_from_peers(
-        &config.master_addresses,
-        state.outgoing_grpc_tls.as_ref(),
-    );
+    let lookup =
+        lookup_leader_from_peers(&config.master_addresses, state.outgoing_grpc_tls.as_ref());
     match tokio::time::timeout(timeout, lookup).await {
         Ok(Some(leader)) => publish_current_master(state, &leader).await,
         _ => state.current_master_url.write().await.clear(),
@@ -3031,5 +3029,386 @@ mod tests {
         assert_eq!(deleted_after_delete.len(), 1);
         assert_eq!(deleted_after_delete[0].ec_index_bits, 1);
         assert_eq!(deleted_after_delete[0].shard_sizes, vec![0]);
+    }
+
+    /// A master gRPC stub for the leader-tracking tests: every RPC except the
+    /// two the tests drive is unimplemented. `leader` is what
+    /// GetMasterConfiguration names; `replies` are what the heartbeat stream
+    /// sends before closing.
+    struct FakeMaster {
+        leader: String,
+        replies: Vec<master_pb::HeartbeatResponse>,
+    }
+
+    #[tonic::async_trait]
+    impl master_pb::seaweed_server::Seaweed for FakeMaster {
+        type SendHeartbeatStream = tokio_stream::Iter<
+            std::vec::IntoIter<Result<master_pb::HeartbeatResponse, tonic::Status>>,
+        >;
+        type KeepConnectedStream = tokio_stream::Iter<
+            std::vec::IntoIter<Result<master_pb::KeepConnectedResponse, tonic::Status>>,
+        >;
+        type StreamAssignStream = tokio_stream::Iter<
+            std::vec::IntoIter<Result<master_pb::AssignResponse, tonic::Status>>,
+        >;
+        type VolumeListStreamStream = tokio_stream::Iter<
+            std::vec::IntoIter<Result<master_pb::VolumeListStreamResponse, tonic::Status>>,
+        >;
+
+        async fn send_heartbeat(
+            &self,
+            _request: tonic::Request<tonic::Streaming<master_pb::Heartbeat>>,
+        ) -> std::result::Result<tonic::Response<Self::SendHeartbeatStream>, tonic::Status>
+        {
+            Ok(tonic::Response::new(tokio_stream::iter(
+                self.replies.iter().cloned().map(Ok).collect::<Vec<_>>(),
+            )))
+        }
+
+        async fn keep_connected(
+            &self,
+            _request: tonic::Request<tonic::Streaming<master_pb::KeepConnectedRequest>>,
+        ) -> std::result::Result<tonic::Response<Self::KeepConnectedStream>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("keep_connected"))
+        }
+
+        async fn stream_assign(
+            &self,
+            _request: tonic::Request<tonic::Streaming<master_pb::AssignRequest>>,
+        ) -> std::result::Result<tonic::Response<Self::StreamAssignStream>, tonic::Status> {
+            Err(tonic::Status::unimplemented("stream_assign"))
+        }
+
+        async fn get_master_configuration(
+            &self,
+            _request: tonic::Request<master_pb::GetMasterConfigurationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::GetMasterConfigurationResponse>,
+            tonic::Status,
+        > {
+            Ok(tonic::Response::new(
+                master_pb::GetMasterConfigurationResponse {
+                    leader: self.leader.clone(),
+                    ..Default::default()
+                },
+            ))
+        }
+
+        async fn lookup_volume(
+            &self,
+            _request: tonic::Request<master_pb::LookupVolumeRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::LookupVolumeResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("lookup_volume"))
+        }
+
+        async fn assign(
+            &self,
+            _request: tonic::Request<master_pb::AssignRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::AssignResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("assign"))
+        }
+
+        async fn statistics(
+            &self,
+            _request: tonic::Request<master_pb::StatisticsRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::StatisticsResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("statistics"))
+        }
+
+        async fn collection_list(
+            &self,
+            _request: tonic::Request<master_pb::CollectionListRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::CollectionListResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("collection_list"))
+        }
+
+        async fn collection_delete(
+            &self,
+            _request: tonic::Request<master_pb::CollectionDeleteRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::CollectionDeleteResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("collection_delete"))
+        }
+
+        async fn volume_list(
+            &self,
+            _request: tonic::Request<master_pb::VolumeListRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::VolumeListResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("volume_list"))
+        }
+
+        async fn volume_list_stream(
+            &self,
+            _request: tonic::Request<master_pb::VolumeListRequest>,
+        ) -> std::result::Result<tonic::Response<Self::VolumeListStreamStream>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("volume_list_stream"))
+        }
+
+        async fn lookup_ec_volume(
+            &self,
+            _request: tonic::Request<master_pb::LookupEcVolumeRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::LookupEcVolumeResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("lookup_ec_volume"))
+        }
+
+        async fn vacuum_volume(
+            &self,
+            _request: tonic::Request<master_pb::VacuumVolumeRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::VacuumVolumeResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("vacuum_volume"))
+        }
+
+        async fn disable_vacuum(
+            &self,
+            _request: tonic::Request<master_pb::DisableVacuumRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::DisableVacuumResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("disable_vacuum"))
+        }
+
+        async fn enable_vacuum(
+            &self,
+            _request: tonic::Request<master_pb::EnableVacuumRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::EnableVacuumResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("enable_vacuum"))
+        }
+
+        async fn volume_mark_readonly(
+            &self,
+            _request: tonic::Request<master_pb::VolumeMarkReadonlyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::VolumeMarkReadonlyResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("volume_mark_readonly"))
+        }
+
+        async fn list_cluster_nodes(
+            &self,
+            _request: tonic::Request<master_pb::ListClusterNodesRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::ListClusterNodesResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("list_cluster_nodes"))
+        }
+
+        async fn lease_admin_token(
+            &self,
+            _request: tonic::Request<master_pb::LeaseAdminTokenRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::LeaseAdminTokenResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("lease_admin_token"))
+        }
+
+        async fn release_admin_token(
+            &self,
+            _request: tonic::Request<master_pb::ReleaseAdminTokenRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::ReleaseAdminTokenResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("release_admin_token"))
+        }
+
+        async fn get_admin_lock_status(
+            &self,
+            _request: tonic::Request<master_pb::GetAdminLockStatusRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::GetAdminLockStatusResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("get_admin_lock_status"))
+        }
+
+        async fn ping(
+            &self,
+            _request: tonic::Request<master_pb::PingRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::PingResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("ping"))
+        }
+
+        async fn raft_list_cluster_servers(
+            &self,
+            _request: tonic::Request<master_pb::RaftListClusterServersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::RaftListClusterServersResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("raft_list_cluster_servers"))
+        }
+
+        async fn raft_add_server(
+            &self,
+            _request: tonic::Request<master_pb::RaftAddServerRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::RaftAddServerResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("raft_add_server"))
+        }
+
+        async fn raft_remove_server(
+            &self,
+            _request: tonic::Request<master_pb::RaftRemoveServerRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::RaftRemoveServerResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("raft_remove_server"))
+        }
+
+        async fn raft_leadership_transfer(
+            &self,
+            _request: tonic::Request<master_pb::RaftLeadershipTransferRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::RaftLeadershipTransferResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("raft_leadership_transfer"))
+        }
+
+        async fn resume_volume_growth(
+            &self,
+            _request: tonic::Request<master_pb::ResumeVolumeGrowthRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::ResumeVolumeGrowthResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("resume_volume_growth"))
+        }
+
+        async fn volume_grow(
+            &self,
+            _request: tonic::Request<master_pb::VolumeGrowRequest>,
+        ) -> std::result::Result<tonic::Response<master_pb::VolumeGrowResponse>, tonic::Status>
+        {
+            Err(tonic::Status::unimplemented("volume_grow"))
+        }
+
+        async fn collection_statistics(
+            &self,
+            _request: tonic::Request<master_pb::CollectionStatisticsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<master_pb::CollectionStatisticsResponse>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("collection_statistics"))
+        }
+    }
+
+    /// Runs a FakeMaster on a loopback port, returning the `host:port` gRPC
+    /// clients dial. The task stops with the test's runtime.
+    async fn fake_master_addr(fake: FakeMaster) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = tonic::transport::Server::builder()
+                .add_service(master_pb::seaweed_server::SeaweedServer::new(fake))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                .await;
+        });
+        format!("127.0.0.1:{port}")
+    }
+
+    // Go's TestHeartbeatToFollowerPublishesNamedLeaderOnly: a reply that
+    // names a different leader publishes it right away and ends the session
+    // with the redirect — lookups stop landing on the follower.
+    #[tokio::test]
+    async fn test_heartbeat_to_a_follower_publishes_the_named_leader() {
+        let grpc_addr = fake_master_addr(FakeMaster {
+            leader: String::new(),
+            replies: vec![master_pb::HeartbeatResponse {
+                leader: "leader.example.com:9333".to_string(),
+                ..Default::default()
+            }],
+        })
+        .await;
+        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        let config = test_config();
+        let (_shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+
+        let redirected = do_heartbeat(
+            &config,
+            &state,
+            &grpc_addr,
+            "127.0.0.1:0",
+            Duration::from_millis(50),
+            &mut shutdown_rx,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(redirected.as_deref(), Some("leader.example.com:9333"));
+        assert_eq!(
+            *state.current_master_url.read().await,
+            "leader.example.com:9333"
+        );
+    }
+
+    // Go's TestHeartbeatToLeaderPublishesItAndResendsFromSendLoop, first
+    // half: the first reply without a leader field is the leader's own, so
+    // the connected peer becomes the lookup target.
+    #[tokio::test]
+    async fn test_heartbeat_to_the_leader_publishes_the_connected_peer() {
+        let grpc_addr = fake_master_addr(FakeMaster {
+            leader: String::new(),
+            replies: vec![master_pb::HeartbeatResponse::default()],
+        })
+        .await;
+        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        let config = test_config();
+        let (_shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+
+        let redirected = do_heartbeat(
+            &config,
+            &state,
+            &grpc_addr,
+            "127.0.0.1:1",
+            Duration::from_millis(50),
+            &mut shutdown_rx,
+        )
+        .await
+        .unwrap();
+
+        assert!(redirected.is_none());
+        assert_eq!(*state.current_master_url.read().await, "127.0.0.1:1");
+    }
+
+    // Go's TestRefreshLeaderFromPeersPublishesReportedLeader: after losing
+    // the stream, the loop asks the configured masters who leads and
+    // publishes the answer.
+    #[tokio::test]
+    async fn test_refresh_leader_from_peers_publishes_the_reported_leader() {
+        let grpc_addr = fake_master_addr(FakeMaster {
+            leader: "10.9.9.9:9333".to_string(),
+            replies: vec![],
+        })
+        .await;
+        let port = grpc_addr.rsplit(':').next().unwrap();
+        let mut config = test_config();
+        config.master_addresses = vec![format!("127.0.0.1:0.{port}")];
+        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+
+        refresh_leader_from_peers(&config, &state, Duration::from_secs(5)).await;
+
+        assert_eq!(*state.current_master_url.read().await, "10.9.9.9:9333");
+    }
+
+    // Go's TestRefreshLeaderFromPeersClearsLeaderWithoutAnswer: no peer
+    // answering clears the published master — the lost one is dead or a
+    // follower answering lookups from its own cache.
+    #[tokio::test]
+    async fn test_refresh_leader_from_peers_clears_without_an_answer() {
+        let mut config = test_config();
+        config.master_addresses = vec!["127.0.0.1:0.1".to_string()];
+        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        *state.current_master_url.write().await = "dead.example.com:9333".to_string();
+
+        refresh_leader_from_peers(&config, &state, Duration::from_secs(2)).await;
+
+        assert!(state.current_master_url.read().await.is_empty());
     }
 }
