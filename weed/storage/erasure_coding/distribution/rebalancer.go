@@ -136,12 +136,18 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 	}
 
 	// balance moves shards between domains of one level until every domain
-	// holds at most its even share or no destination can take a shard.
+	// holds at most its even share or no destination can take a shard. A
+	// source that cannot shed any shard is set aside rather than stopping
+	// the level, so other overloaded sources still get to move.
 	balance := func(level string, domains []string, countOf func(string) int, target int, nodesOf func(string) []*TopologyNode, dstDomains func(string) []string) {
+		blocked := make(map[string]bool)
 		for {
 			src := ""
 			srcFound := false
 			for _, d := range domains {
+				if blocked[d] {
+					continue
+				}
 				if countOf(d) > target && (!srcFound || countOf(d) > countOf(src)) {
 					src, srcFound = d, true
 				}
@@ -164,7 +170,7 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 				}
 			}
 			if !moved {
-				return
+				blocked[src] = true
 			}
 		}
 	}

@@ -375,6 +375,30 @@ func TestPlanRebalanceShardForUnregisteredNode(t *testing.T) {
 	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
 }
 
+// When the most overloaded domain can only offer duplicates, balancing must
+// fall through to the next overloaded source rather than stop.
+func TestPlanRebalanceSkipsBlockedSource(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("a2", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("a3", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("b1", "dcB", "rB", 10, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("c1", "dcC", "rC", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("c2", "dcC", "rC", 10))
+	a.AddNode(makeNode("d1", "dcD", "rD", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("d2", "dcD", "rD", 10))
+	a.Finalize()
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 4, MinRacksPerDC: 1, MinNodesPerRack: 1}).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// dcA is stuck on duplicates (target 8), but dcB still sheds two shards
+	assert.Equal(t, 12, plan.Analysis.ShardsByDC["dcA"])
+	assert.Equal(t, 8, plan.Analysis.ShardsByDC["dcB"])
+	assert.Equal(t, 5, plan.Analysis.ShardsByDC["dcC"])
+	assert.Equal(t, 5, plan.Analysis.ShardsByDC["dcD"])
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
