@@ -678,6 +678,21 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 	return errCode
 }
 
+// checkVersionReadGrant enforces the version read grant AWS requires alongside
+// a version-scoped action such as s3:GetObjectVersionAttributes. The check runs
+// on a request shaped like a plain versioned GET so the s3:GetObjectVersion
+// action resolves from the request instead of the caller's subresource, and a
+// legacy Read grant still applies.
+func (s3a *S3ApiServer) checkVersionReadGrant(r *http.Request, bucket, object, versionId string, objectEntry map[string][]byte) s3err.ErrorCode {
+	versionReadReq := objectKeyPolicyRequest(r, http.MethodGet, bucket, object, versionId)
+	if identity, ok := GetIdentityFromContext(r).(*Identity); ok && identity != nil {
+		if errCode := s3a.iam.VerifyActionPermission(versionReadReq, identity, ACTION_READ, bucket, object); errCode != s3err.ErrNone {
+			return errCode
+		}
+	}
+	return s3a.recheckPolicyWithObjectEntry(versionReadReq, bucket, object, ACTION_READ, objectEntry, "checkVersionReadGrant")
+}
+
 // recheckCopySourcePolicy repeats the source object's policy check once its
 // entry is fetched, so conditions on the object's existing tags apply to a
 // CopyObject / UploadPartCopy / RenameObject source the same way they do to a

@@ -576,3 +576,64 @@ func TestRecheckObjectAclTagConditionedPolicy(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone,
 		s3a.recheckPolicyWithObjectEntry(putReq, "b", "secret.txt", s3_constants.S3_ACTION_PUT_OBJECT_ACL, publicEntry, "test"))
 }
+
+// A versioned GetObjectAttributes request is authorized against the version
+// read grant, not the attributes action the original request resolves to: an
+// explicit bucket-policy Deny on s3:GetObjectVersion blocks it, while a legacy
+// identity holding only the coarse Read grant is still accepted.
+func TestCheckVersionReadGrant(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+		iam:          &IdentityAccessManagement{},
+	}
+
+	denyPolicyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::deny-bucket", "arn:aws:s3:::deny-bucket/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObjectVersion",
+				"Resource": "arn:aws:s3:::deny-bucket/key"
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("deny-bucket", denyPolicyJSON))
+
+	allowPolicyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::allow-bucket", "arn:aws:s3:::allow-bucket/*"]
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("allow-bucket", allowPolicyJSON))
+
+	identity := &Identity{
+		Name:         "reader",
+		Actions:      []Action{s3_constants.ACTION_READ},
+		PrincipalArn: "arn:aws:iam::000000000000:user/reader",
+	}
+
+	attrsReq := func(bucket string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/key?attributes&versionId=v1", nil)
+		return req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+	}
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.checkVersionReadGrant(attrsReq("deny-bucket"), "deny-bucket", "key", "v1", nil))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(attrsReq("allow-bucket"), "allow-bucket", "key", "v1", nil))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(attrsReq("no-policy-bucket"), "no-policy-bucket", "key", "v1", nil))
+}
