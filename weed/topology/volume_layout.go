@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,8 +69,11 @@ type VolumeLayout struct {
 	deletingVolumes  map[needle.VolumeId]struct{}
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	accessLock       sync.RWMutex
-	sizeTracking     map[needle.VolumeId]*volumeSizeTracking
+	// maxWritableVolumes caps how many writables PickForWrite spreads over;
+	// 0 means every writable volume is a candidate.
+	maxWritableVolumes int
+	accessLock         sync.RWMutex
+	sizeTracking       map[needle.VolumeId]*volumeSizeTracking
 	// dropped: the layout went away with its collection; late registrations must re-resolve.
 	dropped bool
 }
@@ -641,12 +645,16 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	lenWriters := len(vl.writables)
+	writables := vl.writables
+	if vl.maxWritableVolumes > 0 && len(writables) > vl.maxWritableVolumes {
+		writables = vl.fullestWritable(writables)
+	}
+	lenWriters := len(writables)
 	if lenWriters <= 0 {
 		return 0, 0, nil, true, fmt.Errorf("%s", NoWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid, locationList = vl.pickWeightedByRemaining(vl.writables)
+		vid, locationList = vl.pickWeightedByRemaining(writables)
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
 		}
@@ -659,7 +667,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	found := 0
 	start := rand.IntN(lenWriters)
 	for i := 0; i < lenWriters && found < pickSampleSize; i++ {
-		writableVolumeId := vl.writables[(start+i)%lenWriters]
+		writableVolumeId := writables[(start+i)%lenWriters]
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
 			if !dn.matchesLocation(option) {
@@ -698,6 +706,21 @@ func (vl *VolumeLayout) pickWeightedByRemaining(candidates []needle.VolumeId) (n
 		sample[i] = candidates[rand.IntN(n)]
 	}
 	return vl.weightedPick(sample[:])
+}
+
+// fullestWritable narrows candidates to the maxWritableVolumes fullest ones,
+// so assignments concentrate on the fullest writable volume instead of
+// spreading across many disks at once.
+func (vl *VolumeLayout) fullestWritable(candidates []needle.VolumeId) []needle.VolumeId {
+	sorted := append([]needle.VolumeId(nil), candidates...)
+	sort.Slice(sorted, func(i, j int) bool {
+		ri, rj := vl.remainingSize(sorted[i]), vl.remainingSize(sorted[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return sorted[i] < sorted[j]
+	})
+	return sorted[:vl.maxWritableVolumes]
 }
 
 func (vl *VolumeLayout) weightedPick(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {

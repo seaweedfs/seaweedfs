@@ -50,6 +50,7 @@ type Topology struct {
 
 	volumeSizeLimit          uint64
 	replicationAsMin         bool
+	maxWritableVolumes       int
 	vacuumDisabledByOperator atomic.Bool // true when operator manually disables vacuum
 	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
 	adminServerConnectedFunc func() bool // optional callback to check admin server presence
@@ -532,8 +533,17 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
+		c := NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
+		c.maxWritableVolumes = t.maxWritableVolumes
+		return c
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
+}
+
+// SetMaxWritableVolumes caps how many of a collection's writable volumes
+// assignments are spread over; 0 means every writable volume is a candidate.
+// It only affects collections created afterwards, so call it before serving.
+func (t *Topology) SetMaxWritableVolumes(n int) {
+	t.maxWritableVolumes = n
 }
 
 // FindVolumeLayout is the read-only counterpart of GetVolumeLayout: it returns
@@ -796,7 +806,6 @@ func ttlEqual(a, b *needle.TTL) bool {
 	}
 	return a.ToUint32() == b.ToUint32()
 }
-
 
 // findDuplicateVolumeLayouts reports every layout that already holds v.Id on
 // data nodes other than dn. Volume ids are global, so the same id held by two

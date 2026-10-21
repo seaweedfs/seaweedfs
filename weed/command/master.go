@@ -57,6 +57,7 @@ type MasterOptions struct {
 	fileSizeLimitMB               *int
 	volumePreallocate             *bool
 	maxParallelVacuumPerServer    *int
+	maxWritableVolumes            *int
 	vacuumIntervalSeconds         *int
 	vacuumDeleteEmptyAfterSeconds *int
 	// pulseSeconds       *int
@@ -95,6 +96,7 @@ func init() {
 	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
+	m.maxWritableVolumes = cmdMaster.Flag.Int("maxWritableVolumes", 0, "maximum writable volumes per collection assignments are spread over, fullest picked first; 0 means no limit")
 	m.vacuumIntervalSeconds = cmdMaster.Flag.Int("vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
 	m.vacuumDeleteEmptyAfterSeconds = cmdMaster.Flag.Int("vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -477,6 +479,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		FileSizeLimitMB:               *m.fileSizeLimitMB,
 		VolumePreallocate:             *m.volumePreallocate,
 		MaxParallelVacuumPerServer:    *m.maxParallelVacuumPerServer,
+		MaxWritableVolumes:            *m.maxWritableVolumes,
 		VacuumIntervalSeconds:         *m.vacuumIntervalSeconds,
 		VacuumDeleteEmptyAfterSeconds: *m.vacuumDeleteEmptyAfterSeconds,
 		// PulseSeconds:            *m.pulseSeconds,
