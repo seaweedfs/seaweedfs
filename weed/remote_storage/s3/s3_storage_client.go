@@ -168,6 +168,24 @@ func S3CompatibleEndpoint(conf *remote_pb.RemoteConf) (string, bool) {
 	return opt.endpoint, true
 }
 
+// awsCredentialSourceConfigured reports whether the environment names a source
+// for the AWS SDK default credential chain, such as static keys, a profile,
+// IRSA web identity or the ECS/EKS container credentials endpoint.
+func awsCredentialSourceConfigured() bool {
+	for _, name := range []string{
+		"AWS_ACCESS_KEY_ID",
+		"AWS_PROFILE",
+		"AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	} {
+		if os.Getenv(name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // MakeWithHTTPClient builds the client for any S3-SDK-backed remote storage
 // type using the supplied *http.Client (or the AWS SDK default when nil).
 // Callers that need to pin the dial path against DNS rebinding can pass a
@@ -191,8 +209,10 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 	}
 	if opt.accessKey != "" && opt.secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(opt.accessKey, opt.secretKey, "")
-	} else if opt.anonymousWhenNoCreds && opt.accessKey == "" && opt.secretKey == "" {
-		// Explicitly disable signing for public buckets.
+	} else if opt.anonymousWhenNoCreds && opt.accessKey == "" && opt.secretKey == "" && !awsCredentialSourceConfigured() {
+		// Explicitly disable signing for public buckets. When the environment
+		// names an AWS credential source, leave Credentials nil so the SDK
+		// default chain (env, web identity, container, shared profile) is used.
 		config.Credentials = credentials.AnonymousCredentials
 	}
 

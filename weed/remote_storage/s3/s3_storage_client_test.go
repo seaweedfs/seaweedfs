@@ -21,6 +21,7 @@ import (
 )
 
 func TestS3MakeUsesAnonymousCredentialsWhenKeysAreEmpty(t *testing.T) {
+	clearAWSCredentialEnv(t)
 	maker := s3RemoteStorageMaker{}
 	conf := &remote_pb.RemoteConf{
 		Type:             "s3",
@@ -38,6 +39,47 @@ func TestS3MakeUsesAnonymousCredentialsWhenKeysAreEmpty(t *testing.T) {
 	s3Client, ok := client.conn.(*awss3.S3)
 	require.True(t, ok)
 	require.Same(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+}
+
+func clearAWSCredentialEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"AWS_ACCESS_KEY_ID",
+		"AWS_PROFILE",
+		"AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestS3MakeUsesDefaultCredentialChainWhenKeysAreEmptyAndSourceIsConfigured(t *testing.T) {
+	for name, value := range map[string]string{
+		"AWS_ACCESS_KEY_ID":                      "env-access",
+		"AWS_PROFILE":                            "some-profile",
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            "/var/run/secrets/token",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "http://127.0.0.1:1/creds",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/creds",
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearAWSCredentialEnv(t)
+			t.Setenv(name, value)
+			t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/test")
+
+			remoteClient, err := s3RemoteStorageMaker{}.Make(&remote_pb.RemoteConf{
+				Type:             "s3",
+				S3Region:         "us-east-1",
+				S3Endpoint:       "http://localhost:8333",
+				S3ForcePathStyle: true,
+			})
+			require.NoError(t, err)
+
+			s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+			require.True(t, ok)
+			require.NotSame(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+		})
+	}
 }
 
 func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
