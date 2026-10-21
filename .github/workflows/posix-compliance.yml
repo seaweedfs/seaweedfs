@@ -1,0 +1,753 @@
+name: POSIX Compliance Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*'
+      - 'weed/command/fuse*'
+      - 'test/fuse_integration/**'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*'
+      - 'weed/command/fuse*'
+      - 'test/fuse_integration/**'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of POSIX tests to run (default: full for comprehensive testing)'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+        - critical
+        - basic
+        - extended
+        - full
+      enable_external_tests:
+        description: 'Run external test suites (slower)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GO_VERSION: '1.24'
+  TIMEOUT: '45m'
+
+jobs:
+  posix-compliance-ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    strategy:
+      matrix:
+        fuse-version: ['2.9', '3.0']
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+    
+    - name: Set up Go ${{ env.GO_VERSION }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        cache-dependency-path: |
+          go.sum
+          test/fuse_integration/go.sum
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          attr \
+          acl \
+          build-essential \
+          git \
+          python3-pip
+        
+        # Install FUSE version specific packages
+        if [ "${{ matrix.fuse-version }}" = "2.9" ]; then
+          echo "Installing FUSE 2.9..."
+          sudo apt-get install -y fuse libfuse-dev
+        elif [ "${{ matrix.fuse-version }}" = "3.0" ]; then
+          echo "Installing FUSE 3.0..."
+          sudo apt-get install -y fuse3 libfuse3-dev
+          # Also install fuse2 for compatibility if needed
+          sudo apt-get install -y fuse libfuse-dev
+        fi
+    
+    - name: Set up user permissions for FUSE
+      run: |
+        # Create fuse group if it doesn't exist
+        sudo groupadd -f fuse
+        
+        # Add user to fuse group
+        sudo usermod -a -G fuse $USER
+        
+        # Set permissions on FUSE device
+        sudo chmod 666 /dev/fuse
+        
+        # Ensure fuse module is loaded
+        sudo modprobe fuse || true
+        
+        # Verify setup
+        echo "FUSE setup verification:"
+        ls -la /dev/fuse
+        groups $USER | grep fuse || echo "User not in fuse group yet (will be effective after login)"
+        lsmod | grep fuse || echo "FUSE module not loaded"
+    
+    - name: Install external test tools
+      if: ${{ github.event.inputs.enable_external_tests == 'true' }}
+      run: |
+        # Install nfstest for POSIX API verification
+        pip3 install --user nfstest
+        
+        # Install FIO for performance testing
+        sudo apt-get install -y fio
+        
+        # Install additional test utilities
+        sudo apt-get install -y stress-ng
+    
+    - name: Build SeaweedFS
+      run: |
+        make
+        # Verify binary exists and is executable (it's installed to GOPATH/bin)
+        weed version
+        
+        # Make weed binary available in PATH (it's already there from go install)
+        sudo cp $(which weed) /usr/local/bin/weed
+        which weed
+        weed version
+    
+    - name: Set up SeaweedFS cluster
+      run: |
+        start_and_wait() {
+            local name=$1
+            local url=$2
+            local pidfile=$3
+            shift 3
+            local cmd="$@"
+
+            echo "Starting $name..."
+            $cmd > "/tmp/seaweedfs/$name.log" 2>&1 &
+            local pid=$!
+            echo $pid > "$pidfile"
+
+            echo "Waiting for $name to start..."
+            for i in {1..30}; do
+                if curl -sf "$url" > /dev/null 2>&1; then
+                    echo "$name is ready"
+                    return 0
+                fi
+                if [ $i -eq 30 ]; then
+                    echo "$name failed to start"
+                    cat "/tmp/seaweedfs/$name.log"
+                    exit 1
+                fi
+                sleep 2
+            done
+        }
+
+        mkdir -p /tmp/seaweedfs/{master,volume,filer,mount}
+
+        start_and_wait "master" "http://127.0.0.1:9333/cluster/status" "/tmp/seaweedfs/master.pid" \
+            "weed master -ip=127.0.0.1 -port=9333 -mdir=/tmp/seaweedfs/master -raftBootstrap=true"
+
+        start_and_wait "volume" "http://127.0.0.1:8080/status" "/tmp/seaweedfs/volume.pid" \
+            "weed volume -mserver=127.0.0.1:9333 -ip=127.0.0.1 -port=8080 -dir=/tmp/seaweedfs/volume -max=100"
+
+        start_and_wait "filer" "http://127.0.0.1:8888/" "/tmp/seaweedfs/filer.pid" \
+            "weed filer -master=127.0.0.1:9333 -ip=127.0.0.1 -port=8888"
+
+        echo "SeaweedFS cluster status:"
+        curl -s http://127.0.0.1:9333/cluster/status || true
+    
+    - name: Set up FUSE mount
+      run: |
+        # Create mount point
+        MOUNT_POINT="/tmp/seaweedfs/mount"
+        mkdir -p $MOUNT_POINT
+        
+        echo "Mounting SeaweedFS FUSE filesystem..."
+        # Mount SeaweedFS FUSE filesystem in background
+        weed mount \
+          -filer=127.0.0.1:8888 \
+          -dir=$MOUNT_POINT \
+          -filer.path=/ \
+          -dirAutoCreate=true \
+          -allowOthers=true \
+          -nonempty=true \
+          > /tmp/seaweedfs/mount.log 2>&1 &
+        MOUNT_PID=$!
+        echo $MOUNT_PID > /tmp/seaweedfs/mount.pid
+        
+        # Wait for mount to be ready
+        echo "Waiting for FUSE mount to be ready..."
+        for i in {1..30}; do
+          if mountpoint -q $MOUNT_POINT 2>/dev/null; then
+            echo "FUSE mount is ready"
+            break
+          fi
+          # Alternative check - try to list the directory
+          if ls -la $MOUNT_POINT > /dev/null 2>&1; then
+            echo "FUSE mount is ready (directory accessible)"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "FUSE mount failed to be ready"
+            cat /tmp/seaweedfs/mount.log
+            echo "Mount status:"
+            mount | grep fuse || echo "No FUSE mounts found"
+            ps aux | grep weed || echo "No weed processes found"
+            exit 1
+          fi
+          sleep 2
+        done
+        
+        # Verify mount is working
+        echo "Testing FUSE mount functionality..."
+        echo "test" > $MOUNT_POINT/test_file.txt
+        if [ "$(cat $MOUNT_POINT/test_file.txt)" = "test" ]; then
+          echo "FUSE mount is working correctly"
+          rm $MOUNT_POINT/test_file.txt
+        else
+          echo "FUSE mount is not working properly"
+          exit 1
+        fi
+        
+        # Export mount point for tests
+        echo "SEAWEEDFS_MOUNT_POINT=$MOUNT_POINT" >> $GITHUB_ENV
+    
+    - name: Set up test environment
+      run: |
+        cd test/fuse_integration
+        
+        # Initialize Go module for tests
+        if [ ! -f go.mod ]; then
+          go mod init seaweedfs-posix-tests
+          go mod tidy
+        fi
+        
+        # Create reports directory
+        mkdir -p reports
+        
+        # Set up external tools if requested
+        # Note: External tools setup is now optional and won't fail the build
+        if [ "${{ github.event.inputs.enable_external_tests }}" = "true" ]; then
+          echo "Setting up external POSIX testing tools..."
+          if make -f posix_Makefile setup-external-tools; then
+            # Make external tools mandatory when explicitly requested and successfully set up
+            export POSIX_REQUIRE_EXTERNAL_TOOLS="true"
+            echo "POSIX_REQUIRE_EXTERNAL_TOOLS=true" >> $GITHUB_ENV
+            echo "✅ External tools setup completed successfully"
+          else
+            echo "⚠️  External tools setup failed - continuing with basic tests only"
+            echo "External tools will be skipped but tests will continue"
+            echo "This is expected behavior when build tools are not available"
+          fi
+        fi
+        
+        # Verify SeaweedFS cluster is accessible
+        echo "Verifying SeaweedFS cluster accessibility..."
+        curl -sf http://127.0.0.1:9333/cluster/status
+        curl -sf http://127.0.0.1:8080/status  
+        curl -sf http://127.0.0.1:8888/
+        
+        # Verify mount point
+        echo "Mount point: $SEAWEEDFS_MOUNT_POINT"
+        ls -la $SEAWEEDFS_MOUNT_POINT
+        
+        # Verify mount is actually working by testing file operations
+        echo "Verifying SeaweedFS mount functionality..."
+        TEST_FILE="$SEAWEEDFS_MOUNT_POINT/.mount_verification_test"
+        echo "SeaweedFS mount test" > "$TEST_FILE"
+        if [ "$(cat "$TEST_FILE")" = "SeaweedFS mount test" ]; then
+          echo "✅ Mount verification successful"
+          rm -f "$TEST_FILE"
+        else
+          echo "❌ Mount verification failed - mount may not be working properly"
+          exit 1
+        fi
+        
+        # Check if this is actually a FUSE mount
+        if mount | grep -q "$SEAWEEDFS_MOUNT_POINT"; then
+          echo "✅ FUSE mount detected:"
+          mount | grep "$SEAWEEDFS_MOUNT_POINT"
+        else
+          echo "⚠️  Warning: Mount point not found in mount table"
+        fi
+    
+    - name: Run POSIX compliance tests
+      id: posix-tests
+      env:
+        SEAWEEDFS_MOUNT_POINT: ${{ env.SEAWEEDFS_MOUNT_POINT }}
+        POSIX_REQUIRE_EXTERNAL_TOOLS: ${{ env.POSIX_REQUIRE_EXTERNAL_TOOLS }}
+      run: |
+        cd test/fuse_integration
+        
+        # Determine which tests to run
+        TEST_TYPE="${{ github.event.inputs.test_type }}"
+        if [ -z "$TEST_TYPE" ]; then
+          TEST_TYPE="full"
+        fi
+        
+        echo "Running POSIX tests: $TEST_TYPE"
+        if [ "$TEST_TYPE" = "full" ]; then
+          echo "🚀 Running COMPREHENSIVE POSIX test suite (including external test suites)"
+        else
+          echo "Using mount point: $SEAWEEDFS_MOUNT_POINT"
+        fi
+        
+        # Set test configuration to use our mounted filesystem
+        export TEST_MOUNT_POINT="$SEAWEEDFS_MOUNT_POINT"
+        export TEST_SKIP_CLUSTER_SETUP="true"
+        
+        # Debug: Show environment variables
+        echo "🔍 Test Environment:"
+        echo "  TEST_MOUNT_POINT=$TEST_MOUNT_POINT"
+        echo "  TEST_SKIP_CLUSTER_SETUP=$TEST_SKIP_CLUSTER_SETUP"
+        echo "  SEAWEEDFS_MOUNT_POINT=$SEAWEEDFS_MOUNT_POINT"
+        
+        case "$TEST_TYPE" in
+          "critical")
+            echo "Running critical POSIX tests (basic compliance only)..."
+            make -f posix_Makefile test-posix-critical
+            ;;
+          "basic")
+            echo "Running basic POSIX tests (core file operations)..."
+            make -f posix_Makefile test-posix-basic
+            ;;
+          "extended")
+            echo "Running extended POSIX tests (including advanced features)..."
+            make -f posix_Makefile test-posix-extended
+            ;;
+          "full")
+            echo "🚀 Running COMPREHENSIVE POSIX test suite (all tests including external)..."
+            echo "   This includes: basic, extended, and external test suites"
+            echo "   External suites: pjdfstest, nfstest_posix, and custom stress tests"
+            make -f posix_Makefile test-posix-full
+            ;;
+          *)
+            echo "Unknown test type: $TEST_TYPE, defaulting to full suite"
+            echo "🚀 Running full POSIX test suite (all tests including external)..."
+            make -f posix_Makefile test-posix-full
+            ;;
+        esac
+    
+    - name: Run external test suites
+      if: ${{ github.event.inputs.enable_external_tests == 'true' }}
+      continue-on-error: true
+      run: |
+        cd test/fuse_integration
+        
+        # Run external tests (may fail on some systems)
+        make -f posix_Makefile test-nfstest-posix || echo "nfstest failed or not available"
+        make -f posix_Makefile test-fio-posix || echo "FIO tests failed or not available"
+    
+    - name: Generate compliance report
+      if: always()
+      run: |
+        cd test/fuse_integration
+        make -f posix_Makefile generate-report
+    
+    - name: Cleanup SeaweedFS cluster and FUSE mount
+      if: always()
+      run: |
+        stop_process() {
+            local name=$1
+            local pidfile=$2
+            if [ -f "$pidfile" ]; then
+                local pid=$(cat "$pidfile")
+                if kill -0 $pid 2>/dev/null; then
+                    echo "Stopping $name process (PID: $pid)..."
+                    kill -TERM $pid || true
+                    sleep 2
+                    kill -KILL $pid 2>/dev/null || true
+                fi
+            fi
+        }
+
+        echo "Cleaning up SeaweedFS cluster and FUSE mount..."
+        
+        MOUNT_POINT="/tmp/seaweedfs/mount"
+        if mountpoint -q $MOUNT_POINT 2>/dev/null; then
+          echo "Unmounting FUSE filesystem..."
+          fusermount -u $MOUNT_POINT || umount $MOUNT_POINT || true
+        fi
+        
+        stop_process "mount" "/tmp/seaweedfs/mount.pid"
+        stop_process "filer" "/tmp/seaweedfs/filer.pid"
+        stop_process "volume" "/tmp/seaweedfs/volume.pid"
+        stop_process "master" "/tmp/seaweedfs/master.pid"
+        
+        pkill -f "weed " || true
+        
+        fusermount -u $MOUNT_POINT 2>/dev/null || true
+        umount $MOUNT_POINT 2>/dev/null || true
+        
+        rm -rf /tmp/seaweedfs || true
+        
+        echo "Cleanup completed"
+    
+    - name: Collect system information for debugging
+      if: failure()
+      run: |
+        cd test/fuse_integration
+        mkdir -p reports/debug
+        
+        echo "System Information" > reports/debug/system_info.txt
+        uname -a >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Mount Information" >> reports/debug/system_info.txt
+        mount >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Disk Space" >> reports/debug/system_info.txt
+        df -h >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Memory Information" >> reports/debug/system_info.txt
+        free -h >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "FUSE Information" >> reports/debug/system_info.txt
+        ls -la /dev/fuse >> reports/debug/system_info.txt
+        lsmod | grep fuse >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "SeaweedFS Version" >> reports/debug/system_info.txt
+        weed version >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Go Version" >> reports/debug/system_info.txt
+        go version >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Running Processes" >> reports/debug/system_info.txt
+        ps aux | grep -E "(weed|fuse)" >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        # Collect SeaweedFS service logs
+        echo "=== SeaweedFS Service Logs ===" >> reports/debug/system_info.txt
+        if [ -f /tmp/seaweedfs/master.log ]; then
+          echo "Master Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/master.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/volume.log ]; then
+          echo "Volume Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/volume.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/filer.log ]; then
+          echo "Filer Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/filer.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/mount.log ]; then
+          echo "Mount Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/mount.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        # Copy full logs as separate files
+        if [ -f /tmp/seaweedfs/master.log ]; then
+          cp /tmp/seaweedfs/master.log reports/debug/master.log
+        fi
+        if [ -f /tmp/seaweedfs/volume.log ]; then
+          cp /tmp/seaweedfs/volume.log reports/debug/volume.log  
+        fi
+        if [ -f /tmp/seaweedfs/filer.log ]; then
+          cp /tmp/seaweedfs/filer.log reports/debug/filer.log
+        fi
+        if [ -f /tmp/seaweedfs/mount.log ]; then
+          cp /tmp/seaweedfs/mount.log reports/debug/mount.log
+        fi
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: posix-test-results-ubuntu-fuse${{ matrix.fuse-version }}
+        path: |
+          test/fuse_integration/reports/
+          test/fuse_integration/*.log
+        retention-days: 30
+    
+    - name: Upload test coverage
+      uses: actions/upload-artifact@v4
+      if: always() && (github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'extended')
+      with:
+        name: posix-coverage-ubuntu
+        path: test/fuse_integration/reports/posix_coverage.html
+        retention-days: 14
+    
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          const reportPath = 'test/fuse_integration/reports/posix_compliance_summary.txt';
+          
+          if (fs.existsSync(reportPath)) {
+            const report = fs.readFileSync(reportPath, 'utf8');
+            const comment = `## POSIX Compliance Test Results
+            
+            **Go Version:** ${{ env.GO_VERSION }}
+            **FUSE Version:** ${{ matrix.fuse-version }}
+            **Test Type:** ${{ github.event.inputs.test_type || 'full' }}
+            
+            <details>
+            <summary>Test Summary</summary>
+            
+            \`\`\`
+            ${report}
+            \`\`\`
+            </details>
+            
+            📊 Full results available in [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          }
+
+  posix-compliance-macos:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Install macFUSE
+      run: |
+        # Install macFUSE
+        brew install macfuse
+        
+        # Note: macFUSE may require system extension approval on macOS
+        # This step may need manual intervention in some cases
+    
+    - name: Build SeaweedFS
+      run: |
+        make
+        # Verify binary exists and is executable (it's installed to GOPATH/bin)
+        weed version
+    
+    - name: Run critical POSIX tests (macOS)
+      continue-on-error: true  # macOS FUSE can be more restrictive
+      run: |
+        cd test/fuse_integration
+        
+        if [ ! -f go.mod ]; then
+          go mod init seaweedfs-posix-tests
+          go mod tidy
+        fi
+        
+        mkdir -p reports
+        
+        # Run basic tests only on macOS due to FUSE limitations
+        make -f posix_Makefile test-posix-critical
+    
+    - name: Upload macOS test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: posix-test-results-macos
+        path: |
+          test/fuse_integration/reports/
+          test/fuse_integration/*.log
+        retention-days: 30
+
+  security-analysis:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Install security analysis tools
+      run: |
+        echo "Installing staticcheck for security analysis..."
+        go install honnef.co/go/tools/cmd/staticcheck@latest
+    
+    - name: Run security analysis on FUSE code
+      run: |
+        # Analyze mount and FUSE-related code for security and quality issues
+        echo "Running staticcheck security analysis..."
+        
+        # Run staticcheck on FUSE-related code
+        echo "Analyzing FUSE mount code..."
+        staticcheck ./weed/mount/... > staticcheck-report.txt 2>&1 || true
+        staticcheck ./weed/command/mount* ./weed/command/fuse* >> staticcheck-report.txt 2>&1 || true
+        
+        # Convert to JSON format for consistency
+        echo "{" > gosec-report.json
+        echo "  \"tool\": \"staticcheck\"," >> gosec-report.json
+        echo "  \"timestamp\": \"$(date -Iseconds)\"," >> gosec-report.json
+        echo "  \"issues\": [" >> gosec-report.json
+        
+        if [ -s staticcheck-report.txt ]; then
+          echo "    \"$(cat staticcheck-report.txt | head -20 | sed 's/"/\\"/g' | tr '\n' ' ')\"" >> gosec-report.json
+        fi
+        
+        echo "  ]," >> gosec-report.json
+        echo "  \"stats\": {" >> gosec-report.json
+        echo "    \"files_analyzed\": $(find ./weed/mount ./weed/command -name '*.go' | wc -l)," >> gosec-report.json
+        echo "    \"issues_found\": $(wc -l < staticcheck-report.txt 2>/dev/null || echo 0)" >> gosec-report.json
+        echo "  }" >> gosec-report.json
+        echo "}" >> gosec-report.json
+        
+        echo "Security analysis completed"
+        echo "Issues found: $(wc -l < staticcheck-report.txt 2>/dev/null || echo 0)"
+    
+    - name: Upload security analysis results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-analysis-results
+        path: gosec-report.json
+        retention-days: 30
+
+  performance-baseline:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'full' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse libfuse-dev fio
+        sudo usermod -a -G fuse $USER
+        sudo chmod 666 /dev/fuse
+    
+    - name: Build SeaweedFS
+      run: make
+    
+    - name: Run performance baseline tests
+      run: |
+        cd test/fuse_integration
+        
+        if [ ! -f go.mod ]; then
+          go mod init seaweedfs-posix-tests
+          go mod tidy
+        fi
+        
+        mkdir -p reports
+        
+        # Run performance benchmarks
+        make -f posix_Makefile benchmark-posix
+        make -f posix_Makefile test-fio-posix
+    
+    - name: Store performance baseline
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-baseline-results
+        path: |
+          test/fuse_integration/reports/posix_benchmark_results.log
+          test/fuse_integration/reports/fio_*_results.log
+        retention-days: 90
+
+  # Schedule regular compliance checks
+  scheduled-compliance-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse libfuse-dev
+        pip3 install --user nfstest
+    
+    - name: Build SeaweedFS
+      run: make
+    
+    - name: Run comprehensive compliance check
+      run: |
+        cd test/fuse_integration
+        make -f posix_Makefile test-posix-full
+        make -f posix_Makefile generate-report
+    
+    - name: Create compliance issue if tests fail
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'POSIX Compliance Check Failed - ' + new Date().toISOString().split('T')[0],
+            body: `## POSIX Compliance Check Failure
+            
+            The scheduled POSIX compliance check has failed. This may indicate:
+            
+            - Regression in FUSE mount functionality
+            - Changes affecting POSIX compatibility
+            - Infrastructure issues with the test environment
+            
+            **Action Required:** Review the test results and investigate any failures.
+            
+            **Test Run:** [Workflow Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            
+            **Date:** ${new Date().toISOString()}
+            
+            ---
+            This issue was automatically created by the POSIX compliance workflow.
+            `,
+            labels: ['bug', 'posix-compliance', 'automated-issue']
+          });
+          
+          console.log('Created issue:', issue.data.number);
+
+# Schedule this workflow to run weekly
+# Uncomment the following lines to enable scheduled runs:
+#  schedule:
+#    - cron: '0 2 * * 1'  # Every Monday at 2 AM UTC
+
