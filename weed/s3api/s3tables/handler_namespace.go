@@ -20,9 +20,18 @@ import (
 var errOwnerlessBucket = fmt.Errorf("table bucket has no owner metadata")
 
 // mayRepairOwnerlessBucket reports whether the caller may repair a bucket in
-// that state: the admin or a trusted internal handler.
+// that state: the admin or a trusted internal handler. hasAdminAction also
+// answers s3tables:*, an operation grant, not administrator status.
 func (h *S3TablesHandler) mayRepairOwnerlessBucket(r *http.Request) bool {
-	return h.trusted || h.getAccountID(r) == s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r))
+	if h.trusted || h.getAccountID(r) == s3_constants.AccountAdminId {
+		return true
+	}
+	for _, action := range getIdentityActions(r) {
+		if action == s3_constants.ACTION_ADMIN {
+			return true
+		}
+	}
+	return false
 }
 
 // handleCreateNamespace creates a new namespace in a table bucket
