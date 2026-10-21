@@ -182,9 +182,11 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Tagging operations. A versionId retargets them at a specific version, so
-	// the version-tagging action applies, not the current-object one.
-	if query.Has("tagging") {
+	// Tagging operations. The routes match ?tagging with an empty value only,
+	// so tagging=anything-else is not a tagging request and must fall through.
+	// A versionId retargets the request at a specific version, so the
+	// version-tagging action applies, not the current-object one.
+	if query.Has("tagging") && query.Get("tagging") == "" {
 		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
 		case http.MethodGet:
