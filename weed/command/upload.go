@@ -106,7 +106,6 @@ func runUpload(cmd *Command, args []string) bool {
 		})
 		if err != nil {
 			fmt.Println(err.Error())
-			return false
 		}
 
 		concurrency := *upload.concurrency
@@ -170,6 +169,9 @@ func runUpload(cmd *Command, args []string) bool {
 		}
 		wg.Wait()
 		if <-printDone {
+			return false
+		}
+		if err != nil {
 			return false
 		}
 	} else {
