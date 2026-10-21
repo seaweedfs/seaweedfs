@@ -978,10 +978,10 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
-	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
-	if !v.HasRemoteFile() {
-		v.noWriteCanDelete = false
-	}
+	// A remote-tiered volume keeps the delete-only mode load() derives: its
+	// .dat cannot take appends, so "writable" resolves to can-delete rather
+	// than advertising writable with no local data file.
+	v.noWriteCanDelete = v.HasRemoteFile()
 	persistErr := v.PersistReadOnly(false, false)
 	if persistErr != nil {
 		var ndErr *volume_info.NotCrashDurableError
