@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -327,6 +328,50 @@ func TestCopyChunksForRangePreservesSourcePrecedence(t *testing.T) {
 	wantMd5 := md5.Sum([]byte("aaaabb"))
 	if !bytes.Equal(partMd5, wantMd5[:]) {
 		t.Errorf("overlap part Md5 = %x, want %x", partMd5, wantMd5)
+	}
+}
+
+// An inline-Content source has no chunks for the raw-byte copy; the plaintext
+// stream path must write the range's real bytes and tag the part with their
+// MD5, not a zero-fill digest.
+func TestCopyObjectPartInlineContent(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	content := []byte("inline-content")
+	entry := &filer_pb.Entry{
+		Name:       "src",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Content:    content,
+	}
+	r := httptest.NewRequest(http.MethodPut, "/b/dst?partNumber=1&uploadId=u1", nil)
+	etag, _, code := s3a.copyObjectPartViaReencryption(r, entry, 2, 5, "b", "dst", "u1", 1, &filer_pb.Entry{})
+	if code != s3err.ErrNone {
+		t.Fatalf("copyObjectPartViaReencryption: %v", code)
+	}
+	wantMd5 := md5.Sum(content[2:6])
+	if got := strings.Trim(etag, `"`); got != fmt.Sprintf("%x", wantMd5) {
+		t.Errorf("etag = %q, want %x", got, wantMd5)
+	}
+	var partEntry *filer_pb.Entry
+	for key, e := range filerImpl.entries {
+		if strings.Contains(key, "u1") {
+			partEntry = e
+		}
+	}
+	if partEntry == nil || len(partEntry.Chunks) == 0 {
+		t.Fatalf("no part entry with chunks stored: %+v", filerImpl.entries)
+	}
+	found := false
+	for _, stored := range volume.stored {
+		if bytes.Contains(stored, content[2:6]) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("destination volume does not hold the copied content bytes")
 	}
 }
 
