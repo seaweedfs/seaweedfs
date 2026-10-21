@@ -246,3 +246,28 @@ func TestPlanRebalanceNilAnalysis(t *testing.T) {
 	_, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{}).PlanRebalance(nil)
 	assert.Error(t, err)
 }
+
+func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10, 3))
+	a.Finalize()
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// n2 already holds 3, so the balancing move brings a different shard
+	assert.Equal(t, 3, a.ShardsByNode["n1"])
+	assert.Equal(t, 2, a.ShardsByNode["n2"])
+	assert.Equal(t, []int{3, 2}, a.AllNodes["n2"].ShardIDs)
+	for _, move := range plan.Moves {
+		assert.NotContains(t, move.DestNode.ShardIDs[:len(move.DestNode.ShardIDs)-1], move.ShardID,
+			"shard %d must not be moved onto a node already holding it", move.ShardID)
+	}
+}
+
+func TestCalculateDistributionZeroReplication(t *testing.T) {
+	dist := CalculateDistribution(DefaultECConfig(), ReplicationConfig{})
+	assert.Equal(t, 14, dist.TargetShardsPerDC)
+	assert.NotPanics(t, func() { dist.Summary(); dist.FaultToleranceAnalysis() })
+}

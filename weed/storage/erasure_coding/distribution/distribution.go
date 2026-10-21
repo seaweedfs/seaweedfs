@@ -31,9 +31,9 @@ type ECDistribution struct {
 // replication policy describes.
 func CalculateDistribution(ec ECConfig, rep ReplicationConfig) *ECDistribution {
 	total := ec.TotalShards()
-	dcUnits := rep.MinDataCenters
-	rackUnits := rep.MinDataCenters * rep.MinRacksPerDC
-	nodeUnits := rackUnits * rep.MinNodesPerRack
+	dcUnits := max(rep.MinDataCenters, 1)
+	rackUnits := dcUnits * max(rep.MinRacksPerDC, 1)
+	nodeUnits := rackUnits * max(rep.MinNodesPerRack, 1)
 	return &ECDistribution{
 		ECConfig:            ec,
 		ReplicationConfig:   rep,
@@ -55,11 +55,14 @@ func evenShare(total, units int) int {
 // share plus the slack that would pad the total to the next multiple of the
 // unit count.
 func maxShare(total, units int) int {
-	max := ceilDivide(total, units) + units - total%units
-	if max > total {
+	if units < 1 {
+		units = 1
+	}
+	m := ceilDivide(total, units) + units - total%units
+	if m > total {
 		return total
 	}
-	return max
+	return m
 }
 
 func ceilDivide(a, b int) int {
