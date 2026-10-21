@@ -185,6 +185,11 @@ func TestPlanRebalanceAcrossDCs(t *testing.T) {
 	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcA"])
 	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcB"])
 
+	// the given analysis still describes the un-moved layout
+	assert.Equal(t, 14, a.ShardsByDC["dcA"])
+	assert.Equal(t, 0, a.ShardsByDC["dcB"])
+	assert.Equal(t, []int{0, 1, 2, 3}, a.AllNodes["a1"].ShardIDs)
+
 	// parity shards (10-13) move before data shards
 	assert.True(t, plan.Moves[0].ShardID >= 10)
 	assert.Equal(t, "b1", plan.Moves[0].DestNode.NodeID)
@@ -226,6 +231,7 @@ func TestPlanRebalanceWithinRack(t *testing.T) {
 	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n1"])
 	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n2"])
 	assert.Equal(t, []int{3, 2}, plan.Analysis.AllNodes["n2"].ShardIDs)
+	assert.Equal(t, []int{0, 1, 2, 3}, a.AllNodes["n1"].ShardIDs)
 }
 
 func TestPlanRebalanceRespectsFreeSlots(t *testing.T) {
@@ -241,6 +247,7 @@ func TestPlanRebalanceRespectsFreeSlots(t *testing.T) {
 	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n1"])
 	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
 	assert.Equal(t, 0, plan.Analysis.AllNodes["n2"].FreeSlots)
+	assert.Equal(t, 1, a.AllNodes["n2"].FreeSlots)
 }
 
 func TestPlanRebalanceNoopWhenBalanced(t *testing.T) {
