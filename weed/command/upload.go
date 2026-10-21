@@ -109,12 +109,14 @@ func runUpload(cmd *Command, args []string) bool {
 			fmt.Println(err.Error())
 			return false
 		}
+		hadErr := false
 		for batchStart := 0; batchStart < len(paths); batchStart += uploadBatchSize {
 			batchEnd := min(batchStart+uploadBatchSize, len(paths))
 			parts, e := operation.NewFileParts(paths[batchStart:batchEnd])
 			if e != nil {
 				fmt.Println(e.Error())
-				return false
+				hadErr = true
+				continue
 			}
 			results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
 				Replication: *upload.replication,
@@ -128,9 +130,10 @@ func runUpload(cmd *Command, args []string) bool {
 			fmt.Println(string(bytes))
 			if e != nil {
 				fmt.Println(e.Error())
-				return false
+				hadErr = true
 			}
 		}
+		return !hadErr
 	} else {
 		parts, e := operation.NewFileParts(args)
 		if e != nil {
@@ -145,12 +148,12 @@ func runUpload(cmd *Command, args []string) bool {
 			DiskType:    *upload.diskType,
 			MaxMB:       *upload.maxMB,
 		}, *upload.usePublicUrl)
+		bytes, _ := json.Marshal(results)
+		fmt.Println(string(bytes))
 		if err != nil {
 			fmt.Println(err.Error())
 			return false
 		}
-		bytes, _ := json.Marshal(results)
-		fmt.Println(string(bytes))
 	}
 	return true
 }
