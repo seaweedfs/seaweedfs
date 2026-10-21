@@ -1743,6 +1743,14 @@ func droppedCopyStamp() *filer_pb.RemoteEntry {
 	return stamp
 }
 
+// droppedCopyEntry is the fixture file with the given stamp and chunks, sized
+// as its remote object.
+func droppedCopyEntry(stamp *filer_pb.RemoteEntry, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
+	entry := entryWith(droppedCopyName, stamp, chunks...)
+	entry.Attributes.FileSize = uint64(droppedCopySynced.RemoteSize)
+	return entry
+}
+
 func droppedCopyUpdate(oldEntry, newEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory:         droppedCopyDir,
@@ -1781,7 +1789,7 @@ func TestDroppedLocalCopyIsNotUploaded(t *testing.T) {
 		oldEntry *filer_pb.Entry
 		newEntry *filer_pb.Entry
 	}{
-		{name: "remote.uncache", oldEntry: entryWith(droppedCopyName, droppedCopySynced, chunk("3,01", "e1")), newEntry: entryWith(droppedCopyName, droppedCopyStamp())},
+		{name: "remote.uncache", oldEntry: droppedCopyEntry(droppedCopySynced, chunk("3,01", "e1")), newEntry: droppedCopyEntry(droppedCopyStamp())},
 		{name: "eviction under storage pressure", oldEntry: cached.ToProtoEntry(), newEntry: evicted.ToProtoEntry()},
 		{name: "remote.meta.sync pulls a newer version", oldEntry: entryWith(droppedCopyName, droppedCopySynced, chunk("3,01", "e1")), newEntry: pulled},
 	}
@@ -1813,9 +1821,9 @@ func TestDroppedLocalCopyIsNotUploaded(t *testing.T) {
 	}
 
 	t.Run("a metadata edit of a remote-only entry still reaches the remote", func(t *testing.T) {
-		tagged := entryWith(droppedCopyName, droppedCopyStamp())
+		tagged := droppedCopyEntry(droppedCopyStamp())
 		tagged.Extended = map[string][]byte{"X-Amz-Tagging-tier": []byte("gold")}
-		resp := droppedCopyUpdate(entryWith(droppedCopyName, droppedCopyStamp()), tagged)
+		resp := droppedCopyUpdate(droppedCopyEntry(droppedCopyStamp()), tagged)
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: tagged}
 		if err := processUpdateEvent(filerClient, filerClient, "", remote, "/buckets/gold", droppedCopyMount, resp); err != nil {
@@ -1864,6 +1872,48 @@ func TestSameSecondRewriteIsStillUploaded(t *testing.T) {
 			}
 			if !slices.Equal(remote.writtenChunks[0], []string{"4,02"}) {
 				t.Errorf("uploaded chunks %v, want the rewrite's [4,02]", remote.writtenChunks[0])
+			}
+			if filerClient.updates != 1 {
+				t.Errorf("stamped the entry %d times, want 1 after the upload", filerClient.updates)
+			}
+		})
+	}
+}
+
+// TestTruncateToZeroIsUploaded: a FUSE truncate of a cached file to zero
+// (truncateEntry, or SetAttr with size 0) drops the chunks and keeps the
+// sized RemoteEntry, so the entry looks remote-only. Its size is no longer
+// the remote object's, and the empty file has to replace the object.
+func TestTruncateToZeroIsUploaded(t *testing.T) {
+	truncated := func(mtime int64, mtimeNs int32) *filer_pb.Entry {
+		// the filer clears the stamp of a content change
+		entry := entryWith(droppedCopyName, droppedCopyStamp())
+		entry.Attributes.Mtime, entry.Attributes.MtimeNs = mtime, mtimeNs
+		return entry
+	}
+	tests := []struct {
+		name     string
+		newEntry *filer_pb.Entry
+	}{
+		{name: "in a later second", newEntry: truncated(droppedCopyMtime+5, 0)},
+		{name: "in the remote mtime's second", newEntry: truncated(droppedCopyMtime, 337)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !isRemoteOnly(tt.newEntry) {
+				t.Fatal("precondition: the truncated entry looks remote-only")
+			}
+			remote := &recordingRemote{}
+			filerClient := &stubFilerClient{entry: tt.newEntry}
+			resp := droppedCopyUpdate(droppedCopyEntry(droppedCopySynced, chunk("3,01", "e1")), tt.newEntry)
+			if err := processUpdateEvent(filerClient, filerClient, "", remote, "/buckets/gold", droppedCopyMount, resp); err != nil {
+				t.Fatal(err)
+			}
+			if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], droppedCopyDest) {
+				t.Fatalf("writes = %+v, want the empty file uploaded to %s", remote.writes, remote_storage.FormatLocation(droppedCopyDest))
+			}
+			if len(remote.writtenChunks[0]) != 0 {
+				t.Errorf("uploaded chunks %v, want none: a zero-byte object", remote.writtenChunks[0])
 			}
 			if filerClient.updates != 1 {
 				t.Errorf("stamped the entry %d times, want 1 after the upload", filerClient.updates)
