@@ -150,7 +150,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 	c.env = commandEnv
-	c.writer = writer
+	c.writer = &lockedWriter{w: writer}
 
 	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
 		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
@@ -642,6 +642,19 @@ type Item struct {
 	fileKey uint64
 	cookie  uint32
 	path    util.FullPath
+}
+
+// lockedWriter serializes concurrent writers — the traversal, the consumer,
+// and the purge workers all log through c.writer at the same time.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }
 
 func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
