@@ -199,7 +199,7 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 			nodeIDs = append(nodeIDs, n.NodeID)
 		}
 		sort.Strings(nodeIDs)
-		balance("node", nodeIDs, nodeCount, ceilDivide(shardCount([]string{rack}, analysis.RackToNodes), len(nodes)),
+		balance("node", nodeIDs, nodeCount, ceilDivide(shardCount([]string{rack}, sim.RackToNodes), len(nodes)),
 			func(nodeID string) []*TopologyNode {
 				for _, n := range nodes {
 					if n.NodeID == nodeID {

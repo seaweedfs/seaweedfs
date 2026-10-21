@@ -266,6 +266,28 @@ func TestPlanRebalanceNilAnalysis(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// Node balancing inside a rack must aim for the rack's count after
+// DC- and rack-level moves, not the count the rack started with.
+func TestPlanRebalanceNodeTargetAfterMoves(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10))
+	a.AddNode(makeNode("n3", "dc1", "r2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("010")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 7, plan.Analysis.ShardsByRack[rackKey("dc1", "r1")])
+	assert.Equal(t, 7, plan.Analysis.ShardsByRack[rackKey("dc1", "r2")])
+	assert.Equal(t, 4, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{0, 1, 2, 3}, plan.Analysis.AllNodes["n1"].ShardIDs)
+	assert.Equal(t, []int{6, 5, 4}, plan.Analysis.AllNodes["n2"].ShardIDs)
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
