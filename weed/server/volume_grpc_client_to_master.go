@@ -56,12 +56,15 @@ func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAd
 
 // refreshLeaderFromPeers publishes the leader the configured masters report,
 // so lookups stop going to a master the heartbeat just lost while the loop
-// retries. Without an answer within timeout the last known leader stays.
+// retries. Without an answer within timeout no leader is published: the lost
+// master is dead or no longer leader, and a follower answers lookups from its
+// own cache rather than refusing them, so failing fast is the safer answer.
 func (vs *VolumeServer) refreshLeaderFromPeers(timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	leader, err := vs.lookupRaftLeaderMaster(ctx)
 	if err != nil {
+		vs.setCurrentMaster("")
 		return
 	}
 	vs.setCurrentMaster(leader)
@@ -90,6 +93,7 @@ func (vs *VolumeServer) getCurrentMaster() pb.ServerAddress {
 // heartbeat goroutine calls this only with a master known to be the leader:
 // one that answered a heartbeat as leader, or the one a follower named, on
 // the heartbeat stream or, after the stream failed, in its configuration.
+// After a failed stream with no leader named, it is cleared to "".
 func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
 	vs.currentMasterLock.Lock()
 	vs.currentMaster = master

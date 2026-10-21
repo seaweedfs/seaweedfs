@@ -287,21 +287,24 @@ func TestRefreshLeaderFromPeersPublishesReportedLeader(t *testing.T) {
 	}
 }
 
-// Mid-election no master names a leader; the last known one stays rather
-// than an address nobody vouched for.
-func TestRefreshLeaderFromPeersKeepsLastLeaderWithoutAnswer(t *testing.T) {
+// Mid-election no master names a leader. The lost master is dead or now a
+// follower that would answer lookups from its own cache, so none is published.
+func TestRefreshLeaderFromPeersClearsLeaderWithoutAnswer(t *testing.T) {
 	peer := startFakeMasterServerForLeaderLookup(t, &fakeLeaderConfigServer{})
 	vs := &VolumeServer{
 		SeedMasterNodes: []pb.ServerAddress{peer},
 		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
 		store:           &storage.Store{Ip: "127.0.0.1", Port: 8080},
 	}
-	last := pb.ServerAddress("last.example.com:9333.19333")
-	vs.setCurrentMaster(last)
+	vs.store.MasterFn = vs.getCurrentMaster
+	vs.setCurrentMaster("lost.example.com:9333.19333")
 
 	vs.refreshLeaderFromPeers(5 * time.Second)
 
-	if got := vs.getCurrentMaster(); got != last {
-		t.Fatalf("currentMaster = %q, want unchanged %q", string(got), string(last))
+	if got := vs.getCurrentMaster(); got != "" {
+		t.Fatalf("currentMaster = %q, want none", string(got))
+	}
+	if got := vs.store.MasterFn(); got != "" {
+		t.Fatalf("store master = %q, want none", string(got))
 	}
 }
