@@ -219,7 +219,11 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		}
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES, entry.Extended, "GetObjectAttributesHandler"); errCode != s3err.ErrNone {
+	action := s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectAttributesHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
