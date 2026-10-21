@@ -72,8 +72,11 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*
 	}
 	ret, err := Assign(context.Background(), masterFn, grpcDialOption, ar)
 	if err != nil {
-		for index := range files {
+		for index, file := range files {
 			results[index].Error = err.Error()
+			if closer, ok := file.Reader.(io.Closer); ok {
+				closer.Close()
+			}
 		}
 		return results, err
 	}
