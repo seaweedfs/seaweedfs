@@ -125,6 +125,18 @@ func TestTopologyAnalysis(t *testing.T) {
 	assert.Equal(t, []int{0, 1, 2}, a.RackToShards[rackKey("dc1", "r1")])
 }
 
+// A node registered twice must still count once in rack and shard totals.
+func TestTopologyAnalysisDuplicateNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 5, 0, 1))
+	a.AddNode(makeNode("n1", "dc1", "r1", 5, 0, 1))
+	a.Finalize()
+
+	assert.Equal(t, 1, a.TotalNodes)
+	assert.Len(t, a.RackToNodes[rackKey("dc1", "r1")], 1)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+}
+
 // Shards may be registered either through TopologyNode.ShardIDs or through
 // AddShardLocation — both must leave the node holding the shards.
 func TestTopologyAnalysisAddShardLocation(t *testing.T) {

@@ -16,8 +16,11 @@ func NewTopologyAnalysis() *TopologyAnalysis {
 }
 
 // AddNode registers a node in the topology, including any shards it already
-// holds for the volume being analyzed.
+// holds for the volume being analyzed. A node id may only register once.
 func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
+	if _, ok := a.AllNodes[node.NodeID]; ok {
+		return
+	}
 	a.AllNodes[node.NodeID] = node
 	a.RackToNodes[rackKey(node.DataCenter, node.Rack)] = append(a.RackToNodes[rackKey(node.DataCenter, node.Rack)], node)
 	if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
