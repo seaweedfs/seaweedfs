@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -419,14 +420,19 @@ func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, uploadID string, partID in
 			return "", s3err.ErrInternalError
 		}
 	}
+	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
 	if err := s3a.mkFile(uploadDir, partName, nil, func(e *filer_pb.Entry) {
 		if e.Attributes == nil {
 			e.Attributes = &filer_pb.FuseAttributes{}
 		}
 		e.Attributes.FileSize = 0
+		e.Attributes.Md5 = md5.New().Sum(nil)
+		if e.Extended == nil {
+			e.Extended = map[string][]byte{}
+		}
+		e.Extended[s3_constants.ExtETagKey] = []byte(emptyMD5Hex)
 	}); err != nil {
 		return "", s3err.ErrInternalError
 	}
-	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
 	return emptyMD5Hex, s3err.ErrNone
 }
