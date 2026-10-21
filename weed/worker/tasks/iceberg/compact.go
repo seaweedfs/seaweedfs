@@ -300,6 +300,14 @@ func (h *Handler) compactDataFiles(
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
 			goto binDone
 		}
+		// A default-CRS geometry column declares no CRS (geometry_crs.go). A
+		// footer that cannot be rewritten leaves the file as written: valid,
+		// only labelled differently.
+		if fixed, _, crsErr := withDefaultGeometryCRSUnset(mergedData, schema); crsErr != nil {
+			glog.Warningf("iceberg compact: geometry CRS left as written in bin %d: %v", binIdx, crsErr)
+		} else {
+			mergedData = fixed
+		}
 
 		// Write merged file to filer
 		if err := ensureFilerDir(ctx, filerClient, dataDir); err != nil {

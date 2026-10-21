@@ -9,6 +9,8 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress/zstd"
+	"github.com/parquet-go/parquet-go/format"
 
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -379,6 +381,62 @@ func TestCompactDataFilesV3RowLineageManifestRead(t *testing.T) {
 		}
 		if seqs[i] != int64(1) {
 			t.Fatalf("row %d _last_updated_sequence_number = %v, want 1", i, seqs[i])
+		}
+	}
+}
+
+// The lineage columns a v3 compaction adds are compressed like the data
+// columns.
+func TestCompactCompressesLineageColumns(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "geo"}
+	populateGeoTable(t, fs, setup, fiveGeoFiles(), geoTableOptions{})
+	compactGeo(t, client, setup, Config{})
+	for name, data := range compactedFiles(t, fs, setup) {
+		f, err := parquet.OpenFile(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := 0
+		for _, rg := range f.Metadata().RowGroups {
+			for _, c := range rg.Columns {
+				col := strings.Join(c.MetaData.PathInSchema, ".")
+				if col != iceberg.RowIDColumnName && col != iceberg.LastUpdatedSequenceNumberColumnName {
+					continue
+				}
+				seen++
+				if c.MetaData.Codec != format.Zstd {
+					t.Errorf("%s: %s written with codec %v, want ZSTD like the data columns", name, col, c.MetaData.Codec)
+				}
+			}
+		}
+		if seen == 0 {
+			t.Errorf("%s: no lineage column", name)
+		}
+	}
+}
+
+// The lineage codec follows the data columns: an input whose own _row_id
+// comes first and is uncompressed does not leave the new lineage columns
+// uncompressed.
+func TestLineageCodecFollowsDataColumns(t *testing.T) {
+	schema := parquet.NewSchema("table", parquet.Group{
+		iceberg.RowIDColumnName: parquet.FieldID(parquet.Compressed(parquet.Optional(parquet.Int(64)), &parquet.Uncompressed), iceberg.RowIDFieldID),
+		"id":                    parquet.FieldID(parquet.Compressed(parquet.Int(64), &zstd.Codec{}), 1),
+	})
+	if first := schema.Fields()[0].Name(); first != iceberg.RowIDColumnName {
+		t.Fatalf("setup: first column %s, want %s", first, iceberg.RowIDColumnName)
+	}
+	layout, err := newLineageLayout(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range layout.schema.Fields() {
+		if f.Name() != iceberg.RowIDColumnName && f.Name() != iceberg.LastUpdatedSequenceNumberColumnName {
+			continue
+		}
+		if c := f.Compression(); c == nil || c.CompressionCodec() != format.Zstd {
+			t.Errorf("%s compressed with %v, want ZSTD like the data column", f.Name(), c)
 		}
 	}
 }
