@@ -140,6 +140,12 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 			return ErrAccessDenied
 		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
+			// An absent name and a denied one must read alike; the caller is
+			// told the bucket is missing only when it may learn that.
+			if !h.mayLearnAbsence(r, "CreateNamespace", bucketName) {
+				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+				return ErrAccessDenied
+			}
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))

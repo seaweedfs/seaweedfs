@@ -459,6 +459,20 @@ func isAuthError(err error) bool {
 	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
 }
 
+// mayLearnAbsence reports whether the caller may be shown that an operation's
+// target is absent rather than the operation's denial: the admin, a trusted
+// handler, or a grant the request itself carries (an identity-level action
+// grant, or the open default-allow context).
+func (h *S3TablesHandler) mayLearnAbsence(r *http.Request, operation, bucketName string) bool {
+	if h.getAccountID(r) == s3_constants.AccountAdminId || h.defaultAllowFor(r) {
+		return true
+	}
+	return hasIdentityPermission(operation, &PolicyContext{
+		TableBucketName: bucketName,
+		IdentityActions: getIdentityActions(r),
+	})
+}
+
 func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (map[string]string, error) {
 	data, err := h.getExtendedAttribute(ctx, client, path, ExtendedKeyTags)
 	if err != nil {
