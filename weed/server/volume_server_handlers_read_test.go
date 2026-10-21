@@ -24,6 +24,12 @@ func TestInternalErrorWritesTheReadError(t *testing.T) {
 	if w.Code != http.StatusInternalServerError || w.Body.Len() != 0 {
 		t.Fatalf("without an error: status %d body %q, want a bare 500", w.Code, w.Body.String())
 	}
+
+	w = httptest.NewRecorder()
+	InternalError(w, httptest.NewRequest(http.MethodHead, "/1,abc", nil), readErr)
+	if w.Code != http.StatusInternalServerError || w.Body.Len() != 0 {
+		t.Fatalf("on a HEAD request: status %d body %q, want a bare 500", w.Code, w.Body.String())
+	}
 }
 
 // A HEAD only attempts a metadata-only read, like a GET: a needle up to

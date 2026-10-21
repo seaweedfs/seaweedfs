@@ -43,7 +43,7 @@ func NotFound(w http.ResponseWriter) {
 func InternalError(w http.ResponseWriter, r *http.Request, err error) {
 	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
-	if err == nil {
+	if err == nil || r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
