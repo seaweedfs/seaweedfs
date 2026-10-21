@@ -83,7 +83,7 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 			method:     http.MethodGet,
 			baseAction: s3_constants.ACTION_READ,
 			object:     "key",
-			want:       s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES,
+			want:       s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES,
 		},
 		{
 			name:       "versionId only GET",
@@ -164,6 +164,29 @@ func TestResolveS3Action_VersionAcl(t *testing.T) {
 		{"put version acl", http.MethodPut, "key", "acl&versionId=v1", s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL},
 		{"empty versionId stays current", http.MethodGet, "key", "acl&versionId=", s3_constants.S3_ACTION_GET_OBJECT_ACL},
 		{"bucket acl ignores versionId", http.MethodGet, "", "acl&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_ACL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_READ, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An attributes request carrying versionId targets a specific version and
+// must resolve to the version attributes action.
+func TestResolveS3Action_VersionAttributes(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		object string
+		query  string
+		want   string
+	}{
+		{"get current attributes", http.MethodGet, "key", "attributes", s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES},
+		{"get version attributes", http.MethodGet, "key", "attributes&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

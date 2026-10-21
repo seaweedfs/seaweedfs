@@ -228,6 +228,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Must be checked before versionId, because GET /bucket/key?attributes&versionId=xyz
 	// is a GetObjectAttributes request, not a GetObjectVersion request
 	if hasObject && query.Has("attributes") && method == http.MethodGet {
+		if query.Get("versionId") != "" {
+			return s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES
+		}
 		return s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
 	}
 
