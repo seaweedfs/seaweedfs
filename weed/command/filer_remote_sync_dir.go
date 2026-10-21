@@ -384,6 +384,16 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
+	if proto.Equal(oldDest, dest) && isRemoteOnly(message.NewEntry) {
+		// The update dropped the local copy: remote.uncache, eviction under
+		// storage pressure, or remote.meta.sync pulling a newer remote
+		// version. Each clears the sync stamp, so shouldSendToRemote reads
+		// the entry as dirty when the remote mtime shares its second. The
+		// content is the object at this very key, and uploading the chunkless
+		// entry would replace it with zero bytes.
+		glog.V(2).Infof("skipping update of remote-only entry: %+v", resp)
+		return nil
+	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		// A renamed entry that holds no local data now (the snapshot was

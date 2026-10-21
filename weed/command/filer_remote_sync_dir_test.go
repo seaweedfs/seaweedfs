@@ -1722,6 +1722,156 @@ func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
 	}
 }
 
+// The droppedCopy fixtures are a small synced file under a mount: a Delta log
+// entry whose remote object was written in the second of its mtime, as a quick
+// sync of a small file is.
+const droppedCopyMtime = 1786096669
+
+var (
+	droppedCopyDir    = "/buckets/gold/sales/_delta_log"
+	droppedCopyName   = "00000000000000000007.json"
+	droppedCopyMount  = &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "gold", Path: "/"}
+	droppedCopyDest   = &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "gold", Path: "/sales/_delta_log/" + droppedCopyName}
+	droppedCopySynced = &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"abc"`, RemoteSize: 1024, RemoteMtime: droppedCopyMtime, LastLocalSyncTsNs: droppedCopyMtime*1e9 + 500}
+)
+
+// droppedCopyStamp is the synced stamp with LastLocalSyncTsNs cleared, as
+// remote.uncache and the eviction leave it.
+func droppedCopyStamp() *filer_pb.RemoteEntry {
+	stamp := proto.Clone(droppedCopySynced).(*filer_pb.RemoteEntry)
+	stamp.LastLocalSyncTsNs = 0
+	return stamp
+}
+
+func droppedCopyUpdate(oldEntry, newEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory:         droppedCopyDir,
+		EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry, NewParentPath: droppedCopyDir, NewEntry: newEntry},
+	}
+}
+
+// TestDroppedLocalCopyIsNotUploaded: remote.uncache and the filer's eviction
+// under storage pressure drop a synced entry's chunks and clear its sync
+// stamp; remote.meta.sync does the same when it pulls a newer remote version.
+// With the remote mtime in the entry's second, shouldSendToRemote falls back
+// to the cleared stamp and reads the entry as dirty. The object at the same
+// key is the entry's only content, so uploading the chunkless entry would
+// replace it with a zero-byte object. The update is skipped, and the stamp
+// stays cleared so remote.cache and eviction still see the entry as uncached.
+func TestDroppedLocalCopyIsNotUploaded(t *testing.T) {
+	// the eviction's entry, built the way uncacheRemoteEntry builds it, and
+	// the event the way the filer's CreateEntry emits it
+	cached := &filer.Entry{
+		FullPath: util.NewFullPath(droppedCopyDir, droppedCopyName),
+		Attr:     filer.Attr{Mtime: time.Unix(droppedCopyMtime, 0), Mode: 0660, FileSize: 1024},
+		Chunks:   []*filer_pb.FileChunk{chunk("3,01", "e1")},
+		Remote:   droppedCopySynced,
+	}
+	evicted := cached.ShallowClone()
+	evicted.Chunks = nil
+	evicted.Remote = proto.Clone(cached.Remote).(*filer_pb.RemoteEntry)
+	evicted.Remote.LastLocalSyncTsNs = 0
+
+	// remote.meta.sync found a newer object: its mtime becomes the entry's
+	newer := &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"def"`, RemoteSize: 4096, RemoteMtime: droppedCopyMtime + 60}
+	pulled := &filer_pb.Entry{Name: droppedCopyName, Attributes: &filer_pb.FuseAttributes{Mtime: droppedCopyMtime + 60, FileSize: 4096}, RemoteEntry: newer}
+
+	tests := []struct {
+		name     string
+		oldEntry *filer_pb.Entry
+		newEntry *filer_pb.Entry
+	}{
+		{name: "remote.uncache", oldEntry: entryWith(droppedCopyName, droppedCopySynced, chunk("3,01", "e1")), newEntry: entryWith(droppedCopyName, droppedCopyStamp())},
+		{name: "eviction under storage pressure", oldEntry: cached.ToProtoEntry(), newEntry: evicted.ToProtoEntry()},
+		{name: "remote.meta.sync pulls a newer version", oldEntry: entryWith(droppedCopyName, droppedCopySynced, chunk("3,01", "e1")), newEntry: pulled},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := droppedCopyUpdate(tt.oldEntry, tt.newEntry)
+			if !shouldSendToRemote(tt.newEntry) {
+				t.Fatal("precondition: the cleared stamp in the remote mtime's second reads as dirty, the bug's trigger")
+			}
+			if isMetadataOnlyUpdate(resp.Directory, resp.EventNotification) {
+				t.Fatal("precondition: the dropped chunks make the update a content change")
+			}
+
+			remote := &recordingRemote{}
+			filerClient := &stubFilerClient{entry: tt.newEntry}
+			if err := processUpdateEvent(filerClient, filerClient, "", remote, "/buckets/gold", droppedCopyMount, resp); err != nil {
+				t.Fatal(err)
+			}
+			if len(remote.writes) != 0 {
+				t.Errorf("writes = %+v, want none: the remote object is the entry's content and an upload would zero it", remote.writes)
+			}
+			if len(remote.deletes) != 0 || len(remote.metadataUpdates) != 0 {
+				t.Errorf("deletes = %+v, metadata updates = %+v, want the remote object left alone", remote.deletes, remote.metadataUpdates)
+			}
+			if filerClient.updates != 0 {
+				t.Errorf("stamped the entry %d times, want 0: a stamp would mark the uncached entry as cached", filerClient.updates)
+			}
+		})
+	}
+
+	t.Run("a metadata edit of a remote-only entry still reaches the remote", func(t *testing.T) {
+		tagged := entryWith(droppedCopyName, droppedCopyStamp())
+		tagged.Extended = map[string][]byte{"X-Amz-Tagging-tier": []byte("gold")}
+		resp := droppedCopyUpdate(entryWith(droppedCopyName, droppedCopyStamp()), tagged)
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: tagged}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, "/buckets/gold", droppedCopyMount, resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.metadataUpdates) != 1 || len(remote.writes) != 0 {
+			t.Errorf("metadata updates = %+v, writes = %+v, want one metadata update and no upload", remote.metadataUpdates, remote.writes)
+		}
+	})
+}
+
+// TestSameSecondRewriteIsStillUploaded: a rewrite that lands in the remote
+// mtime's second holds local data, so the skip for dropped local copies does
+// not apply and it is uploaded and restamped (#11715).
+func TestSameSecondRewriteIsStillUploaded(t *testing.T) {
+	stale := proto.Clone(droppedCopySynced).(*filer_pb.RemoteEntry)
+	stale.LastLocalSyncTsNs = droppedCopyMtime*1e9 + 100
+	rewrite := func(stamp *filer_pb.RemoteEntry) *filer_pb.Entry {
+		entry := entryWith(droppedCopyName, stamp, chunk("4,02", "e2"))
+		entry.Attributes.MtimeNs = 337
+		return entry
+	}
+
+	tests := []struct {
+		name     string
+		oldEntry *filer_pb.Entry
+		newEntry *filer_pb.Entry
+	}{
+		// Filer.UpdateEntry clears the stamp of a content change
+		{name: "synced entry, stamp cleared by the filer", oldEntry: entryWith(droppedCopyName, droppedCopySynced, chunk("3,01", "e1")), newEntry: rewrite(droppedCopyStamp())},
+		{name: "synced entry, stamp older than the rewrite", oldEntry: entryWith(droppedCopyName, stale, chunk("3,01", "e1")), newEntry: rewrite(stale)},
+		{name: "uncached entry", oldEntry: entryWith(droppedCopyName, droppedCopyStamp()), newEntry: rewrite(droppedCopyStamp())},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.newEntry.Attributes.Mtime != tt.newEntry.RemoteEntry.RemoteMtime {
+				t.Fatal("precondition: the rewrite lands in the remote mtime's second")
+			}
+			remote := &recordingRemote{}
+			filerClient := &stubFilerClient{entry: tt.newEntry}
+			if err := processUpdateEvent(filerClient, filerClient, "", remote, "/buckets/gold", droppedCopyMount, droppedCopyUpdate(tt.oldEntry, tt.newEntry)); err != nil {
+				t.Fatal(err)
+			}
+			if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], droppedCopyDest) {
+				t.Fatalf("writes = %+v, want the rewrite uploaded to %s", remote.writes, remote_storage.FormatLocation(droppedCopyDest))
+			}
+			if !slices.Equal(remote.writtenChunks[0], []string{"4,02"}) {
+				t.Errorf("uploaded chunks %v, want the rewrite's [4,02]", remote.writtenChunks[0])
+			}
+			if filerClient.updates != 1 {
+				t.Errorf("stamped the entry %d times, want 1 after the upload", filerClient.updates)
+			}
+		})
+	}
+}
+
 func TestCompleteRemoteOnlyRenameKeepsAReusedOldKey(t *testing.T) {
 	// A was renamed to B, then D to A before the sync got to the first
 	// rename: the object at A is now D's, and the only copy of it
