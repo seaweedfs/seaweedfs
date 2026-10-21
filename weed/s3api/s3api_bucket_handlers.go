@@ -330,7 +330,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// This ensures Object Lock configuration is set in the same CreateEntry call,
 	// preventing race conditions where the bucket exists without Object Lock enabled
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 
 		// Set bucket owner
@@ -373,6 +373,16 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		// return the appropriate already-exists error instead of InternalError.
 		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
 			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			// From the entry itself, not the bucket registry: the pre-check
+			// above has just cached this name as not found, so in the race this
+			// branch exists for the registry would still say "no table bucket".
+			if concurrentEntryIsForeign(s3a.getEntry(s3a.option.BucketsPath, bucket)) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+				return
+			}
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+			}
 			errCode := s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL)
 			if errCode == s3err.ErrBucketAlreadyOwnedByYou {
 				s3a.healBucketOwnerIndex(bucket, currentIdentityId)
@@ -744,7 +754,7 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 
 	identityId := s3_constants.GetIdentityNameFromContext(r)
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 		setBucketOwner(r)(entry)
 	}); err != nil {
@@ -754,26 +764,35 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
 			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
 		} else if exist {
+			entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket)
+			if getErr != nil {
+				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+				return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, getErr))
+			}
+			if concurrentEntryIsForeign(entry, nil) {
+				// A table bucket carries no S3 owner and must not gain one —
+				// or a write intended for a missing plain bucket.
+				if s3a.bucketConfigCache != nil {
+					s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+				}
+				return fmt.Errorf("auto-create bucket %s: name taken by a table bucket: %w", bucket, err)
+			}
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
 			// we'll set it here to ensure consistency.
-			if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil {
-				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
-					// No owner set, assign current admin as owner
-					setBucketOwner(r)(entry)
-					if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
-						glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
-					} else {
-						glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
-						if owner := bucketEntryOwner(entry); owner != "" {
-							if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
-								glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
-							}
+			if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
+				// No owner set, assign current admin as owner
+				setBucketOwner(r)(entry)
+				if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
+					glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
+				} else {
+					glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
+					if owner := bucketEntryOwner(entry); owner != "" {
+						if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
+							glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
 						}
 					}
 				}
-			} else {
-				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
 			}
 			// Remove bucket from negative cache — it exists now
 			if s3a.bucketConfigCache != nil {

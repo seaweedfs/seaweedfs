@@ -27,10 +27,23 @@ const extendedAttributeUpdateAttempts = 5
 
 // createDirectory creates a new directory at the specified path
 func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
+	return h.createDirectoryEntry(ctx, client, path, false, nil)
+}
+
+// createDirectoryExclusive creates a directory entry together with its
+// extended attributes in one CreateEntry that fails with
+// filer_pb.ErrEntryAlreadyExists when an entry is already there: nothing is
+// replaced and no reader sees the directory without its attributes.
+func (h *S3TablesHandler) createDirectoryExclusive(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, extended map[string][]byte) error {
+	return h.createDirectoryEntry(ctx, client, path, true, extended)
+}
+
+func (h *S3TablesHandler) createDirectoryEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, exclusive bool, extended map[string][]byte) error {
 	dir, name := splitPath(path)
 	now := time.Now().Unix()
 	return filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 		Directory: dir,
+		OExcl:     exclusive,
 		Entry: &filer_pb.Entry{
 			Name:        name,
 			IsDirectory: true,
@@ -39,6 +52,7 @@ func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.S
 				Crtime:   now,
 				FileMode: uint32(0755 | os.ModeDir),
 			},
+			Extended: extended,
 		},
 	})
 }
