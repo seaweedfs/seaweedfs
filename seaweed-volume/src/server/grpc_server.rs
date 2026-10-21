@@ -5807,7 +5807,8 @@ impl VolumeCopyJob {
             (&self.dest.data_base_name, self.dest.has_remote_dat);
         let mut preallocate_size: i64 = 0;
         if !has_remote_dat {
-            let grpc_addr = super::heartbeat::to_grpc_address(&state.master_url);
+            let master = state.current_master().await;
+            let grpc_addr = super::heartbeat::to_grpc_address(&master);
             // Race the master-configuration RPC against the caller's
             // response channel: a stalled master (or a slow leader
             // election) would otherwise hold the task and its .note
@@ -5832,7 +5833,7 @@ impl VolumeCopyJob {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("get master {} configuration: {}", state.master_url, e);
+                    tracing::warn!("get master {} configuration: {}", master, e);
                 }
             }
 
