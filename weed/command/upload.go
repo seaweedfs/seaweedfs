@@ -188,12 +188,12 @@ func runUpload(cmd *Command, args []string) bool {
 			DiskType:    *upload.diskType,
 			MaxMB:       *upload.maxMB,
 		}, *upload.usePublicUrl)
+		bytes, _ := json.Marshal(results)
+		fmt.Println(string(bytes))
 		if err != nil {
 			fmt.Println(err.Error())
 			return false
 		}
-		bytes, _ := json.Marshal(results)
-		fmt.Println(string(bytes))
 	}
 	return true
 }
