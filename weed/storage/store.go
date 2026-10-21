@@ -880,7 +880,10 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
-		if v.noWriteOrDelete {
+		v.noWriteLock.RLock()
+		noWriteOrDelete := v.noWriteOrDelete
+		v.noWriteLock.RUnlock()
+		if noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
 		return v.deleteNeedle2(n)
@@ -986,10 +989,10 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
-	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
-	if !v.HasRemoteFile() {
-		v.noWriteCanDelete = false
-	}
+	// A remote-tiered volume keeps the delete-only mode load() derives: its
+	// .dat cannot take appends, so "writable" resolves to can-delete rather
+	// than advertising writable with no local data file.
+	v.noWriteCanDelete = v.HasRemoteFile()
 	persistErr := v.PersistReadOnly(false, false)
 	if persistErr != nil {
 		var ndErr *volume_info.NotCrashDurableError
