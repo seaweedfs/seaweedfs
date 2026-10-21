@@ -8,8 +8,10 @@
 //! After a power loss a complete needle can survive whose .idx entry did
 //! not, although the client was answered. So a complete needle is never
 //! dropped: every complete needle in the tail gets the .idx entry the volume
-//! server would have written, in .dat order, and only an incomplete last
-//! record is cut. A size 0 record is indexed at size 0, the same live entry
+//! server would have written, in .dat order, the .dat synced first so the
+//! rows never become durable ahead of the records they name, and only an
+//! incomplete last record is cut. A size 0 record is indexed at size 0, the
+//! same live entry
 //! the write path publishes for an empty write: a delete appends the
 //! identical record, so the two cannot be told apart, and resurrecting an
 //! empty placeholder beats a wrong tombstone, which drops an acknowledged
@@ -179,6 +181,15 @@ impl Volume {
             self.walk_unindexed_dat_tail(io, version, start, file_size, last_append_at_ns)?;
         let reindexed = entries.len() / NEEDLE_MAP_ENTRY_SIZE;
         if reindexed > 0 {
+            // The new .idx rows must not become durable before the .dat
+            // records they name: a power loss between the two would leave
+            // the .idx pointing past the end of the .dat.
+            self.flush_dat(io).map_err(|e| {
+                TailRepairError::Failed(VolumeError::Io(io::Error::new(
+                    e.kind(),
+                    format!("sync {} before re-indexing: {e}", self.file_name(".dat")),
+                )))
+            })?;
             Self::append_index_entries(&mut idx_file, &entries, idx_size)?;
         }
         let mut cut = 0i64;
