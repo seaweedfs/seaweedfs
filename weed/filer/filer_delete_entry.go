@@ -80,6 +80,19 @@ func keepsRemoteObject(ctx context.Context) bool {
 	return ctx.Value(keepRemoteObjectKey{}) != nil
 }
 
+// ErrDeletePreconditionFailed is a conditional delete refused because check
+// no longer held against the entry as re-read inside the delete.
+var ErrDeletePreconditionFailed = errors.New("delete precondition failed")
+
+type deletePreconditionKey struct{}
+
+// WithDeletePrecondition asks DeleteEntryMetaAndData to fail with
+// ErrDeletePreconditionFailed unless check accepts the entry it reads just
+// before removing it, so the guard and the removal share one snapshot.
+func WithDeletePrecondition(ctx context.Context, check func(*Entry) bool) context.Context {
+	return context.WithValue(ctx, deletePreconditionKey{}, check)
+}
+
 // emptyFolderDeleteContext makes deleting a folder that is empty in the filer
 // metadata-only when it is under a remote mount. A mount is populated lazily,
 // so the folder can still hold remote objects never read, and removing its
@@ -125,6 +138,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	entry, findErr := f.FindEntry(ctx, p)
 	if findErr != nil {
 		return findErr
+	}
+	if check, _ := ctx.Value(deletePreconditionKey{}).(func(*Entry) bool); check != nil && !check(entry) {
+		return fmt.Errorf("delete %s: %w", p, ErrDeletePreconditionFailed)
 	}
 	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
 		return nil

@@ -35,6 +35,24 @@ func TestNonEmptyFolderClassification(t *testing.T) {
 	}
 }
 
+func TestDeletePreconditionCheckedOnTheDeleteRead(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	entry := &Entry{FullPath: "/dir/obj", Attr: Attr{Mode: 0644, Mtime: time.Unix(1700000000, 0)}}
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/dir", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+
+	rejecting := WithDeletePrecondition(ctx, func(*Entry) bool { return false })
+	err := f.DeleteEntryMetaAndData(rejecting, entry.FullPath, false, false, false, false, nil, 0)
+	require.ErrorIs(t, err, ErrDeletePreconditionFailed)
+	require.NotNil(t, store.entries[string(entry.FullPath)], "refused delete must leave the entry")
+
+	accepting := WithDeletePrecondition(ctx, func(*Entry) bool { return true })
+	require.NoError(t, f.DeleteEntryMetaAndData(accepting, entry.FullPath, false, false, false, false, nil, 0))
+	require.Nil(t, store.entries[string(entry.FullPath)])
+}
+
 func TestKeepRemoteObjectMarkerOnlyLivesOnDeleteEvents(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, NewFilerRemoteStorage())

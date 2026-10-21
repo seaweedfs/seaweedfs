@@ -1098,9 +1098,20 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	if req.KeepRemoteObject {
 		ctx = filer.WithKeepRemoteObject(ctx)
 	}
+	if conditionIsSet(req.Condition) {
+		// Re-checked against the entry the delete itself reads, so a write
+		// that lands between the guard above and the removal fails the
+		// delete instead of being deleted unseen.
+		ctx = filer.WithDeletePrecondition(ctx, func(entry *filer.Entry) bool {
+			return writeConditionSatisfied(req.Condition, entry)
+		})
+	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
+	if errors.Is(err, filer.ErrDeletePreconditionFailed) {
+		return resp, status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
+	}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
 	} else {
