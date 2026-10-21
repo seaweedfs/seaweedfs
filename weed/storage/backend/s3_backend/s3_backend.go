@@ -89,7 +89,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["download_concurrency"] = strconv.Itoa(s.downloadConcurrency)
 	m["disable_http2"] = util.BoolToString(s.httpOptions.disableHTTP2)
 	m["max_connections"] = strconv.Itoa(s.httpOptions.maxConnsPerHost)
-	m["idle_connection_timeout_seconds"] = strconv.Itoa(int(s.httpOptions.idleConnTimeout / time.Second))
+	m["idle_connection_timeout_seconds"] = strconv.FormatInt(int64(s.httpOptions.idleConnTimeout/time.Second), 10)
 	return m
 }
 
@@ -127,10 +127,18 @@ func parseNonNegative(value, name string) int {
 const maxIdleConnTimeoutSeconds = math.MaxInt64 / int64(time.Second)
 
 // parseIdleConnTimeout reads idle_connection_timeout_seconds; empty, invalid
-// or too large to represent as a time.Duration means 0 (the default).
+// or too large to represent as a time.Duration means 0 (the default). It
+// parses 64-bit seconds so the range is the same on 32-bit platforms.
 func parseIdleConnTimeout(value string) time.Duration {
-	seconds := parseNonNegative(value, "idle_connection_timeout_seconds")
-	if int64(seconds) > maxIdleConnTimeoutSeconds {
+	if value == "" {
+		return 0
+	}
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds < 0 {
+		glog.Warningf("invalid idle_connection_timeout_seconds value %q, using the default", value)
+		return 0
+	}
+	if seconds > maxIdleConnTimeoutSeconds {
 		glog.Warningf("idle_connection_timeout_seconds %q is out of range, using the default", value)
 		return 0
 	}

@@ -4,7 +4,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +108,8 @@ func TestS3BackendIdleTimeoutOverflowFallsBackToDefault(t *testing.T) {
 		{strconv.FormatInt(maxSeconds, 10), time.Duration(maxSeconds) * time.Second},
 		{strconv.FormatInt(maxSeconds+1, 10), 0},
 		{"10000000000", 0},
+		{"-1", 0},
+		{"x", 0},
 	} {
 		s, err := newS3BackendStorage(testProperties{
 			"endpoint":                        "http://127.0.0.1:4",
@@ -120,8 +121,9 @@ func TestS3BackendIdleTimeoutOverflowFallsBackToDefault(t *testing.T) {
 		if s.httpOptions.idleConnTimeout != c.want {
 			t.Errorf("idle_connection_timeout_seconds=%s: timeout %v, want %v", c.in, s.httpOptions.idleConnTimeout, c.want)
 		}
-		if got := s.ToProperties()["idle_connection_timeout_seconds"]; strings.HasPrefix(got, "-") {
-			t.Errorf("idle_connection_timeout_seconds=%s: ToProperties exports %s", c.in, got)
+		want := strconv.FormatInt(int64(c.want/time.Second), 10)
+		if got := s.ToProperties()["idle_connection_timeout_seconds"]; got != want {
+			t.Errorf("idle_connection_timeout_seconds=%s: ToProperties exports %s, want %s", c.in, got, want)
 		}
 	}
 }
