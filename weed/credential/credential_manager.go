@@ -58,6 +58,11 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 		return nil, fmt.Errorf("failed to initialize credential store '%s': %v", storeName, err)
 	}
 
+	if configuration != nil && configuration.GetBool("credential.encryption.enabled") {
+		store = NewEncryptedCredentialStore(store, configuration.GetString("credential.encryption.key_id"))
+		glog.V(0).Infof("Credential store '%s' persists secret keys KMS-encrypted", storeName)
+	}
+
 	return &CredentialManager{
 		Store: store,
 	}, nil

@@ -101,6 +101,25 @@ connection_max_lifetime_seconds = 3600
 enabled = true
 ```
 
+### Encrypted Secret Keys
+
+Any store can persist secret keys encrypted instead of plaintext:
+
+```toml
+[credential.filer_etc]
+enabled = true
+
+[credential.encryption]
+enabled = true
+#key_id = "seaweedfs-credentials"   # optional KMS key id
+```
+
+Secrets are wrapped with a data key from the configured KMS provider
+(`[kms]` section — local, aws, azure, gcp, or openbao for Vault/OpenBao),
+so the master key material can live in an external KMS or Vault. Secrets
+already stored in plaintext keep working and are encrypted on their next
+write.
+
 ## Environment Variables
 
 All credential configuration can be overridden with environment variables:
