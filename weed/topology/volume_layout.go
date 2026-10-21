@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -733,17 +732,31 @@ func (vl *VolumeLayout) pickWeightedByRemaining(candidates []needle.VolumeId) (n
 
 // fullestWritable narrows candidates to the maxWritableVolumes fullest ones,
 // so assignments concentrate on the fullest writable volume instead of
-// spreading across many disks at once.
+// spreading across many disks at once. The cap is expected to be small, so the
+// top-n are kept by insertion instead of sorting the whole candidate list.
 func (vl *VolumeLayout) fullestWritable(candidates []needle.VolumeId) []needle.VolumeId {
-	sorted := append([]needle.VolumeId(nil), candidates...)
-	sort.Slice(sorted, func(i, j int) bool {
-		ri, rj := vl.remainingSize(sorted[i]), vl.remainingSize(sorted[j])
-		if ri != rj {
-			return ri < rj
+	n := vl.maxWritableVolumes
+	top := make([]needle.VolumeId, 0, n)
+	remaining := make([]uint64, 0, n)
+	for _, vid := range candidates {
+		r := vl.remainingSize(vid)
+		i := len(top)
+		for i > 0 && (remaining[i-1] > r || (remaining[i-1] == r && top[i-1] > vid)) {
+			i--
 		}
-		return sorted[i] < sorted[j]
-	})
-	return sorted[:vl.maxWritableVolumes]
+		if i == n {
+			continue
+		}
+		top = append(top, 0)
+		remaining = append(remaining, 0)
+		copy(top[i+1:], top[i:])
+		copy(remaining[i+1:], remaining[i:])
+		top[i], remaining[i] = vid, r
+		if len(top) > n {
+			top, remaining = top[:n], remaining[:n]
+		}
+	}
+	return top
 }
 
 func (vl *VolumeLayout) weightedPick(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {
