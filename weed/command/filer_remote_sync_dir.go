@@ -384,6 +384,14 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
+	// A remote-only entry has no local data to send: the remote object is the
+	// content. Uncache and eviction reset the sync stamp, which reads as an
+	// unsynced rewrite to shouldSendToRemote, but uploading the chunk-less
+	// entry would put a zero-byte object over it.
+	if proto.Equal(oldDest, dest) && isRemoteOnly(message.NewEntry) {
+		glog.V(2).Infof("skipping remote-only update: %+v", resp)
+		return nil
+	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		// A renamed entry that holds no local data now (the snapshot was
