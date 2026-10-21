@@ -49,7 +49,7 @@ func InternalError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if r.Method == http.MethodHead {
 		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and error:%v",
-			r.Method, r.URL.String(), http.StatusInternalServerError, err)
+			r.Method, redactedURL(r), http.StatusInternalServerError, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -102,7 +102,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		r.URL.RawQuery = query.Encode()
 		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 		if err != nil {
-			glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
+			glog.V(0).Infof("failed to instance http request of url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
 			return
 		}
@@ -115,7 +115,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		response, err := util_http.GetGlobalHttpClient().Do(request)
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.FailedReadProxyReq).Inc()
-			glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
+			glog.V(0).Infof("request remote url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
 			return
 		}
