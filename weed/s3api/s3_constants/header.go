@@ -230,10 +230,11 @@ func AllowBackslashInObjectKey() bool {
 	return allowBackslashInObjectKey.Load()
 }
 
-// IsValidObjectKey rejects S3 object keys that — after normalization
-// (backslash→slash, slash collapse) — contain a `.` or `..` path segment, or
-// embed a NUL byte. Such keys are collapsed by filepath.Join inside the filer
-// and would escape the bucket directory, so they must not reach the gRPC layer.
+// IsValidObjectKey rejects S3 object keys that — after the mode-dependent
+// normalization NormalizeObjectKey applies — contain a `.` or `..` path
+// segment, or embed a NUL byte. Such keys are collapsed by filepath.Join
+// inside the filer and would escape the bucket directory, so they must not
+// reach the gRPC layer.
 // Gorilla mux URL-decodes captured vars before this runs, so `%2e%2e` is
 // already `..` here.
 func IsValidObjectKey(object string) bool {
@@ -279,7 +280,8 @@ func IsValidPathSegment(value string) bool {
 
 // NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
-// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility,
+// unless allowBackslashInObjectKey is set.
 // Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
 // Preserves trailing slash if present (e.g., "foo/" stays "foo/").
 func NormalizeObjectKey(object string) string {
