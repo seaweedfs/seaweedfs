@@ -145,7 +145,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), err)
 	}
 	if indexSize == 0 {
-		if v.noWriteOrDelete || v.noWriteCanDelete {
+		if v.noWriteOrDelete {
 			return 0, nil
 		}
 		// An empty index can hide writes a crash stranded in the .dat: the
@@ -194,7 +194,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	// A repair that fails for any other reason than an unexplained tail (a
 	// read, write, truncate or sync error) fails the check, so the volume
 	// loads read-only instead of writable on a repair that may not be on disk.
-	if !v.noWriteOrDelete && !v.noWriteCanDelete {
+	if !v.noWriteOrDelete {
 		reindexed, _, err := repairUnindexedDatTail(v, indexFile, indexSize, tailEntryPos)
 		if err != nil {
 			if !errors.Is(err, errTailNotTorn) {
@@ -428,6 +428,11 @@ func appendIndexEntries(indexFile indexAppender, entries []byte, at int64) error
 // readTailNeedle reads and verifies the whole record of a needle of the given
 // on-disk size at offset: header, body, CRC and timestamp.
 func readTailNeedle(datFile backend.BackendStorageFile, version needle.Version, at int64, size types.Size) (*needle.Needle, error) {
+	if size > 0 && size < 4 && version != needle.Version1 {
+		// a v2+ body always starts with its 4-byte data-size field; size 1-3
+		// is damaged bytes, not a record — decoding it slices out of range
+		return nil, fmt.Errorf("record at %d has size %d: %w", at, size, needle.ErrorCorrupted)
+	}
 	blob, err := needle.ReadNeedleBlob(datFile, at, size, version)
 	if err != nil {
 		return nil, err

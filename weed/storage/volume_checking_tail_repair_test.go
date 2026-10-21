@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // A torn tail is what a crash between the two appends of a write leaves: the
@@ -545,6 +546,88 @@ func TestVolumeLoadLeavesReadOnlyVolumeTailAlone(t *testing.T) {
 	}
 	if got := fileSize(t, idxName); got != idxBefore {
 		t.Fatalf(".idx of a read-only volume changed from %d to %d bytes", idxBefore, got)
+	}
+}
+
+// A canDelete volume still appends a tombstone record on every delete, so it
+// can tear a tail the same way: it is repaired and keeps taking deletes.
+func TestVolumeLoadRepairsTailOnCanDeleteVolume(t *testing.T) {
+	dir := t.TempDir()
+	v := newTornTailTestVolume(t, dir)
+	var last *needle.Needle
+	for _, id := range []uint64{1, 2, 99} {
+		last = newRandomNeedle(id)
+		if _, _, _, err := v.writeNeedle2(last, true, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.PersistReadOnly(true, true); err != nil {
+		t.Fatal(err)
+	}
+	idxName := v.FileName(".idx")
+	v.Close()
+	if err := os.Truncate(idxName, fileSize(t, idxName)-types.NeedleMapEntrySize); err != nil {
+		t.Fatal(err)
+	}
+
+	v = newTornTailTestVolume(t, dir)
+	defer v.Close()
+	if v.noWriteOrDelete || !v.noWriteCanDelete {
+		t.Fatal("canDelete volume with a torn tail did not load canDelete after the repair")
+	}
+	assertReadable(t, v, last)
+}
+
+// A torn record whose header advertises a positive size smaller than the
+// body's own 4-byte data-size field is damaged, not decodable — reading it
+// used to panic on the slice. As the last record it is cut, and a canDelete
+// volume keeps taking deletes after the repair.
+func TestVolumeLoadCutsDamagedSmallSizeTailOnCanDeleteVolume(t *testing.T) {
+	dir := t.TempDir()
+	v := newTornTailTestVolume(t, dir)
+	var last *needle.Needle
+	for _, id := range []uint64{1, 2, 99} {
+		last = newRandomNeedle(id)
+		if _, _, _, err := v.writeNeedle2(last, true, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.PersistReadOnly(true, true); err != nil {
+		t.Fatal(err)
+	}
+	datName, idxName := v.FileName(".dat"), v.FileName(".idx")
+	version := v.Version()
+	v.Close()
+	if err := os.Truncate(idxName, fileSize(t, idxName)-types.NeedleMapEntrySize); err != nil {
+		t.Fatal(err)
+	}
+	datBefore := fileSize(t, datName)
+
+	// a complete-looking record whose header claims a 2-byte body
+	damagedSize := types.Size(2)
+	record := make([]byte, needle.GetActualSize(damagedSize, version))
+	util.Uint32toBytes(record[0:types.CookieSize], 0xabcd)
+	util.Uint64toBytes(record[types.CookieSize:types.CookieSize+types.NeedleIdSize], uint64(types.Uint64ToNeedleId(7)))
+	util.Uint32toBytes(record[types.CookieSize+types.NeedleIdSize:types.NeedleHeaderSize], uint32(damagedSize))
+	dat, err := os.OpenFile(datName, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dat.Write(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := dat.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	v = newTornTailTestVolume(t, dir)
+	defer v.Close()
+	if v.noWriteOrDelete || !v.noWriteCanDelete {
+		t.Fatal("canDelete volume with a damaged-size tail did not load canDelete after the repair")
+	}
+	assertReadable(t, v, last)
+	if got := fileSize(t, datName); got != datBefore {
+		t.Fatalf("damaged tail was not cut: .dat is %d bytes, want %d", got, datBefore)
 	}
 }
 
