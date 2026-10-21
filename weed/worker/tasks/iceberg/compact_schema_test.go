@@ -47,6 +47,20 @@ type readdedNameSchemaRow struct { // name re-added under field id 3
 	Name string `parquet:"name,id(3),optional"`
 }
 
+type nullableExtraSchemaRow struct { // the wide schema, extra writable as null
+	ID    int64   `parquet:"id,id(1)"`
+	Name  string  `parquet:"name,id(2),optional"`
+	Extra *string `parquet:"extra,id(3),optional"`
+}
+
+func newAddedColumnSchema() *iceberg.Schema { // newTestSchema plus extra id=3
+	return iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Type: iceberg.PrimitiveTypes.Int64, Name: "id", Required: true},
+		iceberg.NestedField{ID: 2, Type: iceberg.PrimitiveTypes.String, Name: "name", Required: false},
+		iceberg.NestedField{ID: 3, Type: iceberg.PrimitiveTypes.String, Name: "extra", Required: false},
+	)
+}
+
 func schemaFileEntry(t *testing.T, path string, recordCount int64) iceberg.ManifestEntry {
 	t.Helper()
 	dfb, err := iceberg.NewDataFileBuilder(*iceberg.UnpartitionedSpec, iceberg.EntryContentData,
@@ -370,6 +384,70 @@ func TestMergeParquetFilesEvolvedSchemaEqualityDelete(t *testing.T) {
 		{nil, int64(1), "a"},
 		{nil, int64(3), "c"},
 		{"e4", int64(4), "d"},
+	})
+}
+
+// An equality delete naming a column added after some files were written:
+// the files that lack it read the delete key's column as null, so a real
+// key does not match their rows and a null key deletes them all.
+func TestMergeParquetFilesEqualityDeleteAddedColumn(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	put := func(fs *fakeFilerServer) map[string]int64 {
+		putDataFileRows(t, fs, "narrow.parquet", []narrowSchemaRow{{1, "a"}, {2, "b"}, {3, "c"}})
+		putDataFileRows(t, fs, "wide.parquet", []nullableExtraSchemaRow{{4, "d", strPtr("e4")}, {5, "e", nil}})
+		return map[string]int64{"narrow.parquet": 3, "wide.parquet": 2}
+	}
+	eqGroups := func(keys ...parquet.Value) []equalityDeleteGroup {
+		set := make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			set[buildEqualityKey(parquet.Row{k}, []int{0})] = struct{}{}
+		}
+		return []equalityDeleteGroup{{FieldIDs: []int{3}, Keys: set}}
+	}
+	schema := newAddedColumnSchema()
+
+	t.Run("key matches no null", func(t *testing.T) {
+		for _, names := range [][]string{
+			{"narrow.parquet", "wide.parquet"},
+			{"wide.parquet", "narrow.parquet"},
+		} {
+			fs, client := startFakeFiler(t)
+			counts := put(fs)
+			merged, count, err := mergeNamedFiles(t, client, names, counts,
+				eqGroups(parquet.ValueOf("e4")), schema, false)
+			if err != nil {
+				t.Fatalf("merge of %v: %v", names, err)
+			}
+			if count != 4 {
+				t.Fatalf("merged %d rows, want 4", count)
+			}
+			var want [][]any
+			if names[0] == "narrow.parquet" {
+				want = [][]any{{int64(1), "a", nil}, {int64(2), "b", nil}, {int64(3), "c", nil}, {int64(5), "e", nil}}
+			} else {
+				want = [][]any{{int64(5), "e", nil}, {int64(1), "a", nil}, {int64(2), "b", nil}, {int64(3), "c", nil}}
+			}
+			checkMergedRows(t, merged, want)
+		}
+	})
+
+	t.Run("null key deletes nulls", func(t *testing.T) {
+		for _, names := range [][]string{
+			{"narrow.parquet", "wide.parquet"},
+			{"wide.parquet", "narrow.parquet"},
+		} {
+			fs, client := startFakeFiler(t)
+			counts := put(fs)
+			merged, count, err := mergeNamedFiles(t, client, names, counts,
+				eqGroups(parquet.NullValue()), schema, false)
+			if err != nil {
+				t.Fatalf("merge of %v: %v", names, err)
+			}
+			if count != 1 {
+				t.Fatalf("merged %d rows, want 1", count)
+			}
+			checkMergedRows(t, merged, [][]any{{int64(4), "d", "e4"}})
+		}
 	})
 }
 

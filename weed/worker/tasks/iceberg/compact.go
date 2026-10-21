@@ -993,20 +993,28 @@ func readEqualityDeleteFile(
 // buildEqualityKey builds a composite string key from specific column values
 // in a row. Each value is serialized as "kind:length:value" to avoid ambiguity
 // between types (e.g., int 123 vs string "123") and to prevent collisions from
-// values containing separator characters.
+// values containing separator characters. A negative column index is a field
+// the file lacks: the value there is null.
 func buildEqualityKey(row parquet.Row, colIndices []int) string {
 	if len(colIndices) == 1 {
-		v := row[colIndices[0]]
+		v := equalityKeyValue(row, colIndices[0])
 		s := v.String()
 		return fmt.Sprintf("%d:%d:%s", v.Kind(), len(s), s)
 	}
 	var b strings.Builder
 	for _, idx := range colIndices {
-		v := row[idx]
+		v := equalityKeyValue(row, idx)
 		s := v.String()
 		fmt.Fprintf(&b, "%d:%d:%s", v.Kind(), len(s), s)
 	}
 	return b.String()
+}
+
+func equalityKeyValue(row parquet.Row, idx int) parquet.Value {
+	if idx < 0 {
+		return parquet.NullValue()
+	}
+	return row[idx]
 }
 
 // resolveEqualityColIndices maps Iceberg field IDs to Parquet column indices.
@@ -1028,6 +1036,12 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 		}
 		idx, ok := colNameToIdx[field.Name]
 		if !ok {
+			// An optional column added to the table after this file was
+			// written reads as null there (-1 marks it in the key).
+			if !field.Required {
+				indices[i] = -1
+				continue
+			}
 			return nil, fmt.Errorf("column %q (field ID %d) not found in parquet schema", field.Name, fid)
 		}
 		indices[i] = idx
