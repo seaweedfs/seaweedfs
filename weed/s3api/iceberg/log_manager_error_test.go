@@ -25,8 +25,12 @@ func TestLogManagerErrorRefusalsAreNotErrors(t *testing.T) {
 	} {
 		refusals, faults = nil, nil
 		logManagerError("CreateNamespace", c.err)
-		if got := len(faults) == 1 && len(refusals) == 0; got != c.fault {
-			t.Errorf("%v: ERROR=%v want %v (refusals %v, faults %v)", c.err, got, c.fault, refusals, faults)
+		wantFaults, wantRefusals := 0, 1
+		if c.fault {
+			wantFaults, wantRefusals = 1, 0
+		}
+		if len(faults) != wantFaults || len(refusals) != wantRefusals {
+			t.Errorf("%v: %d ERROR and %d refusal log(s), want %d and %d (refusals %v, faults %v)", c.err, len(faults), len(refusals), wantFaults, wantRefusals, refusals, faults)
 		}
 	}
 }
