@@ -181,8 +181,13 @@ func doTraverseSnapshotAndSaving(filerClient filer_pb.FilerClient, writer io.Wri
 
 	// The walk tolerates a path that does not exist (it saves nothing); the
 	// filer-side traversal reports it as an error, so let the walk have it.
+	// Any other failure must stop here: a walk that could then reach the filer
+	// reads renamed-away entries as absent, and fsck would purge their chunks.
 	if _, _, _, getErr := filer_pb.GetEntry(ctx, filerClient, util.FullPath(path)); getErr != nil {
-		return false, nil
+		if errors.Is(getErr, filer_pb.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("traverse %s: %w", path, getErr)
 	}
 
 	err = filerClient.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {

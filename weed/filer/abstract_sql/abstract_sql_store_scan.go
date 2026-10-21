@@ -19,6 +19,10 @@ var _ filer.EntryScanner = (*AbstractSqlStore)(nil)
 type scanTable struct {
 	table string
 	base  string
+	// cachedOnly marks a table that only a stale bucket cache remembers: its
+	// bucket directory was already gone from the snapshot, so a missing table
+	// means it was dropped meanwhile, not that rows are absent.
+	cachedOnly bool
 }
 
 // scanPageSize is how many rows one keyset page of a scan fetches.
@@ -49,7 +53,7 @@ func (store *AbstractSqlStore) ScanEntries(ctx context.Context, dirPath util.Ful
 
 	tx, err := store.beginSnapshotTx(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", filer.ErrUnsupportedEntryScan, err)
+		return err
 	}
 	// Read-only: nothing to commit, and a rollback releases the snapshot.
 	defer tx.Rollback()
@@ -120,9 +124,16 @@ func (store *AbstractSqlStore) beginSnapshotTx(ctx context.Context) (*sql.Tx, er
 		db = store.ScanDB
 	} else if db.Stats().MaxOpenConnections == 1 {
 		// The scan would hold the filer's only connection for its whole run.
-		return nil, fmt.Errorf("the store's single connection cannot be held for a scan")
+		return nil, fmt.Errorf("%w: the store's single connection cannot be held for a scan", filer.ErrUnsupportedEntryScan)
 	}
-	return db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	// A BeginTx failure (a down database) must fail the traversal, not route it
+	// to the walk: a recovered database lets the walk read renamed-away entries
+	// as absent, the very loss this scan exists to prevent.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin snapshot: %v", err)
+	}
+	return tx, nil
 }
 
 func (store *AbstractSqlStore) cachedBucketNames() []string {
@@ -155,8 +166,8 @@ func (store *AbstractSqlStore) scanTables(ctx context.Context, tx *sql.Tx, dirPa
 	if err != nil {
 		return nil, err
 	}
-	for _, bucket := range buckets {
-		tables = append(tables, scanTable{table: bucket, base: bucketBase(bucket)})
+	for _, bucket := range buckets.names {
+		tables = append(tables, scanTable{table: bucket, base: bucketBase(bucket), cachedOnly: !buckets.seen[bucket]})
 	}
 	return tables, nil
 }
@@ -185,18 +196,26 @@ func bucketTableFor(dirPath util.FullPath) string {
 	return bucket
 }
 
+// bucketNames is the snapshot-listed and cached-only buckets whose tables a
+// scan may read.
+type bucketNames struct {
+	names []string
+	seen  map[string]bool // listed under /buckets inside the snapshot
+}
+
 // listBucketNames reads the directories under /buckets within the snapshot
 // and keeps those that route to their own table, plus the buckets this
 // process has already seen (their directory entry may be gone, their rows not).
-func (store *AbstractSqlStore) listBucketNames(ctx context.Context, tx *sql.Tx, cachedBuckets []string) ([]string, error) {
+func (store *AbstractSqlStore) listBucketNames(ctx context.Context, tx *sql.Tx, cachedBuckets []string) (bucketNames, error) {
 	seen := make(map[string]bool)
-	var names []string
+	var names bucketNames
+	names.seen = seen
 	add := func(name string) {
 		if seen[name] || strings.HasPrefix(name, ".") || !isValidBucket(name) {
 			return
 		}
 		seen[name] = true
-		names = append(names, name)
+		names.names = append(names.names, name)
 	}
 
 	const page = 1000
@@ -222,13 +241,13 @@ func (store *AbstractSqlStore) listBucketNames(ctx context.Context, tx *sql.Tx, 
 			}
 			return res.Err()
 		}(); err != nil {
-			return nil, err
+			return bucketNames{}, err
 		}
 		for _, r := range rows {
 			startFrom = r.name
 			entry := &filer.Entry{FullPath: util.NewFullPath(bucketsRoot, r.name)}
 			if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(r.data)); err != nil {
-				return nil, fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
+				return bucketNames{}, fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
 			}
 			if entry.IsDirectory() {
 				add(r.name)
@@ -262,6 +281,9 @@ func (store *AbstractSqlStore) scanOneTable(ctx context.Context, tx *sql.Tx, t s
 		sqlText, args := store.GetSqlScanPage(t.table, cursorHash, cursorName, scanPageSize)
 		rows, err := tx.QueryContext(ctx, sqlText, args...)
 		if err != nil {
+			if t.cachedOnly && isMissingTableError(err) {
+				return nil // a cached-only name whose table was dropped meanwhile
+			}
 			return missingTableOr(err, t.table, fmt.Sprintf("scan table %s", t.table))
 		}
 		if err := func() error {
