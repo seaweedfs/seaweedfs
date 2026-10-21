@@ -480,6 +480,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				continue
 			}
 			key := s3_constants.NormalizeObjectKey(object.Key)
+			if key == "" {
+				// A key of only slashes can never name a stored entry; like a
+				// missing key the delete is an idempotent no-op.
+				deletedCount++
+				if !deleteObjects.Quiet {
+					deletedObjects = append(deletedObjects, ObjectIdentifier{Key: object.Key, VersionId: object.VersionId})
+				}
+				continue
+			}
 			if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
 				continue
