@@ -1084,6 +1084,14 @@ func (h *S3TablesHandler) authorizeAbsentResource(r *http.Request, client filer_
 	ctx.IsLocalAccountID = h.localAccountIDs
 	ctx.IdentityActions = getIdentityActions(r)
 	ctx.DefaultAllow = h.defaultAllowFor(r)
+	// Evaluate against the canonical ARN, not the request's: the ARN parser
+	// accepts any account, so a crafted ARN could otherwise dodge a Deny's
+	// resource match.
+	if ctx.TableName != "" {
+		resourceARN = h.generateTableARN(bucketMeta.OwnerAccountID, bucketName, ctx.Namespace+"/"+ctx.TableName)
+	} else {
+		resourceARN = h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
+	}
 	if deniedByPolicy(operation, principal, bucketPolicy, resourceARN, ctx) ||
 		(!CheckPermissionWithContext(operation, principal, bucketMeta.OwnerAccountID, bucketPolicy, resourceARN, ctx) &&
 			!h.mayLearnAbsence(r, operation, bucketName)) {

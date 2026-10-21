@@ -216,14 +216,14 @@ func TestGrantedCallersLearnAbsence(t *testing.T) {
 	})
 }
 
-// A bucket-policy Deny still vetoes a tag operation on an absent name: a
-// denied caller must not trade the denial for a not-found.
+// A bucket-policy Deny still vetoes the operation on an absent name: a denied
+// caller must not trade the denial for a not-found or an empty list.
 func TestAbsentResourceBucketDenyStillDenies(t *testing.T) {
 	fs, m := startRenameManager(t)
 	m.SetTrusted(false)
 	m.SetDefaultAllow(false)
 
-	deny := `{"Statement":[{"Effect":"Deny","Principal":"lister","Action":"s3tables:TagResource","Resource":"*"}]}`
+	deny := `{"Statement":[{"Effect":"Deny","Principal":"lister","Action":"s3tables:*","Resource":"*"}]}`
 	fs.Get(TablesPath, renameTestBucket).Extended[ExtendedKeyPolicy] = []byte(deny)
 
 	got := runAbsentOp(t, m, fs, "TagResource",
@@ -231,4 +231,16 @@ func TestAbsentResourceBucketDenyStillDenies(t *testing.T) {
 		"lister", []string{"s3tables:TagResource"})
 	assert.Equal(t, 403, got.status, got.body.Message)
 	assert.Equal(t, ErrCodeAccessDenied, got.body.Type)
+
+	for _, tc := range []struct {
+		op  string
+		req interface{}
+	}{
+		{"ListTables", &ListTablesRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ghost"}}},
+		{"ListTables", &ListTablesRequest{TableBucketARN: mustBucketARN(t)}},
+		{"ListViews", &ListViewsRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ghost"}}},
+	} {
+		got := runAbsentOp(t, m, fs, tc.op, tc.req, "lister", []string{"s3tables:ListTables", "s3tables:ListViews"})
+		assert.Equal(t, 403, got.status, "%s: %s", tc.op, got.body.Message)
+	}
 }

@@ -558,20 +558,23 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
+			policyCtx := &PolicyContext{
+				TrustedIssuers:   h.trustedIssuers(r),
+				IsLocalAccountID: h.localAccountIDs,
+				TableBucketName:  bucketName,
+				Namespace:        namespaceName,
+				TableBucketTags:  bucketTags,
+				IdentityActions:  identityActions,
+				DefaultAllow:     h.defaultAllowFor(r),
+			}
 			if !CheckTableOrBucketPermission("ListTables", accountID,
 				nsMeta.OwnerAccountID, namespacePolicy, bucketARN,
-				bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-					TrustedIssuers:   h.trustedIssuers(r),
-					IsLocalAccountID: h.localAccountIDs,
-					TableBucketName:  bucketName,
-					Namespace:        namespaceName,
-					TableBucketTags:  bucketTags,
-					IdentityActions:  identityActions,
-					DefaultAllow:     h.defaultAllowFor(r),
-				}) {
+				bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, policyCtx) {
 				// The target is absent: an empty list would reveal that, so
-				// only a caller that may learn absence proceeds to it.
-				if nsFound || !h.mayLearnAbsence(r, "ListTables", bucketName) {
+				// only a caller that may learn absence proceeds to it, and a
+				// resource-policy Deny vetoes even that.
+				if nsFound || !h.mayLearnAbsence(r, "ListTables", bucketName) ||
+					deniedByPolicy("ListTables", accountID, bucketPolicy, bucketARN, policyCtx) {
 					return ErrAccessDenied
 				}
 			}
@@ -615,15 +618,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
-			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			policyCtx := &PolicyContext{
 				TrustedIssuers:   h.trustedIssuers(r),
 				IsLocalAccountID: h.localAccountIDs,
 				TableBucketName:  bucketName,
 				TableBucketTags:  bucketTags,
 				IdentityActions:  identityActions,
 				DefaultAllow:     h.defaultAllowFor(r),
-			}) {
-				if bucketFound || !h.mayLearnAbsence(r, "ListTables", bucketName) {
+			}
+			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, policyCtx) {
+				if bucketFound || !h.mayLearnAbsence(r, "ListTables", bucketName) ||
+					deniedByPolicy("ListTables", accountID, bucketPolicy, bucketARN, policyCtx) {
 					return ErrAccessDenied
 				}
 			}

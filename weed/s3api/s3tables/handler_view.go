@@ -292,10 +292,21 @@ func (h *S3TablesHandler) handleListViews(w http.ResponseWriter, r *http.Request
 			return err
 		}
 		bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
-		if !h.authorizeViewOp(r, "ListViews", h.getAccountID(r), nsMeta.OwnerAccountID, bucketMeta.OwnerAccountID, namespacePolicy, bucketPolicy, bucketARN, bucketName, namespaceName, "", bucketTags) {
+		accountID := h.getAccountID(r)
+		if !h.authorizeViewOp(r, "ListViews", accountID, nsMeta.OwnerAccountID, bucketMeta.OwnerAccountID, namespacePolicy, bucketPolicy, bucketARN, bucketName, namespaceName, "", bucketTags) {
 			// An empty list would reveal the namespace is absent; only a
-			// caller that may learn absence proceeds to it.
-			if nsFound || !h.mayLearnAbsence(r, "ListViews", bucketName) {
+			// caller that may learn absence proceeds to it, and a
+			// resource-policy Deny vetoes even that.
+			if nsFound || !h.mayLearnAbsence(r, "ListViews", bucketName) ||
+				deniedByPolicy("ListViews", accountID, bucketPolicy, bucketARN, &PolicyContext{
+					TrustedIssuers:   h.trustedIssuers(r),
+					IsLocalAccountID: h.localAccountIDs,
+					TableBucketName:  bucketName,
+					Namespace:        namespaceName,
+					TableBucketTags:  bucketTags,
+					IdentityActions:  getIdentityActions(r),
+					DefaultAllow:     h.defaultAllowFor(r),
+				}) {
 				return ErrAccessDenied
 			}
 		}
