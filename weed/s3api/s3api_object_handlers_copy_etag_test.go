@@ -187,7 +187,7 @@ func TestCopyChunksForRangeCopiedETags(t *testing.T) {
 
 	// A range spanning the first chunk fully plus 1 MiB of the second.
 	multiEnd := int64(chunkSize + 1<<20 - 1)
-	dstChunks, err := s3a.copyChunksForRange(entry, 0, multiEnd, "/dst")
+	dstChunks, partMd5, err := s3a.copyChunksForRange(entry, 0, multiEnd, "/dst")
 	if err != nil {
 		t.Fatalf("copyChunksForRange: %v", err)
 	}
@@ -206,9 +206,21 @@ func TestCopyChunksForRangeCopiedETags(t *testing.T) {
 	if stored := volume.stored[dstChunks[1].GetFileIdString()]; !bytes.Contains(stored, payload[chunkSize:multiEnd+1]) {
 		t.Error("destination volume does not hold the copied range bytes")
 	}
+	// The whole-part MD5 hashes every copied byte once, in range order.
+	wantPartMd5 := md5.Sum(payload[:multiEnd+1])
+	if !bytes.Equal(partMd5, wantPartMd5[:]) {
+		t.Errorf("part Md5 = %x, want %x", partMd5, wantPartMd5)
+	}
+	partEntry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Md5: partMd5},
+		Chunks:     dstChunks,
+	}
+	if got, want := copyEntryETag(partEntry), fmt.Sprintf("%x", wantPartMd5); got != want {
+		t.Errorf("copyEntryETag = %q, want %q", got, want)
+	}
 
-	// A range inside one chunk: the chunk's ETag is the MD5 of those bytes.
-	innerChunks, err := s3a.copyChunksForRange(entry, 100, 199, "/dst")
+	// A range inside one chunk: the part's ETag is the MD5 of those bytes.
+	innerChunks, innerMd5, err := s3a.copyChunksForRange(entry, 100, 199, "/dst")
 	if err != nil {
 		t.Fatalf("copyChunksForRange inner range: %v", err)
 	}
@@ -217,5 +229,9 @@ func TestCopyChunksForRangeCopiedETags(t *testing.T) {
 	}
 	if got, want := innerChunks[0].ETag, b64md5(payload[100:200]); got != want {
 		t.Errorf("inner-range chunk ETag = %q, want copied-bytes MD5 %q", got, want)
+	}
+	wantInnerMd5 := md5.Sum(payload[100:200])
+	if !bytes.Equal(innerMd5, wantInnerMd5[:]) {
+		t.Errorf("inner-range part Md5 = %x, want %x", innerMd5, wantInnerMd5)
 	}
 }
