@@ -541,6 +541,12 @@ func storesRequestObjectTags(r *http.Request) bool {
 	if r.Method != http.MethodPut {
 		return false
 	}
+	// A numeric partNumber together with uploadId routes to the part
+	// handlers — with or without a copy source — which never read
+	// X-Amz-Tagging.
+	if query.Has("partNumber") && query.Has("uploadId") && isDigits(query.Get("partNumber")) {
+		return false
+	}
 	if r.Header.Get("X-Amz-Copy-Source") != "" {
 		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
 	}
@@ -555,6 +561,20 @@ func storesRequestObjectTags(r *http.Request) bool {
 	// object tags; a plain object PUT carries only signing parameters.
 	for key := range query {
 		if !strings.HasPrefix(key, "X-Amz-") {
+			return false
+		}
+	}
+	return true
+}
+
+// isDigits reports whether s is non-empty and all ASCII digits, matching the
+// partNumber route constraint.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
 			return false
 		}
 	}
