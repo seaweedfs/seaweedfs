@@ -207,14 +207,14 @@ type bucketNames struct {
 // and keeps those that route to their own table, plus the buckets this
 // process has already seen (their directory entry may be gone, their rows not).
 func (store *AbstractSqlStore) listBucketNames(ctx context.Context, tx *sql.Tx, cachedBuckets []string) (bucketNames, error) {
-	seen := make(map[string]bool)
 	var names bucketNames
-	names.seen = seen
+	names.seen = make(map[string]bool)
+	added := make(map[string]bool)
 	add := func(name string) {
-		if seen[name] || strings.HasPrefix(name, ".") || !isValidBucket(name) {
+		if added[name] || strings.HasPrefix(name, ".") || !isValidBucket(name) {
 			return
 		}
-		seen[name] = true
+		added[name] = true
 		names.names = append(names.names, name)
 	}
 
@@ -250,6 +250,7 @@ func (store *AbstractSqlStore) listBucketNames(ctx context.Context, tx *sql.Tx, 
 				return bucketNames{}, fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
 			}
 			if entry.IsDirectory() {
+				names.seen[r.name] = true
 				add(r.name)
 			}
 		}

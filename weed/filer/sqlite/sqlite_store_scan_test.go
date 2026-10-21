@@ -269,3 +269,20 @@ func TestScanPageQuerySeeksPrimaryKey(t *testing.T) {
 		t.Fatalf("page query does not seek the primary key: %s", joined)
 	}
 }
+
+// A bucket name only the process cache remembers may have its table dropped
+// meanwhile; the scan skips it instead of failing.
+func TestScanEntriesSkipsCachedOnlyBucketTable(t *testing.T) {
+	store := &SqliteStore{}
+	if err := store.initialize(filepath.Join(t.TempDir(), "filer.db"), createTableSql, upsertQuerySql); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Shutdown()
+	if _, err := store.DB.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatal(err)
+	}
+	store.OnBucketCreation("gonebucket") // the table is never created
+	if err := store.ScanEntries(context.Background(), "/", func(context.Context, *filer.Entry) error { return nil }); err != nil {
+		t.Fatalf("cached-only bucket with a dropped table must not fail the scan: %v", err)
+	}
+}
