@@ -171,7 +171,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	if query.Has("acl") {
 		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
-		case http.MethodGet, http.MethodHead:
+		// HEAD has no acl route; it lands on HeadObjectHandler and should
+		// resolve like a read — s3:GetObject, or s3:GetObjectVersion below.
+		case http.MethodGet:
 			if versioned {
 				return s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
 			}
