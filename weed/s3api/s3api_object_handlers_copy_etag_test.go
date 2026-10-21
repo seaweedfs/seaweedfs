@@ -1,6 +1,10 @@
 package s3api
 
 import (
+	"bytes"
+	"crypto/md5"
+	"encoding/base64"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func TestCopyEntryETagPrefersStoredExtendedETag(t *testing.T) {
@@ -143,5 +148,74 @@ func TestParseRangeHeaderRejectsUnsatisfiableRange(t *testing.T) {
 				t.Errorf("parseRangeHeader(%q) = %d, %d, want %d, %d", tc.header, start, end, tc.wantStart, tc.wantEnd)
 			}
 		})
+	}
+}
+
+// A part copied with x-amz-copy-source-range must report the MD5 of the copied
+// bytes: per destination chunk for a partial-chunk copy, and the whole-part MD5
+// the part entry's Attributes.Md5 carries for CopyPartResult / ListParts /
+// complete's composite ETag (#11855).
+func TestCopyChunksForRangeCopiedETags(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	const chunkSize = 4 << 20
+	payload := make([]byte, 2*chunkSize)
+	for i := range payload {
+		payload[i] = byte(i*31 + 7)
+	}
+	b64md5 := func(data []byte) string {
+		sum := md5.Sum(data)
+		return base64.StdEncoding.EncodeToString(sum[:])
+	}
+	fid0 := fmt.Sprintf("3,%016x%08x", 101, 202)
+	fid1 := fmt.Sprintf("3,%016x%08x", 103, 204)
+	volume.stored[fid0] = payload[:chunkSize]
+	volume.stored[fid1] = payload[chunkSize:]
+	entry := &filer_pb.Entry{
+		Name: "src",
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: uint64(len(payload)),
+		},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: fid0, Offset: 0, Size: chunkSize, ETag: b64md5(payload[:chunkSize])},
+			{FileId: fid1, Offset: chunkSize, Size: chunkSize, ETag: b64md5(payload[chunkSize:])},
+		},
+	}
+
+	// A range spanning the first chunk fully plus 1 MiB of the second.
+	multiEnd := int64(chunkSize + 1<<20 - 1)
+	dstChunks, err := s3a.copyChunksForRange(entry, 0, multiEnd, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange: %v", err)
+	}
+	if len(dstChunks) != 2 {
+		t.Fatalf("copyChunksForRange returned %d chunks, want 2", len(dstChunks))
+	}
+	// A whole-chunk copy forwards the stored bytes, so the source ETag stays valid.
+	if got, want := dstChunks[0].ETag, entry.Chunks[0].ETag; got != want {
+		t.Errorf("whole-chunk copy ETag = %q, want source chunk ETag %q", got, want)
+	}
+	// A partial copy stores only the range bytes; its ETag must be their MD5.
+	if got, want := dstChunks[1].ETag, b64md5(payload[chunkSize:multiEnd+1]); got != want {
+		t.Errorf("partial-chunk copy ETag = %q, want copied-bytes MD5 %q", got, want)
+	}
+	// The copied bytes landed on the destination volume (inside the multipart framing).
+	if stored := volume.stored[dstChunks[1].GetFileIdString()]; !bytes.Contains(stored, payload[chunkSize:multiEnd+1]) {
+		t.Error("destination volume does not hold the copied range bytes")
+	}
+
+	// A range inside one chunk: the chunk's ETag is the MD5 of those bytes.
+	innerChunks, err := s3a.copyChunksForRange(entry, 100, 199, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange inner range: %v", err)
+	}
+	if len(innerChunks) != 1 {
+		t.Fatalf("inner range returned %d chunks, want 1", len(innerChunks))
+	}
+	if got, want := innerChunks[0].ETag, b64md5(payload[100:200]); got != want {
+		t.Errorf("inner-range chunk ETag = %q, want copied-bytes MD5 %q", got, want)
 	}
 }
