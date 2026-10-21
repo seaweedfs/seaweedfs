@@ -283,3 +283,49 @@ func TestCopyChunksForRangeSparseETags(t *testing.T) {
 		t.Errorf("hole part Md5 = %x, want %x (all zeros)", holeMd5, wantHoleMd5)
 	}
 }
+
+// Destination chunks must resolve overlaps the way the source did: reads
+// pick winners by ModifiedTsNs, so the copied chunks keep the source's
+// precedence even though they were uploaded concurrently.
+func TestCopyChunksForRangePreservesSourcePrecedence(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	util_http.InitGlobalHttpClient()
+
+	etagOf := func(b []byte) string {
+		sum := md5.Sum(b)
+		return base64.StdEncoding.EncodeToString(sum[:])
+	}
+	fidA := fmt.Sprintf("3,%016x%08x", 107, 208)
+	fidB := fmt.Sprintf("3,%016x%08x", 109, 210)
+	volume.stored[fidA] = []byte("aaaa")
+	volume.stored[fidB] = []byte("bbbb")
+
+	// A covers [0,4), B covers [2,6); B's range is copied into a chunk that
+	// overlaps A's copy on [2,4), and the source says A wins there.
+	entry := &filer_pb.Entry{
+		Name:       "overlap",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 6},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: fidA, Offset: 0, Size: 4, ModifiedTsNs: 20, ETag: etagOf([]byte("aaaa"))},
+			{FileId: fidB, Offset: 2, Size: 4, ModifiedTsNs: 10, ETag: etagOf([]byte("bbbb"))},
+		},
+	}
+	dstChunks, partMd5, err := s3a.copyChunksForRange(entry, 0, 5, "/dst")
+	if err != nil {
+		t.Fatalf("copyChunksForRange overlap: %v", err)
+	}
+	if len(dstChunks) != 2 {
+		t.Fatalf("overlap copy returned %d chunks, want 2", len(dstChunks))
+	}
+	if dstChunks[0].ModifiedTsNs <= dstChunks[1].ModifiedTsNs {
+		t.Errorf("destination precedence inverted: chunk from ts=20 got %d, chunk from ts=10 got %d",
+			dstChunks[0].ModifiedTsNs, dstChunks[1].ModifiedTsNs)
+	}
+	// The source resolves to "aaaa"+"bb"; the part MD5 must match that view.
+	wantMd5 := md5.Sum([]byte("aaaabb"))
+	if !bytes.Equal(partMd5, wantMd5[:]) {
+		t.Errorf("overlap part Md5 = %x, want %x", partMd5, wantMd5)
+	}
+}

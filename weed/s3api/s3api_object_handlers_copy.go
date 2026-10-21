@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1724,6 +1726,24 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	for i := 0; i < len(relevantChunks); i++ {
 		if err := <-errChan; err != nil {
 			return nil, nil, err
+		}
+	}
+
+	// Reads resolve overlapping chunks by ModifiedTsNs, and the concurrent
+	// copies stamped arbitrary finish times: rank the destination chunks by
+	// the source's timestamps so the part resolves overlaps the way the
+	// source did (and the way copiedRangeMd5 hashed it).
+	if len(dstChunks) > 1 {
+		order := make([]int, len(dstChunks))
+		for i := range order {
+			order[i] = i
+		}
+		slices.SortStableFunc(order, func(a, b int) int {
+			return cmp.Compare(originalChunks[a].ModifiedTsNs, originalChunks[b].ModifiedTsNs)
+		})
+		now := time.Now().UnixNano()
+		for rank, i := range order {
+			dstChunks[i].ModifiedTsNs = now + int64(rank)
 		}
 	}
 
