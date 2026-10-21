@@ -98,16 +98,22 @@ func (v *Volume) LoadRemoteFile() error {
 // and .vif to the other replicas after the upload, and a tombstone written
 // before that copy would reach one replica only; a replicated volume keeps
 // refusing deletes until its next load, as before. An I/O quarantine is left
-// alone. Otherwise the flags are the ones load() gives every tiered volume.
+// alone, and so is a volume past the I/O error tolerance that the next
+// heartbeat will quarantine. Otherwise the flags are the ones load() gives
+// every tiered volume.
 func (v *Volume) MarkTieredDeletable() bool {
 	if rp := v.SuperBlock.ReplicaPlacement; rp != nil && rp.GetCopyCount() > 1 {
 		return false
 	}
-	if _, _, quarantined := v.getIoErrorState(); quarantined {
-		return false
-	}
+	// Check the I/O state under noWriteLock: CollectHeartbeat marks the
+	// quarantine before it takes noWriteLock to refuse deletes, so either the
+	// check below sees the quarantine, or the heartbeat's refusal lands after
+	// this change and stays.
 	v.noWriteLock.Lock()
 	defer v.noWriteLock.Unlock()
+	if ioErr, ioCount, quarantined := v.getIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+		return false
+	}
 	v.noWriteOrDelete = false
 	v.noWriteCanDelete = true
 	return true
