@@ -107,6 +107,30 @@ func (v *Volume) loadRemoteFileLocked() error {
 	return nil
 }
 
+// AttachRemoteDatFile records remoteFile, a copy of the .dat read from source,
+// in the volume's .vif and switches the data backend to it. It refuses when
+// source is no longer the volume's data backend: a compaction commit since the
+// copy replaced the .dat and the index, and the copy has the old layout. The
+// check, the .vif write and the switch happen under the data-file locks, so a
+// commit either lands before (and is seen here) or after (and refuses a tiered
+// volume).
+func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFile *volume_server_pb.RemoteFile) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.DataBackend != source {
+		return fmt.Errorf("volume %d data file changed during the copy (compacted or reloaded)", v.Id)
+	}
+	files := v.volumeInfo.GetFiles()
+	v.volumeInfo.Files = append(files, remoteFile)
+	if err := v.SaveVolumeInfo(); err != nil {
+		v.volumeInfo.Files = files
+		return fmt.Errorf("save remote file info: %w", err)
+	}
+	return v.loadRemoteFileLocked()
+}
+
 func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
