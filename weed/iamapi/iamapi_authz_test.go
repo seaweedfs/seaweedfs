@@ -159,7 +159,7 @@ func TestImplicitUserNameUsesVerifiedIdentity(t *testing.T) {
 	mac.Write([]byte(sts))
 	sig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	q := url.Values{"AWSAccessKeyId": {"AKIAIOSFODNN7EXAMPLE"}, "Expires": {expires}, "Signature": {sig}}
-	for _, action := range []string{"ListAccessKeys", "CreateAccessKey"} {
+	for _, action := range []string{"ListAccessKeys", "CreateAccessKey", "GetUser"} {
 		t.Run(action, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodPost, server.URL+"/?"+q.Encode(), strings.NewReader("Action="+action+"&Version=2010-05-08"))
 			require.NoError(t, err)

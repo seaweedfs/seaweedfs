@@ -1437,6 +1437,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "GetUser":
+		iama.handleImplicitUsername(r, values)
 		userName := values.Get("UserName")
 		var err *IamError
 		response, err = iama.GetUser(s3cfg, userName)
