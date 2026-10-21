@@ -127,7 +127,12 @@ func NewFileParts(fullPathFilenames []string) (ret []*FilePart, err error) {
 	ret = make([]*FilePart, len(fullPathFilenames))
 	for index, file := range fullPathFilenames {
 		if ret[index], err = newFilePart(file); err != nil {
-			return
+			for _, part := range ret[:index] {
+				if closer, ok := part.Reader.(io.Closer); ok {
+					closer.Close()
+				}
+			}
+			return nil, err
 		}
 	}
 	return
@@ -139,13 +144,14 @@ func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
 		glog.V(0).Info("Failed to open file: ", fullPathFilename)
 		return ret, openErr
 	}
-	ret.Reader = fh
 
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
+		fh.Close()
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
 		return ret, fiErr
 	}
+	ret.Reader = fh
 	ret.ModTime = fi.ModTime().UTC().Unix()
 	ret.FileSize = fi.Size()
 	ext := strings.ToLower(path.Ext(fullPathFilename))
