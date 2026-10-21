@@ -408,8 +408,16 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			Directory:          dir,
 			Name:               name,
 			IfNotModifiedAfter: mtimeSec,
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: lookupResp.Entry,
+			}}},
 		})
 		if err != nil {
+			if status.Code(err) == codes.FailedPrecondition {
+				fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+				return nil
+			}
 			return err
 		}
 		if deleteResp.Error != "" {
