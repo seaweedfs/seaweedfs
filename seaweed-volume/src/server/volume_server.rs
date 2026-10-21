@@ -86,7 +86,8 @@ pub struct VolumeServerState {
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation,
     /// allowing arbitrary (incl. loopback / link-local / metadata) hosts.
     pub allow_untrusted_remote_endpoints: bool,
-    /// First master address for volume lookups (e.g., "localhost:9333").
+    /// First configured master address (e.g., "localhost:9333"). A seed, not a
+    /// lookup target: lookups go to `current_master_url`.
     pub master_url: String,
     /// Seed master addresses for UI rendering.
     pub master_urls: Vec<String>,
@@ -141,6 +142,12 @@ pub struct VolumeServerState {
 }
 
 impl VolumeServerState {
+    /// The master lookups should go to: the leader the heartbeat confirmed,
+    /// or empty while none is known. Mirrors Go's `vs.getCurrentMaster()`.
+    pub async fn current_master(&self) -> String {
+        self.current_master_url.read().await.clone()
+    }
+
     /// Check if the server is in maintenance mode; return gRPC error if so.
     pub fn check_maintenance(&self) -> Result<(), tonic::Status> {
         if self.maintenance.load(Ordering::Relaxed) {
