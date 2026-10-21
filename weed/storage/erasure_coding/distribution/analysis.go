@@ -16,15 +16,21 @@ func NewTopologyAnalysis() *TopologyAnalysis {
 }
 
 // AddNode registers a node in the topology, including any shards it already
-// holds for the volume being analyzed. A node id may only register once.
+// holds for the volume being analyzed. A node id may only register once;
+// registering it again updates its capacity and adds any new shards. The
+// first registration wins for the node's place in the topology.
 func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
-	if _, ok := a.AllNodes[node.NodeID]; ok {
-		return
-	}
-	a.AllNodes[node.NodeID] = node
-	a.RackToNodes[rackKey(node.DataCenter, node.Rack)] = append(a.RackToNodes[rackKey(node.DataCenter, node.Rack)], node)
-	if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
-		a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
+	registered, ok := a.AllNodes[node.NodeID]
+	if !ok {
+		registered = node
+		a.AllNodes[node.NodeID] = node
+		a.RackToNodes[rackKey(node.DataCenter, node.Rack)] = append(a.RackToNodes[rackKey(node.DataCenter, node.Rack)], node)
+		if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
+			a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
+		}
+	} else {
+		registered.FreeSlots = node.FreeSlots
+		registered.TotalShards = node.TotalShards
 	}
 	seen := node.ShardIDs[:0]
 	for _, shardID := range node.ShardIDs {
@@ -36,9 +42,9 @@ func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
 	for _, shardID := range node.ShardIDs {
 		a.AddShardLocation(ShardLocation{
 			ShardID:    shardID,
-			NodeID:     node.NodeID,
-			DataCenter: node.DataCenter,
-			Rack:       node.Rack,
+			NodeID:     registered.NodeID,
+			DataCenter: registered.DataCenter,
+			Rack:       registered.Rack,
 		})
 	}
 }

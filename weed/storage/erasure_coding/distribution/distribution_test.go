@@ -157,6 +157,20 @@ func TestTopologyAnalysisDuplicateNode(t *testing.T) {
 	assert.Equal(t, 2, a.ShardsByNode["n1"])
 }
 
+// A node auto-registered by a shard location gets its real capacity when the
+// node itself registers later, plus any shards the location did not mention.
+func TestTopologyAnalysisNodeCapacityLateRegistration(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 1))
+	a.Finalize()
+
+	assert.Equal(t, 10, a.AllNodes["n1"].FreeSlots)
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Len(t, a.RackToNodes[rackKey("dc1", "r1")], 1)
+}
+
 // Shards may be registered either through TopologyNode.ShardIDs or through
 // AddShardLocation — both must leave the node holding the shards.
 func TestTopologyAnalysisAddShardLocation(t *testing.T) {
