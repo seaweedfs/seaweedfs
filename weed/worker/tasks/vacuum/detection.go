@@ -109,8 +109,14 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 }
 
 // pickPrimaryReplica returns the eligible replica with the highest garbage
-// ratio. Returns nil if no replica satisfies both gates.
+// ratio. Returns nil if no replica satisfies both gates, or if the volume is
+// tiered to remote storage: the volume server cannot compact it.
 func pickPrimaryReplica(replicas []*types.VolumeHealthMetrics, garbageThreshold float64, minAge time.Duration) *types.VolumeHealthMetrics {
+	for _, m := range replicas {
+		if m.HasRemoteCopy {
+			return nil
+		}
+	}
 	var best *types.VolumeHealthMetrics
 	for _, m := range replicas {
 		if m.GarbageRatio < garbageThreshold {
