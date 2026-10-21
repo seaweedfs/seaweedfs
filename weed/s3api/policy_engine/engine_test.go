@@ -928,28 +928,40 @@ func TestRequestObjectTagCondition(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		method   string
 		target   string
 		headers  map[string]string
 		tagging  string
 		expected PolicyEvaluationResult
 	}{
-		{"matching tag allows", "", nil, "department=engineering", PolicyResultAllow},
-		{"matching tag among others allows", "", nil, "project=alpha&department=engineering", PolicyResultAllow},
-		{"url-encoded value is decoded", "", nil, "department=engin%65ering", PolicyResultAllow},
-		{"other value is not allowed", "", nil, "department=sales", PolicyResultIndeterminate},
-		{"missing tag is not allowed", "", nil, "project=alpha", PolicyResultIndeterminate},
-		{"no tagging header is not allowed", "", nil, "", PolicyResultIndeterminate},
-		{"malformed header is not allowed", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
-		{"last value of a repeated key counts", "", nil, "department=sales&department=engineering", PolicyResultAllow},
-		{"earlier value of a repeated key is ignored", "", nil, "department=engineering&department=sales", PolicyResultIndeterminate},
-		{"header is ignored on PutObjectTagging", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
-		{"header is ignored on a copy that keeps source tags", "", copyHeaders, "department=engineering", PolicyResultIndeterminate},
-		{"header counts on a copy that replaces tags", "", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"matching tag allows", "", "", nil, "department=engineering", PolicyResultAllow},
+		{"matching tag among others allows", "", "", nil, "project=alpha&department=engineering", PolicyResultAllow},
+		{"url-encoded value is decoded", "", "", nil, "department=engin%65ering", PolicyResultAllow},
+		{"other value is not allowed", "", "", nil, "department=sales", PolicyResultIndeterminate},
+		{"missing tag is not allowed", "", "", nil, "project=alpha", PolicyResultIndeterminate},
+		{"no tagging header is not allowed", "", "", nil, "", PolicyResultIndeterminate},
+		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
+		{"last value of a repeated key counts", "", "", nil, "department=sales&department=engineering", PolicyResultAllow},
+		{"earlier value of a repeated key is ignored", "", "", nil, "department=engineering&department=sales", PolicyResultIndeterminate},
+		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy that replaces tags", "", "", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header counts on a multipart create", "POST", "?uploads", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on multipart completion", "POST", "?uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a directory marker", "", "/", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on an acl subresource", "", "?acl", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a GET", "GET", "", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a DELETE", "DELETE", "", nil, "department=engineering", PolicyResultIndeterminate},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-object"+tt.target, nil)
+			method := tt.method
+			if method == "" {
+				method = http.MethodPut
+			}
+			req := httptest.NewRequest(method, "/test-bucket/test-object"+tt.target, nil)
 			for k, v := range tt.headers {
 				req.Header.Set(k, v)
 			}

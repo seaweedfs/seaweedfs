@@ -503,18 +503,15 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 }
 
 // requestObjectTags returns the tags that X-Amz-Tagging will store on the
-// object, or nil when the handler takes its tags from somewhere else.
+// object, or nil when the handler ignores the header — otherwise a tag
+// attached to a read or to a write that never stores it would satisfy a
+// tag-conditioned policy the object cannot meet.
 func requestObjectTags(r *http.Request) map[string]string {
 	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
 	if tagging == "" {
 		return nil
 	}
-	// PutObjectTagging reads the tags from the body, and a copy keeps the
-	// source's tags unless the directive is REPLACE.
-	if r.URL.Query().Has("tagging") {
-		return nil
-	}
-	if r.Header.Get("X-Amz-Copy-Source") != "" && r.Header.Get(s3_constants.AmzObjectTaggingDirective) != "REPLACE" {
+	if !storesRequestObjectTags(r) {
 		return nil
 	}
 	// A malformed header is rejected by the handler with InvalidTag.
@@ -529,6 +526,39 @@ func requestObjectTags(r *http.Request) map[string]string {
 		tags[key] = vals[len(vals)-1]
 	}
 	return tags
+}
+
+// storesRequestObjectTags reports whether the request's handler saves the
+// X-Amz-Tagging header on the object: PutObject, a copy under
+// X-Amz-Tagging-Directive: REPLACE, and CreateMultipartUpload do; every
+// other operation — reads, deletes, part uploads, completion, tagging
+// subresources — does not.
+func storesRequestObjectTags(r *http.Request) bool {
+	query := r.URL.Query()
+	if r.Method == http.MethodPost {
+		return query.Has("uploads") && !query.Has("uploadId")
+	}
+	if r.Method != http.MethodPut {
+		return false
+	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
+	}
+	if query.Has("tagging") || query.Has("partNumber") || query.Has("uploadId") {
+		return false
+	}
+	// An explicit directory-marker PUT stores no tags.
+	if strings.HasSuffix(r.URL.Path, "/") && r.ContentLength <= 1024 {
+		return false
+	}
+	// The other PUT subresources (acl, retention, legal-hold, ...) never store
+	// object tags; a plain object PUT carries only signing parameters.
+	for key := range query {
+		if !strings.HasPrefix(key, "X-Amz-") {
+			return false
+		}
+	}
+	return true
 }
 
 // IsMultipartContinuationAction returns true for actions that do not carry
