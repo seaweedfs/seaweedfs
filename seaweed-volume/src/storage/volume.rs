@@ -4322,11 +4322,25 @@ impl Volume {
         {
             return false;
         }
-        if self.should_quarantine() {
-            return false;
+        // Go takes noWriteLock around the quarantine check and the flag
+        // change; here a compare-exchange gives the same ordering — a
+        // heartbeat refusal landing between the check and the swap fails the
+        // swap, and the retry sees the quarantine mark the heartbeat set
+        // first.
+        loop {
+            if self.should_quarantine() {
+                return false;
+            }
+            let flags = self.no_write.load(Ordering::Acquire);
+            let promoted = (flags & !NO_WRITE_OR_DELETE) | NO_WRITE_CAN_DELETE;
+            if self
+                .no_write
+                .compare_exchange(flags, promoted, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
         }
-        self.no_write.store(NO_WRITE_CAN_DELETE, Ordering::Release);
-        true
     }
 
     /// Recompute the Go-style write/delete mode from the current remote tier
