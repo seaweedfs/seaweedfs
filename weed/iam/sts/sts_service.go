@@ -316,6 +316,10 @@ type SessionInfo struct {
 	// RoleId is the unique ID of the role the session was issued for; empty
 	// for sessions issued before role IDs were recorded.
 	RoleId string `json:"roleId,omitempty"`
+
+	// SourceAccessKeyId is the access key the session was minted for, when the
+	// minting service recorded it (AssumeRoleForPrincipal).
+	SourceAccessKeyId string `json:"sourceAccessKeyId,omitempty"`
 }
 
 // NewSTSService creates a new STS service
@@ -780,7 +784,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 // issueSession mints temporary credentials and the self-contained JWT that
 // carries the whole session, shared by every assume-role entry point.
 func (s *STSService) issueSession(roleArn, roleId, roleSessionName, sessionPolicy string,
-	durationSeconds *int64, providerName, subject string) (*AssumeRoleResponse, error) {
+	durationSeconds *int64, providerName, subject string, options ...func(*STSSessionClaims)) (*AssumeRoleResponse, error) {
 
 	sessionDuration := s.CalculateSessionDuration(durationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
@@ -809,6 +813,9 @@ func (s *STSService) issueSession(roleArn, roleId, roleSessionName, sessionPolic
 		WithMaxDuration(sessionDuration)
 	if sessionPolicy != "" {
 		sessionClaims.WithSessionPolicy(sessionPolicy)
+	}
+	for _, option := range options {
+		option(sessionClaims)
 	}
 
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
@@ -863,6 +870,10 @@ type AssumeRoleForPrincipalRequest struct {
 
 	// DurationSeconds requests a session lifetime.
 	DurationSeconds *int64
+
+	// SourceAccessKeyId optionally records the access key the caller
+	// authenticated with, so the session can be tied to that key.
+	SourceAccessKeyId string
 }
 
 // AssumeRoleForPrincipal issues session credentials for a caller that a
@@ -908,7 +919,8 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 	// Iceberg credential vending resolves no role definition, so its sessions
 	// carry no role ID and stay bound by name.
 	return s.issueSession(request.RoleArn, "", request.RoleSessionName, sessionPolicy,
-		request.DurationSeconds, request.ProviderName, request.Principal)
+		request.DurationSeconds, request.ProviderName, request.Principal,
+		func(c *STSSessionClaims) { c.WithSourceAccessKeyId(request.SourceAccessKeyId) })
 }
 
 // ValidateSessionToken validates a session token and returns session information

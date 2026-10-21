@@ -170,6 +170,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	if !compareSignatureV2(v2Signature, expectedV2Signature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 
@@ -228,6 +229,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 

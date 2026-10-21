@@ -114,7 +114,7 @@ func TestTablePrefixSessionPolicyLeavesBucketLocationUnconditioned(t *testing.T)
 }
 
 func TestIcebergSessionNameIsBounded(t *testing.T) {
-	name := icebergSessionName(strings.Repeat("principal", 10), "warehouse", "ns/table")
+	name := icebergSessionName(strings.Repeat("principal", 10), "warehouse", "ns/table", "")
 	if len(name) > 64 {
 		t.Errorf("session name is %d chars, want at most 64", len(name))
 	}

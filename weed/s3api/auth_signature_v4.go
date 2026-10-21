@@ -414,6 +414,9 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 				return nil, nil, "", nil, s3err.ErrAccessDenied
 			}
 		}
+		// The key of the credential that verified: the audit log and the
+		// catalog's vended sessions name it (never a key re-read from the request).
+		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
