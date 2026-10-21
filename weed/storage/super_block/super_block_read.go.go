@@ -34,10 +34,16 @@ func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBloc
 	if superBlock.ExtraSize > 0 {
 		// read more
 		extraData := make([]byte, int(superBlock.ExtraSize))
+		if n, e := datBackend.ReadAt(extraData, SuperBlockSize); e != nil {
+			if n != len(extraData) {
+				err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.Name(), e)
+				return
+			}
+		}
 		superBlock.Extra = &master_pb.SuperBlockExtra{}
 		err = proto.Unmarshal(extraData, superBlock.Extra)
 		if err != nil {
-			err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.Name(), err)
+			err = fmt.Errorf("cannot unmarshal volume %s super block extra: %v", datBackend.Name(), err)
 			return
 		}
 	}
