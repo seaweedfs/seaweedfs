@@ -172,9 +172,10 @@ func newLineageLayout(reference *parquet.Schema) (*lineageLayout, error) {
 		offsets = append(offsets, leaves)
 		leaves += leafCount(f)
 	}
-	// The lineage columns are compressed like the reference's own columns: a
-	// leaf that declares no codec is written uncompressed, 16 bytes a row.
-	codec := lineageCodec(reference)
+	// The lineage columns are compressed like the reference's data columns
+	// (not like a lineage column it already has): a leaf that declares no
+	// codec is written uncompressed, 16 bytes a row.
+	codec := lineageCodec(base)
 	lineageLeaf := func(id int) parquet.Node {
 		return parquet.FieldID(parquet.Compressed(parquet.Optional(parquet.Leaf(parquet.Int64Type)), codec), id)
 	}
@@ -401,11 +402,13 @@ func mergedFileFirstRowID(data []byte) (*int64, error) {
 	return nil, nil
 }
 
-// lineageCodec is the codec of the reference's first leaf that declares one,
+// lineageCodec is the codec of the first data column leaf that declares one,
 // ZSTD when none does.
-func lineageCodec(reference parquet.Node) compress.Codec {
-	if c := columnCodec(reference); c != nil {
-		return c
+func lineageCodec(base []parquet.Field) compress.Codec {
+	for _, f := range base {
+		if c := columnCodec(f); c != nil {
+			return c
+		}
 	}
 	return &zstd.Codec{}
 }

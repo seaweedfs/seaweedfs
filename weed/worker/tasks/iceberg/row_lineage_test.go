@@ -9,6 +9,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/parquet-go/parquet-go/format"
 
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -411,6 +412,31 @@ func TestCompactCompressesLineageColumns(t *testing.T) {
 		}
 		if seen == 0 {
 			t.Errorf("%s: no lineage column", name)
+		}
+	}
+}
+
+// The lineage codec follows the data columns: an input whose own _row_id
+// comes first and is uncompressed does not leave the new lineage columns
+// uncompressed.
+func TestLineageCodecFollowsDataColumns(t *testing.T) {
+	schema := parquet.NewSchema("table", parquet.Group{
+		iceberg.RowIDColumnName: parquet.FieldID(parquet.Compressed(parquet.Optional(parquet.Int(64)), &parquet.Uncompressed), iceberg.RowIDFieldID),
+		"id":                    parquet.FieldID(parquet.Compressed(parquet.Int(64), &zstd.Codec{}), 1),
+	})
+	if first := schema.Fields()[0].Name(); first != iceberg.RowIDColumnName {
+		t.Fatalf("setup: first column %s, want %s", first, iceberg.RowIDColumnName)
+	}
+	layout, err := newLineageLayout(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range layout.schema.Fields() {
+		if f.Name() != iceberg.RowIDColumnName && f.Name() != iceberg.LastUpdatedSequenceNumberColumnName {
+			continue
+		}
+		if c := f.Compression(); c == nil || c.CompressionCodec() != format.Zstd {
+			t.Errorf("%s compressed with %v, want ZSTD like the data column", f.Name(), c)
 		}
 	}
 }
