@@ -659,7 +659,16 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
-			return err
+			if !absentEntry(err) {
+				return err
+			}
+			ctx := &PolicyContext{RequestTags: req.Tags, TagKeys: requestTagKeys}
+			if rType == ResourceTypeTable {
+				if _, ctx.Namespace, ctx.TableName, err = parseTableFromARN(req.ResourceARN); err != nil {
+					return err
+				}
+			}
+			return h.authorizeAbsentResource(r, client, "TagResource", req.ResourceARN, resourcePath, "not authorized to tag resource", ctx)
 		}
 
 		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
@@ -793,7 +802,16 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
-			return err
+			if !absentEntry(err) {
+				return err
+			}
+			ctx := &PolicyContext{}
+			if rType == ResourceTypeTable {
+				if _, ctx.Namespace, ctx.TableName, err = parseTableFromARN(req.ResourceARN); err != nil {
+					return err
+				}
+			}
+			return h.authorizeAbsentResource(r, client, "ListTagsForResource", req.ResourceARN, resourcePath, "not authorized to list tags for resource", ctx)
 		}
 
 		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
@@ -913,7 +931,16 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
 		if err != nil {
-			return err
+			if !absentEntry(err) {
+				return err
+			}
+			ctx := &PolicyContext{TagKeys: req.TagKeys}
+			if rType == ResourceTypeTable {
+				if _, ctx.Namespace, ctx.TableName, err = parseTableFromARN(req.ResourceARN); err != nil {
+					return err
+				}
+			}
+			return h.authorizeAbsentResource(r, client, "UntagResource", req.ResourceARN, resourcePath, "not authorized to untag resource", ctx)
 		}
 
 		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
@@ -1015,6 +1042,54 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 
 	h.writeJSON(w, http.StatusOK, nil)
 	return nil
+}
+
+// authorizeAbsentResource answers a tag operation whose target carries no
+// readable metadata. A caller holding a grant on the bucket that owns the
+// name, or an identity-level or admin grant, is told the resource is absent;
+// anyone else is refused with the operation's denial.
+func (h *S3TablesHandler) authorizeAbsentResource(r *http.Request, client filer_pb.SeaweedFilerClient, operation, resourceARN, resourcePath, message string, ctx *PolicyContext) error {
+	parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
+	if len(parts) < 2 {
+		return filer_pb.ErrNotFound
+	}
+	bucketName := parts[1]
+	bucketPath := GetTableBucketPath(bucketName)
+	ctx.TableBucketName = bucketName
+
+	var bucketMeta tableBucketMetadata
+	var bucketPolicy string
+	if data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata); err == nil {
+		if err := json.Unmarshal(data, &bucketMeta); err != nil {
+			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+		}
+	} else if !absentEntry(err) {
+		return err
+	}
+	if policy, err := h.readPolicy(r, client, bucketPath); err == nil {
+		bucketPolicy = policy
+	} else if !absentEntry(err) {
+		return err
+	}
+	if tags, err := h.readTags(r.Context(), client, bucketPath); err == nil {
+		if tags != nil {
+			ctx.TableBucketTags = tags
+		}
+	} else if !absentEntry(err) {
+		return err
+	}
+
+	principal := h.getAccountID(r)
+	ctx.TrustedIssuers = h.trustedIssuers(r)
+	ctx.IsLocalAccountID = h.localAccountIDs
+	ctx.IdentityActions = getIdentityActions(r)
+	ctx.DefaultAllow = h.defaultAllowFor(r)
+	if deniedByPolicy(operation, principal, bucketPolicy, resourceARN, ctx) ||
+		(!CheckPermissionWithContext(operation, principal, bucketMeta.OwnerAccountID, bucketPolicy, resourceARN, ctx) &&
+			!h.mayLearnAbsence(r, operation, bucketName)) {
+		return NewAuthError(operation, principal, message)
+	}
+	return filer_pb.ErrNotFound
 }
 
 // resolveResourcePath determines the resource path and extended attribute key from a resource ARN
