@@ -96,9 +96,10 @@ pub struct VolumeServerState {
     pub seed_master_set: std::collections::HashSet<String>,
     /// Master this server takes as leader, in canonical http `host:port`
     /// form. Empty until the heartbeat confirms one — a peer that answered a
-    /// stream without naming a leader, or the leader a follower named. The
-    /// heartbeat writes; admission and lookups read. Mirrors Go's
-    /// `currentMaster` plus `currentMasterLock`.
+    /// stream without naming a leader, or the leader a follower named — and
+    /// cleared again when no master reports one. The heartbeat writes;
+    /// admission and lookups read. Mirrors Go's `currentMaster` plus
+    /// `currentMasterLock`.
     pub current_master_url: tokio::sync::RwLock<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
     pub self_url: String,

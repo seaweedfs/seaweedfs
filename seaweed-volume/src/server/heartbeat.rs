@@ -155,7 +155,11 @@ pub async fn run_heartbeat_with_state(
                 }
                 PostAction::SleepPulse => {
                     new_leader = None;
-                    tokio::time::sleep(pulse).await;
+                    // The lookup spends part of the retry delay rather than
+                    // adding to it.
+                    let retry_at = tokio::time::Instant::now() + pulse;
+                    refresh_leader_from_peers(&config, &state, pulse).await;
+                    tokio::time::sleep_until(retry_at).await;
                 }
             }
 
@@ -252,6 +256,34 @@ pub async fn try_get_master_configuration(
         .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
         .await?;
     Ok(resp.into_inner())
+}
+
+/// Publish the leader the configured masters report, so lookups stop going
+/// to the master the heartbeat just lost while the loop retries. Without an
+/// answer inside `timeout` the published master is cleared: the lost master
+/// is dead or no longer leader, and a follower answers lookups from its own
+/// cache rather than refusing them. Mirrors Go's refreshLeaderFromPeers.
+async fn refresh_leader_from_peers(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    timeout: Duration,
+) {
+    let lookup = async {
+        for master_addr in &config.master_addresses {
+            let grpc_addr = to_grpc_address(master_addr);
+            if let Ok(resp) =
+                try_get_master_configuration(&grpc_addr, state.outgoing_grpc_tls.as_ref()).await
+                && !resp.leader.is_empty()
+            {
+                return Some(resp.leader);
+            }
+        }
+        None
+    };
+    match tokio::time::timeout(timeout, lookup).await {
+        Ok(Some(leader)) => publish_current_master(state, &leader).await,
+        _ => state.current_master_url.write().await.clear(),
+    }
 }
 
 fn is_stopping(state: &VolumeServerState) -> bool {
