@@ -33,8 +33,13 @@ func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
 	}
 }
 
-// AddShardLocation records one shard's placement in the topology.
+// AddShardLocation records one shard's placement in the topology. Repeated
+// calls for a shard already known to its node are ignored, so callers may
+// either set ShardIDs on the TopologyNode or register each shard here.
 func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
+	if contains(a.NodeToShards[loc.NodeID], loc.ShardID) {
+		return
+	}
 	a.ShardsByDC[loc.DataCenter]++
 	a.ShardsByRack[loc.Rack]++
 	a.ShardsByNode[loc.NodeID]++
@@ -42,6 +47,9 @@ func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
 	a.RackToShards[loc.Rack] = append(a.RackToShards[loc.Rack], loc.ShardID)
 	a.NodeToShards[loc.NodeID] = append(a.NodeToShards[loc.NodeID], loc.ShardID)
 	a.TotalShards++
+	if node, ok := a.AllNodes[loc.NodeID]; ok && !contains(node.ShardIDs, loc.ShardID) {
+		node.ShardIDs = append(node.ShardIDs, loc.ShardID)
+	}
 }
 
 // Finalize computes topology statistics after all nodes and shards are added.

@@ -125,6 +125,21 @@ func TestTopologyAnalysis(t *testing.T) {
 	assert.Equal(t, []int{0, 1, 2}, a.RackToShards["r1"])
 }
 
+// Shards may be registered either through TopologyNode.ShardIDs or through
+// AddShardLocation — both must leave the node holding the shards.
+func TestTopologyAnalysisAddShardLocation(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 5))
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalShards)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+}
+
 func TestPlanRebalanceAcrossDCs(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("a1", "dcA", "rA1", 10, 0, 1, 2, 3))
