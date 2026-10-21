@@ -320,6 +320,27 @@ func TestPlanRebalanceNodeTargetAfterMoves(t *testing.T) {
 	assert.Equal(t, []int{6, 5, 4}, plan.Analysis.AllNodes["n2"].ShardIDs)
 }
 
+// A shard that already has a copy anywhere in the destination domain must not
+// be moved there again — the second copy adds no redundancy.
+func TestPlanRebalanceNoDuplicateShardInDomain(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 10, 3))
+	a.AddNode(makeNode("b2", "dcB", "rB2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// dcA holds 4, dcB holds 1, target 3 each: one move, and it cannot be shard 3
+	require.Len(t, plan.Moves, 1)
+	assert.Equal(t, 2, plan.Moves[0].ShardID)
+	assert.Equal(t, []int{2}, plan.Analysis.AllNodes["b2"].ShardIDs)
+	assert.Equal(t, []int{3}, plan.Analysis.AllNodes["b1"].ShardIDs)
+}
+
 func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
 	a := NewTopologyAnalysis()
 	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))

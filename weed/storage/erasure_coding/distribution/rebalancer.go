@@ -109,9 +109,20 @@ func (r *Rebalancer) PlanRebalance(analysis *TopologyAnalysis) (*RebalancePlan, 
 			if src == nil {
 				continue
 			}
+			// a shard already inside the destination domain gains nothing there
+			duplicate := false
+			for _, n := range dstNodes {
+				if contains(n.ShardIDs, shardID) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
 			var dst *TopologyNode
 			for _, n := range dstNodes {
-				if n.FreeSlots > 0 && !contains(n.ShardIDs, shardID) && (dst == nil || nodeLess(n, dst)) {
+				if n.FreeSlots > 0 && (dst == nil || nodeLess(n, dst)) {
 					dst = n
 				}
 			}
