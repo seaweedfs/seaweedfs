@@ -20,6 +20,10 @@ var (
 	upload UploadOptions
 )
 
+// uploadBatchSize is how many files a -dir upload submits per batch: one
+// assign RPC fetches all their file ids, and the batch uploads in parallel.
+const uploadBatchSize = 32
+
 type UploadOptions struct {
 	master       *string
 	dir          *string
@@ -85,6 +89,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if *upload.dir == "" {
 			return false
 		}
+		var paths []string
 		err = filepath.Walk(util.ResolvePath(*upload.dir), func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
@@ -93,23 +98,7 @@ func runUpload(cmd *Command, args []string) bool {
 							return nil
 						}
 					}
-					parts, e := operation.NewFileParts([]string{path})
-					if e != nil {
-						return e
-					}
-					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
-						Replication: *upload.replication,
-						Collection:  *upload.collection,
-						DataCenter:  *upload.dataCenter,
-						Ttl:         *upload.ttl,
-						DiskType:    *upload.diskType,
-						MaxMB:       *upload.maxMB,
-					}, *upload.usePublicUrl)
-					bytes, _ := json.Marshal(results)
-					fmt.Println(string(bytes))
-					if e != nil {
-						return e
-					}
+					paths = append(paths, path)
 				}
 			} else {
 				fmt.Println(err)
@@ -119,6 +108,28 @@ func runUpload(cmd *Command, args []string) bool {
 		if err != nil {
 			fmt.Println(err.Error())
 			return false
+		}
+		for batchStart := 0; batchStart < len(paths); batchStart += uploadBatchSize {
+			batchEnd := min(batchStart+uploadBatchSize, len(paths))
+			parts, e := operation.NewFileParts(paths[batchStart:batchEnd])
+			if e != nil {
+				fmt.Println(e.Error())
+				return false
+			}
+			results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
+				Replication: *upload.replication,
+				Collection:  *upload.collection,
+				DataCenter:  *upload.dataCenter,
+				Ttl:         *upload.ttl,
+				DiskType:    *upload.diskType,
+				MaxMB:       *upload.maxMB,
+			}, *upload.usePublicUrl)
+			bytes, _ := json.Marshal(results)
+			fmt.Println(string(bytes))
+			if e != nil {
+				fmt.Println(e.Error())
+				return false
+			}
 		}
 	} else {
 		parts, e := operation.NewFileParts(args)
