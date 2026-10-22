@@ -298,7 +298,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		Resubscribe: processor.ResubscribeCh(),
 	}
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	err := pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	// Jobs admitted before the stream ended keep running; drain them so the
+	// retry loop's replay cannot race an older write past a newer one.
+	processor.Drain()
+	return err
 
 }
 

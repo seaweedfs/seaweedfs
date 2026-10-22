@@ -206,6 +206,18 @@ func (t *MetadataProcessor) ResubscribeCh() <-chan struct{} {
 	return t.resubscribeCh
 }
 
+// Drain blocks until every admitted job has finished. Callers whose stream
+// just ended use it before reconnecting: a replayed event must not race a
+// still-running job for the same path, or the older write could finish last
+// and clobber the newer one.
+func (t *MetadataProcessor) Drain() {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	for t.activeJobCount > 0 {
+		t.activeJobsCond.Wait()
+	}
+}
+
 // pathAncestors returns all proper ancestor directories of p.
 // For "/a/b/c", returns ["/a/b", "/a", "/"].
 func pathAncestors(p util.FullPath) []util.FullPath {
