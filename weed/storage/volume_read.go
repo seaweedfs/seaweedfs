@@ -66,9 +66,12 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
-			// The meta read ended the request, so its success may reset the
-			// streak — unlike one preceding a payload read.
-			v.checkReadWriteError(nil)
+			// A must-meta-only read ends here, so its success may reset the
+			// streak. A streamed GET's meta read precedes the payload read,
+			// which reports the outcome itself.
+			if readOption.MustMetaOnly {
+				v.checkReadWriteError(nil)
+			}
 		}
 	}
 	if readOption == nil || !readOption.IsMetaOnly {
@@ -93,6 +96,13 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		return
 	}
 	return -1, ErrorNotFound
+}
+
+// NoteMetaOnlySuccess records a request that ended at the metadata read
+// (e.g. a HEAD or a cookie mismatch), so its success may reset the streak —
+// unlike a meta read that precedes a payload read.
+func (v *Volume) NoteMetaOnlySuccess() {
+	v.checkReadWriteError(nil)
 }
 
 // read needle at a specific offset
