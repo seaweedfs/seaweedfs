@@ -89,6 +89,13 @@ type OIDCProvider struct {
 	jtiMaxSize   atomic.Int64
 	jtiLastSweep atomic.Int64 // unix nano of the last sweep; rate limits eager cleanups
 
+	// jtiStoreMu guards the jtiStore/jtiCount pair: replay-state handoffs
+	// (AdoptReplayStateFrom, MergeReplayStateFrom) repoint them under the
+	// write lock while the consume path holds a read lock, so a consume can
+	// never land in a store the handoff already drained and abandoned.
+	// It is always acquired before jtiSweepMu, never while holding it.
+	jtiStoreMu sync.RWMutex
+
 	// jtiMu guards the lifecycle of the cleanup worker: jtiCleanupCancel and
 	// jtiCleanupDone. The worker itself only touches jtiStore/jtiCount, so
 	// holding jtiMu while waiting for it is safe.
@@ -951,9 +958,16 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 			expiresAt: expiresAt,
 		}
 
+		// The read lock pins the store/count pair for the whole test-and-set
+		// so a replay-state handoff cannot repoint them mid-check and strand
+		// this consume in an abandoned store.
+		p.jtiStoreMu.RLock()
+		store, count := p.jtiStore, p.jtiCount
+
 		// Atomic test-and-set detects replays before any capacity work runs,
 		// so a replayed token cannot trigger cleanup scans.
-		if _, loaded := p.jtiStore.LoadOrStore(key, entry); loaded {
+		if _, loaded := store.LoadOrStore(key, entry); loaded {
+			p.jtiStoreMu.RUnlock()
 			glog.Warningf("OIDC provider %q: Token replay detected (jti: %s)",
 				p.name, jtiLogKey(key))
 			return nil, fmt.Errorf("%w: jti %s has already been used",
@@ -963,16 +977,17 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 		// The count is incremented as part of the insert, so concurrent
 		// validations cannot all slip under the limit: whoever pushes the
 		// count over evicts their own entry and is rejected.
-		newCount := p.jtiCount.Add(1)
+		newCount := count.Add(1)
 		maxSize := p.jtiMaxSize.Load()
 		if newCount > maxSize {
 			// Over the bound: expired entries may still occupy slots, so
 			// reclaim them with a synchronized sweep before rejecting.
-			p.sweepExpiredJTIs()
-			if p.jtiCount.Load() > maxSize {
-				if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
-					p.jtiCount.Add(-1)
+			p.sweepJTIStore(store, count)
+			if count.Load() > maxSize {
+				if _, loaded := store.LoadAndDelete(key); loaded {
+					count.Add(-1)
 				}
+				p.jtiStoreMu.RUnlock()
 				glog.Errorf("OIDC provider %q: JTI cache FULL (%d entries) - rejecting token. "+
 					"This may indicate a DoS attack or insufficient cache size. Consider increasing JTICacheMaxSize.",
 					p.name, maxSize)
@@ -983,6 +998,7 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 				p.name, (newCount*100)/maxSize, newCount, maxSize)
 			go p.performEagerCleanup()
 		}
+		p.jtiStoreMu.RUnlock()
 
 		glog.V(4).Infof("OIDC provider %q: Registered JTI %s (expires at %v, cache size: %d)",
 			p.name, jtiLogKey(key), expiresAt, newCount)
@@ -1419,15 +1435,15 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 
 // evictExpiredJTIs removes entries whose expiry has passed and returns how
 // many it deleted. Caller must hold jtiSweepMu.
-func (p *OIDCProvider) evictExpiredJTIs(now time.Time) int {
+func (p *OIDCProvider) evictExpiredJTIs(now time.Time, store *sync.Map, count *atomic.Int64) int {
 	removed := 0
-	p.jtiStore.Range(func(key, value interface{}) bool {
+	store.Range(func(key, value interface{}) bool {
 		expiresAt := value.(*jtiEntry).expiresAt
 		if !expiresAt.IsZero() && now.After(expiresAt) {
 			// LoadAndDelete reports whether this call actually removed the
 			// entry, so concurrent deletes cannot decrement the count twice.
-			if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
-				p.jtiCount.Add(-1)
+			if _, loaded := store.LoadAndDelete(key); loaded {
+				count.Add(-1)
 				removed++
 			}
 		}
@@ -1436,17 +1452,31 @@ func (p *OIDCProvider) evictExpiredJTIs(now time.Time) int {
 	return removed
 }
 
+// replayState returns the provider's current store/count pair.
+func (p *OIDCProvider) replayState() (*sync.Map, *atomic.Int64) {
+	p.jtiStoreMu.RLock()
+	defer p.jtiStoreMu.RUnlock()
+	return p.jtiStore, p.jtiCount
+}
+
+// sweepJTIStore runs one serialized expiry scan over the given store. It only
+// takes jtiSweepMu, so callers already holding jtiStoreMu may use it.
+func (p *OIDCProvider) sweepJTIStore(store *sync.Map, count *atomic.Int64) {
+	p.jtiSweepMu.Lock()
+	defer p.jtiSweepMu.Unlock()
+	p.jtiLastSweep.Store(time.Now().UnixNano())
+	if removed := p.evictExpiredJTIs(time.Now(), store, count); removed > 0 {
+		glog.V(4).Infof("OIDC provider %q: Cleaned up %d expired JTI entries (remaining: %d)",
+			p.name, removed, count.Load())
+	}
+}
+
 // sweepExpiredJTIs runs a scan that is guaranteed to complete before the
 // caller proceeds; the capacity-rejection path uses it so a fresh token is
 // not refused while expired entries still hold slots.
 func (p *OIDCProvider) sweepExpiredJTIs() {
-	p.jtiSweepMu.Lock()
-	defer p.jtiSweepMu.Unlock()
-	p.jtiLastSweep.Store(time.Now().UnixNano())
-	if removed := p.evictExpiredJTIs(time.Now()); removed > 0 {
-		glog.V(4).Infof("OIDC provider %q: Cleaned up %d expired JTI entries (remaining: %d)",
-			p.name, removed, p.jtiCount.Load())
-	}
+	store, count := p.replayState()
+	p.sweepJTIStore(store, count)
 }
 
 // performEagerCleanup performs an opportunistic cleanup of expired JTI
@@ -1460,16 +1490,17 @@ func (p *OIDCProvider) performEagerCleanup() {
 	if time.Since(time.Unix(0, p.jtiLastSweep.Load())) < eagerCleanupMinInterval {
 		return
 	}
+	store, count := p.replayState()
 	if !p.jtiSweepMu.TryLock() {
 		return
 	}
 	defer p.jtiSweepMu.Unlock()
 	p.jtiLastSweep.Store(time.Now().UnixNano())
 
-	beforeCount := p.jtiCount.Load()
-	if removed := p.evictExpiredJTIs(time.Now()); removed > 0 {
+	beforeCount := count.Load()
+	if removed := p.evictExpiredJTIs(time.Now(), store, count); removed > 0 {
 		glog.Infof("OIDC provider %q: Eager cleanup removed %d expired JTI entries (%d -> %d)",
-			p.name, removed, beforeCount, p.jtiCount.Load())
+			p.name, removed, beforeCount, count.Load())
 	} else {
 		glog.Warningf("OIDC provider %q: Eager cleanup found no expired entries to remove. "+
 			"Cache may be filled with valid long-lived tokens. Consider increasing JTICacheMaxSize.",
@@ -1537,28 +1568,48 @@ func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
 	if old == nil || old == p {
 		return
 	}
+	p.jtiStoreMu.Lock()
 	p.jtiSweepMu.Lock()
 	p.jtiStore, p.jtiCount = old.jtiStore, old.jtiCount
 	p.jtiSweepMu.Unlock()
+	p.jtiStoreMu.Unlock()
 }
 
-// MergeReplayStateFrom folds the consumed-token entries of another provider
-// into this one's store, so rejections the other recorded keep holding when
-// its records move to a shared provider. Unlike AdoptReplayStateFrom it swaps
-// nothing, so it is safe on a provider that is already serving validators.
+// MergeReplayStateFrom hands this provider's store to another provider and
+// then folds the other's consumed-token entries in, so rejections the other
+// recorded keep holding when its records move to a shared provider. Repointing
+// first means tokens the other still consumes — in-flight exchanges or ones
+// routed to it before the provider map updates — land in the shared store
+// instead of a store this merge already drained. Unlike AdoptReplayStateFrom
+// it swaps nothing of its own, so it is safe on a provider that is already
+// serving validators.
 func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
 	if other == nil || other == p {
 		return
 	}
+	p.jtiStoreMu.RLock()
+	defer p.jtiStoreMu.RUnlock()
+	store, count := p.jtiStore, p.jtiCount
+
+	other.jtiStoreMu.Lock()
+	oldStore := other.jtiStore
+	if oldStore == store {
+		other.jtiStoreMu.Unlock()
+		return
+	}
+	other.jtiStore, other.jtiCount = store, count
+	other.jtiStoreMu.Unlock()
+
 	p.jtiSweepMu.Lock()
 	defer p.jtiSweepMu.Unlock()
 	now := time.Now()
-	other.jtiStore.Range(func(key, value interface{}) bool {
-		if expiresAt := value.(*jtiEntry).expiresAt; !expiresAt.IsZero() && now.After(expiresAt) {
+	oldStore.Range(func(key, value interface{}) bool {
+		entry := value.(*jtiEntry)
+		if expiresAt := entry.expiresAt; !expiresAt.IsZero() && now.After(expiresAt) {
 			return true
 		}
-		if _, loaded := p.jtiStore.LoadOrStore(key, value); !loaded {
-			p.jtiCount.Add(1)
+		if _, loaded := store.LoadOrStore(key, value); !loaded {
+			count.Add(1)
 		}
 		return true
 	})

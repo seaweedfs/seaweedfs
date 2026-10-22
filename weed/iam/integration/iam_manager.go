@@ -978,6 +978,11 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 				shared.MergeReplayStateFrom(cached.provider)
 			}
 			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
+			if cached != nil && cached.provider != nil && cached.provider != shared && !m.oidcProviderStillReferenced(cached.provider) {
+				if err := cached.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown superseded OIDC provider %s: %v", rec.ARN, err)
+				}
+			}
 		} else if cached != nil && cached.fingerprint == fingerprint {
 			provider = cached.provider
 			sharedProviders[configFingerprint] = provider

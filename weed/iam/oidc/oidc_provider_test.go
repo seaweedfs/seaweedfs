@@ -1557,3 +1557,45 @@ func TestMergeReplayStateFromKeepsConsumedTokensRejected(t *testing.T) {
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
 		"a token the superseded provider consumed must stay rejected after the merge")
 }
+
+// The superseded provider may keep serving exchanges while the provider map
+// updates; tokens it consumes after the handoff must land in the shared store
+// or they would reopen for replay.
+func TestMergeReplayStateFromSharesLiveStore(t *testing.T) {
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	newConfig := func() *OIDCConfig {
+		return &OIDCConfig{
+			Issuer:   jwksServer.URL,
+			ClientID: "test-client",
+			JWKSUri:  jwksServer.URL + "/jwks",
+		}
+	}
+
+	first := NewOIDCProvider("test-oidc-first")
+	require.NoError(t, first.Initialize(newConfig()))
+	defer first.Shutdown(context.Background())
+
+	second := NewOIDCProvider("test-oidc-second")
+	require.NoError(t, second.Initialize(newConfig()))
+	defer second.Shutdown(context.Background())
+
+	second.MergeReplayStateFrom(first)
+
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "late-consume-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err := first.ValidateTokenSingleUse(context.Background(), token)
+	require.NoError(t, err, "the superseded provider still accepts a fresh token")
+
+	_, err = second.ValidateTokenSingleUse(context.Background(), token)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"a token consumed through the superseded provider after the handoff must stay rejected")
+}
