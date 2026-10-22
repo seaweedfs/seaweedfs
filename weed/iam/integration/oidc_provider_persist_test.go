@@ -595,3 +595,57 @@ func TestRefreshReusesProviderWhileRecordIsUnchanged(t *testing.T) {
 	assert.NotContains(t, mgr.oidcManagedProviders, arn)
 	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer))
 }
+
+// stsKnowsIssuerForAccount is stsKnowsIssuer through the account-scoped
+// lookup used for providers that have no global record.
+func stsKnowsIssuerForAccount(t *testing.T, mgr *IAMManager, issuer, accountID string) bool {
+	t.Helper()
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer, "sub": "probe", "aud": "aud", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte("not-the-providers-key"))
+	require.NoError(t, err)
+	_, _, err = mgr.GetSTSService().ValidateWebIdentityTokenForAccount(context.Background(), tok, accountID)
+	require.Error(t, err, "an unsigned-by-provider token for %s was accepted", issuer)
+	return !strings.Contains(err.Error(), "no identity provider registered")
+}
+
+// Two records for one issuer with identical validation settings share a
+// single provider — and with it the consumed-token (jti) replay store — so a
+// token spent through one account's record stays spent through the other's.
+// Removing one record of the pair must not shut the shared provider down.
+func TestSameIssuerRecordsShareOneProvider(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOIDCProviderStore()
+	mgr := startServer(t, store)
+
+	arnA := arnOf(t, persistTestAPIIssuer) + "-account-a"
+	arnB := arnOf(t, persistTestAPIIssuer) + "-account-b"
+	for _, rec := range []*OIDCProviderRecord{
+		{ARN: arnA, URL: persistTestAPIIssuer, AccountID: "111111111111", ClientIDs: []string{"aud"}},
+		{ARN: arnB, URL: persistTestAPIIssuer, AccountID: "222222222222", ClientIDs: []string{"aud"}},
+	} {
+		require.NoError(t, store.StoreProvider(ctx, "", rec))
+	}
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+
+	shared := mgr.oidcManagedProviders[arnA].provider
+	require.NotNil(t, shared)
+	assert.Same(t, shared, mgr.oidcManagedProviders[arnB].provider,
+		"identical records for one issuer built separate replay stores")
+
+	// Removing one record of the pair keeps the shared provider alive.
+	require.NoError(t, store.DeleteProvider(ctx, "", arnA))
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	assert.Same(t, shared, mgr.oidcManagedProviders[arnB].provider,
+		"a removed sibling record shut down the shared provider")
+	assert.True(t, stsKnowsIssuerForAccount(t, mgr, persistTestAPIIssuer, "222222222222"))
+
+	// The remaining record diverging rebuilds its own provider.
+	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
+		ARN: arnB, URL: persistTestAPIIssuer, AccountID: "222222222222", ClientIDs: []string{"b-aud"},
+	}))
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	assert.NotSame(t, shared, mgr.oidcManagedProviders[arnB].provider,
+		"a changed record kept the shared provider")
+	assert.True(t, stsKnowsIssuerForAccount(t, mgr, persistTestAPIIssuer, "222222222222"))
+}

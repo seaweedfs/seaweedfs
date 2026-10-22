@@ -953,6 +953,10 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 		m.oidcManagedProviders = make(map[string]*oidcManagedProvider)
 	}
 	seen := make(map[string]struct{}, len(records))
+	// Records for one issuer with identical validation settings share a single
+	// provider — and with it the consumed-token (jti) replay store — so a token
+	// spent through one account's record stays spent through the other's too.
+	sharedProviders := make(map[string]*oidc.OIDCProvider)
 	for _, rec := range records {
 		if rec == nil || rec.URL == "" {
 			continue
@@ -963,10 +967,20 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 		}
 		seen[key] = struct{}{}
 		fingerprint := oidcProviderFingerprint(rec)
+		configFingerprint := oidcProviderConfigFingerprint(rec)
 		var provider *oidc.OIDCProvider
 		cached := m.oidcManagedProviders[key]
-		if cached != nil && cached.fingerprint == fingerprint {
+		if shared, ok := sharedProviders[configFingerprint]; ok {
+			provider = shared
+			if cached != nil && cached.provider != nil && cached.provider != shared {
+				// The record's own provider is superseded; its consumed
+				// tokens move to the shared store so none reopen for replay.
+				shared.MergeReplayStateFrom(cached.provider)
+			}
+			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
+		} else if cached != nil && cached.fingerprint == fingerprint {
 			provider = cached.provider
+			sharedProviders[configFingerprint] = provider
 		} else {
 			var err error
 			provider, err = buildOIDCProviderFromRecord(rec)
@@ -978,13 +992,17 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 			if cached != nil && cached.provider != nil {
 				// The rebuild must keep rejecting tokens the replaced
 				// provider consumed; carry its replay store over, then stop
-				// its cleanup worker so only the new one sweeps the store.
+				// its cleanup worker so only the new one sweeps the store —
+				// unless another record still references that provider.
 				provider.AdoptReplayStateFrom(cached.provider)
+			}
+			sharedProviders[configFingerprint] = provider
+			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
+			if cached != nil && cached.provider != nil && !m.oidcProviderStillReferenced(cached.provider) {
 				if err := cached.provider.Shutdown(ctx); err != nil {
 					glog.Warningf("shutdown replaced OIDC provider %s: %v", rec.ARN, err)
 				}
 			}
-			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
 		}
 		// Multiple records may share an issuer when each is scoped to a
 		// different account; STS picks the right one at validation time
@@ -997,7 +1015,9 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 	for key, managed := range m.oidcManagedProviders {
 		if _, ok := seen[key]; !ok {
 			delete(m.oidcManagedProviders, key)
-			if managed.provider != nil {
+			// A removed record's provider may be shared by records that are
+			// still present; shut it down only when nothing references it.
+			if managed.provider != nil && !m.oidcProviderStillReferenced(managed.provider) {
 				if err := managed.provider.Shutdown(ctx); err != nil {
 					glog.Warningf("shutdown removed OIDC provider %s: %v", key, err)
 				}
@@ -1015,6 +1035,17 @@ type oidcManagedProvider struct {
 	provider    *oidc.OIDCProvider
 }
 
+// oidcProviderStillReferenced reports whether any managed record still points
+// at the provider, so a shared provider is not shut down with a removed record.
+func (m *IAMManager) oidcProviderStillReferenced(provider *oidc.OIDCProvider) bool {
+	for _, managed := range m.oidcManagedProviders {
+		if managed.provider == provider {
+			return true
+		}
+	}
+	return false
+}
+
 // oidcProviderFingerprint identifies the record content a provider was built
 // from, so a refresh rebuilds the provider only when that content changed.
 func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
@@ -1027,6 +1058,21 @@ func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
 		AllowedPrincipalTagKeys []string
 		PolicyClaim             string
 	}{rec.ARN, rec.AccountID, rec.URL, rec.ClientIDs, rec.Thumbprints, rec.AllowedPrincipalTagKeys, rec.PolicyClaim})
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
+}
+
+// oidcProviderConfigFingerprint identifies the validation settings a provider
+// is built from — everything buildOIDCProviderFromRecord consumes except the
+// record's name — so records that differ only in identity reuse one provider.
+func oidcProviderConfigFingerprint(rec *OIDCProviderRecord) string {
+	key, _ := json.Marshal(&oidc.OIDCConfig{
+		Issuer:                  rec.URL,
+		ClientIDs:               rec.ClientIDs,
+		Thumbprints:             rec.Thumbprints,
+		AllowedPrincipalTagKeys: rec.AllowedPrincipalTagKeys,
+		PolicyClaim:             rec.PolicyClaim,
+	})
 	sum := sha256.Sum256(key)
 	return hex.EncodeToString(sum[:])
 }
