@@ -129,8 +129,9 @@ func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 		{"shared-user", "", "no recorded key"},
 	} {
 		session := vend(t, s3a, tc.principal, tc.key, "")
-		assert.Empty(t, sessionInfo(t, s3a, session).SourceAccessKeyId, tc.why)
-		assert.Empty(t, sessionInfo(t, s3a, session).BoundAccessKeyId, tc.why)
+		info := sessionInfo(t, s3a, session)
+		assert.Equal(t, tc.key, info.SourceAccessKeyId, tc.why)
+		assert.Empty(t, info.BoundAccessKeyId, tc.why)
 		assert.Equal(t, s3err.ErrNone, use(t, s3a, session), tc.why)
 	}
 }

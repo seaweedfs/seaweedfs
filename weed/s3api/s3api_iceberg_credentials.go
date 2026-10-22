@@ -68,11 +68,12 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 
 	accessKey := s3_constants.AccessKeyIdFromContext(ctx)
 	request := &sts.AssumeRoleForPrincipalRequest{
-		RoleArn:         s3a.icebergCredentialRole,
-		Principal:       principal,
-		RoleSessionName: icebergSessionName(principal, bucket, prefix, accessKey),
-		ProviderName:    icebergVendedCredentialsProvider,
-		Policy:          &policy,
+		RoleArn:           s3a.icebergCredentialRole,
+		Principal:         principal,
+		RoleSessionName:   icebergSessionName(principal, bucket, prefix, accessKey),
+		ProviderName:      icebergVendedCredentialsProvider,
+		Policy:            &policy,
+		SourceAccessKeyId: accessKey,
 	}
 	// Bind the session to the caller's key when the caller authenticated with a
 	// stored identity's key — a marker its verifier records, so a caller that
@@ -84,7 +85,6 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 	// its own claim — SourceAccessKeyId is audit-only for compatibility with
 	// tokens minted before the binding existed.
 	if storedKey, fingerprint := s3_constants.StoredCredentialFromContext(ctx); storedKey != "" {
-		request.SourceAccessKeyId = storedKey
 		request.BoundAccessKeyId = storedKey
 		request.BoundAccessKeyFingerprint = fingerprint
 	}
