@@ -4,7 +4,7 @@ This document tracks the implementation status of POSIX features in the SeaweedF
 
 ## Overview
 
-The POSIX compliance test suite currently has several tests that are skipped due to requiring platform-specific implementations. This roadmap outlines the steps needed to implement these tests and achieve comprehensive POSIX compliance validation.
+The platform-specific tests listed below are implemented; this document records the implementation plan that produced them, plus the one feature still pending.
 
 ## Current Status
 
@@ -21,14 +21,15 @@ The POSIX compliance test suite currently has several tests that are skipped due
 
 ### 🚧 Partially Implemented
 - Cross-platform compatibility (basic implementation with platform-specific access time handling)
+- File sealing (still skipped; Linux-specific, pending)
 
-### ❌ Missing Implementations
+### ✅ Implemented Platform-Specific Features
 
 #### 1. Extended Attributes (xattr)
 **Priority: High**
 **Platforms: Linux, macOS, FreeBSD**
 
-**Current Status:** All xattr tests are skipped
+**Status:** Implemented
 - `TestExtendedAttributes/SetExtendedAttribute`
 - `TestExtendedAttributes/ListExtendedAttributes` 
 - `TestExtendedAttributes/RemoveExtendedAttribute`
@@ -58,7 +59,7 @@ func setXattr(path, name string, value []byte) error {
 **Priority: High**
 **Platforms: All POSIX systems**
 
-**Current Status:** All mmap tests are skipped
+**Status:** Implemented
 - `TestMemoryMapping/MemoryMappedRead`
 - `TestMemoryMapping/MemoryMappedWrite`
 
@@ -84,7 +85,7 @@ func testMmap(t *testing.T, filePath string) {
 **Priority: Medium**
 **Platforms: All POSIX systems**
 
-**Current Status:** Vectored I/O test is skipped
+**Status:** Implemented
 - `TestAdvancedIO/VectoredIO`
 
 **Implementation Plan:**
@@ -100,7 +101,7 @@ func testVectoredIO(t *testing.T, filePath string) {
 **Priority: Medium**  
 **Platforms: Linux, some Unix variants**
 
-**Current Status:** Direct I/O test is skipped
+**Status:** Implemented
 - `TestDirectIO/DirectIO`
 
 **Implementation Plan:**
@@ -116,7 +117,7 @@ func testDirectIO(t *testing.T, filePath string) {
 **Priority: Medium**
 **Platforms: Linux, some Unix variants**
 
-**Current Status:** fallocate test is skipped
+**Status:** Implemented
 - `TestFilePreallocation/Fallocate`
 
 **Implementation Plan:**
@@ -132,7 +133,7 @@ func testFallocate(t *testing.T, filePath string) {
 **Priority: Low**
 **Platforms: Linux, FreeBSD, some Unix variants**
 
-**Current Status:** sendfile test is skipped
+**Status:** Implemented
 - `TestZeroCopyTransfer/Sendfile`
 
 **Implementation Plan:**
@@ -148,7 +149,7 @@ func testSendfile(t *testing.T, srcPath, dstPath string) {
 **Priority: Low**
 **Platforms: Linux only**
 
-**Current Status:** File sealing test is skipped
+**Current Status:** File sealing test is still skipped
 - `TestFileSealing`
 
 **Implementation Plan:**

@@ -340,8 +340,7 @@ make -f posix_Makefile test-nfstest-posix
 sudo usermod -a -G fuse $USER
 # Re-login or run: newgrp fuse
 
-# Check mount options
-make -f posix_Makefile test-posix-basic MOUNT_OPTIONS="-allowOthers"
+# Mount with -allowOthers if other users need access (test config MountOptions)
 ```
 
 #### Extended Attributes Not Supported
@@ -366,14 +365,14 @@ getfattr --version
 ### Debug Mode
 
 ```bash
-# Run tests with verbose output
-make -f posix_Makefile test-posix-basic VERBOSE=1
+# Test targets already run go test -v and keep logs under reports/
+make -f posix_Makefile test-posix-basic
 
-# Keep test files for inspection
-make -f posix_Makefile test-posix-basic CLEANUP=false
+# Run against an existing external mount instead of a fresh cluster
+make -f posix_Makefile test-posix-basic TEST_MOUNT_POINT=/path/to/mount
 
-# Enable debug logging
-make -f posix_Makefile test-posix-basic DEBUG=true
+# Extend the 45-minute per-suite timeout
+make -f posix_Makefile test-posix-full TEST_TIMEOUT=90m
 ```
 
 ### Manual Test Execution
@@ -381,10 +380,10 @@ make -f posix_Makefile test-posix-basic DEBUG=true
 ```bash
 # Run specific test
 cd test/fuse_integration
-go test -v -run TestPOSIXCompliance/FileOperations posix_compliance_test.go
+go test -v -run 'TestPOSIXCompliance/FileOperations' .
 
 # Run with custom timeout
-go test -v -timeout 30m -run TestPOSIXExtended posix_extended_test.go
+go test -v -timeout 30m -run TestPOSIXExtended .
 ```
 
 ## 🔄 CI/CD Integration
@@ -457,14 +456,6 @@ pipeline {
         }
     }
 }
-```
-
-### Docker-based Testing
-
-```bash
-# Build Docker image for testing
-cd test/fuse_integration
-make -f posix_Makefile docker-test-posix
 ```
 
 ## 🎯 POSIX Compliance Checklist
