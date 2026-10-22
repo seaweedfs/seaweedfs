@@ -61,10 +61,14 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 			err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 		}
 		if err != nil {
+			v.checkReadWriteError(err)
 			return 0, err
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
+			// The meta read ended the request, so its success may reset the
+			// streak — unlike one preceding a payload read.
+			v.checkReadWriteError(nil)
 		}
 	}
 	if readOption == nil || !readOption.IsMetaOnly {

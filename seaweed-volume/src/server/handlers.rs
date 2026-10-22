@@ -207,9 +207,15 @@ fn read_needle_for_get(
     if request.try_meta_first(plan.size()) {
         plan.read_meta(&mut n)?;
         if n.cookie != cookie {
+            // The meta read answered the request.
+            plan.note_meta_only_success();
             return Ok(None);
         }
         if request.served_from_source(&n) {
+            if request.is_head {
+                // HEAD ends here; no payload read will record the success.
+                plan.note_meta_only_success();
+            }
             let info = plan.into_stream_info(&n);
             return Ok(Some((n, Some(info))));
         }

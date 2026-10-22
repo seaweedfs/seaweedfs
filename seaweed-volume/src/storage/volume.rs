@@ -861,6 +861,12 @@ impl NeedleReadPlan {
         Ok(())
     }
 
+    /// A successful meta read ended the request (e.g. HEAD), so it may reset
+    /// the streak — unlike a meta read that precedes a payload read.
+    pub(crate) fn note_meta_only_success(&self) {
+        self.io_errors.check_read_write_error(None);
+    }
+
     /// For a reply served from the data file, after `read_meta` filled `n`.
     pub(crate) fn into_stream_info(self, n: &Needle) -> NeedleStreamInfo {
         // V1 data starts right after the header, V2/V3 after the DataSize field.
