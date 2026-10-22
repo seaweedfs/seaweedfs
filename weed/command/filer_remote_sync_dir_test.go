@@ -2016,3 +2016,101 @@ func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 		t.Fatalf("stamped RemoteEntry = %+v, want the entry's own stamp kept (mtime 100)", filerClient.updated.Entry.RemoteEntry)
 	}
 }
+
+// TestReshapeCrossMountRename covers an update event with a path outside
+// the mount. The subscription delivers a rename when either path is under
+// the mount, and an update of the /etc/remote directory entry itself through
+// the daemon's /etc/remote prefix; processUpdateEvent then sliced the mount
+// prefix off both paths, which panics on a path shorter than the mount (seen
+// on a replay: "slice bounds out of range [20:11]" on the 11-byte
+// /etc/remote, every restart dying on the same event) and names a key in the
+// wrong tree on a longer one.
+func TestReshapeCrossMountRename(t *testing.T) {
+	const mount = "/buckets/mount"
+	chunked := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, Chunks: []*filer_pb.FileChunk{{FileId: "3,01", Size: 7}}}
+	}
+	event := func(oldDir, oldName, newDir, newName string, oldEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		if oldEntry == nil {
+			oldEntry = chunked(oldName)
+		}
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory:         oldDir,
+			TsNs:              42,
+			EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry, NewParentPath: newDir, NewEntry: chunked(newName), Signatures: []int32{7}},
+		}
+	}
+
+	t.Run("into the mount from a shorter path is a create of the new entry", func(t *testing.T) {
+		resp := event("/plain", "in.txt", mount+"/lock", "in.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsCreate(got) {
+			t.Fatalf("got %+v inMount=%v, want a create", got, inMount)
+		}
+		if got.Directory != mount+"/lock" || got.EventNotification.NewParentPath != mount+"/lock" || got.EventNotification.NewEntry.Name != "in.txt" {
+			t.Errorf("create at %s/%s (dir %s), want %s/in.txt", got.EventNotification.NewParentPath, got.EventNotification.NewEntry.Name, got.Directory, mount+"/lock")
+		}
+		if got.TsNs != 42 || len(got.EventNotification.Signatures) != 1 {
+			t.Errorf("timestamp and signatures must carry over: %+v", got)
+		}
+	})
+
+	t.Run("into the mount from a longer path outside it is a create, not a key in the wrong tree", func(t *testing.T) {
+		resp := event("/buckets/other/deeper/tree", "x.txt", mount, "x.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsCreate(got) || got.EventNotification.NewParentPath != mount {
+			t.Fatalf("got %+v inMount=%v, want a create under %s", got, inMount, mount)
+		}
+	})
+
+	t.Run("out of the mount is a delete of the old entry", func(t *testing.T) {
+		resp := event(mount+"/lock", "out.txt", "/plain", "out.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsDelete(got) {
+			t.Fatalf("got %+v inMount=%v, want a delete", got, inMount)
+		}
+		if got.Directory != mount+"/lock" || got.EventNotification.OldEntry.Name != "out.txt" {
+			t.Errorf("delete of %s/%s, want %s/out.txt", got.Directory, got.EventNotification.OldEntry.Name, mount+"/lock")
+		}
+	})
+
+	t.Run("out of the mount keeps the object of a remote-only entry", func(t *testing.T) {
+		remoteOnly := &filer_pb.Entry{Name: "out.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 7, RemoteMtime: 1786096669}}
+		resp := event(mount+"/lock", "out.txt", "/plain", "out.txt", remoteOnly)
+		if got, inMount := reshapeCrossMountRename(mount, resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("both paths inside is the update itself", func(t *testing.T) {
+		resp := event(mount+"/a", "x.txt", mount+"/b", "y.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount, resp); !inMount || got != resp {
+			t.Fatalf("got %+v inMount=%v, want the same event", got, inMount)
+		}
+	})
+
+	t.Run("an update of the /etc/remote directory entry itself is not the mount's event", func(t *testing.T) {
+		dirEntry := &filer_pb.Entry{Name: "remote", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory:         "/etc",
+			EventNotification: &filer_pb.EventNotification{OldEntry: dirEntry, NewParentPath: "/etc", NewEntry: dirEntry},
+		}
+		if got, inMount := reshapeCrossMountRename("/buckets/c4x-storage", resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("neither path inside is not the mount's event", func(t *testing.T) {
+		resp := event("/plain", "x.txt", "/buckets/mounted-not", "x.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount, resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("a trailing slash on the mount flag changes nothing", func(t *testing.T) {
+		resp := event("/plain", "in.txt", mount, "in.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount+"/", resp); !inMount || !filer_pb.IsCreate(got) {
+			t.Fatalf("got %+v inMount=%v, want a create", got, inMount)
+		}
+	})
+}

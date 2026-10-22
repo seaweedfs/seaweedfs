@@ -140,6 +140,13 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
+		if message.OldEntry != nil && message.NewEntry != nil {
+			reshaped, inMount := reshapeCrossMountRename(mountedDir, resp)
+			if !inMount {
+				return nil
+			}
+			resp, message = reshaped, reshaped.EventNotification
+		}
 		if filer_pb.IsCreate(resp) {
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
@@ -204,6 +211,53 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+// reshapeCrossMountRename maps an update event onto the side of it the mount
+// covers. The subscription delivers a rename when either of its paths lies
+// under the mounted directory, and only a path under it maps to a remote
+// key: toRemoteStorageLocation slices the mount prefix off, which panics on
+// a shorter path and names a key in the wrong tree on a longer one. A rename
+// into the mount is the creation of the new entry, a rename out of it the
+// deletion of the old entry's object, unless that entry is remote-only and
+// the object holds its only copy. An update with both paths inside is
+// returned as is; one with neither is not the mount's (false).
+func reshapeCrossMountRename(mountedDir string, resp *filer_pb.SubscribeMetadataResponse) (*filer_pb.SubscribeMetadataResponse, bool) {
+	message := resp.EventNotification
+	oldInMount := isUnderMount(mountedDir, resp.Directory, message.OldEntry.Name)
+	newInMount := isUnderMount(mountedDir, message.NewParentPath, message.NewEntry.Name)
+	switch {
+	case oldInMount && newInMount:
+		return resp, true
+	case newInMount:
+		glog.V(0).Infof("rename into mount %s: %s/%s -> %s/%s, creating", mountedDir, resp.Directory, message.OldEntry.Name, message.NewParentPath, message.NewEntry.Name)
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory:         message.NewParentPath,
+			EventNotification: &filer_pb.EventNotification{NewEntry: message.NewEntry, NewParentPath: message.NewParentPath, Signatures: message.Signatures},
+			TsNs:              resp.TsNs,
+		}, true
+	case oldInMount:
+		if isRemoteOnly(message.OldEntry) {
+			glog.V(0).Infof("rename out of mount %s: %s/%s -> %s/%s, keeping the remote-only object", mountedDir, resp.Directory, message.OldEntry.Name, message.NewParentPath, message.NewEntry.Name)
+			return nil, false
+		}
+		glog.V(0).Infof("rename out of mount %s: %s/%s -> %s/%s, deleting", mountedDir, resp.Directory, message.OldEntry.Name, message.NewParentPath, message.NewEntry.Name)
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory:         resp.Directory,
+			EventNotification: &filer_pb.EventNotification{OldEntry: message.OldEntry, Signatures: message.Signatures},
+			TsNs:              resp.TsNs,
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+// isUnderMount reports whether dir/name is the mounted directory or lies
+// below it; a trailing slash on the mount flag does not change the answer.
+func isUnderMount(mountedDir string, dir string, name string) bool {
+	mount := strings.TrimSuffix(mountedDir, "/")
+	path := string(util.NewFullPath(dir, name))
+	return path == mount || strings.HasPrefix(path, mount+"/")
 }
 
 // processDeleteEvent removes the remote object an entry mapped to. A remote
