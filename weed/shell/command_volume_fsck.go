@@ -701,12 +701,13 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		}
 		item.path = util.FullPath(pathBytes)
 		item.hardLinkId = nil
-		if _, err := io.ReadFull(br, buffer[:4]); err == nil {
-			if hardLinkIdSize := util.BytesToUint32(buffer[:4]); hardLinkIdSize > 0 {
-				item.hardLinkId = make([]byte, int(hardLinkIdSize))
-				if _, err := io.ReadFull(br, item.hardLinkId); err != nil {
-					return fmt.Errorf("read fid hard link id for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
-				}
+		if _, err := io.ReadFull(br, buffer[:4]); err != nil {
+			return fmt.Errorf("read fid hard link id size for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+		}
+		if hardLinkIdSize := util.BytesToUint32(buffer[:4]); hardLinkIdSize > 0 {
+			item.hardLinkId = make([]byte, int(hardLinkIdSize))
+			if _, err := io.ReadFull(br, item.hardLinkId); err != nil {
+				return fmt.Errorf("read fid hard link id for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
 			}
 		}
 		needleId := types.NeedleId(item.fileKey)

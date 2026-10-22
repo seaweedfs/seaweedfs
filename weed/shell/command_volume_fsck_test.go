@@ -383,3 +383,40 @@ func TestVolumeFsckCheckOneVolumeQueuesOrphansWithHardLinkId(t *testing.T) {
 		t.Fatalf("queued hardLinkId %v, want nil", queued[1].hardLinkId)
 	}
 }
+
+// A .fid file cut short inside the hard link id field is corrupt input, not a
+// record without a link id: the reader must fail instead of emitting the entry
+// with a nil id.
+func TestReadFilerFileIdFileRejectsTruncatedHardLinkId(t *testing.T) {
+	tempDir := t.TempDir()
+	var verbose bool
+	c := &commandVolumeFsck{tempFolder: tempDir, verbose: &verbose, writer: io.Discard}
+
+	f, err := os.Create(getFilerFileIdFile(tempDir, 7))
+	if err != nil {
+		t.Fatalf("create fid file: %v", err)
+	}
+	buffer := make([]byte, readbufferSize)
+	util.Uint64toBytes(buffer, 11)
+	util.Uint32toBytes(buffer[8:], 1)
+	util.Uint32toBytes(buffer[12:], uint32(len("/orphan/b")))
+	if _, err := f.Write(buffer); err != nil {
+		t.Fatalf("write fid header: %v", err)
+	}
+	if _, err := f.Write([]byte("/orphan/b")); err != nil {
+		t.Fatalf("write fid path: %v", err)
+	}
+	if _, err := f.Write([]byte{0, 0}); err != nil {
+		t.Fatalf("write partial hard link id size: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close fid file: %v", err)
+	}
+
+	err = c.readFilerFileIdFile(7, func(types.NeedleId, util.FullPath, []byte) {
+		t.Fatal("callback fired for a truncated record")
+	})
+	if err == nil {
+		t.Fatal("expected an error for a truncated hard link id size")
+	}
+}
