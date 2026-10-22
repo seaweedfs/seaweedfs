@@ -44,6 +44,11 @@ dir = "./filerldb2"                    # directory to store level db files
 # each bucket has its own meta store.
 enabled = false
 dir = "./filerldb3"                    # directory to store level db files
+# optional tuning, applied to the default store and each bucket store
+# block_cache_size_mb = 32             # sorted-table read cache
+# write_buffer_size_mb = 16            # memtable size before flushing to disk
+# block_size_kb = 4                    # uncompressed block ('page') size inside table files
+# compaction_table_size_mb = 2         # target size of generated table files
 
 [rocksdb]
 # local on disk, similar to leveldb
