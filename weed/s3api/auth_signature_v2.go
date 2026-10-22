@@ -18,6 +18,7 @@
 package s3api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/subtle"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -67,7 +69,7 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return iam.doesPresignV2SignatureMatch(r)
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.Header) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	accessKey := formValues.Get("AWSAccessKeyId")
 	if accessKey == "" {
@@ -107,6 +109,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 	if !compareSignatureV2(signature, calculateSignatureV2(policy, cred.SecretKey)) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 
@@ -164,6 +167,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	if !compareSignatureV2(v2Signature, expectedV2Signature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 
@@ -222,6 +226,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 

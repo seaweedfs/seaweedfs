@@ -100,6 +100,11 @@ type STSSessionClaims struct {
 	// guaranteed stable per OpenID Connect Core 1.0. Empty for non-federated
 	// session types.
 	ParentUser string `json:"puid,omitempty"`
+
+	// SourceAccessKeyId is the access key the caller authenticated with when
+	// a SeaweedFS service minted the session for it (AssumeRoleForPrincipal);
+	// empty for every other session type.
+	SourceAccessKeyId string `json:"src_ak,omitempty"`
 }
 
 // NewSTSSessionClaims creates new STS session claims with all required information
@@ -156,6 +161,8 @@ func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionI
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
 		ParentUser:       c.ParentUser,
+		// The access key the session was minted for, if recorded
+		SourceAccessKeyId: c.SourceAccessKeyId,
 		// Provide the Subject (sub) from registered claims
 		Subject:     c.Subject,
 		Credentials: credentials,
@@ -247,6 +254,12 @@ func (c *STSSessionClaims) WithMaxDuration(duration time.Duration) *STSSessionCl
 // WithSessionName sets the session name
 func (c *STSSessionClaims) WithSessionName(sessionName string) *STSSessionClaims {
 	c.SessionName = sessionName
+	return c
+}
+
+// WithSourceAccessKeyId records the access key the session was minted for.
+func (c *STSSessionClaims) WithSourceAccessKeyId(accessKeyId string) *STSSessionClaims {
+	c.SourceAccessKeyId = accessKeyId
 	return c
 }
 
