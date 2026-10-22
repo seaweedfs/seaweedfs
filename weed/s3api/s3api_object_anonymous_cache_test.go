@@ -238,10 +238,12 @@ func TestAnonymousObjectACLVersionedDirectoryIdentity(t *testing.T) {
 							f.entries["/buckets/b/folder/.versions"] = &filer_pb.Entry{IsDirectory: true, Extended: map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("")}}
 						}
 						// Equivalent filer-path spellings must not recover a different object's data.
-						assertMissing(serveAnonymousRead(s3a, method, "folder/", route.query, headers))
+						for _, object := range []string{"folder/", "folder//", "folder\\"} {
+							assertMissing(serveAnonymousRead(s3a, method, object, route.query, headers))
+						}
 						// Spellings the policy's folder/ grant does not cover are
 						// masked: a miss must be indistinguishable from a denied read.
-						for _, object := range []string{"folder//", "folder\\"} {
+						for _, object := range []string{"folder//x", "folder\\x"} {
 							rr := serveAnonymousRead(s3a, method, object, route.query, headers)
 							require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 						}

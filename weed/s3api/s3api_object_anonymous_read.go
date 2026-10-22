@@ -118,7 +118,7 @@ func (s3a *S3ApiServer) authorizeAnonymousObjectRead(r *http.Request, bucket, ob
 // public-read bucket. Anything else masks the miss as AccessDenied.
 func (s3a *S3ApiServer) authorizeAnonymousBucketList(r *http.Request, bucket string) s3err.ErrorCode {
 	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
-	object := mux.Vars(r)["object"]
+	object := s3_constants.NormalizeObjectKey(mux.Vars(r)["object"])
 	// The caller's query parameters would otherwise retarget these checks
 	// (?policy resolves to GetBucketPolicy) or satisfy a prefix condition on an
 	// unrelated subtree, so each runs on a request with a fixed shape: a
