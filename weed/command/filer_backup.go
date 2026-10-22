@@ -206,7 +206,6 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		glog.V(0).Infof("initialSnapshot done; subscribing from %v", startFrom)
 	}
 
-
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
 		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
