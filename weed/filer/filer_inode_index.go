@@ -164,7 +164,7 @@ func (fsw *FilerStoreWrapper) inodeIndexInScope(path util.FullPath) bool {
 	if fc == nil {
 		return false
 	}
-	return fc.MatchStorageRule(string(path)).InodeIndex
+	return fc.MatchInodeIndexRule(string(path))
 }
 
 // inodeIndexUnder reports whether any entry inside dirPath may carry an inode

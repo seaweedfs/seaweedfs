@@ -301,3 +301,16 @@ func TestInodeIndexActiveUnder(t *testing.T) {
 
 	assert.False(t, NewFilerConf().InodeIndexActiveUnder("/"))
 }
+
+func TestMatchInodeIndexRule(t *testing.T) {
+	fc := inodeIndexConf("/exports")
+	assert.True(t, fc.MatchInodeIndexRule("/exports"))
+	assert.True(t, fc.MatchInodeIndexRule("/exports/sub/file"))
+	assert.False(t, fc.MatchInodeIndexRule("/exports2"))
+	assert.False(t, fc.MatchInodeIndexRule("/exports_old/x"))
+	assert.False(t, fc.MatchInodeIndexRule("/exp"))
+	assert.False(t, fc.MatchInodeIndexRule("/other"))
+
+	assert.True(t, inodeIndexConf("/").MatchInodeIndexRule("/anything"))
+	assert.False(t, NewFilerConf().MatchInodeIndexRule("/exports"))
+}
