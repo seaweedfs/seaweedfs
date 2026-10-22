@@ -244,6 +244,33 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 	processor := NewMetadataProcessor(processEventFn, concurrency, startFrom.UnixNano())
 
+	// AddOffsetFunc only checkpoints while events arrive; persist the
+	// completed watermark on a ticker too so work finishing on a quiet
+	// stream does not sit uncheckpointed until the next event.
+	var lastPersistedTsNs atomic.Int64
+	lastPersistedTsNs.Store(startFrom.UnixNano())
+	stopPersist := make(chan struct{})
+	persistDone := make(chan struct{})
+	go func() {
+		defer close(persistDone)
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopPersist:
+				return
+			case <-ticker.C:
+			}
+			if ts := processor.processedTsWatermark.Load(); ts > lastPersistedTsNs.Load() {
+				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); err == nil {
+					lastPersistedTsNs.Store(ts)
+				} else {
+					glog.Warningf("persist backup offset: %v", err)
+				}
+			}
+		}
+	}()
+
 	var lastLogTsNs = time.Now().UnixNano()
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		processor.AddSyncJob(resp)
@@ -256,7 +283,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		now := time.Now().UnixNano()
 		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
-		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, offsetTsNs)
+		return nil
 	})
 
 	if dataSink.IsIncremental() && *filerBackupOptions.retentionDays > 0 {
@@ -302,6 +329,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	// Jobs admitted before the stream ended keep running; drain them so the
 	// retry loop's replay cannot race an older write past a newer one.
 	processor.Drain()
+	close(stopPersist)
+	<-persistDone
+	if ts := processor.processedTsWatermark.Load(); ts > 0 {
+		if offErr := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); offErr != nil {
+			glog.Warningf("persist backup offset: %v", offErr)
+		}
+	}
 	return err
 
 }
