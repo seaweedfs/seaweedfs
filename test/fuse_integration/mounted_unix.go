@@ -17,8 +17,10 @@ func deviceID(path string) (uint64, error) {
 }
 
 // mountedAt reports whether something is actually mounted at path: a plain
-// directory shares its parent's device, a mount point does not.
+// directory shares its parent's device, a mount point does not. The path is
+// cleaned first so a trailing slash does not make Dir return the mount itself.
 func mountedAt(path string) bool {
+	path = filepath.Clean(path)
 	dev, err := deviceID(path)
 	if err != nil {
 		return false
