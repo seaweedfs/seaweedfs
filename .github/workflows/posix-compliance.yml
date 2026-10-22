@@ -285,12 +285,15 @@ jobs:
           exit 1
         fi
         
-        # Check if this is actually a FUSE mount
+        # Check if this is actually a FUSE mount — the plain directory created
+        # above passes the file test, so without this the suite can run
+        # against the local disk and report a pass it never earned
         if mount | grep -q "$SEAWEEDFS_MOUNT_POINT"; then
           echo "✅ FUSE mount detected:"
           mount | grep "$SEAWEEDFS_MOUNT_POINT"
         else
-          echo "⚠️  Warning: Mount point not found in mount table"
+          echo "❌ Mount point not found in mount table - refusing to test a local directory"
+          exit 1
         fi
     
     - name: Run POSIX compliance tests
