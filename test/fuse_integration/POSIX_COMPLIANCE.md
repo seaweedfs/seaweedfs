@@ -526,8 +526,8 @@ go test -v -bench=. -benchtime=30s posix_compliance_test.go
 #### 1. Mount Permission Issues
 ```bash
 # Error: Permission denied mounting
-# Solution: Check FUSE permissions
-sudo chmod 666 /dev/fuse
+# Solution: Check FUSE permissions — add the user to the fuse group and
+# re-login rather than widening permissions on the device node
 sudo usermod -a -G fuse $USER
 ```
 
