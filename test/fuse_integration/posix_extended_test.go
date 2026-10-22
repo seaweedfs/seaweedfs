@@ -437,7 +437,7 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 		readBuffers := [][]byte{
 			make([]byte, 6), // "Hello "
 			make([]byte, 9), // "vectored "
-			make([]byte, 3), // "I/O "
+			make([]byte, 4), // "I/O "
 			make([]byte, 6), // "world!"
 		}
 
