@@ -695,13 +695,13 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 		"iat": time.Now().Unix(),
 	})
 
-	claims1, err := provider.ValidateToken(context.Background(), token1)
+	claims1, err := provider.ValidateTokenSingleUse(context.Background(), token1)
 	require.NoError(t, err)
 	assert.Equal(t, "user123", claims1.Subject)
 	assert.Equal(t, jti, claims1.Claims["jti"])
 
 	// Test 2: Replay of same token should be rejected
-	claims2, err := provider.ValidateToken(context.Background(), token1)
+	claims2, err := provider.ValidateTokenSingleUse(context.Background(), token1)
 	assert.Error(t, err)
 	assert.Nil(t, claims2)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
@@ -718,7 +718,7 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 		"iat": time.Now().Unix(),
 	})
 
-	claims3, err := provider.ValidateToken(context.Background(), token2)
+	claims3, err := provider.ValidateTokenSingleUse(context.Background(), token2)
 	require.NoError(t, err)
 	assert.Equal(t, "user456", claims3.Subject)
 
@@ -732,11 +732,11 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 		"iat": time.Now().Unix(),
 	})
 
-	claims4, err := provider.ValidateToken(context.Background(), tokenNoJTI)
+	claims4, err := provider.ValidateTokenSingleUse(context.Background(), tokenNoJTI)
 	require.NoError(t, err)
 	assert.Equal(t, "user789", claims4.Subject)
 
-	_, err = provider.ValidateToken(context.Background(), tokenNoJTI)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), tokenNoJTI)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
 		"a jti-less token must not stay reusable while protection is enabled")
 
@@ -750,11 +750,11 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 		"iat": time.Now().Unix(),
 	})
 
-	claims5, err := provider.ValidateToken(context.Background(), tokenNoExp)
+	claims5, err := provider.ValidateTokenSingleUse(context.Background(), tokenNoExp)
 	require.NoError(t, err)
 	assert.Equal(t, "userNoExp", claims5.Subject)
 
-	_, err = provider.ValidateToken(context.Background(), tokenNoExp)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), tokenNoExp)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
 }
 
@@ -788,12 +788,12 @@ func TestOIDCProviderJTIReplayProtectionDisabled(t *testing.T) {
 	})
 
 	// First use - should succeed
-	claims1, err := provider.ValidateToken(context.Background(), token)
+	claims1, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "user123", claims1.Subject)
 
 	// Second use - should ALSO succeed (no replay protection)
-	claims2, err := provider.ValidateToken(context.Background(), token)
+	claims2, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "user123", claims2.Subject)
 }
@@ -828,12 +828,12 @@ func TestOIDCProviderJTIExpiration(t *testing.T) {
 	})
 
 	// First use - should succeed
-	claims1, err := provider.ValidateToken(context.Background(), token)
+	claims1, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "user123", claims1.Subject)
 
 	// Immediate replay - should be rejected
-	_, err = provider.ValidateToken(context.Background(), token)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
 
@@ -841,7 +841,7 @@ func TestOIDCProviderJTIExpiration(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	// Now validation should fail due to EXPIRATION (not replay)
-	_, err = provider.ValidateToken(context.Background(), token)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenExpired))
 }
@@ -888,7 +888,7 @@ func TestOIDCProviderJTIReplayProtectionConcurrent(t *testing.T) {
 			defer wg.Done()
 			<-startBarrier // Wait for start signal
 
-			_, err := provider.ValidateToken(context.Background(), token)
+			_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 			if err == nil {
 				successCount.Add(1)
 			} else if errors.Is(err, providers.ErrProviderTokenReplayed) {
@@ -940,7 +940,7 @@ func TestOIDCProviderJTICacheMaxSize(t *testing.T) {
 			"iat": time.Now().Unix(),
 		})
 
-		_, err := provider.ValidateToken(context.Background(), token)
+		_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 		require.NoError(t, err, "Should accept token %d", i)
 	}
 
@@ -954,7 +954,7 @@ func TestOIDCProviderJTICacheMaxSize(t *testing.T) {
 		"iat": time.Now().Unix(),
 	})
 
-	_, err := provider.ValidateToken(context.Background(), token)
+	_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cache capacity exceeded")
 }
@@ -989,7 +989,7 @@ func TestOIDCProviderJTICleanup(t *testing.T) {
 	})
 
 	// Validation should succeed
-	_, err := provider.ValidateToken(context.Background(), token)
+	_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	require.NoError(t, err)
 
 	// Check cache size is 1
@@ -1061,7 +1061,7 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	})
-	_, err := provider.ValidateToken(context.Background(), token1)
+	_, err := provider.ValidateTokenSingleUse(context.Background(), token1)
 	require.NoError(t, err, "First token should validate successfully")
 
 	// Second initialization should not cause errors
@@ -1070,7 +1070,7 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 
 	// The JTI cache survives re-initialization, so the consumed token is
 	// still detected as a replay rather than being usable again
-	_, err = provider.ValidateToken(context.Background(), token1)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token1)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
 		"Re-initialization must not reopen a consumed token for replay")
 
@@ -1087,11 +1087,11 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	})
-	_, err = provider.ValidateToken(context.Background(), token2)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token2)
 	require.NoError(t, err, "New token should validate")
 
 	// Replay should still be detected
-	_, err = provider.ValidateToken(context.Background(), token2)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token2)
 	assert.Error(t, err, "Replay should be detected")
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed), "Should be a replay error")
 
@@ -1149,7 +1149,7 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
-		_, err := provider.ValidateToken(context.Background(), token)
+		_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 		require.NoError(t, err)
 	}
 
@@ -1165,7 +1165,7 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	})
-	_, err := provider.ValidateToken(context.Background(), token10)
+	_, err := provider.ValidateTokenSingleUse(context.Background(), token10)
 	require.NoError(t, err, "10th token should validate (at capacity)")
 
 	// 11th token should fail (over capacity)
@@ -1177,7 +1177,7 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	})
-	_, err = provider.ValidateToken(context.Background(), token11)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token11)
 	assert.Error(t, err, "11th token should fail (over capacity)")
 	assert.Contains(t, err.Error(), "capacity exceeded", "Should indicate capacity exceeded")
 }
@@ -1353,7 +1353,7 @@ func BenchmarkJTIValidation(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			i := int(tokenIndex.Add(1)-1) % len(tokens)
-			if _, err := provider.ValidateToken(context.Background(), tokens[i]); err != nil {
+			if _, err := provider.ValidateTokenSingleUse(context.Background(), tokens[i]); err != nil {
 				b.Errorf("unexpected validation error: %v", err)
 			}
 		}
@@ -1389,14 +1389,14 @@ func BenchmarkJTIValidationWithReplay(b *testing.B) {
 	})
 
 	// First validation to store the JTI
-	_, err := provider.ValidateToken(context.Background(), token)
+	_, err := provider.ValidateTokenSingleUse(context.Background(), token)
 	require.NoError(b, err)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			// All subsequent validations should be fast replay rejections
-			provider.ValidateToken(context.Background(), token)
+			provider.ValidateTokenSingleUse(context.Background(), token)
 		}
 	})
 }
@@ -1429,7 +1429,53 @@ func BenchmarkJTIValidationNoProtection(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			provider.ValidateToken(context.Background(), token)
+			provider.ValidateTokenSingleUse(context.Background(), token)
 		}
 	})
+}
+
+func TestOIDCProviderBearerValidationDoesNotConsume(t *testing.T) {
+	// Bearer authentication validates the same token on every request, so it
+	// must not consume it; only the single-use exchange rejects a repeat.
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-bearer")
+	jtiEnabled := true
+	require.NoError(t, provider.Initialize(&OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+	}))
+	defer provider.Shutdown(context.Background())
+
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "bearer-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	for i := 0; i < 3; i++ {
+		_, err := provider.ValidateToken(context.Background(), token)
+		require.NoError(t, err, "bearer validation must not consume the token")
+	}
+
+	_, err := provider.Authenticate(context.Background(), token)
+	require.NoError(t, err, "bearer authentication must not consume the token")
+
+	// The same token then exchanged single-use is tracked and a repeat rejected.
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token)
+	require.NoError(t, err)
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
+
+	// Even after the exchange consumed it, bearer validation still accepts:
+	// the token itself remains valid until it expires.
+	_, err = provider.ValidateToken(context.Background(), token)
+	require.NoError(t, err)
 }

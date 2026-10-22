@@ -38,9 +38,6 @@ const (
 	defaultCleanupInterval = 5 * time.Minute
 	// eagerCleanupMinInterval rate limits opportunistic sweeps near capacity
 	eagerCleanupMinInterval = 5 * time.Second
-	// noExpJTIRetention bounds how long the JTI of a token without an exp
-	// claim stays consumed, since such a token never ages the entry out itself
-	noExpJTIRetention = 24 * time.Hour
 	// tokenFingerprintPrefix marks replay-cache keys derived from the token's
 	// own fingerprint, used when the token carries no usable jti claim
 	tokenFingerprintPrefix = "fp:"
@@ -594,6 +591,18 @@ func (p *OIDCProvider) allowedAudiences() []string {
 
 // Authenticate authenticates a user with an OIDC token
 func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, false)
+}
+
+// AuthenticateSingleUse authenticates and consumes the token so a second
+// presentation is rejected as a replay. The web-identity exchange uses it,
+// where a token buys a session exactly once; callers that validate the same
+// token on every request use Authenticate.
+func (p *OIDCProvider) AuthenticateSingleUse(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, true)
+}
+
+func (p *OIDCProvider) authenticate(ctx context.Context, token string, singleUse bool) (*providers.ExternalIdentity, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -603,7 +612,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	}
 
 	// Validate token and get claims
-	claims, err := p.ValidateToken(ctx, token)
+	claims, err := p.validateToken(ctx, token, singleUse)
 	if err != nil {
 		return nil, err
 	}
@@ -770,6 +779,16 @@ func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessT
 
 // ValidateToken validates an OIDC JWT token
 func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, false)
+}
+
+// ValidateTokenSingleUse validates and consumes the token: a second
+// presentation of it is rejected as a replay. See AuthenticateSingleUse.
+func (p *OIDCProvider) ValidateTokenSingleUse(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, true)
+}
+
+func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUse bool) (*providers.TokenClaims, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -902,8 +921,10 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		tokenClaims.Claims[key] = value
 	}
 
-	// Extract and validate JTI claim for replay protection
-	if p.jtiEnabled.Load() {
+	// Extract and validate JTI claim for replay protection. The check runs
+	// only for single-use callers: a bearer token is meant to be presented on
+	// every request, so validating it must not consume it.
+	if singleUse && p.jtiEnabled.Load() {
 		jti, _ := claims["jti"].(string)
 		key := jti
 		if key == "" {
@@ -915,16 +936,15 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		}
 
 		expiresAt := tokenClaims.ExpiresAt
-		if expiresAt.IsZero() {
-			// A token without exp never lets its JTI age out on its own, so
-			// the entry gets a bounded retention instead of living forever.
-			expiresAt = time.Now().Add(noExpJTIRetention)
-		} else {
+		if !expiresAt.IsZero() {
 			expiresAt = expiresAt.Add(clockSkewTolerance)
 			if !time.Now().Before(expiresAt) {
 				return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
 			}
 		}
+		// A token without exp never lets its entry age out on its own: the
+		// zero expiresAt keeps it consumed until the capacity bound forces it
+		// out, so the token can never become usable again.
 
 		entry := &jtiEntry{
 			subject:   subject,
@@ -1402,7 +1422,8 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 func (p *OIDCProvider) evictExpiredJTIs(now time.Time) int {
 	removed := 0
 	p.jtiStore.Range(func(key, value interface{}) bool {
-		if now.After(value.(*jtiEntry).expiresAt) {
+		expiresAt := value.(*jtiEntry).expiresAt
+		if !expiresAt.IsZero() && now.After(expiresAt) {
 			// LoadAndDelete reports whether this call actually removed the
 			// entry, so concurrent deletes cannot decrement the count twice.
 			if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
