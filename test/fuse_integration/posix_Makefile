@@ -197,7 +197,7 @@ benchmark-posix: check-prereqs setup-reports
 ifneq ($(TEST_MOUNT_POINT),)
 	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
 endif
-	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -bench=. -benchmem \
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run '^$$' -bench=. -benchmem \
 		. 2>&1 | \
 		tee $(REPORT_DIR)/posix_benchmark_results.log
 
