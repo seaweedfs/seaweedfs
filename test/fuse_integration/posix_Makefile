@@ -1,5 +1,10 @@
 # SeaweedFS POSIX Compliance Testing Makefile
 
+SHELL := /bin/bash
+# go test is piped through tee everywhere; without pipefail a failing suite
+# still exits 0 because only tee's status propagates.
+.SHELLFLAGS := -o pipefail -c
+
 # Configuration
 WEED_BINARY := $(shell which weed 2>/dev/null || echo "../../weed")
 GO_VERSION := 1.21
@@ -24,15 +29,15 @@ POSIX_EXTERNAL_TESTS := posix_external_test.go
 # file explicitly or the sub-make reads the default Makefile instead.
 MAKE_SELF := $(MAKE) -f $(firstword $(MAKEFILE_LIST))
 
-# Colors for output
-RED := \033[31m
-GREEN := \033[32m
-YELLOW := \033[33m
-BLUE := \033[34m
-MAGENTA := \033[35m
-CYAN := \033[36m
-WHITE := \033[37m
-RESET := \033[0m
+# Colors for output — bash echo does not expand \033, so bake the escapes in
+RED := $(shell printf '\033[31m')
+GREEN := $(shell printf '\033[32m')
+YELLOW := $(shell printf '\033[33m')
+BLUE := $(shell printf '\033[34m')
+MAGENTA := $(shell printf '\033[35m')
+CYAN := $(shell printf '\033[36m')
+WHITE := $(shell printf '\033[37m')
+RESET := $(shell printf '\033[0m')
 
 .DEFAULT_GOAL := help
 
