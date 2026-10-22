@@ -265,7 +265,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		defer ticker.Stop()
 		persist := func() {
 			if ts := resumeTsNsFor(processor); ts != lastPersistedTsNs.Load() {
-				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts, true); err == nil {
+				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); err == nil {
 					lastPersistedTsNs.Store(ts)
 				} else {
 					glog.Warningf("persist backup offset: %v", err)
@@ -450,7 +450,7 @@ func persistSnapshotOffset(grpcDialOption grpc.DialOption, sourceFiler pb.Server
 	backoff := 500 * time.Millisecond
 	var lastErr error
 	for i := 1; i <= attempts; i++ {
-		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, tsNs, true); err == nil {
+		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, tsNs); err == nil {
 			return nil
 		} else {
 			lastErr = err

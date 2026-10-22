@@ -227,7 +227,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			if offsetTsNs == 0 {
 				return
 			}
-			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs, true); err != nil {
+			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs); err != nil {
 				glog.Errorf("failed to save checkpoint for %s on shutdown: %v", name, err)
 			} else {
 				glog.V(0).Infof("saved checkpoint for %s on shutdown: %v", name, time.Unix(0, offsetTsNs))
@@ -339,7 +339,7 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 	// convert to nanosecond
 	fromTsNs := fromTsMs * 1000_000
 	// If not successful, exit the program.
-	setOffsetErr := setOffset(grpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, fromTsNs, true)
+	setOffsetErr := setOffset(grpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, fromTsNs)
 	if setOffsetErr != nil {
 		return setOffsetErr
 	}
@@ -476,7 +476,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastProgressedTsNs = offsetTsNs
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor), true)
+		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor))
 	})
 
 	prefix := sourcePath
@@ -579,10 +579,13 @@ func getOffsetWithFallback(grpcDialOption grpc.DialOption, filer pb.ServerAddres
 
 // A checkpoint write can outlive its caller's wait and land beside the next
 // subscription attempt's writes; issued concurrently they may be applied out
-// of order, moving saved progress backward. Writes to the same persisted key
-// are serialized and stale values dropped. State is keyed by target filer so
-// unrelated streams — or the two directions of a bidirectional sync — never
-// block or shadow each other.
+// of order, moving saved progress backward or forward past events still owed
+// a replay. Writes to the same persisted key are serialized and each is
+// ordered by issuance: a write issued before the last one to land is stale
+// and dropped. Deliberate regressions — resume floors, operator seeds — are
+// issued after the writes they supersede, so they still apply. State is keyed
+// by target filer so unrelated streams — or the two directions of a
+// bidirectional sync — never block or shadow each other.
 var offsetCheckpointWrites = struct {
 	sync.Mutex
 	byKey map[string]*offsetCheckpoint
@@ -590,8 +593,7 @@ var offsetCheckpointWrites = struct {
 
 type offsetCheckpoint struct {
 	sync.Mutex
-	lastWritten    int64
-	hasLastWritten bool
+	lastSeq int64
 }
 
 // resumeTsNsFor floors the processed watermark by the earliest failure the
@@ -606,7 +608,11 @@ func resumeTsNsFor(p *MetadataProcessor) int64 {
 	return ts
 }
 
-func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64, allowRegress bool) error {
+// offsetWriteSeq numbers checkpoint writes in issuance order so a write that
+// lands late can be told apart from the fresher write it would shadow.
+var offsetWriteSeq atomic.Int64
+
+func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
 	syncKey := []byte(signaturePrefix + "____")
 	util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
 	key := string(filer) + "\x00" + string(syncKey)
@@ -619,13 +625,15 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 	}
 	offsetCheckpointWrites.Unlock()
 
+	seq := offsetWriteSeq.Add(1)
 	checkpoint.Lock()
 	defer checkpoint.Unlock()
-	if checkpoint.hasLastWritten && offsetTsNs < checkpoint.lastWritten && !allowRegress {
+	if seq < checkpoint.lastSeq {
 		return nil
 	}
+	checkpoint.lastSeq = seq
 
-	writeErr := pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
@@ -648,11 +656,6 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 		return nil
 
 	})
-	if writeErr == nil {
-		checkpoint.lastWritten = offsetTsNs
-		checkpoint.hasLastWritten = true
-	}
-	return writeErr
 }
 
 func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
