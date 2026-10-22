@@ -95,7 +95,7 @@ func init() {
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
 	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
-	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
+	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server; 0 for no limit")
 	m.maxParallelVacuumPerRack = cmdMaster.Flag.Int("maxParallelVacuumPerRack", 0, "maximum number of volume copies to vacuum in parallel per rack; 0 for no limit")
 	m.vacuumIntervalSeconds = cmdMaster.Flag.Int("vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
 	m.vacuumDeleteEmptyAfterSeconds = cmdMaster.Flag.Int("vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
