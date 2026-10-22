@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestVolumeFsckCanPurgeDirectory(t *testing.T) {
@@ -100,6 +101,21 @@ func (s *stubFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_p
 func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	fullPath := string(util.NewFullPath(req.Directory, req.Name))
 	entry, found := s.entries[fullPath]
+	// mirror the real filer: the condition is checked before the delete runs,
+	// so a stale expectation answers PRECONDITION_FAILED — even for a path
+	// that is already gone
+	for _, cl := range req.GetCondition().GetClauses() {
+		if cl.GetKind() != filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			continue
+		}
+		expected := proto.Clone(cl.GetExpectedEntry()).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(expected.GetChunks())
+		stored := proto.Clone(entry).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(stored.GetChunks())
+		if !proto.Equal(stored, expected) {
+			return &filer_pb.DeleteEntryResponse{Error: "precondition failed", ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+		}
+	}
 	if !found {
 		return &filer_pb.DeleteEntryResponse{Error: filer_pb.ErrNotFound.Error()}, nil
 	}
