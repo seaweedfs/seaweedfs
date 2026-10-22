@@ -179,8 +179,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		return nil, fmt.Errorf("at least one filer address is required")
 	}
 
-	SetAllowBackslashInObjectKey(option.AllowBackslashInKey)
-
 	startTsNs := time.Now().UnixNano()
 
 	v := util.GetViper()
@@ -536,6 +534,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Start the versioning reconciler that drains stranded .versions/
 	// pointer-to-missing-file states without waiting for a client GET.
 	s3ApiServer.versionsReconcilerStop = s3ApiServer.startVersioningReconciler()
+
+	// Publish the key mode only once the server is fully constructed so a
+	// failed construction cannot flip the mode of a running server.
+	SetAllowBackslashInObjectKey(option.AllowBackslashInKey)
 
 	return s3ApiServer, nil
 }
