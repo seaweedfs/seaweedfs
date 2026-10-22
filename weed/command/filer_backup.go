@@ -294,7 +294,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return nil
 		}
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		glog.V(0).Infof("backup %s received %0.2f events/sec, processed through %v", sourceFiler, float64(counter)/(float64(now-lastLogTsNs)/1e9), time.Unix(0, offsetTsNs))
 		lastLogTsNs = now
 		return nil
 	})
