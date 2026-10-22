@@ -61,7 +61,7 @@ func ChunkVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.Volum
 	return batches
 }
 
-func ProcessEcEncodeBatch(env *Env, writer io.Writer, volumeIds []needle.VolumeId, rp *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, collectionForMessage string) (err error) {
+func ProcessEcEncodeBatch(env *Env, writer io.Writer, volumeIds []needle.VolumeId, rp *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, strictPlacement bool, collectionForMessage string) (err error) {
 	topologyInfo, _, err := env.FetchTopology(0)
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func ProcessEcEncodeBatch(env *Env, writer io.Writer, volumeIds []needle.VolumeI
 	if err := EcBalance(env, balanceCollections, "", rp, diskType, maxParallelization, 0, applyBalancing, skippedNodes, nil, volumeIds); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
-	if err := verifyEcShardsBeforeDelete(env, volumeIds, diskType, applyBalancing); err != nil {
+	if err := verifyEcShardsBeforeDelete(env, volumeIds, diskType, applyBalancing, rp, strictPlacement); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}
 	// Past verify the EC copy is recoverable; a delete failure below must not
@@ -830,7 +830,7 @@ func ecShardSummaryByNode(byNode map[pb.ServerAddress]erasure_coding.ShardBits) 
 	return summary
 }
 
-func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType types.DiskType, expectSpread bool) error {
+func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType types.DiskType, expectSpread bool, rp *super_block.ReplicaPlacement, strictPlacement bool) error {
 	// Shard relocations from the preceding EC balance reach the master via
 	// volume-server heartbeats, so freshly distributed shards may not all be
 	// visible in the master topology immediately. Poll a few times before
@@ -843,12 +843,16 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 	// rebalance ran in apply mode), a volume whose shards all still sit on one
 	// node while another node has free slots also aborts the deletion: losing
 	// that node would lose the volume, so the original is the safer copy.
+	// strictPlacement turns the replica-placement caps the balance treats as
+	// preferences into a requirement: a volume still over the node or rack
+	// limit aborts the deletion the same way.
 	const maxAttempts = 10
 	const retryInterval = 2 * time.Second
 
 	var lastErr error
 	var lastDegraded []string
 	var lastClumped []string
+	var lastPlacement []string
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		topoInfo, _, err := env.FetchTopology(0)
 		if err != nil {
@@ -858,6 +862,11 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 		lastErr = nil
 		lastDegraded = lastDegraded[:0]
 		lastClumped = lastClumped[:0]
+		lastPlacement = lastPlacement[:0]
+		var rackOf map[pb.ServerAddress]string
+		if strictPlacement {
+			rackOf = ecShardRackByNode(topoInfo)
+		}
 		for _, vid := range volumeIds {
 			// Count the shards wherever they landed, as waitForEcShardsToRegister
 			// above already does. generateEcShards writes them beside the source
@@ -893,6 +902,12 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 					continue
 				}
 			}
+			if strictPlacement {
+				if violations := ecShardPlacementViolations(vid, byNode, rackOf, rp); len(violations) > 0 {
+					lastPlacement = append(lastPlacement, violations...)
+					continue
+				}
+			}
 			if degraded {
 				lastDegraded = append(lastDegraded, fmt.Sprintf("volume %d: %d/%d shards", vid, union.Count(), totalShards))
 				continue
@@ -902,12 +917,12 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 				vid, union.Count(), totalShards, len(byNode))
 		}
 
-		if lastErr == nil && len(lastDegraded) == 0 && len(lastClumped) == 0 {
+		if lastErr == nil && len(lastDegraded) == 0 && len(lastClumped) == 0 && len(lastPlacement) == 0 {
 			return nil
 		}
 		if attempt < maxAttempts-1 {
-			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v %v",
-				attempt+1, maxAttempts, lastErr, lastDegraded, lastClumped)
+			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v %v %v",
+				attempt+1, maxAttempts, lastErr, lastDegraded, lastClumped, lastPlacement)
 			time.Sleep(retryInterval)
 		}
 	}
@@ -918,6 +933,9 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 	}
 	if len(lastClumped) > 0 {
 		return fmt.Errorf("EC shards still sit on a single node after rebalance even though other nodes have free slots (%v); keeping the original volumes. Run ec.balance -apply, verify the spread, then delete the originals or re-run ec.encode", lastClumped)
+	}
+	if len(lastPlacement) > 0 {
+		return fmt.Errorf("EC shard placement does not meet the requested replica placement limits (%v); keeping the original volumes. Loosen -shardReplicaPlacement, add capacity, or re-run without -strictPlacement", lastPlacement)
 	}
 	glog.Warningf("EC shard set incomplete but recoverable after %d attempts, proceeding with source deletion (rebuild missing shards with ec.rebuild): %v",
 		maxAttempts, lastDegraded)
