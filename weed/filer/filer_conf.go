@@ -181,15 +181,24 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 var emptyPathConf = &filer_pb.FilerConf_PathConf{}
 
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
-	// Convert once to avoid allocation in multi-match case
-	pathBytes := []byte(path)
+	// Append the separator so a rule stored with a trailing slash also covers
+	// the location itself, then keep only matches on a path segment boundary:
+	// a plain string prefix would let a rule on /a/b cover /a/b1 too.
+	lookupPath := path
+	if !strings.HasSuffix(lookupPath, "/") {
+		lookupPath += "/"
+	}
+	lookupPathBytes := []byte(lookupPath)
 
 	// Fast path: check if any rules match before allocating
 	// This avoids allocation for paths with no configured rules (common case)
 	var firstMatch *filer_pb.FilerConf_PathConf
 	matchCount := 0
 
-	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+	fc.rules.MatchPrefix(lookupPathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if !util.IsEqualOrUnder(path, string(key)) {
+			return true
+		}
 		matchCount++
 		if matchCount == 1 {
 			firstMatch = value
@@ -211,8 +220,10 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 
 	// Multiple rules match - need to merge (allocate new)
 	pathConf = &filer_pb.FilerConf_PathConf{}
-	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
-		mergePathConf(pathConf, value)
+	fc.rules.MatchPrefix(lookupPathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if util.IsEqualOrUnder(path, string(key)) {
+			mergePathConf(pathConf, value)
+		}
 		return true
 	})
 	return pathConf

@@ -57,6 +57,36 @@ func TestFilerConf(t *testing.T) {
 
 }
 
+// TestMatchStorageRulePathBoundaries guards the rule lookup against sibling
+// directories: a rule on /a/b must not cover /a/b1, and the trailing slash in
+// the configured prefix must not change which paths the rule covers.
+func TestMatchStorageRulePathBoundaries(t *testing.T) {
+	for _, prefix := range []string{"/a/b", "/a/b/"} {
+		t.Run(prefix, func(t *testing.T) {
+			fc := NewFilerConf()
+			fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: prefix, Collection: "b"})
+
+			assert.Equal(t, "b", fc.MatchStorageRule("/a/b").Collection)
+			assert.Equal(t, "b", fc.MatchStorageRule("/a/b/").Collection)
+			assert.Equal(t, "b", fc.MatchStorageRule("/a/b/file").Collection)
+			assert.Equal(t, "", fc.MatchStorageRule("/a/b1").Collection)
+			assert.Equal(t, "", fc.MatchStorageRule("/a/b1/file").Collection)
+			assert.Equal(t, "", fc.MatchStorageRule("/a/bc/file").Collection)
+		})
+	}
+}
+
+// TestMatchStorageRuleKeepsParentOnSibling pins that a rule for a sibling
+// directory does not shadow the parent rule that does cover the path.
+func TestMatchStorageRuleKeepsParentOnSibling(t *testing.T) {
+	fc := NewFilerConf()
+	fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/a", Collection: "a"})
+	fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/a/b", Collection: "b"})
+
+	assert.Equal(t, "b", fc.MatchStorageRule("/a/b/file").Collection)
+	assert.Equal(t, "a", fc.MatchStorageRule("/a/b1/file").Collection)
+}
+
 func TestWormInheritance(t *testing.T) {
 	fc := NewFilerConf()
 	fc.doLoadConf(&filer_pb.FilerConf{
