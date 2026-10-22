@@ -281,6 +281,9 @@ func (fsw *FilerStoreWrapper) collectInodeIndexEntriesRecursive(ctx context.Cont
 	lastFileName := ""
 	includeStartFile := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		page := make([]*Entry, 0, PaginationSize)
 		nextLastFileName, err := actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, includeStartFile, PaginationSize, func(entry *Entry) (bool, error) {
 			page = append(page, entry)
