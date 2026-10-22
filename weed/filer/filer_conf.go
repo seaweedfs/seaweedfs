@@ -33,10 +33,11 @@ const (
 )
 
 // FilerConfVersion is stamped into every configuration this build writes.
-// Version 0 predates worm presence: it was written with EmitUnpopulated, so every
-// rule carries an explicit "worm": false that meant nothing. Reading one back as an
-// override would silently lift worm off nested paths, so it is dropped to unset.
-const FilerConfVersion = 1
+// Version 0 predates worm presence and version 1 predates fsync presence: both
+// were written with EmitUnpopulated, so every rule carries an explicit false
+// that meant nothing. Reading one back as an override would silently lift the
+// setting off nested paths, so a false from an older version is dropped to unset.
+const FilerConfVersion = 2
 
 type FilerConf struct {
 	rules ptrie.Trie[*filer_pb.FilerConf_PathConf]
@@ -126,8 +127,11 @@ func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 
 func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	for _, location := range conf.Locations {
-		if conf.Version < FilerConfVersion && location.Worm != nil && !*location.Worm {
+		if conf.Version < 1 && location.Worm != nil && !*location.Worm {
 			location.Worm = nil
+		}
+		if conf.Version < 2 && location.Fsync != nil && !*location.Fsync {
+			location.Fsync = nil
 		}
 		err = fc.SetLocationConf(location)
 		if err != nil {
@@ -227,7 +231,10 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 	if src == nil {
 		return &filer_pb.FilerConf_PathConf{}
 	}
-	var worm *bool
+	var fsync, worm *bool
+	if src.Fsync != nil {
+		fsync = proto.Bool(*src.Fsync)
+	}
 	if src.Worm != nil {
 		worm = proto.Bool(*src.Worm)
 	}
@@ -237,7 +244,7 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 		Replication:              src.Replication,
 		Ttl:                      src.Ttl,
 		DiskType:                 src.DiskType,
-		Fsync:                    src.Fsync,
+		Fsync:                    fsync,
 		VolumeGrowthCount:        src.VolumeGrowthCount,
 		ReadOnly:                 src.ReadOnly,
 		MaxFileNameLength:        src.MaxFileNameLength,
@@ -484,7 +491,7 @@ func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFil
 // flag, a placement pin - is an operator's, and deleting the whole rule to
 // retire its TTL would take their configuration with it.
 func isLifecycleOwnedPathConf(c *filer_pb.FilerConf_PathConf) bool {
-	return c.GetDiskType() == "" && !c.GetFsync() && !c.GetReadOnly() &&
+	return c.GetDiskType() == "" && c.Fsync == nil && !c.GetReadOnly() &&
 		c.GetDataCenter() == "" && c.GetRack() == "" && c.GetDataNode() == "" &&
 		c.GetMaxFileNameLength() == 0 && !c.GetDisableChunkDeletion() &&
 		c.Worm == nil && c.GetWormGracePeriodSeconds() == 0 && c.GetWormRetentionTimeSeconds() == 0
@@ -507,7 +514,12 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Replication = util.Nvl(b.Replication, a.Replication)
 	a.Ttl = util.Nvl(b.Ttl, a.Ttl)
 	a.DiskType = util.Nvl(b.DiskType, a.DiskType)
-	a.Fsync = b.Fsync || a.Fsync
+	// fsync and worm merge on presence, so a nested rule can turn them off.
+	// readOnly and disableChunkDeletion stay OR'ed on purpose: a nested rule
+	// must not be able to lift a lock the bucket set.
+	if b.Fsync != nil {
+		a.Fsync = proto.Bool(*b.Fsync)
+	}
 	if b.VolumeGrowthCount > 0 {
 		a.VolumeGrowthCount = b.VolumeGrowthCount
 	}
@@ -519,9 +531,6 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Rack = util.Nvl(b.Rack, a.Rack)
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
-	// worm merges on presence, so a nested rule can turn it off. readOnly, fsync and
-	// disableChunkDeletion stay OR'ed on purpose: a nested rule must not be able to
-	// lift a lock the bucket set.
 	if b.Worm != nil {
 		// copy the value: a is often a scratch conf while b is a live trie entry
 		a.Worm = proto.Bool(*b.Worm)

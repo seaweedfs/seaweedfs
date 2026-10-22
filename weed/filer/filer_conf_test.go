@@ -102,6 +102,54 @@ func TestWormLegacyFalseIsNotAnOverride(t *testing.T) {
 	assert.False(t, fc.MatchStorageRule("/buckets/b/sub/x").GetWorm())
 }
 
+func TestFsyncInheritance(t *testing.T) {
+	fc := NewFilerConf()
+	fc.doLoadConf(&filer_pb.FilerConf{
+		Version: FilerConfVersion,
+		Locations: []*filer_pb.FilerConf_PathConf{
+			{LocationPrefix: "/buckets/b/", Fsync: proto.Bool(true), Ttl: "7d"},
+			{LocationPrefix: "/buckets/b/quiet/", Collection: "quiet"},
+			{LocationPrefix: "/buckets/b/scratch/", Fsync: proto.Bool(false)},
+			{LocationPrefix: "/buckets/b/scratch/keep/", Fsync: proto.Bool(true)},
+		},
+	})
+
+	// a rule that says nothing about fsync keeps inheriting it, along with the ttl
+	rule := fc.MatchStorageRule("/buckets/b/quiet/x")
+	assert.True(t, rule.GetFsync())
+	assert.Equal(t, "7d", rule.Ttl)
+
+	// an explicit false turns it off, and a deeper rule turns it back on
+	assert.False(t, fc.MatchStorageRule("/buckets/b/scratch/x").GetFsync())
+	assert.True(t, fc.MatchStorageRule("/buckets/b/scratch/keep/x").GetFsync())
+
+	// paths with no rule at all are unaffected
+	assert.False(t, fc.MatchStorageRule("/buckets/other/x").GetFsync())
+}
+
+// TestFsyncLegacyFalseIsNotAnOverride pins that the explicit "fsync": false
+// every pre-version-2 configuration carries does not read as a per-path
+// opt-out.
+func TestFsyncLegacyFalseIsNotAnOverride(t *testing.T) {
+	const conf = `{
+	  "locations": [
+	    {"locationPrefix": "/buckets/b/", "fsync": true},
+	    {"locationPrefix": "/buckets/b/sub/", "collection": "sub", "fsync": false}
+	  ]
+	}`
+
+	for _, version := range []string{"", `"version": 0,`, `"version": 1,`} {
+		fc := NewFilerConf()
+		assert.NoError(t, fc.LoadFromBytes([]byte(`{`+version+conf[1:])))
+		assert.True(t, fc.MatchStorageRule("/buckets/b/sub/x").GetFsync(), version)
+	}
+
+	// the same file at the current version means what it says
+	fc := NewFilerConf()
+	assert.NoError(t, fc.LoadFromBytes([]byte(`{"version": 2,`+conf[1:])))
+	assert.False(t, fc.MatchStorageRule("/buckets/b/sub/x").GetFsync())
+}
+
 // TestWormSurvivesRoundTrip guards the write side: an explicit false has to be
 // stamped along with a version that says to honor it.
 func TestWormSurvivesRoundTrip(t *testing.T) {
@@ -130,7 +178,7 @@ func TestClonePathConf(t *testing.T) {
 		Replication:              "001",
 		Ttl:                      "7d",
 		DiskType:                 "ssd",
-		Fsync:                    true,
+		Fsync:                    proto.Bool(true),
 		VolumeGrowthCount:        5,
 		ReadOnly:                 true,
 		MaxFileNameLength:        255,
@@ -189,9 +237,11 @@ func TestClonePathConf(t *testing.T) {
 	// Verify mutation of clone doesn't affect source
 	clone.Collection = "modified"
 	clone.ReadOnly = false
+	*clone.Fsync = false
 	*clone.Worm = false
 	assert.Equal(t, "test_collection", src.Collection, "Modifying clone should not affect source Collection")
 	assert.Equal(t, true, src.ReadOnly, "Modifying clone should not affect source ReadOnly")
+	assert.Equal(t, true, src.GetFsync(), "Modifying clone should not affect source Fsync")
 	assert.Equal(t, true, src.GetWorm(), "Modifying clone should not affect source Worm")
 }
 
