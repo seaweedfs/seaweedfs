@@ -282,3 +282,29 @@ func (s *Server) authorizeCommit(ctx context.Context, bucketARN string, namespac
 	glog.V(1).Infof("Iceberg: commit authorization for %s failed: %v", tableName, err)
 	return &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to authorize commit: " + err.Error()}
 }
+
+// authorizeViewCommit is authorizeCommit for a view, whose update path stages
+// its metadata file before UpdateView authorizes the pointer flip.
+func (s *Server) authorizeViewCommit(ctx context.Context, bucketARN string, namespace []string, viewName, identityName string) *icebergRequestError {
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateView(ctx, s3tables.NewManagerClient(client), &s3tables.UpdateViewRequest{
+			TableBucketARN: bucketARN,
+			Namespace:      namespace,
+			Name:           viewName,
+		}, identityName)
+	})
+	if err == nil {
+		return nil
+	}
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) {
+		switch tableErr.Type {
+		case s3tables.ErrCodeAccessDenied:
+			return &icebergRequestError{http.StatusForbidden, "ForbiddenException", fmt.Sprintf("Not authorized to commit to view %s", viewName)}
+		case s3tables.ErrCodeNoSuchView, s3tables.ErrCodeNoSuchNamespace:
+			return &icebergRequestError{http.StatusNotFound, "NoSuchViewException", fmt.Sprintf("View does not exist: %s", viewName)}
+		}
+	}
+	glog.V(1).Infof("Iceberg: view commit authorization for %s failed: %v", viewName, err)
+	return &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to authorize commit: " + err.Error()}
+}
