@@ -16,11 +16,12 @@ import (
 func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBlock, err error) {
 
 	header := make([]byte, SuperBlockSize)
-	if n, e := datBackend.ReadAt(header, 0); e != nil {
-		if n != SuperBlockSize {
-			err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.Name(), e)
-			return
+	if n, e := datBackend.ReadAt(header, 0); n != SuperBlockSize {
+		if e == nil {
+			e = io.ErrUnexpectedEOF
 		}
+		err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.Name(), e)
+		return
 	}
 
 	superBlock.Version = needle.Version(header[0])
