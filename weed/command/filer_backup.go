@@ -176,11 +176,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		sourceFiler.ToGrpcAddress(),
 		sourcePath,
 		*backupOption.proxyByFiler); err != nil {
-		return 0, fmt.Errorf("filersource initialization failed: %v", err)
+		return resumeTsNs, fmt.Errorf("filersource initialization failed: %v", err)
 	}
 
 	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
-		return 0, fmt.Errorf("SSE initialization failed: %v", err)
+		return resumeTsNs, fmt.Errorf("SSE initialization failed: %v", err)
 	}
 	dataSink.SetSourceFiler(filerSource)
 
