@@ -62,19 +62,9 @@ func TestExternalPOSIXSuites(t *testing.T) {
 func (s *ExternalPOSIXTestSuite) TestPjdFsTest(t *testing.T) {
 	mountPoint := s.framework.GetMountPoint()
 
-	// Check if pjdfstest is available
-	_, err := exec.LookPath("pjdfstest")
-	if err != nil {
-		// For comprehensive POSIX compliance testing, external tools should be mandatory
-		if os.Getenv("POSIX_REQUIRE_EXTERNAL_TOOLS") == "true" {
-			t.Fatalf("pjdfstest is required for comprehensive POSIX compliance testing but not found. Install from: https://github.com/pjd/pjdfstest")
-		}
-		t.Skip("pjdfstest not found. Install from: https://github.com/pjd/pjdfstest")
-	}
-
 	// Create test directory within mount point
 	testDir := filepath.Join(mountPoint, "pjdfstest")
-	err = os.MkdirAll(testDir, 0755)
+	err := os.MkdirAll(testDir, 0755)
 	require.NoError(t, err)
 
 	// List of critical POSIX operations to test
@@ -99,13 +89,16 @@ func (s *ExternalPOSIXTestSuite) TestPjdFsTest(t *testing.T) {
 		{"unlink", "tests/unlink", true},
 	}
 
-	// Download and setup pjdfstest if needed
-	pjdDir := filepath.Join(s.workDir, "pjdfstest")
-	if _, err := os.Stat(pjdDir); os.IsNotExist(err) {
-		t.Logf("Setting up pjdfstest...")
-		err = s.setupPjdFsTest(pjdDir)
-		if err != nil {
-			t.Skipf("Failed to setup pjdfstest: %v", err)
+	// Prefer the suite that `make setup-pjdfstest` builds under
+	// external_tools/ before cloning a second copy into the work dir
+	pjdDir := s.findPjdDir()
+	if pjdDir == "" {
+		pjdDir = filepath.Join(s.workDir, "pjdfstest")
+		if err := s.setupPjdFsTest(pjdDir); err != nil {
+			if os.Getenv("POSIX_REQUIRE_EXTERNAL_TOOLS") == "true" {
+				t.Fatalf("pjdfstest is required for comprehensive POSIX compliance testing: %v", err)
+			}
+			t.Skipf("pjdfstest not found and setup failed: %v", err)
 		}
 	}
 
@@ -273,6 +266,19 @@ func (s *ExternalPOSIXTestSuite) TestCustomPOSIXTests(t *testing.T) {
 	t.Run("EdgeCases", func(t *testing.T) {
 		s.testEdgeCases(t, mountPoint)
 	})
+}
+
+// findPjdDir returns a directory holding a built pjdfstest suite, or ""
+// when none is installed. The path is absolute because tests run with
+// cmd.Dir inside the mount.
+func (s *ExternalPOSIXTestSuite) findPjdDir() string {
+	dir := filepath.Join("external_tools", "pjdfstest")
+	if info, err := os.Stat(filepath.Join(dir, "pjdfstest")); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
+		if abs, err := filepath.Abs(dir); err == nil {
+			return abs
+		}
+	}
+	return ""
 }
 
 // setupPjdFsTest downloads and sets up the pjdfstest suite
