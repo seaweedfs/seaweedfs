@@ -1542,6 +1542,28 @@ func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
 	p.jtiSweepMu.Unlock()
 }
 
+// MergeReplayStateFrom folds the consumed-token entries of another provider
+// into this one's store, so rejections the other recorded keep holding when
+// its records move to a shared provider. Unlike AdoptReplayStateFrom it swaps
+// nothing, so it is safe on a provider that is already serving validators.
+func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
+	if other == nil || other == p {
+		return
+	}
+	p.jtiSweepMu.Lock()
+	defer p.jtiSweepMu.Unlock()
+	now := time.Now()
+	other.jtiStore.Range(func(key, value interface{}) bool {
+		if expiresAt := value.(*jtiEntry).expiresAt; !expiresAt.IsZero() && now.After(expiresAt) {
+			return true
+		}
+		if _, loaded := p.jtiStore.LoadOrStore(key, value); !loaded {
+			p.jtiCount.Add(1)
+		}
+		return true
+	})
+}
+
 // jtiLogKey redacts a token identifier for logs and error strings: a stable
 // fingerprint that still lets operators correlate repeated presentations.
 func jtiLogKey(jti string) string {
