@@ -320,6 +320,16 @@ type SessionInfo struct {
 	// SourceAccessKeyId is the access key the session was minted for, when the
 	// minting service recorded it (AssumeRoleForPrincipal).
 	SourceAccessKeyId string `json:"sourceAccessKeyId,omitempty"`
+
+	// BoundAccessKeyId is the stored credential the session is bound to, when
+	// the minting service recorded one (AssumeRoleForPrincipal). A legacy
+	// SourceAccessKeyId is never treated as a binding.
+	BoundAccessKeyId string `json:"boundAccessKeyId,omitempty"`
+
+	// BoundAccessKeyFingerprint identifies the credential instance the
+	// session is bound to, so a key re-created under the same id does not
+	// match.
+	BoundAccessKeyFingerprint string `json:"boundAccessKeyFingerprint,omitempty"`
 }
 
 // NewSTSService creates a new STS service
@@ -874,6 +884,14 @@ type AssumeRoleForPrincipalRequest struct {
 	// SourceAccessKeyId optionally records the access key the caller
 	// authenticated with, so the session can be tied to that key.
 	SourceAccessKeyId string
+
+	// BoundAccessKeyId binds the session to a stored credential: the session
+	// ends when that key is gone. Distinct from SourceAccessKeyId, which is
+	// audit-only on sessions minted before the binding existed.
+	BoundAccessKeyId string
+
+	// BoundAccessKeyFingerprint identifies the bound credential instance.
+	BoundAccessKeyFingerprint string
 }
 
 // AssumeRoleForPrincipal issues session credentials for a caller that a
@@ -920,7 +938,10 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 	// carry no role ID and stay bound by name.
 	return s.issueSession(request.RoleArn, "", request.RoleSessionName, sessionPolicy,
 		request.DurationSeconds, request.ProviderName, request.Principal,
-		func(c *STSSessionClaims) { c.WithSourceAccessKeyId(request.SourceAccessKeyId) })
+		func(c *STSSessionClaims) {
+			c.WithSourceAccessKeyId(request.SourceAccessKeyId)
+			c.WithBoundAccessKey(request.BoundAccessKeyId, request.BoundAccessKeyFingerprint)
+		})
 }
 
 // ValidateSessionToken validates a session token and returns session information

@@ -502,9 +502,10 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	// A session the table catalog vended for a static access key is bound to
 	// that key, as a role session is bound to its role's ID: deleting or
 	// deactivating the key, or deleting or disabling its identity, ends the
-	// session at its next request instead of at its expiry.
-	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.SourceAccessKeyId != "" {
-		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.SourceAccessKeyId); errCode != s3err.ErrNone {
+	// session at its next request instead of at its expiry. Sessions minted
+	// before the binding existed carry only the audit field and stay unbound.
+	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.BoundAccessKeyId != "" {
+		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.BoundAccessKeyId); errCode != s3err.ErrNone {
 			glog.V(2).Infof("vended STS session %s: identity %q or the access key it was vended for is gone, disabled or inactive",
 				sessionInfo.SessionId, sessionInfo.ExternalUserId)
 			return nil, nil, errCode

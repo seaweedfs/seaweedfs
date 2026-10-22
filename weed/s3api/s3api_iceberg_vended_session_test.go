@@ -118,7 +118,9 @@ func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 // made with them.
 func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 	s3a := vendingServer(t)
-	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA, true)).SourceAccessKeyId, "control")
+	control := sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA, true))
+	assert.Equal(t, sharedKeyA, control.SourceAccessKeyId, "control")
+	assert.Equal(t, sharedKeyA, control.BoundAccessKeyId, "control")
 
 	for _, tc := range []struct{ principal, key, why string }{
 		{"47ad4828c45b3f337bc3146081ba8f0f", "ASIATEMPORARYKEY0001", "an STS session's subject and temporary key"},
@@ -128,8 +130,35 @@ func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 	} {
 		session := vend(t, s3a, tc.principal, tc.key, false)
 		assert.Empty(t, sessionInfo(t, s3a, session).SourceAccessKeyId, tc.why)
+		assert.Empty(t, sessionInfo(t, s3a, session).BoundAccessKeyId, tc.why)
 		assert.Equal(t, s3err.ErrNone, use(t, s3a, session), tc.why)
 	}
+}
+
+// Tokens minted before the binding existed record the caller's key under the
+// audit claim only. Validating them as bound would end live table credentials
+// at upgrade — a chained STS caller's key can never resolve to a stored
+// credential. They stay valid until expiry, as they always did.
+func TestLegacyVendedSessionStaysUnbound(t *testing.T) {
+	iam := newSharedIdentityIAM()
+	iam.iamIntegration = &MockIAMIntegration{
+		validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+			return &sts.SessionInfo{
+				SessionId:         "sid",
+				AssumedRoleUser:   "arn:aws:sts::assumed-role/Reader/session",
+				Principal:         "arn:aws:sts::assumed-role/Reader/session",
+				IdentityProvider:  icebergVendedCredentialsProvider,
+				ExternalUserId:    "someone-not-in-the-identity-table",
+				SourceAccessKeyId: "ASIATEMPORARYKEY0001",
+				Credentials:       &sts.Credentials{AccessKeyId: "ASIALEGACY", SecretAccessKey: "secret"},
+				ExpiresAt:         time.Now().Add(time.Hour),
+			}, nil
+		},
+	}
+	r, err := newTestRequest("GET", "https://example.com/bucket/f.parquet", 0, nil)
+	require.NoError(t, err)
+	_, _, errCode := iam.validateSTSSessionToken(r, "token", "ASIALEGACY")
+	assert.Equal(t, s3err.ErrNone, errCode)
 }
 
 // A session for a stored identity stays bound even when the key no longer

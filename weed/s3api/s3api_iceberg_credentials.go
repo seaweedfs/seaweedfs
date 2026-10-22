@@ -80,9 +80,12 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 	// principal names a stored identity, whose session a binding would refuse
 	// on every request. The marker survives the key being revoked between
 	// authentication and this vend: the session then dies on its first request
-	// instead of living unbound until it expires.
+	// instead of living unbound until it expires. The binding travels under
+	// its own claim — SourceAccessKeyId is audit-only for compatibility with
+	// tokens minted before the binding existed.
 	if storedKey := s3_constants.StoredAccessKeyIdFromContext(ctx); storedKey != "" {
 		request.SourceAccessKeyId = storedKey
+		request.BoundAccessKeyId = storedKey
 	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration
