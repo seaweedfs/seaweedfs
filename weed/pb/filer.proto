@@ -522,11 +522,16 @@ message DeleteEntryRequest {
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
     bool keep_remote_object = 10;
+    // Optional precondition evaluated against the current entry atomically with
+    // the delete, under the filer's per-path lock. A failed condition reports
+    // FilerError PRECONDITION_FAILED and deletes nothing.
+    WriteCondition condition = 11;
 }
 
 message DeleteEntryResponse {
     string error = 1;
     SubscribeMetadataResponse metadata_event = 2;
+    FilerError error_code = 3;
 }
 
 message AtomicRenameEntryRequest {
