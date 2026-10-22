@@ -31,6 +31,12 @@ type fakeCopySource struct {
 	copyCalls   int
 }
 
+func (f *fakeCopySource) snapshot() (revision uint32, expireAtSec uint64, statusCalls, copyCalls int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.revision, f.expireAtSec, f.statusCalls, f.copyCalls
+}
+
 func (f *fakeCopySource) ReadVolumeFileStatus(context.Context, *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -120,10 +126,11 @@ func TestCopyVolumeFilesToWorkerRetriesAfterMidCopyCompaction(t *testing.T) {
 	idxContent, err := os.ReadFile(localFiles["idx"])
 	require.NoError(t, err)
 	require.Equal(t, []byte("idx-data-v7\xEC"), idxContent)
-	require.Equal(t, uint32(8), src.revision)
-	require.Equal(t, 2, src.statusCalls)
-	require.Equal(t, 4, src.copyCalls)
-	require.Equal(t, src.expireAtSec, task.expireAtSec)
+	revision, expireAtSec, statusCalls, copyCalls := src.snapshot()
+	require.Equal(t, uint32(8), revision)
+	require.Equal(t, 2, statusCalls)
+	require.Equal(t, 4, copyCalls)
+	require.Equal(t, expireAtSec, task.expireAtSec)
 }
 
 func TestCopyVolumeFilesToWorkerStopsAfterRetryLimit(t *testing.T) {
@@ -137,8 +144,9 @@ func TestCopyVolumeFilesToWorkerStopsAfterRetryLimit(t *testing.T) {
 
 	_, err := task.copyVolumeFilesToWorker(context.Background(), t.TempDir())
 	require.ErrorContains(t, err, "is compacted")
-	require.Equal(t, ecCopyAttempts, src.statusCalls)
-	require.Equal(t, 2*ecCopyAttempts, src.copyCalls)
+	_, _, statusCalls, copyCalls := src.snapshot()
+	require.Equal(t, ecCopyAttempts, statusCalls)
+	require.Equal(t, 2*ecCopyAttempts, copyCalls)
 }
 
 func TestCopyVolumeFilesToWorkerReturnsNonCompactionErrors(t *testing.T) {
@@ -152,6 +160,7 @@ func TestCopyVolumeFilesToWorkerReturnsNonCompactionErrors(t *testing.T) {
 
 	_, err := task.copyVolumeFilesToWorker(context.Background(), t.TempDir())
 	require.ErrorContains(t, err, "boom")
-	require.Equal(t, 1, src.statusCalls)
-	require.Equal(t, 1, src.copyCalls)
+	_, _, statusCalls, copyCalls := src.snapshot()
+	require.Equal(t, 1, statusCalls)
+	require.Equal(t, 1, copyCalls)
 }
