@@ -178,23 +178,51 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 
 	// The header is not part of the streamed body, so verify the indexed
 	// offset really holds this needle before sending another needle's data.
-	header := make([]byte, NeedleHeaderSize)
-	headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
-	if headerErr == io.EOF && headerCount == NeedleHeaderSize {
-		headerErr = nil
-	}
-	if headerErr != nil {
-		if headerErr != io.EOF {
-			v.checkReadWriteError(headerErr)
+	// A slow read dropped the access lock after the index lookup; take it
+	// back for the probe so a compaction commit cannot swap the backend
+	// under it, and resolve the offset the way the streaming loop does.
+	probeHeader := func() error {
+		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
+			if v.nm == nil {
+				return ErrorNotFound
+			}
+			refreshed, found := v.nm.Get(n.Id)
+			if !found || refreshed.Offset.IsZero() {
+				return ErrorNotFound
+			}
+			nv = refreshed
+			actualOffset = nv.Offset.ToActualOffset()
+			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
 		}
-		return fmt.Errorf("ReadNeedleData header: %w", headerErr)
+		header := make([]byte, NeedleHeaderSize)
+		headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
+		if headerErr == io.EOF && headerCount == NeedleHeaderSize {
+			headerErr = nil
+		}
+		if headerErr != nil {
+			if headerErr != io.EOF {
+				v.checkReadWriteError(headerErr)
+			}
+			return fmt.Errorf("ReadNeedleData header: %w", headerErr)
+		}
+		probe := new(needle.Needle)
+		probe.ParseNeedleHeader(header)
+		if probe.Id != n.Id && probe.Size != nv.Size {
+			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+				v.Id, uint64(n.Id), uint64(probe.Id))
+			return ErrorNotFound
+		}
+		return nil
 	}
-	probe := new(needle.Needle)
-	probe.ParseNeedleHeader(header)
-	if probe.Id != n.Id && probe.Size != nv.Size {
-		glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
-			v.Id, uint64(n.Id), uint64(probe.Id))
-		return ErrorNotFound
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RLock()
+	}
+	probeErr := probeHeader()
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RUnlock()
+	}
+	if probeErr != nil {
+		return probeErr
 	}
 
 	// read needle data
