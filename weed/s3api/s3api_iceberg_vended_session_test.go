@@ -108,10 +108,10 @@ func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 	assert.Equal(t, s3err.ErrInvalidAccessKeyID, use(t, s3a, session), "identity deleted")
 }
 
-// A caller that is not a stored identity holding the key it signed with (a
-// caller signing with another STS session's key, an OIDC user, a request that
-// recorded no key) still gets credentials, unbound as before: binding them
-// would refuse every request made with them.
+// A caller that is not a stored identity (a caller signing with another STS
+// session's key, an OIDC user, a request that recorded no key) still gets
+// credentials, unbound as before: binding them would refuse every request
+// made with them.
 func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 	s3a := vendingServer(t)
 	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA)).SourceAccessKeyId, "control")
@@ -120,12 +120,25 @@ func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 		{"47ad4828c45b3f337bc3146081ba8f0f", "ASIATEMPORARYKEY0001", "an STS session's subject and temporary key"},
 		{"alice@example.com", "", "an OIDC user"},
 		{"shared-user", "", "no recorded key"},
-		{"shared-user", "AKIANOTHELDBYTHEUSER", "a key the identity does not hold"},
 	} {
 		session := vend(t, s3a, tc.principal, tc.key)
 		assert.Empty(t, sessionInfo(t, s3a, session).SourceAccessKeyId, tc.why)
 		assert.Equal(t, s3err.ErrNone, use(t, s3a, session), tc.why)
 	}
+}
+
+// A session for a stored identity stays bound even when the key no longer
+// resolves at vend time — revoked between the request's authentication and
+// the vend, or held by a different identity now. The session dies on its
+// first request instead of living unbound until it expires.
+func TestVendedSessionStaysBoundWhenTheKeyIsGoneAtVend(t *testing.T) {
+	s3a := vendingServer(t)
+
+	identity := s3a.iam.nameToIdentity["shared-user"]
+	identity.Credentials = identity.Credentials[1:] // sharedKeyA revoked mid-request
+	session := vend(t, s3a, "shared-user", sharedKeyA)
+	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, session).SourceAccessKeyId, "still bound")
+	assert.Equal(t, s3err.ErrInvalidAccessKeyID, use(t, s3a, session), "the dead key's session is refused")
 }
 
 // Only sessions the catalog vended are bound; any other STS session (web

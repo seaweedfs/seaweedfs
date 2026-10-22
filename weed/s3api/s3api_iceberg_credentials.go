@@ -11,7 +11,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // icebergVendedCredentialsProvider names the origin recorded on sessions the
@@ -75,12 +74,13 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 		ProviderName:    icebergVendedCredentialsProvider,
 		Policy:          &policy,
 	}
-	// Bind the session to the caller's key only when the caller is a stored
-	// identity holding it: a caller that signed with another STS session's key,
-	// or an OIDC user, is not in the identity table, and binding its session
-	// would refuse every request made with it. Such a session stays unbound
-	// and lasts until it expires, as before.
-	if accessKey != "" && s3a.iam != nil && s3a.iam.vendedSessionKeyLive(principal, accessKey) == s3err.ErrNone {
+	// Bind the session to the caller's key when the caller is a stored
+	// identity: a caller that signed with another STS session's key, or an
+	// OIDC user, names no identity, and binding its session would refuse
+	// every request made with it. The binding is kept even when the key was
+	// revoked between authentication and this vend — the session then dies
+	// on its first request instead of living unbound until it expires.
+	if accessKey != "" && s3a.iam != nil && s3a.iam.lookupByIdentityName(principal) != nil {
 		request.SourceAccessKeyId = accessKey
 	}
 	if s3a.icebergCredentialDuration > 0 {

@@ -568,9 +568,8 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 
 // vendedSessionKeyLive answers ErrNone while owner is a known, enabled
 // identity holding accessKey as an active, unexpired credential, and
-// ErrInvalidAccessKeyID (as for an unknown key) otherwise. The vendor applies
-// the same rule before binding a session to a key, so it never binds one that
-// would be refused on its first request. One map lookup under the read lock.
+// ErrInvalidAccessKeyID (as for an unknown key) otherwise. One map lookup
+// under the read lock.
 func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey string) s3err.ErrorCode {
 	if owner == "" || accessKey == "" {
 		return s3err.ErrInvalidAccessKeyID
