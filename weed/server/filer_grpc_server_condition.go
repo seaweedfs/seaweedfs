@@ -87,14 +87,18 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		if !exists || c.ExpectedEntry == nil {
 			return !exists && c.ExpectedEntry == nil
 		}
-		// Compare both sides in serialized form on clones: chunks are matched
-		// by their fid only — the stored entry may carry the restored file_id
-		// while an expected one built from a metadata event does not.
-		expected := proto.Clone(c.ExpectedEntry).(*filer_pb.Entry)
-		filer_pb.BeforeEntrySerialization(expected.Chunks)
-		actual := proto.Clone(current.ToProtoEntry()).(*filer_pb.Entry)
-		filer_pb.BeforeEntrySerialization(actual.Chunks)
-		return proto.Equal(actual, filer.FromPbEntry("", expected).ToProtoEntry())
+		// Compare both sides in canonical serialized form on clones: chunks are
+		// matched by their fid only — the stored entry may carry the restored
+		// file_id while an expected one built from a metadata event does not —
+		// and the codec round-trip settles derived fields on both sides, like an
+		// unset atime reading back as mtime.
+		canonical := func(e *filer_pb.Entry) *filer_pb.Entry {
+			filer_pb.BeforeEntrySerialization(e.Chunks)
+			return filer.FromPbEntry("", e).ToProtoEntry()
+		}
+		expected := canonical(proto.Clone(c.ExpectedEntry).(*filer_pb.Entry))
+		actual := canonical(proto.Clone(current.ToProtoEntry()).(*filer_pb.Entry))
+		return proto.Equal(actual, expected)
 	default:
 		// An unrecognized clause kind (e.g. from a newer client) must not be
 		// treated as satisfied, which would silently bypass the guard. Fail
