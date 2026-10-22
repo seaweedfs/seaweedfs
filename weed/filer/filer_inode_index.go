@@ -210,7 +210,9 @@ func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.Ful
 		}
 		record = &InodeIndexRecord{Generation: InodeIndexInitialGeneration}
 	}
-	record.AddPath(path)
+	if !record.AddPath(path) {
+		return nil
+	}
 
 	value, err := record.Encode()
 	if err != nil {
