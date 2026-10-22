@@ -14,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -100,6 +101,9 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 	}
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+	if jwt != "" {
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
 	resp, err := util_http.Do(req)
