@@ -142,3 +142,36 @@ func TestReadSuperBlockTruncatedExtra(t *testing.T) {
 		t.Fatalf("expected read error for truncated extra, got %v", err)
 	}
 }
+
+// s3_backend.ReadAt clears io.EOF even when it returns fewer bytes than requested.
+type shortReadBackendStorageFile struct {
+	backend.DiskFile
+	data []byte
+}
+
+func (f *shortReadBackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
+	return copy(p, f.data[off:]), nil
+}
+
+func TestReadSuperBlockShortReadWithoutError(t *testing.T) {
+	rp, _ := NewReplicaPlacementFromByte(byte(001))
+	ttl, _ := needle.ReadTTL("15d")
+	s := &SuperBlock{
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              ttl,
+		Extra: &master_pb.SuperBlockExtra{
+			ErasureCoding: &master_pb.SuperBlockExtra_ErasureCoding{
+				Data:      10,
+				Parity:    4,
+				VolumeIds: []uint32{1, 2, 3},
+			},
+		},
+	}
+
+	data := s.Bytes()
+	_, err := ReadSuperBlock(&shortReadBackendStorageFile{data: data[:len(data)-1]})
+	if err == nil || !strings.Contains(err.Error(), "cannot read") {
+		t.Fatalf("expected read error for short extra read, got %v", err)
+	}
+}
