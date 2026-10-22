@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -35,6 +36,14 @@ const (
 	defaultJTICacheSize = 10000
 	// defaultCleanupInterval is how often to scan for expired JTI entries
 	defaultCleanupInterval = 5 * time.Minute
+	// eagerCleanupMinInterval rate limits opportunistic sweeps near capacity
+	eagerCleanupMinInterval = 5 * time.Second
+	// noExpJTIRetention bounds how long the JTI of a token without an exp
+	// claim stays consumed, since such a token never ages the entry out itself
+	noExpJTIRetention = 24 * time.Hour
+	// tokenFingerprintPrefix marks replay-cache keys derived from the token's
+	// own fingerprint, used when the token carries no usable jti claim
+	tokenFingerprintPrefix = "fp:"
 )
 
 // jtiEntry represents a cached JTI with metadata
@@ -51,7 +60,8 @@ type jtiEntry struct {
 // JTI is presented, it is rejected with ErrProviderTokenReplayed.
 //
 // The JTI cache is bounded by JTICacheMaxSize and uses automatic TTL-based expiration.
-// Tokens without JTI claims are accepted with a warning logged (backward compatibility).
+// A token without a usable jti claim is tracked by the token's own fingerprint
+// instead, so a repeated presentation is still detected as a replay.
 //
 // Thread Safety:
 // All methods are safe for concurrent use. The JTI cache uses atomic LoadOrStore
@@ -76,10 +86,11 @@ type OIDCProvider struct {
 	// JTI replay protection fields. jtiStore and jtiCount are allocated once
 	// in NewOIDCProvider and survive re-initialization, so a config refresh
 	// cannot reopen already-consumed tokens for replay.
-	jtiEnabled atomic.Bool
-	jtiStore   *sync.Map     // map[string]*jtiEntry - atomic storage for consumed token keys
-	jtiCount   *atomic.Int64 // entries in jtiStore; shared with the store
-	jtiMaxSize atomic.Int64
+	jtiEnabled   atomic.Bool
+	jtiStore     *sync.Map     // map[string]*jtiEntry - atomic storage for consumed token keys
+	jtiCount     *atomic.Int64 // entries in jtiStore; shared with the store
+	jtiMaxSize   atomic.Int64
+	jtiLastSweep atomic.Int64 // unix nano of the last sweep; rate limits eager cleanups
 
 	// jtiMu guards the lifecycle of the cleanup worker: jtiCleanupCancel and
 	// jtiCleanupDone. The worker itself only touches jtiStore/jtiCount, so
@@ -87,6 +98,9 @@ type OIDCProvider struct {
 	jtiMu            sync.Mutex
 	jtiCleanupCancel context.CancelFunc
 	jtiCleanupDone   chan struct{} // Closed when cleanup goroutine exits
+
+	// jtiSweepMu serializes cache sweeps so at most one scan runs at a time.
+	jtiSweepMu sync.Mutex
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -889,68 +903,69 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	// Extract and validate JTI claim for replay protection
-	if p.jtiEnabled.Load() { // Check if JTI protection is enabled
-		jti, jtiExists := claims["jti"].(string)
+	if p.jtiEnabled.Load() {
+		jti, _ := claims["jti"].(string)
+		key := jti
+		if key == "" {
+			// Providers that issue no jti cannot be tracked by claim, so the
+			// token's own fingerprint keys the entry: a repeated presentation
+			// of the same token is still a replay.
+			sum := sha256.Sum256([]byte(token))
+			key = tokenFingerprintPrefix + hex.EncodeToString(sum[:])
+		}
 
-		if jtiExists && len(jti) > 0 {
-			currentCount := p.jtiCount.Load()
-			maxSize := p.jtiMaxSize.Load()
-
-			// Trigger eager cleanup when cache reaches 90% capacity to prevent DoS
-			if currentCount >= (maxSize * 9 / 10) {
-				glog.Warningf("OIDC provider %q: JTI cache at %d%% capacity (%d/%d), triggering eager cleanup",
-					p.name, (currentCount*100)/maxSize, currentCount, maxSize)
-				go p.performEagerCleanup()
+		expiresAt := tokenClaims.ExpiresAt
+		if expiresAt.IsZero() {
+			// A token without exp never lets its JTI age out on its own, so
+			// the entry gets a bounded retention instead of living forever.
+			expiresAt = time.Now().Add(noExpJTIRetention)
+		} else {
+			expiresAt = expiresAt.Add(clockSkewTolerance)
+			if !time.Now().Before(expiresAt) {
+				return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
 			}
+		}
 
-			// Final check: reject if cache is completely full (prevent memory exhaustion)
-			if currentCount >= maxSize {
+		entry := &jtiEntry{
+			subject:   subject,
+			expiresAt: expiresAt,
+		}
+
+		// Atomic test-and-set detects replays before any capacity work runs,
+		// so a replayed token cannot trigger cleanup scans.
+		if _, loaded := p.jtiStore.LoadOrStore(key, entry); loaded {
+			glog.Warningf("OIDC provider %q: Token replay detected (jti: %s)",
+				p.name, jtiLogKey(key))
+			return nil, fmt.Errorf("%w: jti %s has already been used",
+				providers.ErrProviderTokenReplayed, jtiLogKey(key))
+		}
+
+		// The count is incremented as part of the insert, so concurrent
+		// validations cannot all slip under the limit: whoever pushes the
+		// count over evicts their own entry and is rejected.
+		newCount := p.jtiCount.Add(1)
+		maxSize := p.jtiMaxSize.Load()
+		if newCount > maxSize {
+			// Over the bound: expired entries may still occupy slots, so
+			// reclaim them with a synchronized sweep before rejecting.
+			p.sweepExpiredJTIs()
+			if p.jtiCount.Load() > maxSize {
+				if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
+					p.jtiCount.Add(-1)
+				}
 				glog.Errorf("OIDC provider %q: JTI cache FULL (%d entries) - rejecting token. "+
 					"This may indicate a DoS attack or insufficient cache size. Consider increasing JTICacheMaxSize.",
 					p.name, maxSize)
 				return nil, fmt.Errorf("JTI cache capacity exceeded")
 			}
-
-			// Create entry with expiration (add clock skew tolerance)
-			entry := &jtiEntry{
-				subject:   subject,
-				expiresAt: tokenClaims.ExpiresAt.Add(clockSkewTolerance),
-			}
-
-			// Atomic test-and-set operation to prevent TOCTOU race conditions
-			actual, loaded := p.jtiStore.LoadOrStore(jti, entry)
-			if loaded {
-				// JTI already exists - replay attack detected!
-				existingEntry := actual.(*jtiEntry)
-				glog.Warningf("OIDC provider %q: Token replay detected for JTI %s (subject: %s, existing subject: %s)",
-					p.name, jti, subject, existingEntry.subject)
-				return nil, fmt.Errorf("%w: jti %s has already been used",
-					providers.ErrProviderTokenReplayed, jti)
-			}
-
-			// Increment count only if new entry was stored
-			newCount := p.jtiCount.Add(1)
-
-			// Calculate TTL with clock skew tolerance (match JWT library behavior)
-			ttl := time.Until(entry.expiresAt)
-			if ttl <= 0 {
-				// Token is expired even with clock skew tolerance
-				// Use LoadAndDelete in case cleanup goroutine already removed it
-				if _, loaded := p.jtiStore.LoadAndDelete(jti); loaded {
-					p.jtiCount.Add(-1)
-				}
-				glog.Warningf("OIDC provider %q: Token with JTI %s is already expired (exp: %v)",
-					p.name, jti, tokenClaims.ExpiresAt)
-				return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
-			}
-
-			glog.V(4).Infof("OIDC provider %q: Registered JTI %s (expires in %v, cache size: %d)",
-				p.name, jti, ttl, newCount)
-		} else {
-			// No JTI claim - log warning but allow (for backward compatibility)
-			glog.V(3).Infof("OIDC provider %q: Token has no jti claim, replay protection skipped (subject: %s)",
-				p.name, subject)
+		} else if newCount >= maxSize*9/10 {
+			glog.Warningf("OIDC provider %q: JTI cache at %d%% capacity (%d/%d), triggering eager cleanup",
+				p.name, (newCount*100)/maxSize, newCount, maxSize)
+			go p.performEagerCleanup()
 		}
+
+		glog.V(4).Infof("OIDC provider %q: Registered JTI %s (expires at %v, cache size: %d)",
+			p.name, jtiLogKey(key), expiresAt, newCount)
 	}
 
 	return tokenClaims, nil
@@ -1382,34 +1397,58 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 	return identity
 }
 
-// performEagerCleanup performs an immediate cleanup of expired JTI entries.
-// Called when cache approaches capacity to prevent DoS scenarios where
-// legitimate tokens are rejected due to accumulated expired entries.
+// evictExpiredJTIs removes entries whose expiry has passed and returns how
+// many it deleted. Caller must hold jtiSweepMu.
+func (p *OIDCProvider) evictExpiredJTIs(now time.Time) int {
+	removed := 0
+	p.jtiStore.Range(func(key, value interface{}) bool {
+		if now.After(value.(*jtiEntry).expiresAt) {
+			// LoadAndDelete reports whether this call actually removed the
+			// entry, so concurrent deletes cannot decrement the count twice.
+			if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
+				p.jtiCount.Add(-1)
+				removed++
+			}
+		}
+		return true
+	})
+	return removed
+}
+
+// sweepExpiredJTIs runs a scan that is guaranteed to complete before the
+// caller proceeds; the capacity-rejection path uses it so a fresh token is
+// not refused while expired entries still hold slots.
+func (p *OIDCProvider) sweepExpiredJTIs() {
+	p.jtiSweepMu.Lock()
+	defer p.jtiSweepMu.Unlock()
+	p.jtiLastSweep.Store(time.Now().UnixNano())
+	if removed := p.evictExpiredJTIs(time.Now()); removed > 0 {
+		glog.V(4).Infof("OIDC provider %q: Cleaned up %d expired JTI entries (remaining: %d)",
+			p.name, removed, p.jtiCount.Load())
+	}
+}
+
+// performEagerCleanup performs an opportunistic cleanup of expired JTI
+// entries when the cache approaches capacity. At most one sweep runs at a
+// time and no more often than eagerCleanupMinInterval, so a burst of
+// requests near the limit cannot each turn into a full-cache scan.
 func (p *OIDCProvider) performEagerCleanup() {
 	if !p.jtiEnabled.Load() {
 		return
 	}
+	if time.Since(time.Unix(0, p.jtiLastSweep.Load())) < eagerCleanupMinInterval {
+		return
+	}
+	if !p.jtiSweepMu.TryLock() {
+		return
+	}
+	defer p.jtiSweepMu.Unlock()
+	p.jtiLastSweep.Store(time.Now().UnixNano())
 
-	now := time.Now()
-	count := 0
 	beforeCount := p.jtiCount.Load()
-
-	p.jtiStore.Range(func(key, value interface{}) bool {
-		entry := value.(*jtiEntry)
-		if now.After(entry.expiresAt) {
-			// Use LoadAndDelete to ensure we only decrement if we actually removed the entry
-			// This prevents double-decrement if concurrent cleanups try to remove the same key
-			if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
-				p.jtiCount.Add(-1)
-				count++
-			}
-		}
-		return true // continue iteration
-	})
-
-	if count > 0 {
+	if removed := p.evictExpiredJTIs(time.Now()); removed > 0 {
 		glog.Infof("OIDC provider %q: Eager cleanup removed %d expired JTI entries (%d -> %d)",
-			p.name, count, beforeCount, p.jtiCount.Load())
+			p.name, removed, beforeCount, p.jtiCount.Load())
 	} else {
 		glog.Warningf("OIDC provider %q: Eager cleanup found no expired entries to remove. "+
 			"Cache may be filled with valid long-lived tokens. Consider increasing JTICacheMaxSize.",
@@ -1434,26 +1473,7 @@ func (p *OIDCProvider) cleanupExpiredJTIs(ctx context.Context, done chan struct{
 			glog.V(3).Infof("OIDC provider %q: JTI cleanup goroutine stopping", p.name)
 			return
 		case <-ticker.C:
-			now := time.Now()
-			count := 0
-
-			p.jtiStore.Range(func(key, value interface{}) bool {
-				entry := value.(*jtiEntry)
-				if now.After(entry.expiresAt) {
-					// Use LoadAndDelete to ensure we only decrement if we actually removed the entry
-					// This prevents double-decrement if concurrent cleanups try to remove the same key
-					if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
-						p.jtiCount.Add(-1)
-						count++
-					}
-				}
-				return true // continue iteration
-			})
-
-			if count > 0 {
-				glog.V(4).Infof("OIDC provider %q: Cleaned up %d expired JTI entries (remaining: %d)",
-					p.name, count, p.jtiCount.Load())
-			}
+			p.sweepExpiredJTIs()
 		}
 	}
 }
@@ -1485,4 +1505,11 @@ func (p *OIDCProvider) Shutdown(ctx context.Context) error {
 	}
 	p.jtiMu.Unlock()
 	return nil
+}
+
+// jtiLogKey redacts a token identifier for logs and error strings: a stable
+// fingerprint that still lets operators correlate repeated presentations.
+func jtiLogKey(jti string) string {
+	sum := sha256.Sum256([]byte(jti))
+	return hex.EncodeToString(sum[:8])
 }

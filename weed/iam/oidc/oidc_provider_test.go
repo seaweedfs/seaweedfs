@@ -705,7 +705,7 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, claims2)
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
-	assert.Contains(t, err.Error(), jti)
+	assert.NotContains(t, err.Error(), jti, "error should not expose the raw token identifier")
 
 	// Test 3: Different token with different JTI should succeed
 	jti2 := "different-token-id-67890"
@@ -722,7 +722,8 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user456", claims3.Subject)
 
-	// Test 4: Token without JTI should still be accepted (backward compatibility)
+	// Test 4: Token without JTI is tracked by the token's own fingerprint,
+	// so presenting the same token again is still a replay
 	tokenNoJTI := createTestJWT(t, privateKey, jwt.MapClaims{
 		"iss": jwksServer.URL,
 		"aud": "test-client",
@@ -734,6 +735,27 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	claims4, err := provider.ValidateToken(context.Background(), tokenNoJTI)
 	require.NoError(t, err)
 	assert.Equal(t, "user789", claims4.Subject)
+
+	_, err = provider.ValidateToken(context.Background(), tokenNoJTI)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"a jti-less token must not stay reusable while protection is enabled")
+
+	// Test 5: Token with a JTI but no exp is accepted, and its JTI is still
+	// consumed so a replay is detected
+	tokenNoExp := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "userNoExp",
+		"jti": "no-exp-jti",
+		"iat": time.Now().Unix(),
+	})
+
+	claims5, err := provider.ValidateToken(context.Background(), tokenNoExp)
+	require.NoError(t, err)
+	assert.Equal(t, "userNoExp", claims5.Subject)
+
+	_, err = provider.ValidateToken(context.Background(), tokenNoExp)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
 }
 
 func TestOIDCProviderJTIReplayProtectionDisabled(t *testing.T) {
@@ -1306,7 +1328,7 @@ func BenchmarkJTIValidation(b *testing.B) {
 		ClientID:                   "test-client",
 		JWKSUri:                    jwksServer.URL + "/jwks",
 		JTIReplayProtectionEnabled: &jtiEnabled,
-		JTICacheMaxSize:            100000,
+		JTICacheMaxSize:            b.N + 1024,
 	}
 	require.NoError(b, provider.Initialize(config))
 	defer provider.Shutdown(context.Background())
@@ -1324,12 +1346,16 @@ func BenchmarkJTIValidation(b *testing.B) {
 		})
 	}
 
+	// Parallel workers draw distinct token indices so each iteration
+	// validates a new token rather than a replay or capacity rejection.
+	var tokenIndex atomic.Int64
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		i := 0
 		for pb.Next() {
-			provider.ValidateToken(context.Background(), tokens[i%len(tokens)])
-			i++
+			i := int(tokenIndex.Add(1)-1) % len(tokens)
+			if _, err := provider.ValidateToken(context.Background(), tokens[i]); err != nil {
+				b.Errorf("unexpected validation error: %v", err)
+			}
 		}
 	})
 }
