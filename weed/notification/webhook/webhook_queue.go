@@ -276,9 +276,11 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 			t.handleWebhook,
 		)
 
+		routerStopped := make(chan struct{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer close(routerStopped)
 			if err := router.Run(w.ctx); err != nil && !errors.Is(err, context.Canceled) {
 				glog.Errorf("webhook pubsub worker stopped with error: %v", err)
 			}
@@ -290,6 +292,8 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 		// without a subscriber GoChannel drops the publish as undeliverable
 		select {
 		case <-router.Running():
+		case <-routerStopped:
+			return fmt.Errorf("webhook router for target %q stopped before it started", t.name)
 		case <-w.ctx.Done():
 			return w.ctx.Err()
 		}
