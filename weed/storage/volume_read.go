@@ -184,6 +184,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		headerErr = nil
 	}
 	if headerErr != nil {
+		if headerErr != io.EOF {
+			v.checkReadWriteError(headerErr)
+		}
 		return fmt.Errorf("ReadNeedleData header: %w", headerErr)
 	}
 	probe := new(needle.Needle)
