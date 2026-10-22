@@ -413,6 +413,28 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
+type syncWriteKey struct{}
+
+// WithSyncWrite marks the entry writes under ctx durable-on-ack: a store that
+// buffers writes by default must flush them before returning.
+func WithSyncWrite(ctx context.Context) context.Context {
+	return context.WithValue(ctx, syncWriteKey{}, true)
+}
+
+// SyncWrite reports whether ctx carries a durability request for entry writes.
+func SyncWrite(ctx context.Context) bool {
+	return ctx.Value(syncWriteKey{}) != nil
+}
+
+// syncWriteContext flags ctx when the storage rule on p asks for fsync, so the
+// store write is held to the same durability as the data path.
+func (f *Filer) syncWriteContext(ctx context.Context, p util.FullPath) context.Context {
+	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).Fsync {
+		return WithSyncWrite(ctx)
+	}
+	return ctx
+}
+
 // CreateEntry creates or replaces an entry. When existing is non-nil the caller
 // has already fetched the current entry at this path under a path lock, and it
 // is reused instead of looking the store up again; pass nil to have CreateEntry
@@ -422,6 +444,8 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if string(entry.FullPath) == "/" {
 		return nil
 	}
+
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
 
 	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
 		return filer_pb.ErrEntryNameTooLong
@@ -628,6 +652,7 @@ func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) 
 // deleted with, so a restore cannot hand back a directory more permissive than the one
 // it replaces - including when someone else already put it back with wider ones.
 func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath, attrs empty_folder_cleanup.DirectoryAttributes) error {
+	ctx = f.syncWriteContext(ctx, dirPath)
 	existing, err := f.FindEntry(ctx, dirPath)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return err
@@ -677,6 +702,7 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 }
 
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, isFromOtherCluster bool) (err error) {
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.Attr.Inode != 0 {

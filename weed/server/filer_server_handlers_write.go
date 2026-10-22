@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -120,6 +121,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
+	}
+
+	if so.Fsync {
+		ctx = filer.WithSyncWrite(ctx)
 	}
 
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
