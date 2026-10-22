@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultWorkerStaleTimeout = 2 * time.Minute
@@ -495,23 +496,21 @@ func cloneJobTypeCapability(in *plugin_pb.JobTypeCapability) *plugin_pb.JobTypeC
 	if in == nil {
 		return nil
 	}
-	out := *in
-	return &out
+	return proto.Clone(in).(*plugin_pb.JobTypeCapability)
 }
 
 func cloneWorkerHeartbeat(in *plugin_pb.WorkerHeartbeat) *plugin_pb.WorkerHeartbeat {
 	if in == nil {
 		return nil
 	}
-	out := *in
+	out := proto.Clone(in).(*plugin_pb.WorkerHeartbeat)
 	if in.RunningWork != nil {
 		out.RunningWork = make([]*plugin_pb.RunningWork, 0, len(in.RunningWork))
 		for _, rw := range in.RunningWork {
 			if rw == nil {
 				continue
 			}
-			clone := *rw
-			out.RunningWork = append(out.RunningWork, &clone)
+			out.RunningWork = append(out.RunningWork, proto.Clone(rw).(*plugin_pb.RunningWork))
 		}
 	}
 	if in.QueuedJobsByType != nil {
@@ -526,5 +525,5 @@ func cloneWorkerHeartbeat(in *plugin_pb.WorkerHeartbeat) *plugin_pb.WorkerHeartb
 			out.Metadata[k] = v
 		}
 	}
-	return &out
+	return out
 }
