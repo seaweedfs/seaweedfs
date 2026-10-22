@@ -2,6 +2,7 @@ package filer_etc
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -141,4 +142,65 @@ func TestLoadConfigurationSucceedsOnValidFiles(t *testing.T) {
 		names = append(names, id.Name)
 	}
 	assert.ElementsMatch(t, []string{"alice", "bob"}, names)
+}
+
+// A legacy client that rewrites identity.json between the migration's
+// load-time read and its rename strands the newer content in
+// identity.json.old. The migration must pick up those entries instead of
+// losing them.
+func TestLoadConfigurationMigratesLegacyWriteRacingWithRename(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	v1 := []byte(`{"identities":[{"name":"alice","credentials":[{"accessKey":"AK1","secretKey":"SK1"}]}]}`)
+	v2 := []byte(`{"identities":[{"name":"alice","credentials":[{"accessKey":"AK1","secretKey":"SK1"}]},{"name":"bob","credentials":[{"accessKey":"AK2","secretKey":"SK2"}]}]}`)
+	putEntry(t, server, filer.IamConfigDirectory, IamLegacyIdentityFile, v1)
+
+	var once sync.Once
+	server.beforeAtomicRename = func(dir, name string) {
+		once.Do(func() {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			key := filerEntryKey(dir, name)
+			entry := cloneEntry(server.entries[key])
+			entry.Content = v2
+			server.entries[key] = entry
+		})
+	}
+
+	_, err := store.LoadConfiguration(ctx)
+	require.NoError(t, err)
+
+	bob, err := store.GetUser(ctx, "bob")
+	require.NoError(t, err)
+	assert.Equal(t, "bob", bob.Name)
+
+	alice, err := store.GetUser(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, "alice", alice.Name)
+
+	_, found, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, IamLegacyIdentityFile)
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+// Without a concurrent write, the migration still renames the legacy file and
+// writes out every identity.
+func TestLoadConfigurationMigratesLegacyFile(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	legacy := []byte(`{"identities":[{"name":"alice","credentials":[{"accessKey":"AK1","secretKey":"SK1"}]}]}`)
+	putEntry(t, server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy)
+
+	_, err := store.LoadConfiguration(ctx)
+	require.NoError(t, err)
+
+	alice, err := store.GetUser(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, "alice", alice.Name)
+
+	_, found, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, IamLegacyIdentityFile)
+	require.NoError(t, err)
+	assert.False(t, found)
 }

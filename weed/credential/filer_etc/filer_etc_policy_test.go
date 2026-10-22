@@ -32,6 +32,7 @@ type policyTestFilerServer struct {
 	afterListEntry       func(string, string)
 	beforeDelete         func(string, string) error
 	beforeUpdate         func(string, string) error
+	beforeAtomicRename   func(string, string)
 }
 
 func newPolicyTestFilerServer() *policyTestFilerServer {
@@ -137,6 +138,29 @@ func (s *policyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.Del
 
 	delete(s.entries, key)
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (s *policyTestFilerServer) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	s.mu.RLock()
+	beforeAtomicRename := s.beforeAtomicRename
+	s.mu.RUnlock()
+	if beforeAtomicRename != nil {
+		beforeAtomicRename(req.OldDirectory, req.OldName)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldKey := filerEntryKey(req.OldDirectory, req.OldName)
+	entry, found := s.entries[oldKey]
+	if !found {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+	delete(s.entries, oldKey)
+	renamed := cloneEntry(entry)
+	renamed.Name = req.NewName
+	s.entries[filerEntryKey(req.NewDirectory, req.NewName)] = renamed
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
 func newPolicyTestStore(t *testing.T) *FilerEtcStore {
