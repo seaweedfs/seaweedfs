@@ -836,7 +836,7 @@ impl NeedleReadPlan {
     pub(crate) fn read_meta(&mut self, n: &mut Needle) -> Result<(), VolumeError> {
         let (source, size, version) = (&self.source, self.size, self.version);
         let read_at = |buf: &mut [u8], at: u64| Ok(source.read_exact_at(buf, at)?);
-        with_offset_retry(&mut self.offset, |off| {
+        let result = with_offset_retry(&mut self.offset, |off| {
             if version == VERSION_1 {
                 // A V1 body is all data, so its "meta" is the whole record.
                 let mut buf = vec![0u8; get_actual_size(size, version) as usize];
@@ -847,7 +847,13 @@ impl NeedleReadPlan {
             } else {
                 Volume::read_needle_meta_blob_and_parse(read_at, n, off, size, version)
             }
-        })?;
+        });
+        match &result {
+            Ok(()) => self.io_errors.check_read_write_error(None),
+            Err(VolumeError::Io(e)) => self.io_errors.check_read_write_error(Some(e)),
+            Err(_) => {}
+        }
+        result?;
         if needle_expired(n) {
             return Err(VolumeError::NotFound);
         }
