@@ -505,25 +505,26 @@ func cloneWorkerHeartbeat(in *plugin_pb.WorkerHeartbeat) *plugin_pb.WorkerHeartb
 	}
 	out := proto.Clone(in).(*plugin_pb.WorkerHeartbeat)
 	if in.RunningWork != nil {
-		out.RunningWork = make([]*plugin_pb.RunningWork, 0, len(in.RunningWork))
-		for _, rw := range in.RunningWork {
-			if rw == nil {
-				continue
+		running := out.RunningWork[:0]
+		// Clone can turn nil messages into empty messages, so filter using
+		// their original positions while reusing the cloned entries.
+		for i, work := range in.RunningWork {
+			if work != nil {
+				running = append(running, out.RunningWork[i])
 			}
-			out.RunningWork = append(out.RunningWork, proto.Clone(rw).(*plugin_pb.RunningWork))
 		}
+		clear(out.RunningWork[len(running):])
+		if running == nil {
+			running = []*plugin_pb.RunningWork{}
+		}
+		out.RunningWork = running
 	}
-	if in.QueuedJobsByType != nil {
-		out.QueuedJobsByType = make(map[string]int32, len(in.QueuedJobsByType))
-		for k, v := range in.QueuedJobsByType {
-			out.QueuedJobsByType[k] = v
-		}
+	// Preserve writable empty maps without rebuilding populated clones.
+	if in.QueuedJobsByType != nil && out.QueuedJobsByType == nil {
+		out.QueuedJobsByType = make(map[string]int32)
 	}
-	if in.Metadata != nil {
-		out.Metadata = make(map[string]string, len(in.Metadata))
-		for k, v := range in.Metadata {
-			out.Metadata[k] = v
-		}
+	if in.Metadata != nil && out.Metadata == nil {
+		out.Metadata = make(map[string]string)
 	}
 	return out
 }
