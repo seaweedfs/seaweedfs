@@ -247,6 +247,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.Header.Get("If-Modified-Since") != "" {
 			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
 				if t.Unix() >= int64(n.LastModified) {
+					if readOption.IsMetaOnly {
+						if v := vs.store.GetVolume(volumeId); v != nil {
+							v.NoteMetaOnlySuccess()
+						}
+					}
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -254,6 +259,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
