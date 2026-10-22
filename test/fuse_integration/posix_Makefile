@@ -20,6 +20,10 @@ POSIX_BASIC_TESTS := posix_compliance_test.go
 POSIX_EXTENDED_TESTS := posix_extended_test.go  
 POSIX_EXTERNAL_TESTS := posix_external_test.go
 
+# -f is not propagated through MAKEFLAGS, so recursive calls must name this
+# file explicitly or the sub-make reads the default Makefile instead.
+MAKE_SELF := $(MAKE) -f $(firstword $(MAKEFILE_LIST))
+
 # Colors for output
 RED := \033[31m
 GREEN := \033[32m
@@ -72,9 +76,9 @@ setup-reports:
 
 setup-external-tools: setup-reports
 	@echo "$(BLUE)🛠️  Setting up external POSIX test tools...$(RESET)"
-	@$(MAKE) setup-pjdfstest || echo "$(YELLOW)[WARNING] pjdfstest setup failed - continuing without it$(RESET)"
-	@$(MAKE) setup-nfstest || echo "$(YELLOW)[WARNING] nfstest setup failed - continuing without it$(RESET)"
-	@$(MAKE) setup-fio || echo "$(YELLOW)[WARNING] FIO setup failed - continuing without it$(RESET)"
+	@$(MAKE_SELF) setup-pjdfstest || echo "$(YELLOW)[WARNING] pjdfstest setup failed - continuing without it$(RESET)"
+	@$(MAKE_SELF) setup-nfstest || echo "$(YELLOW)[WARNING] nfstest setup failed - continuing without it$(RESET)"
+	@$(MAKE_SELF) setup-fio || echo "$(YELLOW)[WARNING] FIO setup failed - continuing without it$(RESET)"
 
 # External tools setup
 setup-pjdfstest:
@@ -156,7 +160,7 @@ endif
 # Comprehensive test suites
 test-posix-full: test-posix-basic test-posix-extended test-posix-external
 	@echo "$(GREEN)[OK] Full POSIX compliance test suite completed$(RESET)"
-	@$(MAKE) generate-report
+	@$(MAKE_SELF) generate-report
 
 test-posix-critical: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running critical POSIX compliance tests...$(RESET)"
@@ -240,7 +244,7 @@ test-nfstest-posix: setup-nfstest setup-reports
 # FIO-based performance tests
 test-fio-posix: setup-reports
 	@echo "$(CYAN)[TEST] Running FIO-based POSIX I/O tests...$(RESET)"
-	@$(MAKE) create-fio-configs
+	@$(MAKE_SELF) create-fio-configs
 	@if command -v fio >/dev/null 2>&1; then \
 		for config in $(REPORT_DIR)/fio_*.conf; do \
 			echo "$(BLUE)Running FIO config: $$config$(RESET)"; \
@@ -287,9 +291,9 @@ create-fio-configs: setup-reports
 # Reporting and analysis
 generate-report: setup-reports
 	@echo "$(BLUE)[REPORT] Generating comprehensive POSIX compliance report...$(RESET)"
-	@$(MAKE) -f posix_Makefile generate-html-report
-	@$(MAKE) -f posix_Makefile generate-text-report
-	@$(MAKE) -f posix_Makefile generate-json-report
+	@$(MAKE_SELF) generate-html-report
+	@$(MAKE_SELF) generate-text-report
+	@$(MAKE_SELF) generate-json-report
 
 generate-html-report:
 	@echo "$(BLUE)[REPORT] Generating HTML report...$(RESET)"
@@ -432,8 +436,8 @@ lint:
 # CI/CD integration
 ci-posix-tests: check-prereqs setup-external-tools
 	@echo "$(CYAN)🚀 Running POSIX tests for CI/CD...$(RESET)"
-	@$(MAKE) test-posix-critical
-	@$(MAKE) generate-report
+	@$(MAKE_SELF) test-posix-critical
+	@$(MAKE_SELF) generate-report
 
 
 
