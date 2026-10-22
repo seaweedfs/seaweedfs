@@ -107,9 +107,12 @@ func runFilerBackup(cmd *Command, args []string) bool {
 
 	clientId := util.RandomInt32()
 	var clientEpoch int32
+	var resumeTsNs int64
+
 	for {
 		clientEpoch++
-		err := doFilerBackup(grpcDialOption, &filerBackupOptions, reExcludeFileName, excludeFileNames, excludePathPatterns, clientId, clientEpoch)
+		var err error
+		resumeTsNs, err = doFilerBackup(grpcDialOption, &filerBackupOptions, reExcludeFileName, excludeFileNames, excludePathPatterns, clientId, clientEpoch, resumeTsNs)
 		if err != nil {
 			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
@@ -121,12 +124,12 @@ const (
 	BackupKeyPrefix = "backup."
 )
 
-func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, clientId int32, clientEpoch int32) error {
+func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, clientId int32, clientEpoch int32, resumeTsNs int64) (int64, error) {
 
 	// find data sink
 	dataSink := findSink(util.GetViper())
 	if dataSink == nil {
-		return fmt.Errorf("no data sink configured in replication.toml")
+		return 0, fmt.Errorf("no data sink configured in replication.toml")
 	}
 
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
@@ -167,11 +170,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		sourceFiler.ToGrpcAddress(),
 		sourcePath,
 		*backupOption.proxyByFiler); err != nil {
-		return fmt.Errorf("filersource initialization failed: %v", err)
+		return 0, fmt.Errorf("filersource initialization failed: %v", err)
 	}
 
 	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
-		return fmt.Errorf("SSE initialization failed: %v", err)
+		return 0, fmt.Errorf("SSE initialization failed: %v", err)
 	}
 	dataSink.SetSourceFiler(filerSource)
 
@@ -182,14 +185,14 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	if runSnapshot {
 		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.ignore404Error)
 		if err != nil {
-			return fmt.Errorf("initial snapshot: %w", err)
+			return 0, fmt.Errorf("initial snapshot: %w", err)
 		}
 		// The walk can take hours on large trees; retry the tiny KV write a
 		// handful of times before giving up so a flaky filer KV doesn't force
 		// the whole walk to repeat on the next retry loop iteration.
 		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, sinkId, snapshotTsNs); err != nil {
 			glog.Errorf("initialSnapshot: FAILED to persist offset %d for sinkId %d after retries: %v — the next retry will redo the full walk", snapshotTsNs, sinkId, err)
-			return fmt.Errorf("persist initial snapshot offset: %w", err)
+			return 0, fmt.Errorf("persist initial snapshot offset: %w", err)
 		}
 		startFrom = time.Unix(0, snapshotTsNs)
 		// walk once per process; retries resume from the persisted checkpoint
@@ -341,7 +344,12 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	case <-time.After(30 * time.Second):
 		glog.Warningf("backup %s offset checkpoint did not finish in 30s; reconnecting anyway", sourceFiler)
 	}
-	return err
+	// Resume the next attempt at the failure pin when one exists, else at the
+	// processed watermark — never recompute a position that skips events.
+	if ts := processor.OldestFailedTsNs(); ts > 0 {
+		return ts, err
+	}
+	return processor.processedTsWatermark.Load(), err
 
 }
 
