@@ -2891,7 +2891,7 @@ impl Volume {
     /// matches the stored copy and there is nothing to append.
     fn prepare_write(
         &self,
-        io: &VolumeIo,
+        io: &mut VolumeIo,
         n: &mut Needle,
         check_cookie: bool,
     ) -> Result<bool, VolumeError> {
@@ -2918,18 +2918,35 @@ impl Volume {
         }
 
         // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
-        if let Some(nm) = &io.nm
-            && let Some(nv) = nm.get(n.id)?
+        let indexed = match io.nm.as_ref() {
+            Some(nm) => nm.get(n.id)?,
+            None => None,
+        };
+        if let Some(nv) = indexed
+            && !nv.offset.is_zero()
         {
             let mut existing = Needle::default();
             // Read only the header to check cookie
             self.read_needle_header_unlocked(io, &mut existing, nv.offset.to_actual_offset())?;
 
-            if n.cookie.0 == 0 && !check_cookie {
-                n.cookie = existing.cookie;
-            }
-            if existing.cookie != n.cookie {
-                return Err(VolumeError::CookieMismatch(n.cookie.0));
+            if existing.id != n.id && existing.size != nv.size {
+                // the entry resolves to a record that is neither the indexed
+                // key nor the indexed size, so it is stale rather than a
+                // duplicate — drop it and let the append re-index the key
+                warn!(
+                    "volume {} index entry for needle {} resolves to needle {}; dropping stale index entry",
+                    self.id.0, n.id.0, existing.id.0
+                );
+                if let Some(nm) = io.nm.as_mut() {
+                    nm.delete(n.id, nv.offset)?;
+                }
+            } else {
+                if n.cookie.0 == 0 && !check_cookie {
+                    n.cookie = existing.cookie;
+                }
+                if existing.cookie != n.cookie {
+                    return Err(VolumeError::CookieMismatch(n.cookie.0));
+                }
             }
         }
         Ok(false)
@@ -9042,6 +9059,57 @@ mod tests {
         };
         let err = v.write_needle(&mut n2, true, false).unwrap_err();
         assert!(matches!(err, VolumeError::CookieMismatch(_)));
+    }
+
+    /// A damaged index entry resolving to a different needle must miss on
+    /// reads and be dropped by the next write for the key, not rejected as a
+    /// cookie conflict.
+    #[test]
+    fn test_stale_index_entry_heals_on_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut first = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x2222),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut first, true, false).unwrap();
+
+        // point key 9 at needle 2's record with a size that does not match
+        // the record, as a corrupt index entry would look
+        {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, Size(nv.size.0 + 1)).unwrap();
+        }
+
+        let mut probe = Needle {
+            id: NeedleId(9),
+            ..Needle::default()
+        };
+        assert!(v.read_needle(&mut probe).is_err());
+
+        let mut n = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xabcd),
+            data: b"ninth".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+
+        let mut back = Needle {
+            id: NeedleId(9),
+            ..Needle::default()
+        };
+        v.read_needle(&mut back).unwrap();
+        assert_eq!(back.data, b"ninth");
+        assert_eq!(back.cookie, Cookie(0xabcd));
     }
 
     // A size disagreeing with the blob's own header indexes the needle at the wrong
