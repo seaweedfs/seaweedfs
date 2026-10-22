@@ -1301,6 +1301,12 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 				resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
 				return resp, nil
 			}
+			if storeErr == nil {
+				policyNames, listErr := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+				if listErr == nil && len(policyNames) > 0 {
+					return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the policy with name %s cannot be found", policyName)}
+				}
+			}
 		}
 
 		// Fallback: reconstruct from ident.Actions (lossy - fine-grained actions
