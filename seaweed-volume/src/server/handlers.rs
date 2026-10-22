@@ -1121,6 +1121,10 @@ async fn get_or_head_handler_inner(
 
     let (etag, last_modified_str) = etag_and_last_modified(&n);
     if let Some(resp) = not_modified_response(&n, &headers, &etag, &last_modified_str) {
+        // A request that ends here was answered by the meta read alone.
+        if let Some(io_errors) = strategy.io_errors() {
+            io_errors.check_read_write_error(None);
+        }
         return resp;
     }
 
@@ -1212,6 +1216,19 @@ enum ReadStrategy {
 struct ReadPlan {
     needle: Needle,
     strategy: ReadStrategy,
+}
+
+impl ReadStrategy {
+    /// The tracker a terminal meta read reports success to, when the reply
+    /// is served from the data file.
+    fn io_errors(&self) -> Option<&Arc<crate::storage::io_error::IoErrorTracker>> {
+        match self {
+            ReadStrategy::Stream(info)
+            | ReadStrategy::HeadFromMeta(info)
+            | ReadStrategy::RangeFromSource(info) => Some(&info.io_errors),
+            ReadStrategy::Buffered => None,
+        }
+    }
 }
 
 /// The 401 reply for a bad read JWT; Go checks it before NewVolumeId, so a
