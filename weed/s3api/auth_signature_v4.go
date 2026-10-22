@@ -412,6 +412,9 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		// catalog's vended sessions name it (never a key re-read from the request).
 		// Recorded before the retarget check so that refusal names it too.
 		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
+		if found {
+			s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey)
+		}
 		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
 			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
 				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
@@ -912,6 +915,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey)
 	return identity, s3err.ErrNone
 }
 

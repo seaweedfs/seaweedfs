@@ -82,6 +82,7 @@ func TestVendTableCredentialsRecordsTheCallersKey(t *testing.T) {
 			// As the catalog's auth does: the holder is installed, the verifier records into it.
 			r := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/", nil))
 			s3_constants.RecordAccessKeyId(r.Context(), key)
+			s3_constants.RecordStoredAccessKeyId(r.Context(), key)
 			ctx = r.Context()
 		}
 		creds, err := s3a.VendTableCredentials(ctx, "shared-user", "warehouse", "ns/t", false)

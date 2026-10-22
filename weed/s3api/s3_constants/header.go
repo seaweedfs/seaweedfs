@@ -355,6 +355,7 @@ const (
 	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
 	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
 	contextKeyAccessKeyId         contextKey = "s3-access-key-id"
+	contextKeyStoredAccessKeyId   contextKey = "s3-stored-access-key-id"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -365,10 +366,11 @@ const (
 // holder installed before authentication is shared across all copies, so the
 // name written by the inner handler is readable by the outer middleware.
 type identityHolder struct {
-	name          atomic.Pointer[string]
-	principalArn  atomic.Pointer[string]
-	identityClaim atomic.Pointer[string]
-	accessKeyId   atomic.Pointer[string]
+	name              atomic.Pointer[string]
+	principalArn      atomic.Pointer[string]
+	identityClaim     atomic.Pointer[string]
+	accessKeyId       atomic.Pointer[string]
+	storedAccessKeyId atomic.Pointer[string]
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -548,6 +550,52 @@ func AccessKeyIdFromContext(ctx context.Context) string {
 	}
 	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
 		if id := h.accessKeyId.Load(); id != nil {
+			return *id
+		}
+	}
+	return ""
+}
+
+// SetStoredAccessKeyIdInContext records the id of a stored-identity key the
+// request authenticated with — set by an authenticator that verified the
+// credential against the identity store, so a credential vendor can tell the
+// caller apart from an STS session or OIDC user holding a key the store never
+// issued.
+func SetStoredAccessKeyIdInContext(ctx context.Context, accessKeyId string) context.Context {
+	if accessKeyId == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedAccessKeyId.Store(&accessKeyId)
+	}
+	return context.WithValue(ctx, contextKeyStoredAccessKeyId, accessKeyId)
+}
+
+// RecordStoredAccessKeyId stores the stored-credential marker into the
+// request's identity holder: a verifier calls it when the credential that
+// matched resolves to a key held by a configured identity. A no-op without a
+// holder (EnsureIdentityHolder) or without a key.
+func RecordStoredAccessKeyId(ctx context.Context, accessKeyId string) {
+	if ctx == nil || accessKeyId == "" {
+		return
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedAccessKeyId.Store(&accessKeyId)
+	}
+}
+
+// StoredAccessKeyIdFromContext retrieves the stored-identity access key id the
+// request authenticated with, or "" when it authenticated another way (STS
+// session, OIDC bearer, anonymous).
+func StoredAccessKeyIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(contextKeyStoredAccessKeyId).(string); ok && id != "" {
+		return id
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if id := h.storedAccessKeyId.Load(); id != nil {
 			return *id
 		}
 	}

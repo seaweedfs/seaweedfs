@@ -74,14 +74,15 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 		ProviderName:    icebergVendedCredentialsProvider,
 		Policy:          &policy,
 	}
-	// Bind the session to the caller's key when the caller is a stored
-	// identity: a caller that signed with another STS session's key, or an
-	// OIDC user, names no identity, and binding its session would refuse
-	// every request made with it. The binding is kept even when the key was
-	// revoked between authentication and this vend — the session then dies
-	// on its first request instead of living unbound until it expires.
-	if accessKey != "" && s3a.iam != nil && s3a.iam.lookupByIdentityName(principal) != nil {
-		request.SourceAccessKeyId = accessKey
+	// Bind the session to the caller's key when the caller authenticated with a
+	// stored identity's key — a marker its verifier records, so a caller that
+	// signed with an STS session key or OIDC token stays unbound even when its
+	// principal names a stored identity, whose session a binding would refuse
+	// on every request. The marker survives the key being revoked between
+	// authentication and this vend: the session then dies on its first request
+	// instead of living unbound until it expires.
+	if storedKey := s3_constants.StoredAccessKeyIdFromContext(ctx); storedKey != "" {
+		request.SourceAccessKeyId = storedKey
 	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration

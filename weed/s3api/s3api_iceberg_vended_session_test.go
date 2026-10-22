@@ -40,12 +40,16 @@ func vendingServer(t *testing.T) *S3ApiServer {
 }
 
 // vend mints table credentials for principal as if its request had been
-// signed with accessKey ("" for a request that recorded none).
-func vend(t *testing.T, s3a *S3ApiServer, principal, accessKey string) *VendedCredentials {
+// signed with accessKey ("" for a request that recorded none); stored marks
+// the key as a stored identity's credential, as a verifier would.
+func vend(t *testing.T, s3a *S3ApiServer, principal, accessKey string, stored bool) *VendedCredentials {
 	t.Helper()
 	ctx := context.Background()
 	if accessKey != "" {
 		ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
+	}
+	if stored {
+		ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
 	}
 	creds, err := s3a.VendTableCredentials(ctx, principal, "warehouse", "ns/t", false)
 	require.NoError(t, err)
@@ -72,8 +76,8 @@ func sessionInfo(t *testing.T, s3a *S3ApiServer, creds *VendedCredentials) *sts.
 
 func TestVendedSessionEndsWithItsAccessKey(t *testing.T) {
 	s3a := vendingServer(t)
-	sessionA := vend(t, s3a, "shared-user", sharedKeyA)
-	sessionB := vend(t, s3a, "shared-user", sharedKeyB)
+	sessionA := vend(t, s3a, "shared-user", sharedKeyA, true)
+	sessionB := vend(t, s3a, "shared-user", sharedKeyB, true)
 	require.Equal(t, s3err.ErrNone, use(t, s3a, sessionA), "control: the session works while its key does")
 	require.Equal(t, s3err.ErrNone, use(t, s3a, sessionB))
 
@@ -96,7 +100,7 @@ func TestVendedSessionEndsWithItsAccessKey(t *testing.T) {
 
 func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 	s3a := vendingServer(t)
-	session := vend(t, s3a, "shared-user", sharedKeyA)
+	session := vend(t, s3a, "shared-user", sharedKeyA, true)
 	require.Equal(t, s3err.ErrNone, use(t, s3a, session))
 
 	s3a.iam.nameToIdentity["shared-user"].Disabled = true
@@ -114,14 +118,15 @@ func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 // made with them.
 func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 	s3a := vendingServer(t)
-	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA)).SourceAccessKeyId, "control")
+	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA, true)).SourceAccessKeyId, "control")
 
 	for _, tc := range []struct{ principal, key, why string }{
 		{"47ad4828c45b3f337bc3146081ba8f0f", "ASIATEMPORARYKEY0001", "an STS session's subject and temporary key"},
+		{"shared-user", "ASIATEMPORARYKEY0001", "an STS session whose subject names a stored identity"},
 		{"alice@example.com", "", "an OIDC user"},
 		{"shared-user", "", "no recorded key"},
 	} {
-		session := vend(t, s3a, tc.principal, tc.key)
+		session := vend(t, s3a, tc.principal, tc.key, false)
 		assert.Empty(t, sessionInfo(t, s3a, session).SourceAccessKeyId, tc.why)
 		assert.Equal(t, s3err.ErrNone, use(t, s3a, session), tc.why)
 	}
@@ -136,7 +141,7 @@ func TestVendedSessionStaysBoundWhenTheKeyIsGoneAtVend(t *testing.T) {
 
 	identity := s3a.iam.nameToIdentity["shared-user"]
 	identity.Credentials = identity.Credentials[1:] // sharedKeyA revoked mid-request
-	session := vend(t, s3a, "shared-user", sharedKeyA)
+	session := vend(t, s3a, "shared-user", sharedKeyA, true)
 	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, session).SourceAccessKeyId, "still bound")
 	assert.Equal(t, s3err.ErrInvalidAccessKeyID, use(t, s3a, session), "the dead key's session is refused")
 }

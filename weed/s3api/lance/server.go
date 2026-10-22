@@ -181,6 +181,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
 				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}
@@ -199,6 +200,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
 				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}
