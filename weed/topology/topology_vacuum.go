@@ -319,8 +319,8 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	// Rack keys are resolved once up front: a node that unregisters mid-sweep
 	// loses its parent, and a later GetRack call would panic.
 	limiter := make(map[NodeId]int)
-	rackLimiter := make(map[NodeId]int)
-	dnRack := make(map[NodeId]NodeId)
+	rackLimiter := make(map[Node]int)
+	dnRack := make(map[NodeId]Node)
 	var limiterLock sync.Mutex
 	for _, locationList := range todoVolumeMap {
 		for _, dn := range locationList.list {
@@ -350,7 +350,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			// that alone exceeds a cap waits for the whole bucket to be free
 			// instead of pending forever
 			serverNeeds := make(map[NodeId]int)
-			rackNeeds := make(map[NodeId]int)
+			rackNeeds := make(map[Node]int)
 			for _, dn := range locationList.list {
 				serverNeeds[dn.Id()]++
 				if maxParallelVacuumPerRack > 0 {
@@ -424,18 +424,15 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 
 }
 
-// vacuumRackKey scopes a data node's rack to its data center so racks that
-// share a name in different centers get separate quotas. A node that already
-// lost its parent falls back to its own id, degrading to the per-server cap.
-func vacuumRackKey(dn *DataNode) NodeId {
-	rack := dn.Parent()
-	if rack == nil {
-		return dn.Id()
+// vacuumRackKey identifies a data node's rack by the rack node itself, so
+// racks that share a name in different data centers still get separate
+// quotas. A node that already lost its parent falls back to itself,
+// degrading to the per-server cap.
+func vacuumRackKey(dn *DataNode) Node {
+	if rack := dn.Parent(); rack != nil {
+		return rack
 	}
-	if dc := rack.Parent(); dc != nil {
-		return dc.Id() + "/" + rack.Id()
-	}
-	return rack.Id()
+	return dn
 }
 
 // skipReadOnly is set by the background scan and all-volumes sweep, where a
