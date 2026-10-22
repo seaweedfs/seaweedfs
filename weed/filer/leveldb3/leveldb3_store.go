@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -35,6 +36,11 @@ type LevelDB3Store struct {
 	dbs      map[string]*leveldb.DB
 	dbsLock  sync.RWMutex
 	ReadOnly bool
+
+	blockCacheSizeMB      int
+	writeBufferSizeMB     int
+	blockSizeKB           int
+	compactionTableSizeMB int
 }
 
 func (store *LevelDB3Store) GetName() string {
@@ -43,7 +49,56 @@ func (store *LevelDB3Store) GetName() string {
 
 func (store *LevelDB3Store) Initialize(configuration weed_util.Configuration, prefix string) (err error) {
 	dir := configuration.GetString(prefix + "dir")
+	store.blockCacheSizeMB = configuration.GetInt(prefix + "block_cache_size_mb")
+	store.writeBufferSizeMB = configuration.GetInt(prefix + "write_buffer_size_mb")
+	store.blockSizeKB = configuration.GetInt(prefix + "block_size_kb")
+	store.compactionTableSizeMB = configuration.GetInt(prefix + "compaction_table_size_mb")
+	if err := store.validateSizeOptions(); err != nil {
+		return err
+	}
 	return store.initialize(dir)
+}
+
+// validateSizeOptions rejects sizes too large to convert to bytes without
+// overflowing int on this platform.
+func (store *LevelDB3Store) validateSizeOptions() error {
+	for name, kv := range map[string][2]int{
+		"block_cache_size_mb":      {store.blockCacheSizeMB, 1 << 20},
+		"write_buffer_size_mb":     {store.writeBufferSizeMB, 1 << 20},
+		"block_size_kb":            {store.blockSizeKB, 1 << 10},
+		"compaction_table_size_mb": {store.compactionTableSizeMB, 1 << 20},
+	} {
+		if kv[0] > math.MaxInt/kv[1] {
+			return fmt.Errorf("leveldb3 option %s=%d overflows int", name, kv[0])
+		}
+	}
+	return nil
+}
+
+func (store *LevelDB3Store) buildOptions(name string) *opt.Options {
+	opts := &opt.Options{
+		BlockCacheCapacity: 32 * 1024 * 1024, // default value is 8MiB
+		WriteBuffer:        16 * 1024 * 1024, // default value is 4MiB
+		Filter:             filter.NewBloomFilter(8),
+		ReadOnly:           store.ReadOnly,
+	}
+	if name != DEFAULT {
+		opts.BlockCacheCapacity = 16 * 1024 * 1024 // default value is 8MiB
+		opts.WriteBuffer = 8 * 1024 * 1024         // default value is 4MiB
+	}
+	if store.blockCacheSizeMB > 0 {
+		opts.BlockCacheCapacity = store.blockCacheSizeMB * 1024 * 1024
+	}
+	if store.writeBufferSizeMB > 0 {
+		opts.WriteBuffer = store.writeBufferSizeMB * 1024 * 1024
+	}
+	if store.blockSizeKB > 0 {
+		opts.BlockSize = store.blockSizeKB * 1024
+	}
+	if store.compactionTableSizeMB > 0 {
+		opts.CompactionTableSize = store.compactionTableSizeMB * 1024 * 1024
+	}
+	return opts
 }
 
 func (store *LevelDB3Store) initialize(dir string) (err error) {
@@ -65,21 +120,7 @@ func (store *LevelDB3Store) initialize(dir string) (err error) {
 }
 
 func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
-	bloom := filter.NewBloomFilter(8) // false positive rate 0.02
-	opts := &opt.Options{
-		BlockCacheCapacity: 32 * 1024 * 1024, // default value is 8MiB
-		WriteBuffer:        16 * 1024 * 1024, // default value is 4MiB
-		Filter:             bloom,
-		ReadOnly:           store.ReadOnly,
-	}
-	if name != DEFAULT {
-		opts = &opt.Options{
-			BlockCacheCapacity: 16 * 1024 * 1024, // default value is 8MiB
-			WriteBuffer:        8 * 1024 * 1024,  // default value is 4MiB
-			Filter:             bloom,
-			ReadOnly:           store.ReadOnly,
-		}
-	}
+	opts := store.buildOptions(name)
 
 	dbFolder := fmt.Sprintf("%s/%s", store.dir, name)
 	os.MkdirAll(dbFolder, 0755)
