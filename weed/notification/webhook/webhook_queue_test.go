@@ -715,6 +715,82 @@ func TestQueueBurstKeepsPendingEvents(t *testing.T) {
 	}
 }
 
+// A saturated target still applies backpressure to the sender, but it must
+// not starve the targets after it: the event reaches a healthy endpoint
+// while the slow one is still out of pending slots.
+func TestSaturatedTargetDoesNotStarveOthers(t *testing.T) {
+	var hitsA, hitsB atomic.Int32
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	newTestTarget := func(name, endpoint string) *target {
+		tgt, err := newTarget(name, &config{
+			endpoint:          endpoint,
+			timeoutSeconds:    5,
+			maxRetries:        0,
+			backoffSeconds:    1,
+			maxBackoffSeconds: 1,
+			nWorkers:          1,
+			bufferSize:        2,
+		})
+		if err != nil {
+			t.Fatalf("newTarget() error = %v", err)
+		}
+		return tgt
+	}
+	slow := newTestTarget("slow", serverA.URL)
+	fast := newTestTarget("fast", serverB.URL)
+
+	q := &Queue{}
+	if err := q.initialize([]*target{slow, fast}); err != nil {
+		t.Fatalf("initialize() error = %v", err)
+	}
+	defer closeQueueForTest(q)
+
+	for i := 0; i < cap(slow.pending); i++ {
+		slow.pending <- struct{}{}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- q.SendMessage("/test/path", &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}})
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && hitsB.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := hitsB.Load(); got != 1 {
+		t.Fatalf("expected fast target to receive the event while slow is saturated, got %d", got)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("SendMessage() returned %v while the saturated target had no free slot", err)
+	default:
+	}
+
+	<-slow.pending
+	if err := <-done; err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && hitsA.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := hitsA.Load(); got != 1 {
+		t.Errorf("expected the saturated target to deliver once a slot freed, got %d", got)
+	}
+}
+
 // A disabled flat section keeps no target even when an endpoint is set —
 // the scaffold ships exactly that combination, and a named target must not
 // reactivate it.

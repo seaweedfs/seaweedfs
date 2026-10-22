@@ -143,6 +143,7 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		return nil
 	}
 
+	var deferred []routedMessage
 	for _, t := range w.targets {
 		if t.filter != nil && !t.filter.shouldPublish(key, eventNotification) {
 			continue
@@ -156,21 +157,44 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 			return err
 		}
 		wMsg.Metadata.Set("target", t.name)
-		// a saturated target applies backpressure instead of dropping the
-		// event; the token covers the delivery until the handler finishes
+		// a free reservation routes the event without waiting on slower
+		// targets; a saturated target defers to the blocking pass below so
+		// it applies backpressure instead of dropping or starving the rest
 		select {
 		case t.pending <- struct{}{}:
+			if err := t.enqueue(w.ctx, wMsg); err != nil {
+				return err
+			}
+		default:
+			deferred = append(deferred, routedMessage{t, wMsg})
+		}
+	}
+	for _, r := range deferred {
+		select {
+		case r.target.pending <- struct{}{}:
 		case <-w.ctx.Done():
 			return w.ctx.Err()
 		}
-		select {
-		case t.inbox <- wMsg:
-		case <-w.ctx.Done():
-			t.releasePending()
-			return w.ctx.Err()
+		if err := r.target.enqueue(w.ctx, r.msg); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+type routedMessage struct {
+	target *target
+	msg    *message.Message
+}
+
+func (t *target) enqueue(ctx context.Context, wMsg *message.Message) error {
+	select {
+	case t.inbox <- wMsg:
+		return nil
+	case <-ctx.Done():
+		t.releasePending()
+		return ctx.Err()
+	}
 }
 
 func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
