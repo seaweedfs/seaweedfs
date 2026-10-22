@@ -740,8 +740,9 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
 		"a jti-less token must not stay reusable while protection is enabled")
 
-	// Test 5: Token with a JTI but no exp is accepted, and its JTI is still
-	// consumed so a replay is detected
+	// Test 5: Token with a JTI but no exp is rejected — a cache slot frees
+	// only by expiry, so an expiry-less entry would hold it forever and a
+	// burst of distinct tokens could exhaust the bound permanently.
 	tokenNoExp := createTestJWT(t, privateKey, jwt.MapClaims{
 		"iss": jwksServer.URL,
 		"aud": "test-client",
@@ -751,11 +752,8 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	})
 
 	claims5, err := provider.ValidateTokenSingleUse(context.Background(), tokenNoExp)
-	require.NoError(t, err)
-	assert.Equal(t, "userNoExp", claims5.Subject)
-
-	_, err = provider.ValidateTokenSingleUse(context.Background(), tokenNoExp)
-	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
+	assert.Nil(t, claims5)
+	assert.True(t, errors.Is(err, providers.ErrProviderMissingClaims))
 }
 
 func TestOIDCProviderJTIReplayProtectionDisabled(t *testing.T) {

@@ -936,15 +936,15 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 		}
 
 		expiresAt := tokenClaims.ExpiresAt
-		if !expiresAt.IsZero() {
-			expiresAt = expiresAt.Add(clockSkewTolerance)
-			if !time.Now().Before(expiresAt) {
-				return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
-			}
+		if expiresAt.IsZero() {
+			// a cache slot is freed only by expiry, so a token without exp
+			// would hold it forever and eventually exhaust the bound
+			return nil, fmt.Errorf("%w: missing exp claim", providers.ErrProviderMissingClaims)
 		}
-		// A token without exp never lets its entry age out on its own: the
-		// zero expiresAt keeps it consumed until the capacity bound forces it
-		// out, so the token can never become usable again.
+		expiresAt = expiresAt.Add(clockSkewTolerance)
+		if !time.Now().Before(expiresAt) {
+			return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
+		}
 
 		entry := &jtiEntry{
 			subject:   subject,
