@@ -1303,7 +1303,11 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 			}
 			// The user has stored inline policies, but none by this name
 			if storeErr == nil {
-				if names, err := e.credentialManager.ListUserInlinePolicies(ctx, userName); err == nil && len(names) > 0 {
+				policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+				if err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
+				}
+				if len(policyNames) > 0 {
 					return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user policy with name %s cannot be found", policyName)}
 				}
 			}
