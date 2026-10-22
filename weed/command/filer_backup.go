@@ -351,9 +351,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		glog.Warningf("backup %s offset checkpoint did not finish in 30s; reconnecting anyway", sourceFiler)
 	}
 	// Resume the next attempt at the failure pin when one exists, else at the
-	// processed watermark — never recompute a position that skips events.
+	// processed watermark — never recompute a position that skips events. The
+	// reader treats the position as exclusive, so back one tick off the pin or
+	// the failed event at that timestamp replays nothing.
 	if ts := processor.OldestFailedTsNs(); ts > 0 {
-		return ts, err
+		return ts - 1, err
 	}
 	return processor.processedTsWatermark.Load(), err
 
