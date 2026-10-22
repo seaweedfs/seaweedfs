@@ -406,6 +406,10 @@ func TestRedactedURLDropsTheJwt(t *testing.T) {
 	if got := redactedURL(r); strings.Contains(got, "secret-token") || !strings.Contains(got, "size=5") {
 		t.Errorf("got %q, want jwt redacted and other params kept", got)
 	}
+	r = httptest.NewRequest(http.MethodGet, "/1,abc?jwt=&jwt=secret-token&size=5", nil)
+	if got := redactedURL(r); strings.Contains(got, "secret-token") {
+		t.Errorf("got %q, want every jwt value redacted", got)
+	}
 	r = httptest.NewRequest(http.MethodGet, "/1,abc?size=5", nil)
 	if got := redactedURL(r); got != "/1,abc?size=5" {
 		t.Errorf("got %q, want the URL unchanged without a jwt", got)

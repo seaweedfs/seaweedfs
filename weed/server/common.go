@@ -120,7 +120,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 }
 
 func redactedURL(r *http.Request) string {
-	if r.URL.Query().Get("jwt") == "" {
+	if _, ok := r.URL.Query()["jwt"]; !ok {
 		return r.URL.String()
 	}
 	u := *r.URL
