@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,5 +218,64 @@ func TestRepairIdxHeadTombstones_KeepsDeletedNeedlesDeleted(t *testing.T) {
 	}
 	if _, err := v.readNeedle(newEmptyNeedle(1), nil, nil); err != nil {
 		t.Fatalf("needle 1 should have been recovered: %v", err)
+	}
+}
+
+// TestStaleIndexEntry_HealsOnWrite covers a damaged index entry that resolves
+// to a different needle: reads must miss instead of serving the wrong needle,
+// and the next write for the key must re-index it rather than be rejected as
+// a cookie conflict.
+func TestStaleIndexEntry_HealsOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	written := writeTestVolume(t, dir, 5)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	// point key 9 at needle 2's record with a size that does not match the
+	// record, as a corrupt index entry would look
+	const staleKey = 9
+	nv, ok := v.nm.Get(types.Uint64ToNeedleId(2))
+	if !ok {
+		t.Fatal("needle 2 missing from index")
+	}
+	if err := v.nm.Put(types.Uint64ToNeedleId(staleKey), nv.Offset, nv.Size+1); err != nil {
+		t.Fatalf("plant stale index entry: %v", err)
+	}
+
+	if _, err := v.readNeedle(newEmptyNeedle(staleKey), nil, nil); err == nil {
+		t.Fatal("stale-index read served needle 2's data")
+	}
+
+	stream := newEmptyNeedle(staleKey)
+	stream.DataSize = written[2].DataSize
+	if err := v.readNeedleDataInto(stream, &ReadOption{ReadBufferSize: 1024}, &bytes.Buffer{}, 0, int64(stream.DataSize)); err != ErrorNotFound {
+		t.Fatalf("stale-index stream: want ErrorNotFound, got %v", err)
+	}
+
+	n := newRandomNeedle(staleKey)
+	n.Cookie = 0xABCD
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+		t.Fatalf("write over stale index entry: %v", err)
+	}
+	if got := mustRead(t, v, staleKey); !bytes.Equal(got, n.Data) {
+		t.Fatalf("needle %d after re-index: got %d bytes, want %d", staleKey, len(got), len(n.Data))
+	}
+}
+
+// TestStaleIndexEntry_KeepsCookieConflictForSameKey checks that an entry
+// resolving to the same needle id still enforces the cookie check: only
+// cross-key corruption is dropped.
+func TestStaleIndexEntry_KeepsCookieConflictForSameKey(t *testing.T) {
+	dir := t.TempDir()
+	writeTestVolume(t, dir, 3)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	n := newRandomNeedle(2)
+	n.Cookie = 0xABCD
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err == nil {
+		t.Fatal("write with a foreign cookie over an existing key should be rejected")
 	}
 }

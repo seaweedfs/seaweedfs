@@ -176,6 +176,24 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		}
 	}()
 
+	// The header is not part of the streamed body, so verify the indexed
+	// offset really holds this needle before sending another needle's data.
+	header := make([]byte, NeedleHeaderSize)
+	headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
+	if headerErr == io.EOF && headerCount == NeedleHeaderSize {
+		headerErr = nil
+	}
+	if headerErr != nil {
+		return fmt.Errorf("ReadNeedleData header: %w", headerErr)
+	}
+	probe := new(needle.Needle)
+	probe.ParseNeedleHeader(header)
+	if probe.Id != n.Id && probe.Size != nv.Size {
+		glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+			v.Id, uint64(n.Id), uint64(probe.Id))
+		return ErrorNotFound
+	}
+
 	// read needle data
 	crc := needle.CRC(0)
 	var pending []byte
