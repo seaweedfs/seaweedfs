@@ -241,16 +241,18 @@ func (f *FuseTestFramework) GetFilerAddr() string {
 
 // startMaster starts the SeaweedFS master server
 func (f *FuseTestFramework) startMaster(config *TestConfig) error {
-	args := []string{
+	var args []string
+	if config.EnableDebug {
+		// -v is a global flag; before the subcommand or flag parsing dies
+		args = append(args, "-v=4")
+	}
+	args = append(args,
 		"master",
 		"-ip=127.0.0.1",
 		"-port=19333",
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
-	}
+	)
 
 	cmd := exec.Command(f.weedBinary, args...)
 	cmd.Dir = f.tempDir
@@ -263,17 +265,18 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 
 // startVolumeServers starts SeaweedFS volume servers
 func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
-	args := []string{
+	var args []string
+	if config.EnableDebug {
+		args = append(args, "-v=4")
+	}
+	args = append(args,
 		"volume",
 		"-mserver=" + f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18080",
 		"-dir=" + filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
-	}
+	)
 
 	cmd := exec.Command(f.weedBinary, args...)
 	cmd.Dir = f.tempDir
@@ -286,15 +289,16 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 
 // startFiler starts the SeaweedFS filer server
 func (f *FuseTestFramework) startFiler(config *TestConfig) error {
-	args := []string{
+	var args []string
+	if config.EnableDebug {
+		args = append(args, "-v=4")
+	}
+	args = append(args,
 		"filer",
 		"-master=" + f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18888",
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
-	}
+	)
 
 	cmd := exec.Command(f.weedBinary, args...)
 	cmd.Dir = f.tempDir
@@ -307,13 +311,17 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 
 // mountFuse mounts the SeaweedFS FUSE filesystem
 func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
-	args := []string{
+	var args []string
+	if config.EnableDebug {
+		args = append(args, "-v=4")
+	}
+	args = append(args,
 		"mount",
 		"-filer=" + f.filerAddr,
 		"-dir=" + f.mountPoint,
 		"-filer.path=/",
 		"-dirAutoCreate",
-	}
+	)
 
 	if config.Collection != "" {
 		args = append(args, "-collection="+config.Collection)
@@ -326,9 +334,6 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	}
 	if config.CacheSizeMB > 0 {
 		args = append(args, fmt.Sprintf("-cacheSizeMB=%d", config.CacheSizeMB))
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
 	}
 
 	args = append(args, config.MountOptions...)
