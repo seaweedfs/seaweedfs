@@ -93,6 +93,25 @@ func withActions(r *http.Request, name string, actions ...string) *http.Request 
 	}{Name: name, Actions: actions}))
 }
 
+func viewMetadataJSON(t *testing.T, location string) []byte {
+	t.Helper()
+	schema := iceberg.NewSchemaWithIdentifiers(0, nil,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int32, Required: true})
+	ver, err := view.NewVersionFromSQL(1, schema.ID, "SELECT 1", table.Identifier{"finance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, err := view.NewMetadata(ver, schema, location, iceberg.Properties{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullMetadata, err := json.Marshal(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fullMetadata
+}
+
 // A caller that may load a table but not commit to it must be refused before
 // the commit stages its metadata file in the table's directory. The commit
 // paths used to write that file, reach the UpdateTable authorization, and
@@ -130,7 +149,7 @@ func TestCommitDeniedBeforeStagingMetadata(t *testing.T) {
 			fc := &writeLogFiler{memFiler: newMemFiler()}
 			seedNamespace(fc.memFiler, bucket, "finance", "alice")
 			seedOwnedTable(fc.memFiler, bucket, "finance", "quarterly_reports", "alice")
-			seedOwnedView(fc.memFiler, bucket, "finance", "quarterly_view", "alice", nil)
+			seedOwnedView(fc.memFiler, bucket, "finance", "quarterly_view", "alice", viewMetadataJSON(t, "s3://"+bucket+"/finance/quarterly_view"))
 			s := NewServer(fc, nil)
 
 			w := run(s)
@@ -184,20 +203,7 @@ func TestCommitAllowedStagesMetadata(t *testing.T) {
 // identity carries UpdateView, stage a metadata file and land the commit.
 func TestViewCommitAllowedStagesMetadata(t *testing.T) {
 	const bucket = "warehouse"
-	schema := iceberg.NewSchemaWithIdentifiers(0, nil,
-		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int32, Required: true})
-	ver, err := view.NewVersionFromSQL(1, schema.ID, "SELECT 1", table.Identifier{"finance"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	md, err := view.NewMetadata(ver, schema, "s3://"+bucket+"/finance/quarterly_view", iceberg.Properties{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fullMetadata, err := json.Marshal(md)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fullMetadata := viewMetadataJSON(t, "s3://"+bucket+"/finance/quarterly_view")
 
 	callers := map[string]func(r *http.Request) *http.Request{
 		"owner": func(r *http.Request) *http.Request {
