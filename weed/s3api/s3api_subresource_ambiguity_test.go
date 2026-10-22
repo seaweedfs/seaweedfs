@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-func serveThroughSubresourceGuard(t *testing.T, rawQuery string) *httptest.ResponseRecorder {
-	t.Helper()
-	reached := false
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true })
-	r := httptest.NewRequest(http.MethodPut, "http://localhost/bucket?"+rawQuery, nil)
-	w := httptest.NewRecorder()
-	rejectAmbiguousSubresource(next).ServeHTTP(w, r)
-	if reached {
-		return w
-	}
-	return w
-}
-
 func TestRejectAmbiguousSubresource(t *testing.T) {
 	passthrough := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
 	for _, query := range []string{
@@ -32,6 +19,7 @@ func TestRejectAmbiguousSubresource(t *testing.T) {
 		"analytics&id=weekly",
 		"delete",
 		"versions&versionId=",
+		"versioning",
 		"prefix=a&expected-bucket-owner=123",
 		"tagging&tagging=x",
 		"",
@@ -49,6 +37,7 @@ func TestRejectAmbiguousSubresource(t *testing.T) {
 		"policy&tagging",
 		"list-type=2&policy",
 		"versions&policy",
+		"versioning&policy",
 		"delete&policy",
 		"cors&policy",
 		"acl&tagging",
