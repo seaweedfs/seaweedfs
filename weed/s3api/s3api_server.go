@@ -909,6 +909,9 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// runs before subrouter matching so Queries() matchers see the fixed query
 	router.Use(util_http.EscapeSemicolonsInQuery)
+	// a request naming two subresources routes one way and authorizes another;
+	// reject it rather than guess
+	router.Use(rejectAmbiguousSubresource)
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
 	apiRouter.Use(request_id.Middleware)
