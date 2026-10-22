@@ -2,7 +2,7 @@ package leveldb
 
 import (
 	"context"
-	"strconv"
+	"math"
 	"strings"
 	"testing"
 
@@ -151,13 +151,10 @@ func TestInitializeDefaultOptions(t *testing.T) {
 }
 
 func TestInitializeRejectsOversizedOption(t *testing.T) {
-	if strconv.IntSize != 32 {
-		t.Skip("int can hold any MiB value on 64-bit")
-	}
 	store := &LevelDB3Store{}
 	err := store.Initialize(fakeConfiguration{
 		"leveldb3.dir":                  t.TempDir(),
-		"leveldb3.write_buffer_size_mb": 1 << 11,
+		"leveldb3.write_buffer_size_mb": math.MaxInt/(1<<20) + 1,
 	}, "leveldb3.")
 	if err == nil || !strings.Contains(err.Error(), "write_buffer_size_mb") {
 		t.Fatalf("expected overflow rejection, got %v", err)
