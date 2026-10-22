@@ -72,6 +72,27 @@ func TestFilerStoreWrapperMimeNormalization(t *testing.T) {
 	}
 }
 
+// TestGetActualStoreMatchesOnPathBoundaries guards path-specific store
+// lookup against sibling directories: a store located at /a/b must not
+// serve /a/b1, and a trailing slash in the location must not change
+// which paths resolve to it.
+func TestGetActualStoreMatchesOnPathBoundaries(t *testing.T) {
+	for _, location := range []string{"/a/b", "/a/b/"} {
+		t.Run(location, func(t *testing.T) {
+			defaultStore := newStubFilerStore()
+			named := newStubFilerStore()
+			wrapper := NewFilerStoreWrapper(defaultStore)
+			wrapper.AddPathSpecificStore(location, "named", named)
+
+			matched := wrapper.storeIdToStore["named"]
+			assert.Equal(t, matched, wrapper.getActualStore("/a/b"))
+			assert.Equal(t, matched, wrapper.getActualStore("/a/b/file"))
+			assert.Equal(t, defaultStore, wrapper.getActualStore("/a/b1"))
+			assert.Equal(t, defaultStore, wrapper.getActualStore("/a/b1/file"))
+		})
+	}
+}
+
 // cancelledCtx returns a context that is already cancelled.
 func cancelledCtx() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())

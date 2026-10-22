@@ -100,7 +100,14 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 		return
 	}
 	var storeId string
-	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value string) bool {
+	lookup := path
+	if !strings.HasSuffix(string(lookup), "/") {
+		lookup += "/"
+	}
+	fsw.pathToStore.MatchPrefix([]byte(lookup), func(key []byte, value string) bool {
+		if !util.IsEqualOrUnder(string(path), string(key)) {
+			return true
+		}
 		storeId = value
 		return false
 	})
