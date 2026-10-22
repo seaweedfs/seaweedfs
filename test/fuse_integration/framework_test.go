@@ -30,6 +30,7 @@ type FuseTestFramework struct {
 	filerPort    int
 	weedBinary   string
 	isSetup      bool
+	config       *TestConfig
 }
 
 // TestConfig holds configuration for FUSE tests
@@ -83,6 +84,7 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 		filerAddr:  fmt.Sprintf("127.0.0.1:%d", filerPort),
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
+		config:     config,
 	}
 }
 
@@ -131,6 +133,9 @@ func portIsFree(port int) bool {
 func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	if f.isSetup {
 		return fmt.Errorf("framework already setup")
+	}
+	if config != nil {
+		f.config = config
 	}
 
 	dirs := []string{f.mountPoint, f.logDir, f.dataDir}
@@ -182,7 +187,7 @@ func (f *FuseTestFramework) Cleanup() {
 
 	f.copyLogsForCI()
 
-	if !DefaultTestConfig().SkipCleanup {
+	if !f.config.SkipCleanup {
 		os.RemoveAll(f.tempDir)
 	}
 }
