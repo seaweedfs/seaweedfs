@@ -2936,6 +2936,25 @@ impl Volume {
             self.read_needle_header_unlocked(io, &mut existing, nv.offset.to_actual_offset())?;
 
             if existing.id != n.id && existing.size != nv.size {
+                // a 4-byte index entry can index past the 32 GiB wrap: the
+                // low offset may hold another needle while the real record
+                // sits at the wrapped offset, where reads already retry
+                #[cfg(not(feature = "5bytes"))]
+                if nv.offset.to_actual_offset() < MAX_POSSIBLE_VOLUME_SIZE as i64 {
+                    let mut wrapped = Needle::default();
+                    match self.read_needle_header_unlocked(
+                        io,
+                        &mut wrapped,
+                        nv.offset.to_actual_offset() + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                    ) {
+                        Ok(()) => existing = wrapped,
+                        Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+
+            if existing.id != n.id && existing.size != nv.size {
                 // the entry resolves to a record that is neither the indexed
                 // key nor the indexed size, so it is stale rather than a
                 // duplicate — skip the cookie check and let publish_write
