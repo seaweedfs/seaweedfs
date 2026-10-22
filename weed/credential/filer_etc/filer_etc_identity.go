@@ -1,6 +1,7 @@
 package filer_etc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -54,7 +56,7 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	// This ensures that all identities (including legacy ones) are written to individual files
 	// and the legacy file is renamed.
 	if foundLegacy {
-		if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
+		if err := store.migrateToMultiFile(ctx, s3cfg, content); err != nil {
 			glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
 			return s3cfg, nil
 		}
@@ -137,7 +139,7 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 	return hasIdentities, nil
 }
 
-func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) error {
+func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, migratedContent []byte) error {
 	glog.Infof("Migrating IAM configuration to multi-file layout...")
 
 	// 1. Save all identities
@@ -162,7 +164,7 @@ func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_p
 	}
 
 	// 4. Rename legacy file
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: filer.IamConfigDirectory,
 			OldName:      IamLegacyIdentityFile,
@@ -171,6 +173,85 @@ func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_p
 		})
 		return err
 	})
+	if err != nil {
+		return err
+	}
+
+	// A legacy client can rewrite identity.json between the load-time read and
+	// the rename; the rename then strands the newer content under
+	// identity.json.old. Migrate whatever the rename actually captured.
+	return store.migrateStrandedLegacyFile(ctx, migratedContent)
+}
+
+func (store *FilerEtcStore) migrateStrandedLegacyFile(ctx context.Context, migratedContent []byte) error {
+	content, found, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, IamLegacyIdentityOldFile)
+	if err != nil || !found || len(content) == 0 || bytes.Equal(content, migratedContent) {
+		return err
+	}
+
+	migrated := &iam_pb.S3ApiConfiguration{}
+	if len(migratedContent) > 0 {
+		if err := filer.ParseS3ConfigurationFromBytes(migratedContent, migrated); err != nil {
+			return fmt.Errorf("failed to re-parse legacy IAM configuration: %w", err)
+		}
+	}
+	stranded := &iam_pb.S3ApiConfiguration{}
+	if err := filer.ParseS3ConfigurationFromBytes(content, stranded); err != nil {
+		return fmt.Errorf("failed to parse renamed legacy IAM configuration: %w", err)
+	}
+
+	for _, identity := range stranded.Identities {
+		if existing := findIdentityByName(migrated.Identities, identity.Name); existing != nil && proto.Equal(existing, identity) {
+			continue
+		}
+		if err := store.saveIdentity(ctx, identity); err != nil {
+			return err
+		}
+	}
+	for _, sa := range stranded.ServiceAccounts {
+		if existing := findServiceAccountById(migrated.ServiceAccounts, sa.Id); existing != nil && proto.Equal(existing, sa) {
+			continue
+		}
+		if err := store.saveServiceAccount(ctx, sa); err != nil {
+			return err
+		}
+	}
+	for _, g := range stranded.Groups {
+		if existing := findGroupByName(migrated.Groups, g.Name); existing != nil && proto.Equal(existing, g) {
+			continue
+		}
+		if err := store.saveGroup(ctx, g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func findIdentityByName(identities []*iam_pb.Identity, name string) *iam_pb.Identity {
+	for _, identity := range identities {
+		if identity.Name == name {
+			return identity
+		}
+	}
+	return nil
+}
+
+func findServiceAccountById(accounts []*iam_pb.ServiceAccount, id string) *iam_pb.ServiceAccount {
+	for _, sa := range accounts {
+		if sa.Id == id {
+			return sa
+		}
+	}
+	return nil
+}
+
+func findGroupByName(groups []*iam_pb.Group, name string) *iam_pb.Group {
+	for _, g := range groups {
+		if g.Name == name {
+			return g
+		}
+	}
+	return nil
 }
 
 func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
