@@ -579,21 +579,37 @@ func getOffsetWithFallback(grpcDialOption grpc.DialOption, filer pb.ServerAddres
 
 // A checkpoint write can outlive its caller's wait and land beside the next
 // subscription attempt's writes; issued concurrently they may be applied out
-// of order, moving saved progress backward. Serialize checkpoint writes per
-// key and drop any value older than one already written from this process.
+// of order, moving saved progress backward. Writes to the same persisted key
+// are serialized and stale values dropped. State is keyed by target filer so
+// unrelated streams — or the two directions of a bidirectional sync — never
+// block or shadow each other.
 var offsetCheckpointWrites = struct {
 	sync.Mutex
-	lastWritten map[string]int64
-}{lastWritten: map[string]int64{}}
+	byKey map[string]*offsetCheckpoint
+}{byKey: map[string]*offsetCheckpoint{}}
+
+type offsetCheckpoint struct {
+	sync.Mutex
+	lastWritten    int64
+	hasLastWritten bool
+}
 
 func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
 	syncKey := []byte(signaturePrefix + "____")
 	util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
-	key := string(syncKey)
+	key := string(filer) + "\x00" + string(syncKey)
 
 	offsetCheckpointWrites.Lock()
-	defer offsetCheckpointWrites.Unlock()
-	if last, ok := offsetCheckpointWrites.lastWritten[key]; ok && offsetTsNs < last {
+	checkpoint := offsetCheckpointWrites.byKey[key]
+	if checkpoint == nil {
+		checkpoint = &offsetCheckpoint{}
+		offsetCheckpointWrites.byKey[key] = checkpoint
+	}
+	offsetCheckpointWrites.Unlock()
+
+	checkpoint.Lock()
+	defer checkpoint.Unlock()
+	if checkpoint.hasLastWritten && offsetTsNs < checkpoint.lastWritten {
 		return nil
 	}
 
@@ -621,7 +637,8 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 	})
 	if writeErr == nil {
-		offsetCheckpointWrites.lastWritten[key] = offsetTsNs
+		checkpoint.lastWritten = offsetTsNs
+		checkpoint.hasLastWritten = true
 	}
 	return writeErr
 }
