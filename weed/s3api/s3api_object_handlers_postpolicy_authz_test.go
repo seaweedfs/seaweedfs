@@ -225,6 +225,27 @@ func TestPostPolicyBucketHandlerGatesAclFields(t *testing.T) {
 		postAclAccessKey, postAclSecretKey, map[string]string{"acl": "public-read"}))
 	assert.Equal(t, http.StatusForbidden, rec.Code,
 		"POST with an acl field must honor the bucket-policy PutObjectAcl deny, body: %s", rec.Body.String())
+
+	for _, field := range []string{"x-amz-grant-read", "x-amz-grant-write", "x-amz-grant-read-acp", "x-amz-grant-write-acp", "x-amz-grant-full-control"} {
+		rec = httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt",
+			postAuthzAccessKey, postAuthzSecretKey,
+			map[string]string{field: `id="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`}))
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"POST with an %s field needs WriteAcp like PUT, body: %s", field, rec.Body.String())
+	}
+}
+
+func TestPostRequestsAcl(t *testing.T) {
+	for _, header := range []string{
+		s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead,
+		s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/"+postAuthzBucket, nil)
+		req.Header.Set(header, "x")
+		assert.True(t, postRequestsAcl(req), "%s must trip the ACL gate", header)
+	}
+	assert.False(t, postRequestsAcl(httptest.NewRequest(http.MethodPost, "/"+postAuthzBucket, nil)))
 }
 
 // TestAuthorizeObjectAclWrite covers the acl authorization decision at the
