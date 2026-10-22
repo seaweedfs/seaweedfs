@@ -48,6 +48,10 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeManagerError(w, err)
 			return
 		}
+		if reqErr := s.authorizeViewCommit(r.Context(), bucketARN, namespace, viewName, identityName); reqErr != nil {
+			writeError(w, reqErr.status, reqErr.errType, reqErr.message)
+			return
+		}
 		if getResp.Metadata == nil || len(getResp.Metadata.FullMetadata) == 0 {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "view has no metadata")
 			return
