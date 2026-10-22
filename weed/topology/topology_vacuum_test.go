@@ -644,3 +644,116 @@ func TestVacuumRackLimitSerializesVolumes(t *testing.T) {
 		}
 	}
 }
+
+// Racks that share a name in different data centers are independent: a per
+// rack cap must not serialize volumes sitting in dc1/rack1 and dc2/rack1.
+func TestVacuumRackLimitScopesRacksByDataCenter(t *testing.T) {
+	tracker := &compactTracker{}
+	newFake := func(vid uint32) *fakeVacuumServer {
+		return &fakeVacuumServer{
+			checks:         map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{vid: {GarbageRatio: 0.9}},
+			entered:        make(chan string, 1),
+			compactGate:    make(chan struct{}),
+			compactTracker: tracker,
+		}
+	}
+	fake1, fake2 := newFake(1), newFake(2)
+	port1, dialOption := startFakeVolumeServer(t, fake1)
+	port2, _ := startFakeVolumeServer(t, fake2)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dns := []*DataNode{
+		topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+			GetOrCreateDataNode("127.0.0.1", 8080, port1, "127.0.0.1", "dn-1", map[string]uint32{"": 10}),
+		topo.GetOrCreateDataCenter("dc2").GetOrCreateRack("rack1").
+			GetOrCreateDataNode("127.0.0.1", 8081, port2, "127.0.0.1", "dn-2", map[string]uint32{"": 10}),
+	}
+	for i, dn := range dns {
+		v := storage.VolumeInfo{
+			Id:               needle.VolumeId(i + 1),
+			Size:             1 << 20,
+			Collection:       "c",
+			ModifiedAtSecond: time.Now().Unix(),
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: &super_block.ReplicaPlacement{},
+			Ttl:              needle.EMPTY_TTL,
+		}
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		topo.RegisterVolumeLayout(v, dn)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		topo.Vacuum(dialOption, 0.3, 10, 1, 0, "c", 0, false, 0)
+		close(done)
+	}()
+
+	// both volumes sit in different racks, so both compacts start while the
+	// gates stay closed
+	deadline := time.After(15 * time.Second)
+	for _, fake := range []*fakeVacuumServer{fake1, fake2} {
+		select {
+		case <-fake.entered:
+		case <-deadline:
+			t.Fatal("a volume in an independent rack never reached the compact phase")
+		}
+	}
+
+	close(fake1.compactGate)
+	close(fake2.compactGate)
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("vacuum did not finish after the gates opened")
+	}
+}
+
+// A data node that unregisters while its volume is still compacting must not
+// crash the sweep when the quota is credited back: the rack key was captured
+// before the RPCs ran.
+func TestVacuumRackLimitSurvivesUnregister(t *testing.T) {
+	fake := &fakeVacuumServer{
+		checks:         map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{1: {GarbageRatio: 0.9}},
+		entered:        make(chan string, 1),
+		compactGate:    make(chan struct{}),
+		compactTracker: &compactTracker{},
+	}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn-1", map[string]uint32{"": 10})
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Size:             1 << 20,
+		Collection:       "c",
+		ModifiedAtSecond: time.Now().Unix(),
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: &super_block.ReplicaPlacement{},
+		Ttl:              needle.EMPTY_TTL,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
+
+	done := make(chan struct{})
+	go func() {
+		topo.Vacuum(dialOption, 0.3, 1, 1, 0, "c", 0, false, 0)
+		close(done)
+	}()
+
+	select {
+	case <-fake.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("volume never reached the compact phase")
+	}
+
+	topo.UnRegisterDataNode(dn)
+	close(fake.compactGate)
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("vacuum did not finish after the data node unregistered")
+	}
+}

@@ -315,9 +315,12 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	}
 
 	// limiter for each volume server, and for each rack when a rack cap is
-	// set — several volume servers can share one rack's disks and network
+	// set — several volume servers can share one rack's disks and network.
+	// Rack keys are resolved once up front: a node that unregisters mid-sweep
+	// loses its parent, and a later GetRack call would panic.
 	limiter := make(map[NodeId]int)
 	rackLimiter := make(map[NodeId]int)
+	dnRack := make(map[NodeId]NodeId)
 	var limiterLock sync.Mutex
 	for _, locationList := range todoVolumeMap {
 		for _, dn := range locationList.list {
@@ -325,9 +328,11 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 				limiter[dn.Id()] = maxParallelVacuumPerServer
 			}
 			if maxParallelVacuumPerRack > 0 {
-				rackId := dn.GetRack().Id()
-				if _, ok := rackLimiter[rackId]; !ok {
-					rackLimiter[rackId] = maxParallelVacuumPerRack
+				if _, ok := dnRack[dn.Id()]; !ok {
+					dnRack[dn.Id()] = vacuumRackKey(dn)
+				}
+				if _, ok := rackLimiter[dnRack[dn.Id()]]; !ok {
+					rackLimiter[dnRack[dn.Id()]] = maxParallelVacuumPerRack
 				}
 			}
 		}
@@ -345,7 +350,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			for _, dn := range locationList.list {
 				limiterLock.Lock()
 				hasQuota := limiter[dn.Id()] > 0 &&
-					(maxParallelVacuumPerRack <= 0 || rackLimiter[dn.GetRack().Id()] > 0)
+					(maxParallelVacuumPerRack <= 0 || rackLimiter[dnRack[dn.Id()]] > 0)
 				limiterLock.Unlock()
 				if !hasQuota {
 					hasEnoughQuota = false
@@ -362,7 +367,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 				limiterLock.Lock()
 				limiter[dn.Id()]--
 				if maxParallelVacuumPerRack > 0 {
-					rackLimiter[dn.GetRack().Id()]--
+					rackLimiter[dnRack[dn.Id()]]--
 				}
 				limiterLock.Unlock()
 			}
@@ -376,7 +381,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 					limiterLock.Lock()
 					limiter[dn.Id()]++
 					if maxParallelVacuumPerRack > 0 {
-						rackLimiter[dn.GetRack().Id()]++
+						rackLimiter[dnRack[dn.Id()]]++
 					}
 					limiterLock.Unlock()
 				}
@@ -403,6 +408,20 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 
 	wg.Wait()
 
+}
+
+// vacuumRackKey scopes a data node's rack to its data center so racks that
+// share a name in different centers get separate quotas. A node that already
+// lost its parent falls back to its own id, degrading to the per-server cap.
+func vacuumRackKey(dn *DataNode) NodeId {
+	rack := dn.Parent()
+	if rack == nil {
+		return dn.Id()
+	}
+	if dc := rack.Parent(); dc != nil {
+		return dc.Id() + "/" + rack.Id()
+	}
+	return rack.Id()
 }
 
 // skipReadOnly is set by the background scan and all-volumes sweep, where a
