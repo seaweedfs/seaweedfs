@@ -230,8 +230,9 @@ endif
 # mkdir -p would happily point them at a plain local directory and report a
 # pass the mount never earned.
 require-mounted:
-	@if ! mountpoint -q "$(MOUNT_POINT)" 2>/dev/null && ! mount | grep -qF " $(MOUNT_POINT) "; then \
-		echo "$(RED)❌ $(MOUNT_POINT) is not a mounted filesystem - refusing to run against the local disk$(RESET)"; \
+	@mnt="$(MOUNT_POINT)"; mnt="$${mnt%/}"; \
+	if ! mountpoint -q "$$mnt" 2>/dev/null && ! mount | grep -qF " $$mnt "; then \
+		echo "$(RED)❌ $$mnt is not a mounted filesystem - refusing to run against the local disk$(RESET)"; \
 		exit 1; \
 	fi
 
