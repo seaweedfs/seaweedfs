@@ -143,7 +143,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	startFrom := time.Unix(0, 0)
 	sinkId, legacySinkId := backupCheckpointIds(sourcePath, dataSink)
 	runSnapshot := *backupOption.initialSnapshot && timeAgo == 0
-	if timeAgo == 0 {
+	if resumeTsNs > 0 {
+		// The previous attempt pinned where it stopped — a failed event's
+		// timestamp or the processed watermark — which can sit behind both the
+		// persisted checkpoint and a recomputed -timeAgo window.
+		startFrom = time.Unix(0, resumeTsNs)
+		glog.V(0).Infof("resuming previous attempt at %v", startFrom)
+	} else if timeAgo == 0 {
 		if runSnapshot {
 			// snapshot below sets the start point; no checkpoint read needed
 			glog.V(0).Infof("initialSnapshot requested — walking live tree before subscribing")
