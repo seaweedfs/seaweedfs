@@ -259,9 +259,13 @@ func (fc *FilerConf) InodeIndexActiveUnder(dirPath string) bool {
 	if fc.MatchStorageRule(dirPath).InodeIndex {
 		return true
 	}
+	prefix := dirPath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 	active := false
 	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
-		if value.InodeIndex && strings.HasPrefix(string(key), dirPath) {
+		if value.InodeIndex && (string(key) == dirPath || strings.HasPrefix(string(key), prefix)) {
 			active = true
 			return false
 		}

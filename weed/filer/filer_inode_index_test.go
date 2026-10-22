@@ -296,6 +296,8 @@ func TestInodeIndexActiveUnder(t *testing.T) {
 	assert.True(t, fc.InodeIndexActiveUnder("/exports"))
 	assert.True(t, fc.InodeIndexActiveUnder("/exports/sub"))
 	assert.False(t, fc.InodeIndexActiveUnder("/other"))
+	assert.False(t, fc.InodeIndexActiveUnder("/exp"))
+	assert.False(t, fc.InodeIndexActiveUnder("/export"))
 
 	assert.False(t, NewFilerConf().InodeIndexActiveUnder("/"))
 }
