@@ -226,8 +226,17 @@ endif
 	@go tool cover -html=$(REPORT_DIR)/$(COVERAGE_FILE) -o $(REPORT_DIR)/posix_coverage.html
 	@echo "$(GREEN)[COVERAGE] Coverage report generated: $(REPORT_DIR)/posix_coverage.html$(RESET)"
 
+# The external suites exercise whatever filesystem MOUNT_POINT resolves to;
+# mkdir -p would happily point them at a plain local directory and report a
+# pass the mount never earned.
+require-mounted:
+	@if ! mountpoint -q "$(MOUNT_POINT)" 2>/dev/null && ! mount | grep -qF " $(MOUNT_POINT) "; then \
+		echo "$(RED)❌ $(MOUNT_POINT) is not a mounted filesystem - refusing to run against the local disk$(RESET)"; \
+		exit 1; \
+	fi
+
 # External tool tests
-test-pjdfstest: setup-pjdfstest setup-reports
+test-pjdfstest: setup-pjdfstest setup-reports require-mounted
 	@echo "$(CYAN)[TEST] Running pjdfstest suite...$(RESET)"
 	@if [ -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ]; then \
 		mkdir -p $(MOUNT_POINT)/pjdfstest_workdir; \
@@ -238,7 +247,7 @@ test-pjdfstest: setup-pjdfstest setup-reports
 		exit 1; \
 	fi
 
-test-nfstest-posix: setup-nfstest setup-reports
+test-nfstest-posix: setup-nfstest setup-reports require-mounted
 	@echo "$(CYAN)[TEST] Running nfstest_posix...$(RESET)"
 	@if command -v nfstest_posix >/dev/null 2>&1; then \
 		mkdir -p $(MOUNT_POINT); \
@@ -249,7 +258,7 @@ test-nfstest-posix: setup-nfstest setup-reports
 	fi
 
 # FIO-based performance tests
-test-fio-posix: setup-reports
+test-fio-posix: setup-reports require-mounted
 	@echo "$(CYAN)[TEST] Running FIO-based POSIX I/O tests...$(RESET)"
 	@$(MAKE_SELF) create-fio-configs
 	@if command -v fio >/dev/null 2>&1; then \
