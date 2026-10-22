@@ -29,6 +29,8 @@ type FuseTestFramework struct {
 	filerAddr     string
 	weedBinary    string
 	isSetup       bool
+	config        *TestConfig
+	externalMount bool
 }
 
 // TestConfig holds configuration for FUSE tests
@@ -76,6 +78,7 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 		filerAddr:  "127.0.0.1:18888",
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
+		config:     config,
 	}
 }
 
@@ -84,18 +87,29 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	if f.isSetup {
 		return fmt.Errorf("framework already setup")
 	}
+	if config != nil {
+		f.config = config
+	}
 
 	// Check if we should skip cluster setup and use existing mount
 	if os.Getenv("TEST_SKIP_CLUSTER_SETUP") == "true" {
 		// Use existing mount point from environment
 		if existingMount := os.Getenv("TEST_MOUNT_POINT"); existingMount != "" {
-			f.mountPoint = existingMount
-			f.t.Logf("Using existing mount point: %s", f.mountPoint)
+			f.externalMount = true
 
 			// Verify mount point is accessible
-			if _, err := os.Stat(f.mountPoint); err != nil {
+			if _, err := os.Stat(existingMount); err != nil {
 				return fmt.Errorf("existing mount point not accessible: %v", err)
 			}
+
+			// Run inside a private work dir so test files do not pile up in
+			// the shared mount root and cleanup can remove only what it made
+			workDir, err := os.MkdirTemp(existingMount, ".fuse_test_")
+			if err != nil {
+				return fmt.Errorf("creating work dir under existing mount: %v", err)
+			}
+			f.mountPoint = workDir
+			f.t.Logf("Using existing mount point: %s (work dir %s)", existingMount, f.mountPoint)
 
 			// Test basic functionality
 			testFile := filepath.Join(f.mountPoint, ".framework_test")
@@ -186,9 +200,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 // Cleanup stops all processes and removes temporary files
 func (f *FuseTestFramework) Cleanup() {
-	// Skip cleanup if using external cluster
-	if os.Getenv("TEST_SKIP_CLUSTER_SETUP") == "true" {
-		f.t.Logf("Skipping cleanup - using external SeaweedFS cluster")
+	// An external mount needs no teardown; only this run's work dir is ours.
+	// A TEST_SKIP_CLUSTER_SETUP that fell through to a self-started cluster
+	// still owns its processes and must not skip stopping them.
+	if f.externalMount {
+		if !f.config.SkipCleanup {
+			os.RemoveAll(f.mountPoint)
+		}
 		return
 	}
 
@@ -206,7 +224,7 @@ func (f *FuseTestFramework) Cleanup() {
 	}
 
 	// Remove temp directory
-	if !DefaultTestConfig().SkipCleanup {
+	if !f.config.SkipCleanup {
 		os.RemoveAll(f.tempDir)
 	}
 }
