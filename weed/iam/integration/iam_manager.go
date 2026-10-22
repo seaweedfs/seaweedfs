@@ -964,7 +964,8 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 		seen[key] = struct{}{}
 		fingerprint := oidcProviderFingerprint(rec)
 		var provider *oidc.OIDCProvider
-		if cached := m.oidcManagedProviders[key]; cached != nil && cached.fingerprint == fingerprint {
+		cached := m.oidcManagedProviders[key]
+		if cached != nil && cached.fingerprint == fingerprint {
 			provider = cached.provider
 		} else {
 			var err error
@@ -973,6 +974,15 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 				delete(m.oidcManagedProviders, key)
 				glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
 				continue
+			}
+			if cached != nil && cached.provider != nil {
+				// The rebuild must keep rejecting tokens the replaced
+				// provider consumed; carry its replay store over, then stop
+				// its cleanup worker so only the new one sweeps the store.
+				provider.AdoptReplayStateFrom(cached.provider)
+				if err := cached.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown replaced OIDC provider %s: %v", rec.ARN, err)
+				}
 			}
 			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
 		}

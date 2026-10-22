@@ -1528,6 +1528,20 @@ func (p *OIDCProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// AdoptReplayStateFrom takes over the consumed-token store of the provider it
+// replaces, so tokens it already saw stay rejected across the rebuild. The
+// caller must shut down the replaced provider; only one cleanup worker may
+// sweep the shared store at a time. Call before the new provider serves
+// validators; jtiSweepMu excludes its own cleanup worker during the swap.
+func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
+	if old == nil || old == p {
+		return
+	}
+	p.jtiSweepMu.Lock()
+	p.jtiStore, p.jtiCount = old.jtiStore, old.jtiCount
+	p.jtiSweepMu.Unlock()
+}
+
 // jtiLogKey redacts a token identifier for logs and error strings: a stable
 // fingerprint that still lets operators correlate repeated presentations.
 func jtiLogKey(jti string) string {

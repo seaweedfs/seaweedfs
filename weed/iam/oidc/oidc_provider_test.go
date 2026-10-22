@@ -1477,3 +1477,42 @@ func TestOIDCProviderBearerValidationDoesNotConsume(t *testing.T) {
 	_, err = provider.ValidateToken(context.Background(), token)
 	require.NoError(t, err)
 }
+
+func TestAdoptReplayStateFromKeepsConsumedTokensRejected(t *testing.T) {
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	newConfig := func() *OIDCConfig {
+		return &OIDCConfig{
+			Issuer:   jwksServer.URL,
+			ClientID: "test-client",
+			JWKSUri:  jwksServer.URL + "/jwks",
+		}
+	}
+
+	old := NewOIDCProvider("test-oidc-old")
+	require.NoError(t, old.Initialize(newConfig()))
+
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "consumed-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err := old.ValidateTokenSingleUse(context.Background(), token)
+	require.NoError(t, err)
+
+	rebuilt := NewOIDCProvider("test-oidc-new")
+	require.NoError(t, rebuilt.Initialize(newConfig()))
+	defer rebuilt.Shutdown(context.Background())
+
+	rebuilt.AdoptReplayStateFrom(old)
+	require.NoError(t, old.Shutdown(context.Background()))
+
+	_, err = rebuilt.ValidateTokenSingleUse(context.Background(), token)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"a token consumed before the rebuild must stay rejected")
+}
