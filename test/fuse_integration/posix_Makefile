@@ -13,6 +13,9 @@ COVERAGE_FILE := posix_coverage.out
 REPORT_DIR := reports
 EXTERNAL_TOOLS_DIR := external_tools
 MOUNT_POINT ?= /tmp/seaweedfs_mount
+ifneq ($(TEST_MOUNT_POINT),)
+MOUNT_POINT := $(TEST_MOUNT_POINT)
+endif
 
 # Go test command prefix for external mount points
 GO_TEST_PREFIX :=
