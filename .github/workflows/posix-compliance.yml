@@ -354,6 +354,11 @@ jobs:
       run: |
         cd test/fuse_integration
         
+        # Point the external suites at the same mount as the Go tests;
+        # without these the Makefile falls back to a local-disk path.
+        export TEST_MOUNT_POINT="$SEAWEEDFS_MOUNT_POINT"
+        export TEST_SKIP_CLUSTER_SETUP="true"
+        
         # Run external tests (may fail on some systems)
         make -f posix_Makefile test-nfstest-posix || echo "nfstest failed or not available"
         make -f posix_Makefile test-fio-posix || echo "FIO tests failed or not available"
