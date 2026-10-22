@@ -163,7 +163,12 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		case <-w.ctx.Done():
 			return w.ctx.Err()
 		}
-		t.inbox <- wMsg
+		select {
+		case t.inbox <- wMsg:
+		case <-w.ctx.Done():
+			t.releasePending()
+			return w.ctx.Err()
+		}
 	}
 	return nil
 }
