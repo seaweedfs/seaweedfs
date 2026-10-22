@@ -3,12 +3,12 @@ package s3api
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,22 +115,22 @@ func newSignedPostRequestFor(t *testing.T, key, accessKey, secretKey string, ext
 		extraKeys = append(extraKeys, k)
 	}
 	sort.Strings(extraKeys)
-	var extraConds strings.Builder
-	for _, k := range extraKeys {
-		fmt.Fprintf(&extraConds, `,["eq","$%s","%s"]`, k, extraFields[k])
+	conditions := []any{
+		[]any{"eq", "$bucket", postAuthzBucket},
+		[]any{"eq", "$key", key},
+		[]any{"eq", "$x-amz-credential", credential},
+		[]any{"eq", "$x-amz-algorithm", "AWS4-HMAC-SHA256"},
+		[]any{"eq", "$x-amz-date", amzDate},
 	}
-
-	policyJSON := fmt.Sprintf(
-		`{"expiration":"%s","conditions":[`+
-			`["eq","$bucket","%s"],`+
-			`["eq","$key","%s"],`+
-			`["eq","$x-amz-credential","%s"],`+
-			`["eq","$x-amz-algorithm","AWS4-HMAC-SHA256"],`+
-			`["eq","$x-amz-date","%s"]`+
-			`%s]}`,
-		expiration, postAuthzBucket, key, credential, amzDate, extraConds.String(),
-	)
-	encodedPolicy := base64.StdEncoding.EncodeToString([]byte(policyJSON))
+	for _, k := range extraKeys {
+		conditions = append(conditions, []any{"eq", "$" + k, extraFields[k]})
+	}
+	policyJSON, err := json.Marshal(map[string]any{
+		"expiration": expiration,
+		"conditions": conditions,
+	})
+	require.NoError(t, err)
+	encodedPolicy := base64.StdEncoding.EncodeToString(policyJSON)
 	signature := getSignature(getSigningKey(secretKey, yyyymmddStr, postAuthzRegion, postAuthzService), encodedPolicy)
 
 	var buf bytes.Buffer
