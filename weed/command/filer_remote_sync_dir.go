@@ -243,9 +243,9 @@ func processCreateEvent(
 		return nil
 	}
 	// A create reshaped from a rename into the mount (mustSend) writes an empty
-	// entry as a zero-byte object; a remote-only entry holds nothing local to
-	// send and still skips.
-	if !filer.HasData(message.NewEntry) && !(mustSend && !isRemoteOnly(message.NewEntry)) {
+	// entry as a zero-byte object; a dropped local copy whose remote object
+	// still describes it holds nothing local to send and still skips.
+	if !filer.HasData(message.NewEntry) && !(mustSend && !isDroppedLocalCopy(message.NewEntry)) {
 		return nil
 	}
 	glog.V(2).Infof("create: %+v", resp)
