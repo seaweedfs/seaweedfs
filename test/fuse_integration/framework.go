@@ -395,23 +395,24 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 	return fmt.Errorf("mount point not ready within timeout")
 }
 
-// findWeedBinary locates the weed binary
+// findWeedBinary locates the weed binary. Candidates are resolved to
+// absolute paths because the started processes run with cmd.Dir set to the
+// framework's temp dir, where a relative path would not resolve.
 func findWeedBinary() string {
-	// Try different possible locations
-	candidates := []string{
-		"./weed",
-		"../weed",
-		"../../weed",
-		"weed", // in PATH
+	if p, err := exec.LookPath("weed"); err == nil {
+		return p
 	}
 
+	candidates := []string{
+		"../../weed/weed",
+		"./weed",
+		"../weed",
+	}
 	for _, candidate := range candidates {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
-		}
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-			abs, _ := filepath.Abs(candidate)
-			return abs
+			if abs, err := filepath.Abs(candidate); err == nil {
+				return abs
+			}
 		}
 	}
 
