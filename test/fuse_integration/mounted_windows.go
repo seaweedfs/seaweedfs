@@ -32,3 +32,9 @@ func mountedAt(path string) bool {
 	data, ok := info.Sys().(*syscall.Win32FileAttributeData)
 	return ok && data.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
+
+// fuseFilesystem is covered by the WinFsp checks in mountedAt: WinFsp is the
+// only FUSE provider on the platform.
+func fuseFilesystem(path string) bool {
+	return true
+}

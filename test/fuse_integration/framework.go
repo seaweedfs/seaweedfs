@@ -108,6 +108,11 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 			if !mountedAt(existingMount) {
 				return fmt.Errorf("mount point %s is not a mounted filesystem", existingMount)
 			}
+			// So can a non-FUSE mount like tmpfs: a device boundary alone does
+			// not make the results FUSE compliance
+			if !fuseFilesystem(existingMount) {
+				return fmt.Errorf("mount point %s is not a FUSE filesystem", existingMount)
+			}
 
 			// Run inside a private work dir so test files do not pile up in
 			// the shared mount root and cleanup can remove only what it made
