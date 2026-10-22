@@ -99,6 +99,12 @@ func (c *commandVolumeFsck) Help() string {
 		A newly uploaded chunk may appear as orphan if metadata commit is still pending.
 		The default 5h cutoff provides sufficient buffer for metadata commits.
 
+	Step 2 reads the filer from one consistent snapshot when its store supports
+	that (the SQL stores do), so a file renamed while the filer is being read is
+	still counted and its chunks are not mistaken for orphans. Other stores are
+	walked directory by directory; there, avoid running with -reallyDeleteFromVolume
+	while files are being renamed or moved.
+
 `
 }
 
@@ -322,7 +328,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
+	return doTraverseAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
