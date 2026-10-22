@@ -62,6 +62,14 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(deletedSize) / float64(fileSize)
 }
 
+// errTieredVolumeCompact refuses a compaction of a volume whose .dat is in the
+// remote tier: the copy reads the local .dat, which tiering removes (or leaves
+// behind as a stale copy), and the reload after a commit would read the remote
+// object through the compacted index.
+func errTieredVolumeCompact(vid needle.VolumeId) error {
+	return fmt.Errorf("volume %d is tiered to remote storage, cannot compact", vid)
+}
+
 type CompactOptions struct {
 	PreallocateBytes  int64
 	MaxBytesPerSecond int64
@@ -87,6 +95,9 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compacting volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -132,6 +143,9 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
@@ -183,6 +197,21 @@ func (v *Volume) CommitCompact() error {
 	defer v.dataFileAccessLock.Unlock()
 
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
+	if v.HasRemoteFile() {
+		// The volume was tiered after the copy started: the reload would read
+		// the remote object through the compacted index. Drop the copy and its
+		// temporary needle map; no later vacuum of this volume would.
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+		for _, ext := range []string{".cpd", ".cpx", ".cpldb"} {
+			if e := os.RemoveAll(v.FileName(ext)); e != nil {
+				glog.V(0).Infof("remove %s: %v", v.FileName(ext), e)
+			}
+		}
+		return errTieredVolumeCompact(v.Id)
+	}
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil

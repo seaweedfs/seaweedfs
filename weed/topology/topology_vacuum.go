@@ -39,6 +39,13 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 	defer cancel()
 	for index, dn := range locationlist.list {
 		go func(index int, dn *DataNode, url pb.ServerAddress, vid needle.VolumeId) {
+			// A replica tiered to remote storage cannot be compacted in place,
+			// whatever its garbage ratio; volume.tier.compact reclaims it.
+			if v, lookErr := dn.GetVolumesById(vid); lookErr == nil && v.IsRemote() {
+				glog.V(1).Infof("skip vacuuming volume %d on %s: tiered to %s", vid, url, v.RemoteStorageName)
+				ch <- -1
+				return
+			}
 			err := operation.WithVolumeServerClient(false, url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, err := volumeServerClient.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
 					VolumeId: uint32(vid),
