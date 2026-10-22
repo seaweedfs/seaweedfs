@@ -29,12 +29,13 @@ func init() {
 // concurrency budget. The flat [notification.webhook] section is the unnamed
 // target; each enabled [notification.webhook.<name>] subsection adds another.
 type target struct {
-	name   string
-	config *config
-	filter *filter
-	client client
-	sem    chan struct{}
-	inbox  chan *message.Message
+	name    string
+	config  *config
+	filter  *filter
+	client  client
+	sem     chan struct{}
+	inbox   chan *message.Message
+	pending chan struct{}
 }
 
 func newTarget(name string, cfg *config) (*target, error) {
@@ -42,8 +43,9 @@ func newTarget(name string, cfg *config) (*target, error) {
 		name:   name,
 		config: cfg,
 		filter: newFilter(cfg),
-		sem:    make(chan struct{}, cfg.nWorkers),
-		inbox:  make(chan *message.Message, cfg.bufferSize),
+		sem:     make(chan struct{}, cfg.nWorkers),
+		inbox:   make(chan *message.Message, cfg.bufferSize),
+		pending: make(chan struct{}, cfg.bufferSize),
 	}
 	hClient, err := newHTTPClient(cfg)
 	if err != nil {
@@ -154,12 +156,14 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 			return err
 		}
 		wMsg.Metadata.Set("target", t.name)
-		// a saturated inbox applies backpressure instead of dropping the event
+		// a saturated target applies backpressure instead of dropping the
+		// event; the token covers the delivery until the handler finishes
 		select {
-		case t.inbox <- wMsg:
+		case t.pending <- struct{}{}:
 		case <-w.ctx.Done():
 			return w.ctx.Err()
 		}
+		t.inbox <- wMsg
 	}
 	return nil
 }
@@ -249,7 +253,15 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 		}
 
 		router.AddPlugin(plugin.SignalsHandler)
-		router.AddMiddleware(retryMiddleware, poisonQueue)
+		// outermost: the reservation SendMessage took releases once the whole
+		// chain (retries, dead letter) is done, bounding in-flight deliveries
+		releasePending := func(h message.HandlerFunc) message.HandlerFunc {
+			return func(msg *message.Message) ([]*message.Message, error) {
+				defer t.releasePending()
+				return h(msg)
+			}
+		}
+		router.AddMiddleware(releasePending, retryMiddleware, poisonQueue)
 
 		t := t
 		router.AddConsumerHandler(
@@ -289,18 +301,28 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 }
 
 // forwardTargetMessages publishes each queued event to the target's topic in
-// order. It owns the potentially blocking Publish call so a saturated target
-// can neither stall the other targets nor the caller of SendMessage.
+// order. Publish detaches its delivery, so the pending reservation is what
+// keeps a saturated target from queuing without bound.
 func (w *Queue) forwardTargetMessages(t *target) {
 	for {
 		select {
 		case msg := <-t.inbox:
 			if err := w.queueChannel.Publish(t.topic(), msg); err != nil {
 				glog.Errorf("webhook target %q failed to publish message: %v", t.name, err)
+				t.releasePending()
 			}
 		case <-w.ctx.Done():
 			return
 		}
+	}
+}
+
+// releasePending frees one delivery reservation. It never blocks: a nacked
+// message GoChannel resends reaches the release again after its token is gone.
+func (t *target) releasePending() {
+	select {
+	case <-t.pending:
+	default:
 	}
 }
 
