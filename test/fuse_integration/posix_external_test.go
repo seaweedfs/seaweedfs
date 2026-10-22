@@ -23,8 +23,8 @@ type ExternalPOSIXTestSuite struct {
 
 // NewExternalPOSIXTestSuite creates a new external POSIX test suite runner
 func NewExternalPOSIXTestSuite(t *testing.T, framework *FuseTestFramework) *ExternalPOSIXTestSuite {
-	workDir := filepath.Join(os.TempDir(), fmt.Sprintf("posix_external_tests_%d", time.Now().Unix()))
-	os.MkdirAll(workDir, 0755)
+	workDir, err := os.MkdirTemp("", "posix_external_tests_")
+	require.NoError(t, err)
 
 	return &ExternalPOSIXTestSuite{
 		framework: framework,
