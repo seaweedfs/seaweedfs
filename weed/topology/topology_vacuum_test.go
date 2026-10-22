@@ -564,6 +564,9 @@ func TestVacuumSkipsTieredReplica(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.committed) != 1 || fake.committed[0] != 2 {
 		t.Fatalf("committed %v, want only the local volume 2", fake.committed) // volume 2 is the positive control
+	}
+}
+
 // A rack cap bounds copies compacting in parallel inside one rack even when
 // every data node still has per-server quota left: volumes whose only copy
 // sits on different data nodes of the same rack serialize.
