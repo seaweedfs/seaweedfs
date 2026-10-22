@@ -51,6 +51,7 @@ func (f *fakeCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, stream 
 		f.rejectDat--
 		f.revision++
 		f.datBytes = append(f.datBytes, 0xEC)
+		f.idxBytes = append(f.idxBytes, 0xEC)
 		f.expireAtSec += 100
 	}
 	failErr := f.failErr
@@ -116,6 +117,9 @@ func TestCopyVolumeFilesToWorkerRetriesAfterMidCopyCompaction(t *testing.T) {
 	datContent, err := os.ReadFile(localFiles["dat"])
 	require.NoError(t, err)
 	require.Equal(t, []byte("dat-payload-v7\xEC"), datContent)
+	idxContent, err := os.ReadFile(localFiles["idx"])
+	require.NoError(t, err)
+	require.Equal(t, []byte("idx-data-v7\xEC"), idxContent)
 	require.Equal(t, uint32(8), src.revision)
 	require.Equal(t, 2, src.statusCalls)
 	require.Equal(t, 4, src.copyCalls)
