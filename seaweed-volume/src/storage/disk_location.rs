@@ -740,7 +740,11 @@ impl DiskLocation {
             if vol.is_read_only() {
                 continue;
             }
-            let dat_size = vol.dat_file_size().unwrap_or(0);
+            // A preallocated volume already holds its space on disk.
+            let dat_size = vol
+                .dat_file_size()
+                .unwrap_or(0)
+                .max(vol.dat_allocated_size());
             let idx_size = vol.idx_file_size();
             let used = dat_size + idx_size;
             if volume_size_limit > used {
