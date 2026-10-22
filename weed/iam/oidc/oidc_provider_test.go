@@ -1599,3 +1599,56 @@ func TestMergeReplayStateFromSharesLiveStore(t *testing.T) {
 	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
 		"a token consumed through the superseded provider after the handoff must stay rejected")
 }
+
+// Merging two stores that are each near the bound must not reject new
+// exchanges: consumed tokens are carried over without charging the bound,
+// which still applies to tokens consumed through the live path.
+func TestMergeReplayStateFromOverflowStillAdmits(t *testing.T) {
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	newConfig := func() *OIDCConfig {
+		return &OIDCConfig{
+			Issuer:          jwksServer.URL,
+			ClientID:        "test-client",
+			JWKSUri:         jwksServer.URL + "/jwks",
+			JTICacheMaxSize: 4,
+		}
+	}
+	newToken := func(jti string) string {
+		return createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss": jwksServer.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"jti": jti,
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+	}
+
+	first := NewOIDCProvider("test-oidc-first")
+	require.NoError(t, first.Initialize(newConfig()))
+	defer first.Shutdown(context.Background())
+	for _, jti := range []string{"first-a", "first-b", "first-c"} {
+		_, err := first.ValidateTokenSingleUse(context.Background(), newToken(jti))
+		require.NoError(t, err)
+	}
+
+	second := NewOIDCProvider("test-oidc-second")
+	require.NoError(t, second.Initialize(newConfig()))
+	defer second.Shutdown(context.Background())
+	for _, jti := range []string{"second-a", "second-b", "second-c"} {
+		_, err := second.ValidateTokenSingleUse(context.Background(), newToken(jti))
+		require.NoError(t, err)
+	}
+
+	second.MergeReplayStateFrom(first)
+
+	_, err := second.ValidateTokenSingleUse(context.Background(), newToken("first-a"))
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"merged consumed tokens must stay rejected")
+
+	_, err = second.ValidateTokenSingleUse(context.Background(), newToken("fresh-jti"))
+	assert.NoError(t, err, "merged excess must not reject a new exchange")
+}

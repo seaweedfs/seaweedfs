@@ -47,6 +47,10 @@ const (
 type jtiEntry struct {
 	subject   string
 	expiresAt time.Time
+	// uncounted marks an entry merged in past the capacity bound: it keeps
+	// rejecting replays but does not charge jtiCount, so merged excess can
+	// neither reject new exchanges nor be double-counted when swept.
+	uncounted bool
 }
 
 // OIDCProvider implements OpenID Connect authentication with JTI replay protection.
@@ -1442,8 +1446,10 @@ func (p *OIDCProvider) evictExpiredJTIs(now time.Time, store *sync.Map, count *a
 		if !expiresAt.IsZero() && now.After(expiresAt) {
 			// LoadAndDelete reports whether this call actually removed the
 			// entry, so concurrent deletes cannot decrement the count twice.
-			if _, loaded := store.LoadAndDelete(key); loaded {
-				count.Add(-1)
+			if v, loaded := store.LoadAndDelete(key); loaded {
+				if !v.(*jtiEntry).uncounted {
+					count.Add(-1)
+				}
 				removed++
 			}
 		}
@@ -1608,9 +1614,10 @@ func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
 		if expiresAt := entry.expiresAt; !expiresAt.IsZero() && now.After(expiresAt) {
 			return true
 		}
-		if _, loaded := store.LoadOrStore(key, value); !loaded {
-			count.Add(1)
-		}
+		// A consumed token is never dropped to fit the bound: merged entries
+		// stay but do not charge the count, so a store filled past the bound
+		// by the merge cannot reject new exchanges while it drains by expiry.
+		store.LoadOrStore(key, &jtiEntry{subject: entry.subject, expiresAt: entry.expiresAt, uncounted: true})
 		return true
 	})
 }
