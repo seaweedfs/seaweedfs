@@ -346,45 +346,59 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	for len(todoVolumeMap) > 0 {
 		pendingVolumeMap := make(map[needle.VolumeId]*VolumeLocationList)
 		for vid, locationList := range todoVolumeMap {
-			hasEnoughQuota := true
+			// copies on the same server or rack reserve together; a volume
+			// that alone exceeds a cap waits for the whole bucket to be free
+			// instead of pending forever
+			serverNeeds := make(map[NodeId]int)
+			rackNeeds := make(map[NodeId]int)
 			for _, dn := range locationList.list {
-				limiterLock.Lock()
-				hasQuota := limiter[dn.Id()] > 0 &&
-					(maxParallelVacuumPerRack <= 0 || rackLimiter[dnRack[dn.Id()]] > 0)
-				limiterLock.Unlock()
-				if !hasQuota {
+				serverNeeds[dn.Id()]++
+				if maxParallelVacuumPerRack > 0 {
+					rackNeeds[dnRack[dn.Id()]]++
+				}
+			}
+			limiterLock.Lock()
+			hasEnoughQuota := true
+			for id, need := range serverNeeds {
+				serverNeeds[id] = min(need, maxParallelVacuumPerServer)
+				if limiter[id] < serverNeeds[id] {
 					hasEnoughQuota = false
-					break
+				}
+			}
+			for id, need := range rackNeeds {
+				rackNeeds[id] = min(need, maxParallelVacuumPerRack)
+				if rackLimiter[id] < rackNeeds[id] {
+					hasEnoughQuota = false
 				}
 			}
 			if !hasEnoughQuota {
+				limiterLock.Unlock()
 				pendingVolumeMap[vid] = locationList
 				continue
 			}
 
 			// debit the quota
-			for _, dn := range locationList.list {
-				limiterLock.Lock()
-				limiter[dn.Id()]--
-				if maxParallelVacuumPerRack > 0 {
-					rackLimiter[dnRack[dn.Id()]]--
-				}
-				limiterLock.Unlock()
+			for id, need := range serverNeeds {
+				limiter[id] -= need
 			}
+			for id, need := range rackNeeds {
+				rackLimiter[id] -= need
+			}
+			limiterLock.Unlock()
 
 			wg.Add(1)
 			executor.Execute(func() {
 				defer wg.Done()
 				t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, true)
 				// credit the quota
-				for _, dn := range locationList.list {
-					limiterLock.Lock()
-					limiter[dn.Id()]++
-					if maxParallelVacuumPerRack > 0 {
-						rackLimiter[dnRack[dn.Id()]]++
-					}
-					limiterLock.Unlock()
+				limiterLock.Lock()
+				for id, need := range serverNeeds {
+					limiter[id] += need
 				}
+				for id, need := range rackNeeds {
+					rackLimiter[id] += need
+				}
+				limiterLock.Unlock()
 				select {
 				case quotaFreed <- struct{}{}:
 				default:
