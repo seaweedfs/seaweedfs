@@ -413,7 +413,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		// Recorded before the retarget check so that refusal names it too.
 		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
 		if found {
-			s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey)
+			s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey, cred.SecretKey)
 		}
 		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
 			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
@@ -505,7 +505,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	// session at its next request instead of at its expiry. Sessions minted
 	// before the binding existed carry only the audit field and stay unbound.
 	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.BoundAccessKeyId != "" {
-		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.BoundAccessKeyId); errCode != s3err.ErrNone {
+		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.BoundAccessKeyId, sessionInfo.BoundAccessKeyFingerprint); errCode != s3err.ErrNone {
 			glog.V(2).Infof("vended STS session %s: identity %q or the access key it was vended for is gone, disabled or inactive",
 				sessionInfo.SessionId, sessionInfo.ExternalUserId)
 			return nil, nil, errCode
@@ -572,9 +572,11 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 
 // vendedSessionKeyLive answers ErrNone while owner is a known, enabled
 // identity holding accessKey as an active, unexpired credential, and
-// ErrInvalidAccessKeyID (as for an unknown key) otherwise. One map lookup
-// under the read lock.
-func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey string) s3err.ErrorCode {
+// ErrInvalidAccessKeyID (as for an unknown key) otherwise. A fingerprint set
+// at mint time must still match, so a key re-created under the same id does
+// not revive sessions the deleted original had carried. One map lookup under
+// the read lock.
+func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fingerprint string) s3err.ErrorCode {
 	if owner == "" || accessKey == "" {
 		return s3err.ErrInvalidAccessKeyID
 	}
@@ -589,6 +591,9 @@ func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey strin
 			continue
 		}
 		if credential.Status == iamAccessKeyStatusInactive || credential.isCredentialExpired() {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		if fingerprint != "" && s3_constants.StoredCredentialFingerprint(accessKey, credential.SecretKey) != fingerprint {
 			return s3err.ErrInvalidAccessKeyID
 		}
 		return s3err.ErrNone
@@ -916,7 +921,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
-	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey, cred.SecretKey)
 	return identity, s3err.ErrNone
 }
 

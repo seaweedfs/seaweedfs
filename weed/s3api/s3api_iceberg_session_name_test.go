@@ -76,13 +76,14 @@ func TestVendTableCredentialsRecordsTheCallersKey(t *testing.T) {
 	s3a := &S3ApiServer{iam: iam}
 	s3a.SetIcebergCredentialRole("arn:aws:iam::role/IcebergTableAccess", 3600)
 
-	for _, key := range []string{sharedKeyA, sharedKeyB, ""} {
+	for _, k := range []struct{ id, secret string }{{sharedKeyA, sharedSecretA}, {sharedKeyB, sharedSecretB}, {"", ""}} {
+		key := k.id
 		ctx := context.Background()
 		if key != "" {
 			// As the catalog's auth does: the holder is installed, the verifier records into it.
 			r := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/", nil))
 			s3_constants.RecordAccessKeyId(r.Context(), key)
-			s3_constants.RecordStoredAccessKeyId(r.Context(), key)
+			s3_constants.RecordStoredAccessKeyId(r.Context(), k.id, k.secret)
 			ctx = r.Context()
 		}
 		creds, err := s3a.VendTableCredentials(ctx, "shared-user", "warehouse", "ns/t", false)

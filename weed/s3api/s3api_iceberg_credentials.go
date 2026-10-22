@@ -83,9 +83,10 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 	// instead of living unbound until it expires. The binding travels under
 	// its own claim — SourceAccessKeyId is audit-only for compatibility with
 	// tokens minted before the binding existed.
-	if storedKey := s3_constants.StoredAccessKeyIdFromContext(ctx); storedKey != "" {
+	if storedKey, fingerprint := s3_constants.StoredCredentialFromContext(ctx); storedKey != "" {
 		request.SourceAccessKeyId = storedKey
 		request.BoundAccessKeyId = storedKey
+		request.BoundAccessKeyFingerprint = fingerprint
 	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration

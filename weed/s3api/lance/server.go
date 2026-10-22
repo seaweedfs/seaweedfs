@@ -177,11 +177,11 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 		// different error that clients cannot act on.
 		// The auth scheme is case-insensitive (RFC 7235).
 		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
-			if identityName, identity, accessKey, ok := s.authenticateBearerKey(r); ok {
+			if identityName, identity, accessKey, secretKey, ok := s.authenticateBearerKey(r); ok {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
 				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
-				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey, secretKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}
@@ -196,11 +196,11 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
 			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
-				accessKey, _, _ := strings.Cut(apiKey, ":")
+				accessKey, secretKey, _ := strings.Cut(apiKey, ":")
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
 				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
-				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey, secretKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}

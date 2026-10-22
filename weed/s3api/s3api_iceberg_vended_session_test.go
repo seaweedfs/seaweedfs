@@ -40,16 +40,16 @@ func vendingServer(t *testing.T) *S3ApiServer {
 }
 
 // vend mints table credentials for principal as if its request had been
-// signed with accessKey ("" for a request that recorded none); stored marks
-// the key as a stored identity's credential, as a verifier would.
-func vend(t *testing.T, s3a *S3ApiServer, principal, accessKey string, stored bool) *VendedCredentials {
+// signed with accessKey ("" for a request that recorded none); a non-empty
+// secret marks the credential as a stored identity's, as a verifier would.
+func vend(t *testing.T, s3a *S3ApiServer, principal, accessKey, secret string) *VendedCredentials {
 	t.Helper()
 	ctx := context.Background()
 	if accessKey != "" {
 		ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
 	}
-	if stored {
-		ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey)
+	if secret != "" {
+		ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey, secret)
 	}
 	creds, err := s3a.VendTableCredentials(ctx, principal, "warehouse", "ns/t", false)
 	require.NoError(t, err)
@@ -76,8 +76,8 @@ func sessionInfo(t *testing.T, s3a *S3ApiServer, creds *VendedCredentials) *sts.
 
 func TestVendedSessionEndsWithItsAccessKey(t *testing.T) {
 	s3a := vendingServer(t)
-	sessionA := vend(t, s3a, "shared-user", sharedKeyA, true)
-	sessionB := vend(t, s3a, "shared-user", sharedKeyB, true)
+	sessionA := vend(t, s3a, "shared-user", sharedKeyA, sharedSecretA)
+	sessionB := vend(t, s3a, "shared-user", sharedKeyB, sharedSecretB)
 	require.Equal(t, s3err.ErrNone, use(t, s3a, sessionA), "control: the session works while its key does")
 	require.Equal(t, s3err.ErrNone, use(t, s3a, sessionB))
 
@@ -100,7 +100,7 @@ func TestVendedSessionEndsWithItsAccessKey(t *testing.T) {
 
 func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 	s3a := vendingServer(t)
-	session := vend(t, s3a, "shared-user", sharedKeyA, true)
+	session := vend(t, s3a, "shared-user", sharedKeyA, sharedSecretA)
 	require.Equal(t, s3err.ErrNone, use(t, s3a, session))
 
 	s3a.iam.nameToIdentity["shared-user"].Disabled = true
@@ -118,7 +118,7 @@ func TestVendedSessionEndsWithItsIdentity(t *testing.T) {
 // made with them.
 func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 	s3a := vendingServer(t)
-	control := sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA, true))
+	control := sessionInfo(t, s3a, vend(t, s3a, "shared-user", sharedKeyA, sharedSecretA))
 	assert.Equal(t, sharedKeyA, control.SourceAccessKeyId, "control")
 	assert.Equal(t, sharedKeyA, control.BoundAccessKeyId, "control")
 
@@ -128,7 +128,7 @@ func TestVendedSessionIsBoundOnlyForAStoredIdentitysKey(t *testing.T) {
 		{"alice@example.com", "", "an OIDC user"},
 		{"shared-user", "", "no recorded key"},
 	} {
-		session := vend(t, s3a, tc.principal, tc.key, false)
+		session := vend(t, s3a, tc.principal, tc.key, "")
 		assert.Empty(t, sessionInfo(t, s3a, session).SourceAccessKeyId, tc.why)
 		assert.Empty(t, sessionInfo(t, s3a, session).BoundAccessKeyId, tc.why)
 		assert.Equal(t, s3err.ErrNone, use(t, s3a, session), tc.why)
@@ -161,6 +161,22 @@ func TestLegacyVendedSessionStaysUnbound(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone, errCode)
 }
 
+// A key re-created under the same id with a different secret does not revive
+// sessions bound to the deleted original: the fingerprint recorded at mint
+// time no longer matches.
+func TestRecreatedKeyDoesNotReviveVendedSession(t *testing.T) {
+	s3a := vendingServer(t)
+	session := vend(t, s3a, "shared-user", sharedKeyA, sharedSecretA)
+	require.Equal(t, s3err.ErrNone, use(t, s3a, session))
+
+	identity := s3a.iam.nameToIdentity["shared-user"]
+	identity.Credentials[0] = &Credential{AccessKey: sharedKeyA, SecretKey: "recreated-secret"}
+	assert.Equal(t, s3err.ErrInvalidAccessKeyID, use(t, s3a, session), "same id, different secret")
+
+	identity.Credentials[0] = &Credential{AccessKey: sharedKeyA, SecretKey: sharedSecretA}
+	assert.Equal(t, s3err.ErrNone, use(t, s3a, session), "the identical credential is indistinguishable")
+}
+
 // A session for a stored identity stays bound even when the key no longer
 // resolves at vend time — revoked between the request's authentication and
 // the vend, or held by a different identity now. The session dies on its
@@ -170,7 +186,7 @@ func TestVendedSessionStaysBoundWhenTheKeyIsGoneAtVend(t *testing.T) {
 
 	identity := s3a.iam.nameToIdentity["shared-user"]
 	identity.Credentials = identity.Credentials[1:] // sharedKeyA revoked mid-request
-	session := vend(t, s3a, "shared-user", sharedKeyA, true)
+	session := vend(t, s3a, "shared-user", sharedKeyA, sharedSecretA)
 	assert.Equal(t, sharedKeyA, sessionInfo(t, s3a, session).SourceAccessKeyId, "still bound")
 	assert.Equal(t, s3err.ErrInvalidAccessKeyID, use(t, s3a, session), "the dead key's session is refused")
 }
@@ -210,7 +226,7 @@ func BenchmarkVendedSessionKeyLive(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if iam.vendedSessionKeyLive("shared-user", sharedKeyB) != s3err.ErrNone {
+		if iam.vendedSessionKeyLive("shared-user", sharedKeyB, "") != s3err.ErrNone {
 			b.Fatal("refused")
 		}
 	}
