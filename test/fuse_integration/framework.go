@@ -376,11 +376,16 @@ func (f *FuseTestFramework) waitForService(addr string, timeout time.Duration) e
 
 // waitForMount waits for the FUSE mount to be ready
 func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
+	// The mount point is created before weed mount starts, so Stat/ReadDir
+	// alone succeed on the plain directory. The device id only differs from
+	// its parent's once a filesystem is actually mounted on it.
+	parentDev, err := deviceID(filepath.Dir(f.mountPoint))
+	if err != nil {
+		return fmt.Errorf("stat mount parent: %w", err)
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		// Check if mount point is accessible
-		if _, err := os.Stat(f.mountPoint); err == nil {
-			// Try to list directory
+		if dev, err := deviceID(f.mountPoint); err == nil && dev != parentDev {
 			if _, err := os.ReadDir(f.mountPoint); err == nil {
 				return nil
 			}
