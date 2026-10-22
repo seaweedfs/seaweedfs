@@ -307,6 +307,9 @@ impl http_body::Body for StreamingBody {
                                             ),
                                         )));
                                     }
+                                    // Hyper may not poll again once Content-Length is
+                                    // satisfied, so the read's success is recorded here.
+                                    self.io_errors.check_read_write_error(None);
                                 }
                                 return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(
                                     chunk,
