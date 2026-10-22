@@ -381,7 +381,7 @@ func findWeedBinary() string {
 		if _, err := exec.LookPath(candidate); err == nil {
 			return candidate
 		}
-		if _, err := os.Stat(candidate); err == nil {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 			abs, _ := filepath.Abs(candidate)
 			return abs
 		}
