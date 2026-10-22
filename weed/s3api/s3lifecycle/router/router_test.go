@@ -458,6 +458,65 @@ func TestRouteVersionedCurrentEventStaysLatest(t *testing.T) {
 	}
 }
 
+func TestRouteVersionedVersionFileWriteSchedulesExpiration(t *testing.T) {
+	// A versioned PUT shows up in the meta-log as the version file plus
+	// the .versions/ directory update — there is no bare-key event for
+	// the regular path to see. The version file is the latest at write
+	// time; the match carries its identity with an empty VersionID so
+	// dispatch CAS-checks the current latest at due time.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := eventCreate("bk", "logs/foo"+s3_constants.VersionsFolder+"/v_v1", old.Unix(), 1, old.UnixNano())
+	ev.NewEntry.Extended = map[string][]byte{
+		s3_constants.ExtVersionIdKey: []byte("v1"),
+	}
+
+	matches := Route(context.Background(), snap, ev, now, nil)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match (EXPIRATION_DAYS), got %v", matches)
+	}
+	m := matches[0]
+	if m.Key.ActionKind != s3lifecycle.ActionKindExpirationDays {
+		t.Fatalf("ActionKind=%v, want ExpirationDays", m.Key.ActionKind)
+	}
+	if m.ObjectKey != "logs/foo" {
+		t.Fatalf("ObjectKey=%q, want the logical key", m.ObjectKey)
+	}
+	if m.VersionID != "" {
+		t.Fatalf("VersionID=%q, want empty so dispatch resolves the current latest", m.VersionID)
+	}
+	if m.Identity == nil {
+		t.Fatal("Identity must fingerprint the version file for dispatch CAS")
+	}
+	if want := time.Unix(old.Unix(), 0).Add(s3lifecycle.DaysToDuration(1)); !m.DueTime.Equal(want) {
+		t.Fatalf("DueTime=%v, want %v", m.DueTime, want)
+	}
+}
+
+func TestRouteVersionedMarkerCreateDoesNotFireExpiration(t *testing.T) {
+	// A delete marker is a version file too, but ExpirationDays never
+	// applies to a marker — only EXP_DM, handled by the sole-survivor
+	// path. Without the marker gate, the expiration match would pin a
+	// marker identity and dispatch would stack a second marker on top.
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileWithVersioned(rule, activatedPrior(rule))
+
+	now := time.Now()
+	old := now.AddDate(0, 0, -2)
+	ev := markerEvent("bk", "logs/gone", "2026-05-09-abc", old.Unix(), old.UnixNano())
+
+	lister := &recordingLister{survivors: Survivors{Count: 1}}
+	if got := Route(context.Background(), snap, ev, now, lister); len(got) != 0 {
+		t.Fatalf("marker create must not fire EXPIRATION_DAYS, got %v", got)
+	}
+	if len(lister.calls) != 0 {
+		t.Fatalf("lister consulted without an EXP_DM rule: calls=%v", lister.calls)
+	}
+}
+
 func TestRouteNonVersionedBucketIgnoresVersionsSuffix(t *testing.T) {
 	// A non-versioned bucket happens to have an object literally named
 	// "logs/foo.versions/v1" — that's just a regular path. The router
@@ -796,13 +855,11 @@ func TestRouteVersionedDeleteMarkerNoExpDMRuleSkipsListing(t *testing.T) {
 }
 
 func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
-	// On a versioned bucket the router skips every event whose parent
-	// directory name ends with ".versions" — both the version files
-	// SeaweedFS itself writes (logs/foo.versions/v_v1) and any literal
-	// key the user happens to put under such a parent — because the
-	// current-vs-noncurrent classification needs the .versions/
-	// directory's latest pointer, which isn't carried by these events.
-	// Bootstrap covers retention for those entries.
+	// On a versioned bucket, events inside a *.versions/ parent that are
+	// not stamped version-file writes stay unrouted — current-vs-noncurrent
+	// classification needs the container's latest pointer, and the file's
+	// own ExtVersionIdKey is what marks it as a version write the
+	// expiration path can schedule from.
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
 	snap := compileWithVersioned(rule, activatedPrior(rule))
 
@@ -815,9 +872,11 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 		ext   map[string][]byte
 	}{
 		{
-			name: "tracked version file",
+			// A marker carries the version id but is a marker, not an
+			// expirable write — it routes to the sole-survivor path.
+			name: "delete marker",
 			key:  "logs/foo.versions/v_v1",
-			ext:  map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")},
+			ext:  map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1"), s3_constants.ExtDeleteMarkerKey: []byte("true")},
 		},
 		{
 			name: "literal-key collision",
