@@ -235,6 +235,33 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	if !isUnchanged {
 		err = v.publishWriteRequest(n, offset, fsync)
 	}
+	// The .idx row goes down before the write is acknowledged, same as the
+	// .dat record above; the access lock is dropped for the fsync the same
+	// way, since the row is already published.
+	v.dataFileAccessLock.Unlock()
+	if idxErr := v.syncIndex(); err == nil {
+		err = idxErr
+	}
+	v.dataFileAccessLock.Lock()
+	return
+}
+
+// syncIndex flushes the .idx, the second half of a durable write: the row is
+// already published and cannot be taken back, so a failed sync stops the
+// volume taking writes rather than acknowledge an index entry that may not
+// survive — the same split the Rust volume server makes between flush_dat
+// and flush_idx.
+func (v *Volume) syncIndex() (err error) {
+	if v.nm == nil {
+		return nil
+	}
+	if err = v.nm.Sync(); err != nil {
+		v.checkReadWriteError(err)
+		v.noWriteLock.Lock()
+		v.noWriteOrDelete = true
+		v.noWriteLock.Unlock()
+		err = fmt.Errorf("sync volume %d index: %w", v.Id, err)
+	}
 	return
 }
 
@@ -503,6 +530,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	stagedWriteOk := make([]bool, len(run))
 	stagedDeleteOffsets := make([]uint64, len(run))
 	stagedDeleteOk := make([]bool, len(run))
+	needIndexSync := false
 	for i := 0; i < len(run); i++ {
 		// Every queued request meets the same refusal it would get sent on
 		// its own: once a durable index update fails the volume stops taking
@@ -514,9 +542,12 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 				run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
 			} else {
 				offset, size, isUnchanged, err := v.appendWriteRequest(run[i].N, true, true)
-				if err == nil && !isUnchanged {
-					stagedWriteOffsets[i] = offset
-					stagedWriteOk[i] = true
+				if err == nil {
+					needIndexSync = true
+					if !isUnchanged {
+						stagedWriteOffsets[i] = offset
+						stagedWriteOk[i] = true
+					}
 				}
 				run[i].UpdateResult(offset, uint64(size), isUnchanged, err)
 			}
@@ -527,9 +558,12 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 				run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
 			} else {
 				size, offset, tombstoned, err := v.appendDeleteRequest(run[i].N)
-				if err == nil && tombstoned {
-					stagedDeleteOffsets[i] = offset
-					stagedDeleteOk[i] = true
+				if err == nil {
+					needIndexSync = true
+					if tombstoned {
+						stagedDeleteOffsets[i] = offset
+						stagedDeleteOk[i] = true
+					}
 				}
 				run[i].UpdateResult(0, uint64(size), false, err)
 			}
@@ -588,6 +622,16 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 		}
 	}
 	v.dataFileAccessLock.Unlock()
+	// One .idx sync per run, paired with the .dat sync above: the published
+	// rows cannot be rolled back, so a failed sync fails every request in the
+	// run instead of acknowledging an index entry that may not survive.
+	if needIndexSync {
+		if idxErr := v.syncIndex(); idxErr != nil {
+			for i := 0; i < len(run); i++ {
+				run[i].UpdateResult(0, 0, false, idxErr)
+			}
+		}
+	}
 	for i := 0; i < len(run); i++ {
 		run[i].Submit()
 	}
