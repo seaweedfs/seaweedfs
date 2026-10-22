@@ -67,8 +67,7 @@ check-fuse:
 	fi
 
 check-go:
-	@go version | grep -q "go1\.[2-9][0-9]" || \
-	go version | grep -q "go1\.2[1-9]" || \
+	@go version | grep -Eq "go(1\.(2[1-9]|[3-9][0-9]+)|[2-9]\.)" || \
 	(echo "$(RED)❌ Go $(GO_VERSION)+ required. Current: $$(go version)$(RESET)" && exit 1)
 	@echo "$(GREEN)[OK] Go version check passed$(RESET)"
 
