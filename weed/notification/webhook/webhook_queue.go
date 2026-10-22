@@ -141,7 +141,6 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 		return nil
 	}
 
-	var firstErr error
 	for _, t := range w.targets {
 		if t.filter != nil && !t.filter.shouldPublish(key, eventNotification) {
 			continue
@@ -155,15 +154,14 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 			return err
 		}
 		wMsg.Metadata.Set("target", t.name)
+		// a saturated inbox applies backpressure instead of dropping the event
 		select {
 		case t.inbox <- wMsg:
-		default:
-			if firstErr == nil {
-				firstErr = fmt.Errorf("webhook target %q buffer is full, dropping event for %s", t.name, key)
-			}
+		case <-w.ctx.Done():
+			return w.ctx.Err()
 		}
 	}
-	return firstErr
+	return nil
 }
 
 func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {

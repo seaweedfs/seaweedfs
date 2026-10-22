@@ -677,6 +677,44 @@ func TestNamedTargets(t *testing.T) {
 	}
 }
 
+func TestQueueBurstKeepsPendingEvents(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config{
+		endpoint:          server.URL,
+		timeoutSeconds:    5,
+		maxRetries:        0,
+		backoffSeconds:    1,
+		maxBackoffSeconds: 1,
+		nWorkers:          1,
+		bufferSize:        2,
+	}
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
+
+	const total = 6
+	msg := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}}
+	for i := 0; i < total; i++ {
+		if err := q.SendMessage("/test/path", msg); err != nil {
+			t.Fatalf("SendMessage() error = %v", err)
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && hits.Load() < total {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := hits.Load(); got != total {
+		t.Errorf("expected %d deliveries, got %d", total, got)
+	}
+}
+
 // A disabled flat section keeps no target even when an endpoint is set —
 // the scaffold ships exactly that combination, and a named target must not
 // reactivate it.
