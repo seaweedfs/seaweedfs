@@ -78,6 +78,9 @@ type S3ApiServerOption struct {
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only object dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
+	// AllowBackslashInKey keeps '\' a literal object-key character instead of
+	// normalizing it to '/', matching AWS S3 where the two are distinct keys.
+	AllowBackslashInKey bool
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -531,6 +534,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Start the versioning reconciler that drains stranded .versions/
 	// pointer-to-missing-file states without waiting for a client GET.
 	s3ApiServer.versionsReconcilerStop = s3ApiServer.startVersioningReconciler()
+
+	// Publish the key mode only once the server is fully constructed so a
+	// failed construction cannot flip the mode of a running server.
+	SetAllowBackslashInObjectKey(option.AllowBackslashInKey)
 
 	return s3ApiServer, nil
 }
