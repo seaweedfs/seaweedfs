@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type fsVerifyTestVolumeServer struct {
@@ -37,6 +38,9 @@ type fsVerifyTestFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entry   *filer_pb.Entry
 	deleted []*filer_pb.DeleteEntryRequest
+	// onDelete runs inside DeleteEntry before the guards, letting a test
+	// interleave a rewrite between the pruning lookup and the delete.
+	onDelete func()
 }
 
 func (s *fsVerifyTestFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -48,10 +52,27 @@ func (s *fsVerifyTestFilerServer) LookupDirectoryEntry(_ context.Context, req *f
 
 func (s *fsVerifyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	s.deleted = append(s.deleted, req)
+	if s.onDelete != nil {
+		s.onDelete()
+	}
 	// mirror the real filer: an entry newer than IfNotModifiedAfter is
 	// silently skipped, no error and no Error field
 	if s.entry != nil && req.IfNotModifiedAfter > 0 && s.entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
 		return &filer_pb.DeleteEntryResponse{}, nil
+	}
+	// ... and an entry that no longer matches the version the client
+	// verified fails the delete's write condition
+	for _, cl := range req.GetCondition().GetClauses() {
+		if cl.GetKind() != filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			continue
+		}
+		expected := proto.Clone(cl.GetExpectedEntry()).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(expected.GetChunks())
+		stored := proto.Clone(s.entry).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(stored.GetChunks())
+		if !proto.Equal(stored, expected) {
+			return &filer_pb.DeleteEntryResponse{Error: "precondition failed", ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+		}
 	}
 	s.entry = nil
 	return &filer_pb.DeleteEntryResponse{}, nil
@@ -289,6 +310,38 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, nil, chunks)
 	if err != nil || pruned {
 		t.Fatalf("missing entry must be a no-op, got pruned=%v err=%v", pruned, err)
+	}
+}
+
+// A rewrite landing between the pruning lookup and the delete keeps the same
+// mtime second, so neither the re-lookup nor IfNotModifiedAfter sees it — the
+// entry version on the delete is the only guard that catches it.
+func TestFsVerifyPruneEntryMidFlightRewrite(t *testing.T) {
+	filer := &fsVerifyTestFilerServer{entry: &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
+	}}
+	commandEnv, _, cleanup := newFsVerifyTestCommandEnv(t, filer, &fsVerifyTestVolumeServer{})
+	defer cleanup()
+	c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{})
+
+	chunks := []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}}
+	filer.onDelete = func() {
+		filer.onDelete = nil
+		filer.entry = &filer_pb.Entry{
+			Name:       "file",
+			Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+			Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 43}}},
+		}
+	}
+
+	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	if err != nil || pruned {
+		t.Fatalf("mid-flight rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
+	}
+	if filer.entry == nil {
+		t.Fatal("rewritten entry must survive the conditional delete")
 	}
 }
 

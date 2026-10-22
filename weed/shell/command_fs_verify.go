@@ -408,9 +408,17 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			Directory:          dir,
 			Name:               name,
 			IfNotModifiedAfter: mtimeSec,
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: lookupResp.Entry,
+			}}},
 		})
 		if err != nil {
 			return err
+		}
+		if deleteResp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+			return nil
 		}
 		if deleteResp.Error != "" {
 			return fmt.Errorf("delete entry %s: %s", path, deleteResp.Error)
