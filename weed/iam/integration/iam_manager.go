@@ -53,7 +53,13 @@ type IAMManager struct {
 	oidcRetryAgain bool
 	// oidcRefreshMu serializes refreshes from reading the store to handing
 	// STS the result, so an older snapshot cannot replace a newer one.
-	oidcRefreshMu        sync.Mutex
+	oidcRefreshMu sync.Mutex
+	// oidcManagedProviders caches providers refreshOIDCProvidersFrom built,
+	// keyed by record identity, so an unchanged record reuses its provider:
+	// rebuilding would drop the provider's consumed-token (jti) replay cache
+	// and let an already-used token be presented again. Guarded by
+	// oidcRefreshMu.
+	oidcManagedProviders map[string]*oidcManagedProvider
 	oidcAuditSink        OIDCProviderAuditSink
 	revocationStore      SessionRevocationStore
 	filerAddressProvider func() string // Function to get current filer address
@@ -943,14 +949,32 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 		return fmt.Errorf("list OIDC providers: the store was replaced during the refresh")
 	}
 	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
+	if m.oidcManagedProviders == nil {
+		m.oidcManagedProviders = make(map[string]*oidcManagedProvider)
+	}
+	seen := make(map[string]struct{}, len(records))
 	for _, rec := range records {
 		if rec == nil || rec.URL == "" {
 			continue
 		}
-		provider, err := buildOIDCProviderFromRecord(rec)
-		if err != nil {
-			glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
-			continue
+		key := rec.ARN
+		if key == "" {
+			key = rec.URL + "\x00" + rec.AccountID
+		}
+		seen[key] = struct{}{}
+		fingerprint := oidcProviderFingerprint(rec)
+		var provider *oidc.OIDCProvider
+		if cached := m.oidcManagedProviders[key]; cached != nil && cached.fingerprint == fingerprint {
+			provider = cached.provider
+		} else {
+			var err error
+			provider, err = buildOIDCProviderFromRecord(rec)
+			if err != nil {
+				delete(m.oidcManagedProviders, key)
+				glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
+				continue
+			}
+			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
 		}
 		// Multiple records may share an issuer when each is scoped to a
 		// different account; STS picks the right one at validation time
@@ -960,8 +984,36 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 			Provider:  provider,
 		})
 	}
+	for key := range m.oidcManagedProviders {
+		if _, ok := seen[key]; !ok {
+			delete(m.oidcManagedProviders, key)
+		}
+	}
 	m.stsService.SetIAMManagedOIDCProviders(byIssuer)
 	return nil
+}
+
+// oidcManagedProvider is a runtime provider together with the fingerprint of
+// the record it was built from.
+type oidcManagedProvider struct {
+	fingerprint string
+	provider    *oidc.OIDCProvider
+}
+
+// oidcProviderFingerprint identifies the record content a provider was built
+// from, so a refresh rebuilds the provider only when that content changed.
+func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
+	key, _ := json.Marshal(struct {
+		ARN                     string
+		AccountID               string
+		URL                     string
+		ClientIDs               []string
+		Thumbprints             []string
+		AllowedPrincipalTagKeys []string
+		PolicyClaim             string
+	}{rec.ARN, rec.AccountID, rec.URL, rec.ClientIDs, rec.Thumbprints, rec.AllowedPrincipalTagKeys, rec.PolicyClaim})
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
 }
 
 // buildOIDCProviderFromRecord turns a stored record into a runtime

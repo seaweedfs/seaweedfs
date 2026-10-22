@@ -559,3 +559,39 @@ func TestAFailureDuringARetryIsNotDropped(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, store.successes(), 2, "the retry ended on its first success, dropping the refresh that failed while it ran")
 }
+
+// A refresh must not rebuild a provider whose record is unchanged: rebuilding
+// would drop the provider's consumed-token (jti) replay cache and let an
+// already-used token be presented again.
+func TestRefreshReusesProviderWhileRecordIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOIDCProviderStore()
+	mgr := startServer(t, store)
+
+	arn := arnOf(t, persistTestAPIIssuer)
+	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
+		ARN: arn, URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
+	}))
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	first := mgr.oidcManagedProviders[arn].provider
+	require.NotNil(t, first)
+
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	assert.Same(t, first, mgr.oidcManagedProviders[arn].provider,
+		"an unchanged record was rebuilt, dropping its replay cache")
+
+	// A changed record must rebuild so the new configuration applies.
+	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
+		ARN: arn, URL: persistTestAPIIssuer, ClientIDs: []string{"aud", "aud2"},
+	}))
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	rebuilt := mgr.oidcManagedProviders[arn].provider
+	require.NotNil(t, rebuilt)
+	assert.NotSame(t, first, rebuilt, "a changed record kept the old provider")
+
+	// Deleting the record drops the provider from the cache and the STS map.
+	require.NoError(t, store.DeleteProvider(ctx, "", arn))
+	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	assert.NotContains(t, mgr.oidcManagedProviders, arn)
+	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer))
+}
