@@ -148,58 +148,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			resp, message = reshaped, reshaped.EventNotification
 		}
 		if filer_pb.IsCreate(resp) {
-			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
-				return nil
-			}
-			// Propagate delete markers as deletions on the remote.
-			// Delete markers are zero-content version entries, so they
-			// would be filtered out by the HasData check below.
-			if isDeleteMarker(message.NewEntry) {
-				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
-					dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
-					return syncDeleteMarker(client, option, message, dest)
-				}
-				return nil
-			}
-			if !filer.HasData(message.NewEntry) {
-				return nil
-			}
-			glog.V(2).Infof("create: %+v", resp)
-			if !shouldSendToRemote(message.NewEntry) {
-				glog.V(2).Infof("skipping creating: %+v", resp)
-				return nil
-			}
-			// Rewrite internal versioning paths to the original S3 key
-			// to prevent double-versioning when central also has versioning enabled
-			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
-			isRewrittenVersion := false
-			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
-				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
-				parentPath, entryName = newParent, newName
-				isRewrittenVersion = true
-			}
-			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
-			if message.NewEntry.IsDirectory {
-				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
-				return client.WriteDirectory(dest, remoteWriteEntry(message.NewEntry, *option.storageClass))
-			}
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, *option.storageClass), dest)
-			if errors.Is(writeErr, errSuperseded) {
-				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
-				return nil
-			}
-			if writeErr != nil {
-				return writeErr
-			}
-			// Skip updateLocalEntry for versioned rewrites: the logical
-			// object (e.g. file.xml) has no filer entry in versioned
-			// buckets, and stamping the internal v_* entry with a
-			// RemoteEntry for the logical key is semantically wrong.
-			// Replay is safe because S3 PutObject is idempotent.
-			if isRewrittenVersion {
-				return nil
-			}
-			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
+			return processCreateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp)
 		}
 		if filer_pb.IsDelete(resp) {
 			return processDeleteEvent(filerSource, client, mountedDir, remoteStorageMountLocation, resp)
@@ -258,6 +207,72 @@ func isUnderMount(mountedDir string, dir string, name string) bool {
 	mount := strings.TrimSuffix(mountedDir, "/")
 	path := string(util.NewFullPath(dir, name))
 	return path == mount || strings.HasPrefix(path, mount+"/")
+}
+
+// processCreateEvent uploads a created entry to the remote key its path maps
+// to.
+func processCreateEvent(
+	filerClient filer_pb.FilerClient,
+	filerSource filer_pb.FilerClient,
+	storageClass string,
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	resp *filer_pb.SubscribeMetadataResponse,
+) error {
+	message := resp.EventNotification
+	if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+		return nil
+	}
+	// Propagate delete markers as deletions on the remote.
+	// Delete markers are zero-content version entries, so they
+	// would be filtered out by the HasData check below.
+	if isDeleteMarker(message.NewEntry) {
+		if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
+			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+			return syncDeleteMarker(client, filerClient, message, dest)
+		}
+		return nil
+	}
+	if !filer.HasData(message.NewEntry) {
+		return nil
+	}
+	glog.V(2).Infof("create: %+v", resp)
+	if !shouldSendToRemote(message.NewEntry) {
+		glog.V(2).Infof("skipping creating: %+v", resp)
+		return nil
+	}
+	// Rewrite internal versioning paths to the original S3 key
+	// to prevent double-versioning when central also has versioning enabled
+	parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+	isRewrittenVersion := false
+	if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
+		glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
+		parentPath, entryName = newParent, newName
+		isRewrittenVersion = true
+	}
+	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
+	if message.NewEntry.IsDirectory {
+		glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
+		return client.WriteDirectory(dest, remoteWriteEntry(message.NewEntry, storageClass))
+	}
+	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, storageClass), dest)
+	if errors.Is(writeErr, errSuperseded) {
+		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		return nil
+	}
+	if writeErr != nil {
+		return writeErr
+	}
+	// Skip updateLocalEntry for versioned rewrites: the logical
+	// object (e.g. file.xml) has no filer entry in versioned
+	// buckets, and stamping the internal v_* entry with a
+	// RemoteEntry for the logical key is semantically wrong.
+	// Replay is safe because S3 PutObject is idempotent.
+	if isRewrittenVersion {
+		return nil
+	}
+	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 }
 
 // processDeleteEvent removes the remote object an entry mapped to. A remote
