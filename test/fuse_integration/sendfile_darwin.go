@@ -39,5 +39,7 @@ func sendfileTransfer(outFd int, inFd int, offset *int64, count int) (int, error
 }
 
 func isSendfileSupported() bool {
-	return true
+	// macOS sendfile(2) requires a socket destination; file-to-file copies
+	// fail with ENOTSOCK.
+	return false
 }
