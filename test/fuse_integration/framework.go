@@ -185,6 +185,11 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("filer not ready: %v", err)
 	}
 
+	// Skip rather than fail on a host with no FUSE device to mount through
+	if !fuseAvailable() {
+		f.t.Skip("no FUSE device node (/dev/fuse, /dev/macfuse0, /dev/osxfuse0)")
+	}
+
 	// Mount FUSE filesystem
 	if err := f.mountFuse(config); err != nil {
 		return fmt.Errorf("failed to mount FUSE: %v", err)
@@ -395,6 +400,17 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout")
+}
+
+// fuseAvailable reports whether the host has a FUSE device node to mount
+// through: /dev/fuse on Linux, /dev/macfuse* or /dev/osxfuse* on macOS.
+func fuseAvailable() bool {
+	for _, dev := range []string{"/dev/fuse", "/dev/macfuse0", "/dev/osxfuse0"} {
+		if _, err := os.Stat(dev); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // findWeedBinary locates the weed binary. Candidates are resolved to
