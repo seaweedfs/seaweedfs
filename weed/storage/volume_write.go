@@ -322,22 +322,34 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 
 	// check whether existing needle cookie matches
 	nv, ok := v.nm.Get(n.Id)
-	if ok {
+	if ok && !nv.Offset.IsZero() {
 		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
 		if existingNeedleReadErr != nil {
 			err = fmt.Errorf("reading existing needle: %w", existingNeedleReadErr)
 			return
 		}
-		if n.Cookie == 0 && !checkCookie {
-			// this is from batch deletion, and read back again when tailing a remote volume
-			// which only happens when checkCookie == false and fsync == false
-			n.Cookie = existingNeedle.Cookie
-		}
-		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
-				needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
-			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
-			return
+		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size {
+			// the entry resolves to a record that is neither the indexed key
+			// nor the indexed size, so it is stale rather than a duplicate —
+			// drop it and let the append re-index the key
+			glog.V(0).Infof("volume %d index entry for %s resolves to %s; dropping stale index entry",
+				v.Id, needle.NewFileIdFromNeedle(v.Id, n), needle.NewFileIdFromNeedle(v.Id, existingNeedle))
+			if err = v.nm.Delete(n.Id, nv.Offset); err != nil {
+				err = fmt.Errorf("dropping stale index entry for needle %d of volume %d: %w", n.Id, v.Id, err)
+				return
+			}
+		} else {
+			if n.Cookie == 0 && !checkCookie {
+				// this is from batch deletion, and read back again when tailing a remote volume
+				// which only happens when checkCookie == false and fsync == false
+				n.Cookie = existingNeedle.Cookie
+			}
+			if existingNeedle.Cookie != n.Cookie {
+				glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
+					needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
+				err = fmt.Errorf("mismatching cookie %x", n.Cookie)
+				return
+			}
 		}
 	}
 
