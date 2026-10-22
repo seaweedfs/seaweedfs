@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -50,6 +51,10 @@ type StoragePreference struct {
 
 type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
+// submitUploadWorkers bounds how many files one SubmitFiles call uploads at
+// once; the batch assign above already fetched all their file ids.
+const submitUploadWorkers = 4
+
 func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*FilePart, pref StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	var totalBytes int64
@@ -72,8 +77,11 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*
 	}
 	ret, err := Assign(context.Background(), masterFn, grpcDialOption, ar)
 	if err != nil {
-		for index := range files {
+		for index, file := range files {
 			results[index].Error = err.Error()
+			if closer, ok := file.Reader.(io.Closer); ok {
+				closer.Close()
+			}
 		}
 		return results, err
 	}
@@ -87,14 +95,35 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*
 			file.Server = ret.PublicUrl
 		}
 		file.Pref = pref
-		results[index].Size, err = file.Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
-		if err != nil {
-			results[index].Error = err.Error()
-		}
 		results[index].Fid = file.Fid
 		results[index].FileUrl = ret.PublicUrl + "/" + file.Fid
 	}
-	return results, nil
+
+	var wg sync.WaitGroup
+	var lastErrLock sync.Mutex
+	jobs := make(chan int)
+	for w := 0; w < min(submitUploadWorkers, len(files)); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				size, uploadErr := files[index].Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
+				results[index].Size = size
+				if uploadErr != nil {
+					results[index].Error = uploadErr.Error()
+					lastErrLock.Lock()
+					err = uploadErr
+					lastErrLock.Unlock()
+				}
+			}
+		}()
+	}
+	for index := range files {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	return results, err
 }
 
 func NewFileParts(fullPathFilenames []string) (ret []*FilePart, err error) {
@@ -118,6 +147,8 @@ func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
+		fh.Close()
+		ret.Reader = nil
 		return ret, fiErr
 	}
 	ret.ModTime = fi.ModTime().UTC().Unix()
