@@ -318,11 +318,6 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			break
 		}
 	}
-	// Whole-needle read completed without a backend error — clear any
-	// pending EIO streak. If a non-EIO failure happens later (CRC etc.)
-	// we still return that error to the caller, but the disk itself
-	// produced clean bytes.
-	v.checkReadWriteError(nil)
 	if checkCRC && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
 		// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
@@ -331,6 +326,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
 	}
+	// The read succeeded only once the checksum passes; a failed needle
+	// leaves the io error streak untouched, matching the streamed path.
+	v.checkReadWriteError(nil)
 	if pending != nil {
 		if _, err = writer.Write(pending); err != nil {
 			return fmt.Errorf("ReadNeedleData write: %w", err)
