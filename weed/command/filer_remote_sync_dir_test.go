@@ -2216,6 +2216,25 @@ func TestRenameIntoMountWritesAnEmptyFile(t *testing.T) {
 		}
 	})
 
+	// a stamped entry truncated to zero is not remote-only content: its stamp
+	// describes bytes the file no longer holds, so the new key takes a
+	// zero-byte object
+	t.Run("a truncated stamped entry writes a zero-byte object", func(t *testing.T) {
+		stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: stamp}
+		if !isRemoteOnly(entry) || isDroppedLocalCopy(entry) {
+			t.Fatal("precondition: a truncated stamped entry reports remote-only but is not a dropped copy")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+		}
+	})
+
 	// an ordinary create of an empty entry is unchanged: no object
 	t.Run("a plain empty create still writes nothing", func(t *testing.T) {
 		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
