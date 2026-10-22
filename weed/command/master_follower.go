@@ -47,7 +47,7 @@ func init() {
 	mf.metricsIntervalSec = aws.Int(0)
 	mf.raftResumeState = aws.Bool(false)
 	mf.maxParallelVacuumPerServer = aws.Int(1)
-	mf.maxParallelVacuumPerRack = aws.Int(0)
+	mf.maxParallelVacuumPerRack = cmdMasterFollower.Flag.Int("maxParallelVacuumPerRack", 0, "maximum number of volume copies to vacuum in parallel per rack; 0 for no limit")
 	mf.vacuumIntervalSeconds = aws.Int(840)
 	mf.vacuumDeleteEmptyAfterSeconds = aws.Int(0)
 	mf.telemetryUrl = aws.String("https://telemetry.seaweedfs.com/api/collect")
