@@ -37,7 +37,7 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 				continue
 			}
 			typ, ok := field.Type.(iceberg.PrimitiveType)
-			if !ok {
+			if !ok || !orderableType(typ) {
 				continue
 			}
 			candidate := &compactionOrder{fieldID: field.ID, typ: typ, descending: sortField.Direction == table.SortDESC}
@@ -57,7 +57,7 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 	// different format, or another partition) cannot disable ordering here.
 	for _, field := range schema.Fields() {
 		typ, ok := field.Type.(iceberg.PrimitiveType)
-		if !ok {
+		if !ok || !orderableType(typ) {
 			continue
 		}
 		candidate := &compactionOrder{fieldID: field.ID, typ: typ, bestEffort: true}
@@ -66,6 +66,18 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 		}
 	}
 	return nil
+}
+
+// orderableType reports whether bounds of the type order files. Geometry and
+// geography bounds are corners of a box: they decode into literals that do
+// not compare, so ordering by them would sort nothing while still splitting
+// oversized bins as if the files were in order.
+func orderableType(t iceberg.PrimitiveType) bool {
+	switch t.(type) {
+	case iceberg.GeometryType, iceberg.GeographyType:
+		return false
+	}
+	return true
 }
 
 func (o *compactionOrder) coversEntries(entries []iceberg.ManifestEntry) bool {
