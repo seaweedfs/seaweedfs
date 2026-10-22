@@ -109,7 +109,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 
 	if httpStatus >= 400 {
 		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
-			r.Method, r.URL.String(), httpStatus, string(bytes))
+			r.Method, redactedURL(r), httpStatus, string(bytes))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -119,10 +119,21 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	return
 }
 
+func redactedURL(r *http.Request) string {
+	if _, ok := r.URL.Query()["jwt"]; !ok {
+		return r.URL.String()
+	}
+	u := *r.URL
+	q := u.Query()
+	q.Set("jwt", "[redacted]")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
 	if err := writeJson(w, r, httpStatus, obj); err != nil {
-		glog.V(0).Infof("error writing JSON status %s %d: %v", r.URL, httpStatus, err)
+		glog.V(0).Infof("error writing JSON status %s %d: %v", redactedURL(r), httpStatus, err)
 		glog.V(1).Infof("JSON content: %+v", obj)
 	}
 }
