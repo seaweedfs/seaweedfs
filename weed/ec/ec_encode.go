@@ -727,6 +727,47 @@ func ecShardsClumpedOnOneNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 	return "", false
 }
 
+// ecShardRackByNode maps every volume server's address to its "dc:rack"
+// failure-domain key, matching how the balance planner keys racks.
+func ecShardRackByNode(topoInfo *master_pb.TopologyInfo) map[pb.ServerAddress]string {
+	rackOf := make(map[pb.ServerAddress]string)
+	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		rackOf[pb.NewServerAddressFromDataNode(dn)] = fmt.Sprintf("%s:%s", dc, rack)
+	})
+	return rackOf
+}
+
+// ecShardPlacementViolations reports where the newest-generation placement of
+// vid breaches the caps the encode asked for: the replica placement's node
+// digit (SameRackCount) bounds the shards of the volume one node may hold and
+// its rack digit (DiffRackCount) the shards one rack may hold. A zero digit
+// leaves that level unbounded; a nil placement binds nothing. byNode counts
+// only the newest encode generation -- a stale orphan's shards do not weaken
+// the fresh set.
+func ecShardPlacementViolations(vid needle.VolumeId, byNode map[pb.ServerAddress]erasure_coding.ShardBits, rackOf map[pb.ServerAddress]string, rp *super_block.ReplicaPlacement) []string {
+	if rp == nil || (rp.SameRackCount <= 0 && rp.DiffRackCount <= 0) {
+		return nil
+	}
+	rackCount := make(map[string]int)
+	var violations []string
+	for addr, bits := range byNode {
+		count := bits.Count()
+		if rp.SameRackCount > 0 && count > rp.SameRackCount {
+			violations = append(violations, fmt.Sprintf("volume %d: %d shards on node %s, over the requested %d per node", vid, count, addr, rp.SameRackCount))
+		}
+		rackCount[rackOf[addr]] += count
+	}
+	if rp.DiffRackCount > 0 {
+		for rack, count := range rackCount {
+			if count > rp.DiffRackCount {
+				violations = append(violations, fmt.Sprintf("volume %d: %d shards on rack %s, over the requested %d per rack", vid, count, rack, rp.DiffRackCount))
+			}
+		}
+	}
+	sort.Strings(violations)
+	return violations
+}
+
 // ecShardSummaryByNode says where a volume's shards are, one entry per node,
 // sorted so the message is stable. It names the ids and not just the count: a
 // set holding shards 0-9 and one holding 4-13 are both "10 shards", and which
