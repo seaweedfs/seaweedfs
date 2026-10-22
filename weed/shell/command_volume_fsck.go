@@ -63,6 +63,7 @@ type commandVolumeFsck struct {
 	tempFolder                string
 	verbose                   *bool
 	forcePurging              *bool
+	purgeConcurrency          *int
 	skipEcVolumes             *bool
 	findMissingChunksInFiler  *bool
 	verifyNeedle              *bool
@@ -123,6 +124,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
+	c.purgeConcurrency = fsckCommand.Int("purgeConcurrency", 16, "parallel filer deletes for -reallyDeleteFilerEntries")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Hour, "only include entries on volume servers before this cutoff time to check orphan chunks")
 	modifyTimeAgo := fsckCommand.Duration("modifyTimeAgo", 0, "only include entries after this modify time to check orphan chunks")
@@ -154,7 +156,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 	c.env = commandEnv
-	c.writer = writer
+	c.writer = &lockedWriter{w: writer}
 
 	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
 		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
@@ -366,10 +368,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				}
 				select {
 				case outputChan <- &Item{
-					vid:     chunk.Fid.VolumeId,
-					fileKey: chunk.Fid.FileKey,
-					cookie:  chunk.Fid.Cookie,
-					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+					vid:        chunk.Fid.VolumeId,
+					fileKey:    chunk.Fid.FileKey,
+					cookie:     chunk.Fid.Cookie,
+					path:       util.NewFullPath(entry.Dir, entry.Entry.Name),
+					hardLinkId: entry.Entry.GetHardLinkId(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -379,6 +382,12 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		},
 		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
+			var queuePurge func(purgeItem)
+			var finishPurge func()
+			if purgeAbsent {
+				queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
+				defer finishPurge()
+			}
 			for item := range outputChan {
 				i := item.(*Item)
 				if f, ok := files[i.vid]; ok {
@@ -406,7 +415,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
 						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
-						c.httpDelete(i.path)
+						queuePurge(purgeItem{path: i.path, hardLinkId: i.hardLinkId})
 					}
 				}
 			}
@@ -621,10 +630,24 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 }
 
 type Item struct {
-	vid     uint32
-	fileKey uint64
-	cookie  uint32
-	path    util.FullPath
+	vid        uint32
+	fileKey    uint64
+	cookie     uint32
+	path       util.FullPath
+	hardLinkId []byte
+}
+
+// lockedWriter serializes concurrent writers — the traversal, the consumer,
+// and the purge workers all log through c.writer at the same time.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }
 
 func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
@@ -690,6 +713,47 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		return
 	}
 	return nil
+}
+
+type purgeItem struct {
+	path       util.FullPath
+	hardLinkId []byte
+}
+
+// startPurgeWorkers fans deletes across at least one worker and returns a
+// queue function plus a finish function that closes the channels and waits
+// for in-flight deletes. Paths that share a hard link id always land on the
+// same worker, so their shared hard-link counter updates stay serialized —
+// concurrent deletes of the same id could both read count N and write N-1,
+// leaving the shared record behind after every path is gone.
+func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(purgeItem), finish func()) {
+	if workers < 1 {
+		workers = 1
+	}
+	chans := make([]chan purgeItem, workers)
+	var wg sync.WaitGroup
+	for w := range chans {
+		chans[w] = make(chan purgeItem, 128)
+		wg.Add(1)
+		go func(ch <-chan purgeItem) {
+			defer wg.Done()
+			for it := range ch {
+				deleteFn(it.path)
+			}
+		}(chans[w])
+	}
+	return func(it purgeItem) {
+			key := []byte(it.path)
+			if len(it.hardLinkId) > 0 {
+				key = it.hardLinkId
+			}
+			chans[int(uint32(util.HashToInt32(key))%uint32(workers))] <- it
+		}, func() {
+			for _, ch := range chans {
+				close(ch)
+			}
+			wg.Wait()
+		}
 }
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
