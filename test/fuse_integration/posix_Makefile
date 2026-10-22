@@ -310,15 +310,15 @@ generate-html-report:
 	@echo "<div class='summary'>" >> $(REPORT_DIR)/posix_compliance_report.html
 	@echo "<h2>Test Summary</h2>" >> $(REPORT_DIR)/posix_compliance_report.html
 	@if [ -f "$(REPORT_DIR)/posix_basic_results.log" ]; then \
-		TOTAL=$$(grep -c "RUN\|PASS\|FAIL" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
-		PASSED=$$(grep -c "PASS:" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
-		FAILED=$$(grep -c "FAIL:" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
+		TOTAL=$$(awk '/RUN|PASS|FAIL/{c++} END{print c+0}' $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo 0); \
+		PASSED=$$(awk '/PASS:/{c++} END{print c+0}' $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo 0); \
+		FAILED=$$(awk '/FAIL:/{c++} END{print c+0}' $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo 0); \
 		echo "<p>Basic Tests: <span class='pass'>$$PASSED passed</span>, <span class='fail'>$$FAILED failed</span></p>" >> $(REPORT_DIR)/posix_compliance_report.html; \
 	fi
 	@if [ -f "$(REPORT_DIR)/posix_critical_results.log" ]; then \
-		TOTAL=$$(grep -c "RUN\|PASS\|FAIL" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
-		PASSED=$$(grep -c "PASS:" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
-		FAILED=$$(grep -c "FAIL:" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
+		TOTAL=$$(awk '/RUN|PASS|FAIL/{c++} END{print c+0}' $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo 0); \
+		PASSED=$$(awk '/PASS:/{c++} END{print c+0}' $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo 0); \
+		FAILED=$$(awk '/FAIL:/{c++} END{print c+0}' $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo 0); \
 		echo "<p>Critical Tests: <span class='pass'>$$PASSED passed</span>, <span class='fail'>$$FAILED failed</span></p>" >> $(REPORT_DIR)/posix_compliance_report.html; \
 	fi
 	@echo "</div>" >> $(REPORT_DIR)/posix_compliance_report.html
@@ -364,8 +364,8 @@ generate-json-report:
 			else \
 				echo "    ," >> $(REPORT_DIR)/posix_compliance_report.json; \
 			fi; \
-			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo 0); \
-			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo 0); \
+			PASSED=$$(awk '/PASS:/{c++} END{print c+0}' "$$logfile" 2>/dev/null || echo 0); \
+			FAILED=$$(awk '/FAIL:/{c++} END{print c+0}' "$$logfile" 2>/dev/null || echo 0); \
 			TOTAL=$$(expr "$$PASSED" + "$$FAILED" 2>/dev/null || echo 0); \
 			echo "    \"$$basename\": {" >> $(REPORT_DIR)/posix_compliance_report.json; \
 			echo "      \"total_tests\": $$TOTAL," >> $(REPORT_DIR)/posix_compliance_report.json; \
@@ -384,8 +384,8 @@ generate-json-report:
 	@TOTAL_PASSED=0; TOTAL_FAILED=0; \
 	for logfile in $(REPORT_DIR)/*.log; do \
 		if [ -f "$$logfile" ]; then \
-			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo 0); \
-			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo 0); \
+			PASSED=$$(awk '/PASS:/{c++} END{print c+0}' "$$logfile" 2>/dev/null || echo 0); \
+			FAILED=$$(awk '/FAIL:/{c++} END{print c+0}' "$$logfile" 2>/dev/null || echo 0); \
 			TOTAL_PASSED=$$(expr "$$TOTAL_PASSED" + "$$PASSED" 2>/dev/null || echo "$$TOTAL_PASSED"); \
 			TOTAL_FAILED=$$(expr "$$TOTAL_FAILED" + "$$FAILED" 2>/dev/null || echo "$$TOTAL_FAILED"); \
 		fi; \
