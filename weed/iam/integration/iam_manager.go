@@ -994,9 +994,14 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 			Provider:  provider,
 		})
 	}
-	for key := range m.oidcManagedProviders {
+	for key, managed := range m.oidcManagedProviders {
 		if _, ok := seen[key]; !ok {
 			delete(m.oidcManagedProviders, key)
+			if managed.provider != nil {
+				if err := managed.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown removed OIDC provider %s: %v", key, err)
+				}
+			}
 		}
 	}
 	m.stsService.SetIAMManagedOIDCProviders(byIssuer)
