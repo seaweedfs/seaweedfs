@@ -271,6 +271,13 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 		}()
 
 		go w.forwardTargetMessages(t)
+
+		// without a subscriber GoChannel drops the publish as undeliverable
+		select {
+		case <-router.Running():
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		}
 	}
 
 	// the queue context lives until every target's worker has stopped so the
