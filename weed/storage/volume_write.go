@@ -331,13 +331,10 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size {
 			// the entry resolves to a record that is neither the indexed key
 			// nor the indexed size, so it is stale rather than a duplicate —
-			// drop it and let the append re-index the key
-			glog.V(0).Infof("volume %d index entry for %s resolves to %s; dropping stale index entry",
+			// skip the cookie check and let the publish step overwrite it
+			// once the append commits
+			glog.V(0).Infof("volume %d index entry for %s resolves to %s; overwriting stale index entry",
 				v.Id, needle.NewFileIdFromNeedle(v.Id, n), needle.NewFileIdFromNeedle(v.Id, existingNeedle))
-			if err = v.nm.Delete(n.Id, nv.Offset); err != nil {
-				err = fmt.Errorf("dropping stale index entry for needle %d of volume %d: %w", n.Id, v.Id, err)
-				return
-			}
 		} else {
 			if n.Cookie == 0 && !checkCookie {
 				// this is from batch deletion, and read back again when tailing a remote volume
