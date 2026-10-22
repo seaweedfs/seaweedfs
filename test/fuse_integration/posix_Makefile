@@ -254,6 +254,7 @@ test-fio-posix: setup-reports
 	@echo "$(CYAN)[TEST] Running FIO-based POSIX I/O tests...$(RESET)"
 	@$(MAKE_SELF) create-fio-configs
 	@if command -v fio >/dev/null 2>&1; then \
+		mkdir -p $(MOUNT_POINT); \
 		for config in $(REPORT_DIR)/fio_*.conf; do \
 			echo "$(BLUE)Running FIO config: $$config$(RESET)"; \
 			fio $$config --output=$(REPORT_DIR)/$$(basename $$config .conf)_results.log; \
