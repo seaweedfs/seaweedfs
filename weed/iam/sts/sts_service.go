@@ -508,8 +508,35 @@ func (s *STSService) SetIAMManagedOIDCProviders(byIssuer map[string][]ScopedOIDC
 		}
 	}
 	s.iamManagedOIDCMu.Lock()
+	old := s.iamManagedOIDCByIssuer
 	s.iamManagedOIDCByIssuer = cp
 	s.iamManagedOIDCMu.Unlock()
+
+	// Providers dropped by the swap may own background workers (the JTI
+	// cleanup goroutine); stop them so a replaced provider does not leak.
+	kept := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range cp {
+		for _, sp := range scoped {
+			kept[sp.Provider] = struct{}{}
+		}
+	}
+	stopped := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range old {
+		for _, sp := range scoped {
+			if _, ok := kept[sp.Provider]; ok {
+				continue
+			}
+			if _, ok := stopped[sp.Provider]; ok {
+				continue
+			}
+			stopped[sp.Provider] = struct{}{}
+			if sd, ok := sp.Provider.(interface{ Shutdown(context.Context) error }); ok {
+				if err := sd.Shutdown(context.Background()); err != nil {
+					glog.Warningf("OIDC provider %q shutdown after replacement: %v", sp.Provider.Name(), err)
+				}
+			}
+		}
+	}
 }
 
 // lookupOIDCProviderForAccount returns the provider that should validate
