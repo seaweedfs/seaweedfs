@@ -408,6 +408,13 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					if _, err := f.Write([]byte(i.path)); err != nil {
 						return err
 					}
+					util.Uint32toBytes(buffer[:4], uint32(len(i.hardLinkId)))
+					if _, err := f.Write(buffer[:4]); err != nil {
+						return err
+					}
+					if _, err := f.Write(i.hardLinkId); err != nil {
+						return err
+					}
 				} else if *c.findMissingChunksInFiler {
 					// check if the volume matches the filter
 					if len(c.volumeIds) > 0 {
@@ -658,7 +665,7 @@ func (lw *lockedWriter) Write(p []byte) (int, error) {
 	return lw.w.Write(p)
 }
 
-func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
+func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte)) error {
 	fp, err := os.Open(getFilerFileIdFile(c.tempFolder, volumeId))
 	if err != nil {
 		return err
@@ -693,8 +700,17 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
 		item.path = util.FullPath(pathBytes)
+		item.hardLinkId = nil
+		if _, err := io.ReadFull(br, buffer[:4]); err == nil {
+			if hardLinkIdSize := util.BytesToUint32(buffer[:4]); hardLinkIdSize > 0 {
+				item.hardLinkId = make([]byte, int(hardLinkIdSize))
+				if _, err := io.ReadFull(br, item.hardLinkId); err != nil {
+					return fmt.Errorf("read fid hard link id for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+				}
+			}
+		}
 		needleId := types.NeedleId(item.fileKey)
-		fn(needleId, item.path)
+		fn(needleId, item.path, item.hardLinkId)
 	}
 	return nil
 }
@@ -710,11 +726,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte) {
 		if _, found := db.Get(needleId); !found {
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if queuePurge != nil {
-				queuePurge(purgeItem{path: itemPath})
+				queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
 			}
 		}
 	}); err != nil {
@@ -897,7 +913,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath, _ []byte) {
 		inUseCount++
 		if *c.verifyNeedle && !vinfo.isEcVolume {
 			if needleValue, ok := volumeFileIdDb.Get(filerNeedleId); ok && !needleValue.Size.IsDeleted() {
