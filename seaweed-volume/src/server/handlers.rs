@@ -243,6 +243,9 @@ struct StreamingBody {
     hold_read_lock_for_stream: bool,
     _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
     io_unavailable: Arc<crate::storage::volume::IoUnavailable>,
+    /// Chunk read failures feed the volume's io-error streak, and finishing
+    /// the stream clears it — Go readNeedleDataInto parity.
+    io_errors: Arc<crate::storage::io_error::IoErrorTracker>,
     /// Pending chunk read; it hands `buf` back with the result.
     pending: Option<tokio::task::JoinHandle<(bytes::BytesMut, std::io::Result<bytes::Bytes>)>>,
     /// Chunk buffer, reclaimed once the previous frame has been written out.
@@ -309,7 +312,10 @@ impl http_body::Body for StreamingBody {
                                     chunk,
                                 ))));
                             }
-                            Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
+                            Ok(Err(e)) => {
+                                self.io_errors.check_read_write_error(Some(&e));
+                                return std::task::Poll::Ready(Some(Err(e)));
+                            }
                             Err(e) => {
                                 return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
                             }
@@ -320,6 +326,7 @@ impl http_body::Body for StreamingBody {
 
             let total = self.data_size as usize;
             if self.pos >= total {
+                self.io_errors.check_read_write_error(None);
                 return std::task::Poll::Ready(None);
             }
 
@@ -1728,6 +1735,7 @@ fn stream_response(
         data_file_access_control: info.data_file_access_control,
         hold_read_lock_for_stream: !state.has_slow_read,
         io_unavailable: info.io_unavailable,
+        io_errors: info.io_errors,
         pending: None,
         buf: bytes::BytesMut::new(),
         state: tracking_state,
@@ -5231,6 +5239,7 @@ mod tests {
             hold_read_lock_for_stream: true,
             _held_read_lease: None,
             io_unavailable: Arc::default(),
+            io_errors: Arc::default(),
             pending: None,
             buf: bytes::BytesMut::new(),
             state: None,

@@ -881,6 +881,7 @@ impl NeedleReadPlan {
             data_size: n.data_size,
             data_file_access_control: self.data_file_access_control,
             io_unavailable: self.io_unavailable,
+            io_errors: self.io_errors,
             needle_id: self.needle_id,
             checksum: n.checksum.0,
         }
@@ -1157,6 +1158,9 @@ pub struct NeedleStreamInfo {
     pub data_file_access_control: Arc<DataFileAccessControl>,
     /// Checked before each chunk: the volume can become unavailable mid-stream.
     pub(crate) io_unavailable: Arc<IoUnavailable>,
+    /// Streamed chunks report read failures here and clear the streak when
+    /// the whole body has been emitted, mirroring readNeedleDataInto.
+    pub(crate) io_errors: Arc<IoErrorTracker>,
     pub needle_id: NeedleId,
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
