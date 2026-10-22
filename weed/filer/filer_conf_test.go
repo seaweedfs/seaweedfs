@@ -167,6 +167,23 @@ func TestWormSurvivesRoundTrip(t *testing.T) {
 	assert.True(t, reloaded.MatchStorageRule("/buckets/b/other/x").GetWorm())
 }
 
+// TestFsyncSurvivesRoundTrip guards the write side: an explicit false has to be
+// stamped along with a version that says to honor it.
+func TestFsyncSurvivesRoundTrip(t *testing.T) {
+	fc := NewFilerConf()
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/", Fsync: proto.Bool(true)})
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/sub/", Fsync: proto.Bool(false)})
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/other/", Ttl: "7d"})
+
+	var buf bytes.Buffer
+	assert.NoError(t, fc.ToText(&buf))
+
+	reloaded := NewFilerConf()
+	assert.NoError(t, reloaded.LoadFromBytes(buf.Bytes()))
+	assert.False(t, reloaded.MatchStorageRule("/buckets/b/sub/x").GetFsync())
+	assert.True(t, reloaded.MatchStorageRule("/buckets/b/other/x").GetFsync())
+}
+
 // TestClonePathConf verifies that ClonePathConf copies all exported fields.
 // Uses reflection to automatically detect new fields added to the protobuf,
 // ensuring the test fails if ClonePathConf is not updated for new fields.
