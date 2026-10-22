@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"sort"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -12,6 +13,14 @@ import (
 
 const inodeIndexKeyPrefix = "filer.inode.path."
 const InodeIndexInitialGeneration uint64 = 1
+
+// inodeRowLocks serializes the read-modify-write of one inode's index row so
+// concurrent writers (hard links share an inode) cannot overwrite each other.
+var inodeRowLocks [256]sync.Mutex
+
+func inodeRowLock(inode uint64) *sync.Mutex {
+	return &inodeRowLocks[inode%uint64(len(inodeRowLocks))]
+}
 
 type inodeIndexEntry struct {
 	path  util.FullPath
@@ -190,6 +199,10 @@ func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.Ful
 		return nil
 	}
 
+	lock := inodeRowLock(inode)
+	lock.Lock()
+	defer lock.Unlock()
+
 	record, err := fsw.lookupInodeIndex(ctx, inode)
 	if err != nil {
 		if err != ErrKvNotFound {
@@ -236,6 +249,10 @@ func (fsw *FilerStoreWrapper) removePathFromInodeIndex(ctx context.Context, path
 	if inode == 0 || path == "" {
 		return nil
 	}
+
+	lock := inodeRowLock(inode)
+	lock.Lock()
+	defer lock.Unlock()
 
 	record, err := fsw.lookupInodeIndex(ctx, inode)
 	if err != nil {
