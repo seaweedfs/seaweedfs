@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -576,11 +577,27 @@ func getOffsetWithFallback(grpcDialOption grpc.DialOption, filer pb.ServerAddres
 	return lastOffsetTsNs, err
 }
 
-func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
-	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+// A checkpoint write can outlive its caller's wait and land beside the next
+// subscription attempt's writes; issued concurrently they may be applied out
+// of order, moving saved progress backward. Serialize checkpoint writes per
+// key and drop any value older than one already written from this process.
+var offsetCheckpointWrites = struct {
+	sync.Mutex
+	lastWritten map[string]int64
+}{lastWritten: map[string]int64{}}
 
-		syncKey := []byte(signaturePrefix + "____")
-		util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
+func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
+	syncKey := []byte(signaturePrefix + "____")
+	util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
+	key := string(syncKey)
+
+	offsetCheckpointWrites.Lock()
+	defer offsetCheckpointWrites.Unlock()
+	if last, ok := offsetCheckpointWrites.lastWritten[key]; ok && offsetTsNs < last {
+		return nil
+	}
+
+	writeErr := pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
@@ -603,7 +620,10 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 		return nil
 
 	})
-
+	if writeErr == nil {
+		offsetCheckpointWrites.lastWritten[key] = offsetTsNs
+	}
+	return writeErr
 }
 
 func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
