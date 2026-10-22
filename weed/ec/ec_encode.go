@@ -727,6 +727,13 @@ func ecShardsClumpedOnOneNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 	return "", false
 }
 
+// verifyEcShardAttempts and verifyEcShardRetryInterval bound how long
+// verifyEcShardsBeforeDelete waits for post-rebalance shard locations to
+// propagate through volume-server heartbeats before giving up. They are
+// package vars so tests can shrink the wait.
+var verifyEcShardAttempts = 10
+var verifyEcShardRetryInterval = 2 * time.Second
+
 // ecShardRackByNode maps every volume server's address to its "dc:rack"
 // failure-domain key, matching how the balance planner keys racks.
 func ecShardRackByNode(topoInfo *master_pb.TopologyInfo) map[pb.ServerAddress]string {
@@ -846,8 +853,8 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 	// strictPlacement turns the replica-placement caps the balance treats as
 	// preferences into a requirement: a volume still over the node or rack
 	// limit aborts the deletion the same way.
-	const maxAttempts = 10
-	const retryInterval = 2 * time.Second
+	maxAttempts := verifyEcShardAttempts
+	retryInterval := verifyEcShardRetryInterval
 
 	var lastErr error
 	var lastDegraded []string
