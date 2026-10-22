@@ -193,17 +193,19 @@ jobs:
         MOUNT_PID=$!
         echo $MOUNT_PID > /tmp/seaweedfs/mount.pid
         
-        # Wait for mount to be ready
+        # Wait for mount to be ready. The mount point directory already
+        # exists, so only a real mount counts — a directory listing would
+        # pass on the local disk even if weed mount died.
         echo "Waiting for FUSE mount to be ready..."
         for i in {1..30}; do
           if mountpoint -q $MOUNT_POINT 2>/dev/null; then
             echo "FUSE mount is ready"
             break
           fi
-          # Alternative check - try to list the directory
-          if ls -la $MOUNT_POINT > /dev/null 2>&1; then
-            echo "FUSE mount is ready (directory accessible)"
-            break
+          if ! kill -0 $MOUNT_PID 2>/dev/null; then
+            echo "FUSE mount process exited"
+            cat /tmp/seaweedfs/mount.log
+            exit 1
           fi
           if [ $i -eq 30 ]; then
             echo "FUSE mount failed to be ready"
