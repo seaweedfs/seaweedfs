@@ -18,7 +18,7 @@ use crate::storage::erasure_coding::ec_volume::{
 };
 use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
+use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE, SuperBlock};
 use crate::storage::types::*;
 use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
 
@@ -762,8 +762,8 @@ impl Store {
     }
 
     /// Configure a volume's replica placement on disk.
-    /// The volume must already be unmounted. This opens the .dat file directly,
-    /// modifies the replica_placement byte (offset 1), and writes it back.
+    /// The volume must already be unmounted. Rewrites the .vif and the .dat
+    /// superblock so both carry the new placement.
     pub fn configure_volume(&self, vid: VolumeId, rp: ReplicaPlacement) -> Result<(), VolumeError> {
         let (_, base_path, _) = self.find_volume_file_base(vid).ok_or_else(|| {
             VolumeError::Io(io::Error::new(
@@ -775,7 +775,7 @@ impl Store {
         let mut vif = load_vif_volume_info(&vif_path)?;
         vif.replication = rp.to_string();
         save_vif_volume_info(&vif_path, &vif)?;
-        Ok(())
+        update_dat_replica_placement(&format!("{}.dat", base_path), vid, rp)
     }
 
     // ---- Read / Write / Delete ----
@@ -1740,6 +1740,61 @@ fn strip_volume_suffix(filename: &str) -> Option<&str> {
         .or_else(|| filename.strip_suffix(".idx"))
 }
 
+/// Rewrites the replica placement in a .dat header for a volume that is not
+/// mounted; a missing .dat means a remote-only volume, where the .vif carries
+/// the placement.
+fn update_dat_replica_placement(
+    dat_path: &str,
+    vid: VolumeId,
+    rp: ReplicaPlacement,
+) -> Result<(), VolumeError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dat_path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(VolumeError::Io(io::Error::new(
+                e.kind(),
+                format!("volume {} failed to open {}: {}", vid, dat_path, e),
+            )))
+        }
+    };
+    let mut header = [0u8; SUPER_BLOCK_SIZE];
+    file.read_exact(&mut header).map_err(|e| {
+        VolumeError::Io(io::Error::new(
+            e.kind(),
+            format!("volume {} failed to parse superblock: {}", vid, e),
+        ))
+    })?;
+    let extra_size = u16::from_be_bytes([header[6], header[7]]) as usize;
+    let mut block = header.to_vec();
+    block.resize(SUPER_BLOCK_SIZE + extra_size, 0);
+    if extra_size > 0 {
+        file.read_exact(&mut block[SUPER_BLOCK_SIZE..]).map_err(|e| {
+            VolumeError::Io(io::Error::new(
+                e.kind(),
+                format!("volume {} failed to parse superblock: {}", vid, e),
+            ))
+        })?;
+    }
+    let mut super_block = SuperBlock::from_bytes(&block).map_err(|e| {
+        VolumeError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("volume {} failed to parse superblock: {}", vid, e),
+        ))
+    })?;
+    super_block.replica_placement = rp;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&super_block.to_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
 fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -1975,6 +2030,33 @@ mod tests {
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
         assert_eq!(store.total_volume_count(), 1);
+    }
+
+    // Mirrors Go's TestConfigureVolumeUpdatesSuperblock: configure must leave
+    // the .dat header and the .vif both on the new placement.
+    #[test]
+    fn test_configure_volume_updates_superblock() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        assert!(store.unmount_volume(VolumeId(1)).unwrap());
+
+        let rp = ReplicaPlacement::from_string("010").unwrap();
+        store.configure_volume(VolumeId(1), rp).unwrap();
+
+        let base = volume_file_name(dir, "", VolumeId(1));
+        let vif = load_vif_volume_info(&format!("{}.vif", base)).unwrap();
+        assert_eq!(vif.replication, "010");
+
+        let dat = std::fs::read(format!("{}.dat", base)).unwrap();
+        let super_block = SuperBlock::from_bytes(&dat).unwrap();
+        assert_eq!(super_block.replica_placement, rp);
+
+        assert!(store.configure_volume(VolumeId(2), rp).is_err());
     }
 
     #[test]

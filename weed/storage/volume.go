@@ -188,6 +188,35 @@ func (v *Volume) Version() needle.Version {
 	return v.SuperBlock.Version
 }
 
+// UpdateReplicaPlacement records rp in the live volume — the in-memory .vif
+// copy and the superblock — and rewrites the .dat header when the data file
+// is local. Keeps a mounted volume consistent with the .vif the caller just
+// configured on disk, so heartbeats and later compactions report and rewrite
+// the same placement.
+func (v *Volume) UpdateReplicaPlacement(rp *super_block.ReplicaPlacement) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	v.superBlockAccessLock.Lock()
+	defer v.superBlockAccessLock.Unlock()
+	v.volumeInfoRWLock.Lock()
+	defer v.volumeInfoRWLock.Unlock()
+
+	v.SuperBlock.ReplicaPlacement = rp
+	if v.volumeInfo != nil {
+		v.volumeInfo.Replication = rp.String()
+	}
+	diskFile, ok := v.DataBackend.(*backend.DiskFile)
+	if !ok {
+		return nil // remote-tiered: the .vif carries the placement
+	}
+	if _, err := diskFile.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+		return fmt.Errorf("volume %d failed to write superblock: %v", v.Id, err)
+	}
+	return diskFile.Sync()
+}
+
 func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
