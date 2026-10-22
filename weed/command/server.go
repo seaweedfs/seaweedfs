@@ -200,6 +200,7 @@ func init() {
 	s3Options.cacheSizeMB = cmdServer.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	s3Options.readerCacheSizeMB = cmdServer.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	s3Options.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	s3Options.iamSelfServiceRequiresGrant = cmdServer.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
@@ -215,6 +216,7 @@ func init() {
 	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
+	iamOptions.selfServiceRequiresGrant = s3Options.iamSelfServiceRequiresGrant
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")

@@ -81,6 +81,11 @@ type S3ApiServerOption struct {
 	// AllowBackslashInKey keeps '\' a literal object-key character instead of
 	// normalizing it to '/', matching AWS S3 where the two are distinct keys.
 	AllowBackslashInKey bool
+	// IamSelfServiceRequiresGrant makes managing one's own access keys
+	// (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys,
+	// GetUser) need an explicit iam: grant instead of being allowed to every
+	// authenticated identity.
+	IamSelfServiceRequiresGrant bool
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert

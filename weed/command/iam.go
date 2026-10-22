@@ -28,10 +28,11 @@ var (
 )
 
 type IamOptions struct {
-	filer   *string
-	masters *string
-	ip      *string
-	port    *int
+	filer                    *string
+	masters                  *string
+	ip                       *string
+	port                     *int
+	selfServiceRequiresGrant *bool
 }
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	iamStandaloneOptions.masters = cmdIam.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
+	iamStandaloneOptions.selfServiceRequiresGrant = cmdIam.Flag.Bool("selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 }
 
 var cmdIam = &Command{
@@ -101,10 +103,11 @@ func (iamopt *IamOptions) startIamServer() bool {
 	masters := pb.ServerAddresses(*iamopt.masters).ToAddressMap()
 	router := mux.NewRouter().SkipClean(true)
 	iamApiServer, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
-		Masters:        masters,
-		Filers:         filerAddresses,
-		Port:           *iamopt.port,
-		GrpcDialOption: grpcDialOption,
+		Masters:                     masters,
+		Filers:                      filerAddresses,
+		Port:                        *iamopt.port,
+		GrpcDialOption:              grpcDialOption,
+		IamSelfServiceRequiresGrant: *iamopt.selfServiceRequiresGrant,
 	})
 	glog.V(0).Info("NewIamApiServer created")
 	if iamApiServer_err != nil {

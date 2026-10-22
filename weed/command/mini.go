@@ -557,6 +557,7 @@ func initMiniS3Flags() {
 	miniS3Options.readerCacheSizeMB = cmdMini.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	miniS3Options.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	miniS3Options.allowBackslashInKey = cmdMini.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
+	miniS3Options.iamSelfServiceRequiresGrant = cmdMini.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false
 	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
