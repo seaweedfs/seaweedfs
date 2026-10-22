@@ -77,14 +77,22 @@ func TestMatchStorageRulePathBoundaries(t *testing.T) {
 }
 
 // TestMatchStorageRuleKeepsParentOnSibling pins that a rule for a sibling
-// directory does not shadow the parent rule that does cover the path.
+// directory does not shadow the parent rules that do cover the path. The root
+// rule keeps a second valid match on /a/b1/file so the merge pass runs with the
+// sibling rule present and has to filter it out.
 func TestMatchStorageRuleKeepsParentOnSibling(t *testing.T) {
 	fc := NewFilerConf()
+	fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/", Ttl: "7d"})
 	fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/a", Collection: "a"})
 	fc.AddLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/a/b", Collection: "b"})
 
-	assert.Equal(t, "b", fc.MatchStorageRule("/a/b/file").Collection)
-	assert.Equal(t, "a", fc.MatchStorageRule("/a/b1/file").Collection)
+	rule := fc.MatchStorageRule("/a/b/file")
+	assert.Equal(t, "b", rule.Collection)
+	assert.Equal(t, "7d", rule.Ttl)
+
+	rule = fc.MatchStorageRule("/a/b1/file")
+	assert.Equal(t, "a", rule.Collection)
+	assert.Equal(t, "7d", rule.Ttl)
 }
 
 func TestWormInheritance(t *testing.T) {
