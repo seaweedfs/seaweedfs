@@ -105,7 +105,17 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 		lookup += "/"
 	}
 	fsw.pathToStore.MatchPrefix([]byte(lookup), func(key []byte, value string) bool {
-		if !util.IsEqualOrUnder(string(path), string(key)) {
+		k := string(key)
+		if !util.IsEqualOrUnder(string(path), k) {
+			return true
+		}
+		// A location ending in "/" owns the directory's children — and its
+		// listing, which is looked up as "<dir>/" — but not the directory
+		// entry itself, which the parent store has always held. Routing the
+		// entry here would orphan ones written before the mount and hide new
+		// ones from the parent's listing.
+		if strings.HasSuffix(k, "/") && !strings.HasSuffix(string(path), "/") &&
+			util.NormalizePath(k) == util.NormalizePath(string(path)) {
 			return true
 		}
 		storeId = value

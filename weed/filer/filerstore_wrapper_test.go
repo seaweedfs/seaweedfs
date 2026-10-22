@@ -77,15 +77,23 @@ func TestFilerStoreWrapperMimeNormalization(t *testing.T) {
 // serve /a/b1, and a trailing slash in the location must not change
 // which paths resolve to it.
 func TestGetActualStoreMatchesOnPathBoundaries(t *testing.T) {
-	for _, location := range []string{"/a/b", "/a/b/"} {
-		t.Run(location, func(t *testing.T) {
+	for _, tc := range []struct {
+		location   string
+		entryStore string
+	}{
+		{"/a/b", "named"},
+		{"/a/b/", "default"},
+	} {
+		t.Run(tc.location, func(t *testing.T) {
 			defaultStore := newStubFilerStore()
 			named := newStubFilerStore()
 			wrapper := NewFilerStoreWrapper(defaultStore)
-			wrapper.AddPathSpecificStore(location, "named", named)
+			wrapper.AddPathSpecificStore(tc.location, "named", named)
 
 			matched := wrapper.storeIdToStore["named"]
-			assert.Equal(t, matched, wrapper.getActualStore("/a/b"))
+			entry := map[string]FilerStore{"named": matched, "default": defaultStore}[tc.entryStore]
+			assert.Equal(t, entry, wrapper.getActualStore("/a/b"))
+			assert.Equal(t, matched, wrapper.getActualStore("/a/b/"))
 			assert.Equal(t, matched, wrapper.getActualStore("/a/b/file"))
 			assert.Equal(t, defaultStore, wrapper.getActualStore("/a/b1"))
 			assert.Equal(t, defaultStore, wrapper.getActualStore("/a/b1/file"))
