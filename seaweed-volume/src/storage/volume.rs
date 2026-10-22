@@ -848,10 +848,11 @@ impl NeedleReadPlan {
                 Volume::read_needle_meta_blob_and_parse(read_at, n, off, size, version)
             }
         });
-        match &result {
-            Ok(()) => self.io_errors.check_read_write_error(None),
-            Err(VolumeError::Io(e)) => self.io_errors.check_read_write_error(Some(e)),
-            Err(_) => {}
+        // Report failures only: a successful meta read precedes the payload
+        // read, so clearing the streak here would reset the count before
+        // every failing download and the volume could never reach quarantine.
+        if let Err(VolumeError::Io(e)) = &result {
+            self.io_errors.check_read_write_error(Some(e));
         }
         result?;
         if needle_expired(n) {
