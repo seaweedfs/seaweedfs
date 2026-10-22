@@ -364,45 +364,6 @@ jobs:
         cd test/fuse_integration
         make -f posix_Makefile generate-report
     
-    - name: Cleanup SeaweedFS cluster and FUSE mount
-      if: always()
-      run: |
-        stop_process() {
-            local name=$1
-            local pidfile=$2
-            if [ -f "$pidfile" ]; then
-                local pid=$(cat "$pidfile")
-                if kill -0 $pid 2>/dev/null; then
-                    echo "Stopping $name process (PID: $pid)..."
-                    kill -TERM $pid || true
-                    sleep 2
-                    kill -KILL $pid 2>/dev/null || true
-                fi
-            fi
-        }
-
-        echo "Cleaning up SeaweedFS cluster and FUSE mount..."
-        
-        MOUNT_POINT="/tmp/seaweedfs/mount"
-        if mountpoint -q $MOUNT_POINT 2>/dev/null; then
-          echo "Unmounting FUSE filesystem..."
-          fusermount -u $MOUNT_POINT || umount $MOUNT_POINT || true
-        fi
-        
-        stop_process "mount" "/tmp/seaweedfs/mount.pid"
-        stop_process "filer" "/tmp/seaweedfs/filer.pid"
-        stop_process "volume" "/tmp/seaweedfs/volume.pid"
-        stop_process "master" "/tmp/seaweedfs/master.pid"
-        
-        pkill -f "weed " || true
-        
-        fusermount -u $MOUNT_POINT 2>/dev/null || true
-        umount $MOUNT_POINT 2>/dev/null || true
-        
-        rm -rf /tmp/seaweedfs || true
-        
-        echo "Cleanup completed"
-    
     - name: Collect system information for debugging
       if: failure()
       run: |
@@ -482,6 +443,46 @@ jobs:
           cp /tmp/seaweedfs/mount.log reports/debug/mount.log
         fi
     
+    - name: Cleanup SeaweedFS cluster and FUSE mount
+      if: always()
+      run: |
+        stop_process() {
+            local name=$1
+            local pidfile=$2
+            if [ -f "$pidfile" ]; then
+                local pid=$(cat "$pidfile")
+                if kill -0 $pid 2>/dev/null; then
+                    echo "Stopping $name process (PID: $pid)..."
+                    kill -TERM $pid || true
+                    sleep 2
+                    kill -KILL $pid 2>/dev/null || true
+                fi
+            fi
+        }
+
+        echo "Cleaning up SeaweedFS cluster and FUSE mount..."
+        
+        MOUNT_POINT="/tmp/seaweedfs/mount"
+        if mountpoint -q $MOUNT_POINT 2>/dev/null; then
+          echo "Unmounting FUSE filesystem..."
+          fusermount -u $MOUNT_POINT || umount $MOUNT_POINT || true
+        fi
+        
+        stop_process "mount" "/tmp/seaweedfs/mount.pid"
+        stop_process "filer" "/tmp/seaweedfs/filer.pid"
+        stop_process "volume" "/tmp/seaweedfs/volume.pid"
+        stop_process "master" "/tmp/seaweedfs/master.pid"
+        
+        pkill -f "weed " || true
+        
+        fusermount -u $MOUNT_POINT 2>/dev/null || true
+        umount $MOUNT_POINT 2>/dev/null || true
+        
+        rm -rf /tmp/seaweedfs || true
+        
+        echo "Cleanup completed"
+    
+
     - name: Upload test results
       uses: actions/upload-artifact@v7
       if: always()
