@@ -107,7 +107,6 @@ func runFilerBackup(cmd *Command, args []string) bool {
 
 	clientId := util.RandomInt32()
 	var clientEpoch int32
-
 	for {
 		clientEpoch++
 		err := doFilerBackup(grpcDialOption, &filerBackupOptions, reExcludeFileName, excludeFileNames, excludePathPatterns, clientId, clientEpoch)
@@ -198,6 +197,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		glog.V(0).Infof("initialSnapshot done; subscribing from %v", startFrom)
 	}
 
+
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
 		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
@@ -255,18 +255,22 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		defer close(persistDone)
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-stopPersist:
-				return
-			case <-ticker.C:
-			}
+		persist := func() {
 			if ts := processor.processedTsWatermark.Load(); ts > lastPersistedTsNs.Load() {
 				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); err == nil {
 					lastPersistedTsNs.Store(ts)
 				} else {
 					glog.Warningf("persist backup offset: %v", err)
 				}
+			}
+		}
+		for {
+			select {
+			case <-stopPersist:
+				persist()
+				return
+			case <-ticker.C:
+				persist()
 			}
 		}
 	}()
@@ -330,11 +334,12 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	// retry loop's replay cannot race an older write past a newer one.
 	processor.Drain()
 	close(stopPersist)
-	<-persistDone
-	if ts := processor.processedTsWatermark.Load(); ts > 0 {
-		if offErr := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); offErr != nil {
-			glog.Warningf("persist backup offset: %v", offErr)
-		}
+	// setOffset has no context, so a stalled checkpoint RPC must not hold the
+	// retry loop: bound the wait and let a late write land in the background.
+	select {
+	case <-persistDone:
+	case <-time.After(30 * time.Second):
+		glog.Warningf("backup %s offset checkpoint did not finish in 30s; reconnecting anyway", sourceFiler)
 	}
 	return err
 
