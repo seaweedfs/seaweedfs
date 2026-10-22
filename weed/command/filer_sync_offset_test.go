@@ -56,7 +56,7 @@ func TestSyncOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 	prefixB := getSignaturePrefixByPath("/data", "/backup-b")
 
 	// pre-upgrade state: both syncs shared the historical key
-	if err := setOffset(dial, filerAddr, historical, sourceSig, 111); err != nil {
+	if err := setOffset(dial, filerAddr, historical, sourceSig, 111, true); err != nil {
 		t.Fatalf("seed historical offset: %v", err)
 	}
 	if got, err := getOffsetWithFallback(dial, filerAddr, prefixA, sourceSig, historical, sourceSig); err != nil || got != 111 {
@@ -64,7 +64,7 @@ func TestSyncOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 	}
 
 	// A checkpoints under its own key; B still resumes from the historical one
-	if err := setOffset(dial, filerAddr, prefixA, sourceSig, 222); err != nil {
+	if err := setOffset(dial, filerAddr, prefixA, sourceSig, 222, true); err != nil {
 		t.Fatalf("write A offset: %v", err)
 	}
 	if got, err := getOffsetWithFallback(dial, filerAddr, prefixA, sourceSig, historical, sourceSig); err != nil || got != 222 {

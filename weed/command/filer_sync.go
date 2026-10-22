@@ -227,7 +227,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			if offsetTsNs == 0 {
 				return
 			}
-			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs); err != nil {
+			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs, true); err != nil {
 				glog.Errorf("failed to save checkpoint for %s on shutdown: %v", name, err)
 			} else {
 				glog.V(0).Infof("saved checkpoint for %s on shutdown: %v", name, time.Unix(0, offsetTsNs))
@@ -339,7 +339,7 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 	// convert to nanosecond
 	fromTsNs := fromTsMs * 1000_000
 	// If not successful, exit the program.
-	setOffsetErr := setOffset(grpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, fromTsNs)
+	setOffsetErr := setOffset(grpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, fromTsNs, true)
 	if setOffsetErr != nil {
 		return setOffsetErr
 	}
@@ -476,7 +476,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastProgressedTsNs = offsetTsNs
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor))
+		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor), true)
 	})
 
 	prefix := sourcePath
@@ -606,7 +606,7 @@ func resumeTsNsFor(p *MetadataProcessor) int64 {
 	return ts
 }
 
-func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
+func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64, allowRegress bool) error {
 	syncKey := []byte(signaturePrefix + "____")
 	util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
 	key := string(filer) + "\x00" + string(syncKey)
@@ -621,7 +621,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 	checkpoint.Lock()
 	defer checkpoint.Unlock()
-	if checkpoint.hasLastWritten && offsetTsNs < checkpoint.lastWritten {
+	if checkpoint.hasLastWritten && offsetTsNs < checkpoint.lastWritten && !allowRegress {
 		return nil
 	}
 
