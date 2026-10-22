@@ -42,6 +42,7 @@ type FilerBackupOptions struct {
 	timeAgo             *time.Duration
 	retentionDays       *int
 	initialSnapshot     *bool
+	concurrency         *int
 }
 
 var (
@@ -65,6 +66,7 @@ func init() {
 	filerBackupOptions.disableErrorRetry = cmdFilerBackup.Flag.Bool("disableErrorRetry", false, "disables errors retry, only logs will print")
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
 	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination, then subscribe from the walk-start timestamp so concurrent changes are still captured. Runs on every start when -timeAgo is 0 and overwrites the saved checkpoint, so it also re-seeds a reinitialized destination. Remove it once the backup is caught up, otherwise it re-walks the whole tree on each restart.")
+	filerBackupOptions.concurrency = cmdFilerBackup.Flag.Int("concurrency", DefaultConcurrencyLimit, "the maximum number of files that will be backed up concurrently.")
 }
 
 var cmdFilerBackup = &Command{
@@ -218,9 +220,43 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
 	}
 
-	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
-		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, lastTsNs)
+	if *backupOption.disableErrorRetry {
+		// TrivialOnError semantics: log the failure and advance. Left to the
+		// processor a permanent failure would pin the checkpoint and replay
+		// forever, which is the opposite of what this flag asks for.
+		inner := processEventFn
+		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
+			if err := inner(resp); err != nil {
+				glog.Errorf("process %v: %v", resp, err)
+			}
+			return nil
+		}
+	}
+
+	// Serial event handling caps throughput at one fetch+write at a time, so a
+	// busy source keeps outrunning the backup. The metadata processor fans
+	// events out while serializing same-path and subtree-barrier conflicts,
+	// and the checkpoint only advances on the contiguous processed watermark.
+	concurrency := *backupOption.concurrency
+	if concurrency < 1 || concurrency > 1024 {
+		glog.Warningf("invalid concurrency value %d, using default: %d", concurrency, DefaultConcurrencyLimit)
+		concurrency = DefaultConcurrencyLimit
+	}
+	processor := NewMetadataProcessor(processEventFn, concurrency, startFrom.UnixNano())
+
+	var lastLogTsNs = time.Now().UnixNano()
+	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		processor.AddSyncJob(resp)
+		return nil
+	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		offsetTsNs := processor.processedTsWatermark.Load()
+		if offsetTsNs == 0 {
+			return nil
+		}
+		now := time.Now().UnixNano()
+		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		lastLogTsNs = now
+		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, offsetTsNs)
 	})
 
 	if dataSink.IsIncremental() && *filerBackupOptions.retentionDays > 0 {
@@ -256,6 +292,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		StartTsNs:              startFrom.UnixNano(),
 		StopTsNs:               0,
 		EventErrorType:         eventErrorType,
+		GetResumeTsNs: func() int64 {
+			return processor.processedTsWatermark.Load()
+		},
+		Resubscribe: processor.ResubscribeCh(),
 	}
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
