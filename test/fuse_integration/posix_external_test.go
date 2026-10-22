@@ -289,10 +289,18 @@ func (s *ExternalPOSIXTestSuite) setupPjdFsTest(targetDir string) error {
 		return fmt.Errorf("failed to clone pjdfstest: %w", err)
 	}
 
-	// Build pjdfstest
-	cmd = exec.Command("make", "-C", targetDir)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to build pjdfstest: %w", err)
+	// pjdfstest is autotools-based: the fresh clone has no Makefile until
+	// configure runs
+	for _, step := range [][]string{
+		{"autoreconf", "-ifs"},
+		{"./configure"},
+		{"make"},
+	} {
+		cmd = exec.Command(step[0], step[1:]...)
+		cmd.Dir = targetDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("pjdfstest %s: %w: %s", step[0], err, out)
+		}
 	}
 
 	return nil
