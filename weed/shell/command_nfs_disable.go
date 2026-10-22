@@ -101,6 +101,7 @@ func (c *commandNfsDisable) Do(args []string, commandEnv *CommandEnv, writer io.
 
 func cleanupInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath util.FullPath) error {
 	var cleared atomic.Int64
+	var locks inodeRowLocks
 
 	if exportPath != "/" {
 		rootEntry, err := lookupPathEntry(commandEnv, exportPath)
@@ -111,14 +112,14 @@ func cleanupInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath util
 		if err != nil {
 			return err
 		}
-		if err := removeInodeIndexRow(commandEnv, exportPath, rootEntry.GetAttributes().GetInode(), &cleared); err != nil {
+		if err := removeInodeIndexRow(commandEnv, exportPath, rootEntry.GetAttributes().GetInode(), &cleared, &locks); err != nil {
 			return err
 		}
 	}
 
 	err := filer_pb.TraverseBfs(context.Background(), commandEnv, exportPath, func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		fullPath := util.NewFullPath(string(parentPath), entry.Name)
-		if err := removeInodeIndexRow(commandEnv, fullPath, entry.GetAttributes().GetInode(), &cleared); err != nil {
+		if err := removeInodeIndexRow(commandEnv, fullPath, entry.GetAttributes().GetInode(), &cleared, &locks); err != nil {
 			return err
 		}
 		return nil
@@ -131,11 +132,14 @@ func cleanupInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath util
 	return nil
 }
 
-func removeInodeIndexRow(commandEnv *CommandEnv, fullPath util.FullPath, inode uint64, cleared *atomic.Int64) error {
+func removeInodeIndexRow(commandEnv *CommandEnv, fullPath util.FullPath, inode uint64, cleared *atomic.Int64, locks *inodeRowLocks) error {
 	if inode == 0 {
 		return nil
 	}
 	key := filer.InodeIndexKey(inode)
+	lock := locks.forInode(inode)
+	lock.Lock()
+	defer lock.Unlock()
 	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, kvErr := client.KvGet(context.Background(), &filer_pb.KvGetRequest{Key: key})
 		if kvErr != nil {

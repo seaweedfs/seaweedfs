@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -89,8 +90,20 @@ func (c *commandNfsEnable) Do(args []string, commandEnv *CommandEnv, writer io.W
 	return backfillInodeIndex(commandEnv, writer, util.FullPath(*path))
 }
 
+// inodeRowLocks serializes the read-modify-write of one inode's index row:
+// TraverseBfs runs its callback on several workers, and hard-linked entries
+// share an inode, so two rows updates on the same key could otherwise
+// overwrite each other and drop a path.
+type inodeRowLocks [256]sync.Mutex
+
+func (l *inodeRowLocks) forInode(inode uint64) *sync.Mutex {
+	return &l[inode%uint64(len(l))]
+}
+
 func backfillInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath util.FullPath) error {
 	var indexed, assigned atomic.Int64
+	var locks inodeRowLocks
+	var printMu sync.Mutex
 
 	if exportPath != "/" {
 		rootEntry, err := lookupPathEntry(commandEnv, exportPath)
@@ -101,7 +114,7 @@ func backfillInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath uti
 		if err != nil {
 			return err
 		}
-		changed, err := backfillEntryInodeIndex(commandEnv, exportPath, rootEntry, &assigned)
+		changed, err := backfillEntryInodeIndex(commandEnv, exportPath, rootEntry, &assigned, &locks)
 		if err != nil {
 			return err
 		}
@@ -112,13 +125,15 @@ func backfillInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath uti
 
 	err := filer_pb.TraverseBfs(context.Background(), commandEnv, exportPath, func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		fullPath := util.NewFullPath(string(parentPath), entry.Name)
-		changed, err := backfillEntryInodeIndex(commandEnv, fullPath, entry, &assigned)
+		changed, err := backfillEntryInodeIndex(commandEnv, fullPath, entry, &assigned, &locks)
 		if err != nil {
 			return err
 		}
 		if changed {
 			if count := indexed.Add(1); count%10000 == 0 {
+				printMu.Lock()
 				fmt.Fprintf(writer, "indexed %d entries ...\n", count)
+				printMu.Unlock()
 			}
 		}
 		return nil
@@ -131,7 +146,7 @@ func backfillInodeIndex(commandEnv *CommandEnv, writer io.Writer, exportPath uti
 	return nil
 }
 
-func backfillEntryInodeIndex(commandEnv *CommandEnv, fullPath util.FullPath, entry *filer_pb.Entry, assigned *atomic.Int64) (changed bool, err error) {
+func backfillEntryInodeIndex(commandEnv *CommandEnv, fullPath util.FullPath, entry *filer_pb.Entry, assigned *atomic.Int64, locks *inodeRowLocks) (changed bool, err error) {
 	inode := entry.GetAttributes().GetInode()
 	if inode == 0 {
 		// Entry predates filer-assigned inodes: re-save it so the filer
@@ -161,7 +176,7 @@ func backfillEntryInodeIndex(commandEnv *CommandEnv, fullPath util.FullPath, ent
 		}
 		assigned.Add(1)
 	}
-	return upsertInodeIndexRow(commandEnv, fullPath, inode)
+	return upsertInodeIndexRow(commandEnv, fullPath, inode, locks.forInode(inode))
 }
 
 func lookupPathEntry(commandEnv *CommandEnv, fullPath util.FullPath) (entry *filer_pb.Entry, err error) {
@@ -180,8 +195,10 @@ func lookupPathEntry(commandEnv *CommandEnv, fullPath util.FullPath) (entry *fil
 	return
 }
 
-func upsertInodeIndexRow(commandEnv *CommandEnv, fullPath util.FullPath, inode uint64) (changed bool, err error) {
+func upsertInodeIndexRow(commandEnv *CommandEnv, fullPath util.FullPath, inode uint64, lock *sync.Mutex) (changed bool, err error) {
 	key := filer.InodeIndexKey(inode)
+	lock.Lock()
+	defer lock.Unlock()
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, kvErr := client.KvGet(context.Background(), &filer_pb.KvGetRequest{Key: key})
 		if kvErr != nil {
