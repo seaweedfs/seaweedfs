@@ -2115,3 +2115,53 @@ func TestReshapeCrossMountRename(t *testing.T) {
 	})
 }
 
+// TestRenameIntoMountUploadsDespiteTheOldStamp covers a file synced at a path
+// under the mount, renamed out (which deleted its remote object), and renamed
+// back in: the entry still carries the RemoteEntry the first sync stamped, so
+// shouldSendToRemote would skip the create the reshape made, leaving the new
+// key without an object. A reshaped create must send unconditionally.
+func TestRenameIntoMountUploadsDespiteTheOldStamp(t *testing.T) {
+	const mountedDir = "/buckets/mount"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+	newEntry := &filer_pb.Entry{
+		Name:        "back.txt",
+		Content:     []byte("payload"),
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+		RemoteEntry: stamp,
+	}
+	resp, inMount := reshapeCrossMountRename(mountedDir, &filer_pb.SubscribeMetadataResponse{
+		Directory: "/plain",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "back.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: stamp},
+			NewParentPath: mountedDir + "/lock",
+			NewEntry:      newEntry,
+		},
+	})
+	if !inMount || !filer_pb.IsCreate(resp) {
+		t.Fatalf("reshape = %+v inMount=%v, want a create", resp, inMount)
+	}
+	if shouldSendToRemote(resp.EventNotification.NewEntry) {
+		t.Fatal("precondition: the stamp the rename carried should fail shouldSendToRemote")
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp, true); err != nil {
+		t.Fatal(err)
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/lock/back.txt"}
+	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+		t.Fatalf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+	}
+
+	// a plain create keeps trusting the stamp
+	remote = &recordingRemote{}
+	if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want the stamped create skipped", remote.writes)
+	}
+}
