@@ -140,20 +140,17 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
-		mustSend := false
+		renamedIntoMount := false
 		if message.OldEntry != nil && message.NewEntry != nil {
 			reshaped, inMount := reshapeCrossMountRename(mountedDir, resp)
 			if !inMount {
 				return nil
 			}
-			// a create reshaped from a rename into the mount can carry a
-			// RemoteEntry earned at the old path: it stamps the old key, so
-			// it cannot vouch for this destination
-			mustSend = filer_pb.IsCreate(reshaped)
+			renamedIntoMount = reshaped != resp && filer_pb.IsCreate(reshaped)
 			resp, message = reshaped, reshaped.EventNotification
 		}
 		if filer_pb.IsCreate(resp) {
-			return processCreateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp, mustSend)
+			return processCreateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp, renamedIntoMount)
 		}
 		if filer_pb.IsDelete(resp) {
 			return processDeleteEvent(filerSource, client, mountedDir, remoteStorageMountLocation, resp)
@@ -215,9 +212,12 @@ func isUnderMount(mountedDir string, dir string, name string) bool {
 }
 
 // processCreateEvent uploads a created entry to the remote key its path maps
-// to. mustSend skips the sync-stamp check: a create reshaped out of a rename
-// into the mount inherits a RemoteEntry stamped at the old path's key, which
-// says nothing about whether this destination holds the content.
+// to. A create reshaped from a rename into the mount (renamedIntoMount) writes
+// whatever the entry holds: the stamp it inherited describes an object the
+// move out deleted, so it cannot skip the upload, and an empty file still
+// takes a zero-byte object. A remote-only entry still skips: it holds nothing
+// local to send, and the filer refuses to rename one out of its mount, so its
+// object remains under the key its path maps to.
 func processCreateEvent(
 	filerClient filer_pb.FilerClient,
 	filerSource filer_pb.FilerClient,
@@ -226,7 +226,7 @@ func processCreateEvent(
 	mountedDir string,
 	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
 	resp *filer_pb.SubscribeMetadataResponse,
-	mustSend bool,
+	renamedIntoMount bool,
 ) error {
 	message := resp.EventNotification
 	if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
@@ -242,11 +242,11 @@ func processCreateEvent(
 		}
 		return nil
 	}
-	if !filer.HasData(message.NewEntry) {
+	if !filer.HasData(message.NewEntry) && !(renamedIntoMount && !isRemoteOnly(message.NewEntry)) {
 		return nil
 	}
 	glog.V(2).Infof("create: %+v", resp)
-	if !mustSend && !shouldSendToRemote(message.NewEntry) {
+	if !renamedIntoMount && !shouldSendToRemote(message.NewEntry) {
 		glog.V(2).Infof("skipping creating: %+v", resp)
 		return nil
 	}
