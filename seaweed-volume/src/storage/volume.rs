@@ -2891,7 +2891,7 @@ impl Volume {
     /// matches the stored copy and there is nothing to append.
     fn prepare_write(
         &self,
-        io: &mut VolumeIo,
+        io: &VolumeIo,
         n: &mut Needle,
         check_cookie: bool,
     ) -> Result<bool, VolumeError> {
@@ -2932,14 +2932,12 @@ impl Volume {
             if existing.id != n.id && existing.size != nv.size {
                 // the entry resolves to a record that is neither the indexed
                 // key nor the indexed size, so it is stale rather than a
-                // duplicate — drop it and let the append re-index the key
+                // duplicate — skip the cookie check and let publish_write
+                // overwrite it once the append commits
                 warn!(
-                    "volume {} index entry for needle {} resolves to needle {}; dropping stale index entry",
+                    "volume {} index entry for needle {} resolves to needle {}; overwriting stale index entry",
                     self.id.0, n.id.0, existing.id.0
                 );
-                if let Some(nm) = io.nm.as_mut() {
-                    nm.delete(n.id, nv.offset)?;
-                }
             } else {
                 if n.cookie.0 == 0 && !check_cookie {
                     n.cookie = existing.cookie;
@@ -9110,6 +9108,56 @@ mod tests {
         v.read_needle(&mut back).unwrap();
         assert_eq!(back.data, b"ninth");
         assert_eq!(back.cookie, Cookie(0xabcd));
+    }
+
+    /// A stale index entry is only replaced once the new record commits: a
+    /// durable write rolled back by a failed fsync leaves the index exactly
+    /// as it found it.
+    #[test]
+    fn test_stale_index_entry_survives_failed_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut existing = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x2222),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut existing, true, false).unwrap();
+
+        let stale_nv = {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, Size(nv.size.0 + 1)).unwrap();
+            nm.get(NeedleId(9)).unwrap().unwrap()
+        };
+
+        v.fail_next_fsync_for_test(true);
+        let mut replacement = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xabcd),
+            data: b"ninth".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        assert!(v.write_needle(&mut replacement, true, true).is_err());
+        v.fail_next_fsync_for_test(false);
+
+        let now = {
+            let io = v.io.read().unwrap();
+            io.nm
+                .as_ref()
+                .unwrap()
+                .get(NeedleId(9))
+                .unwrap()
+                .expect("a failed write must not drop the index entry it meant to replace")
+        };
+        assert_eq!(now.offset, stale_nv.offset);
+        assert_eq!(now.size, stale_nv.size);
     }
 
     // A size disagreeing with the blob's own header indexes the needle at the wrong
