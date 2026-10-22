@@ -585,7 +585,10 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
 
-		resp, err := client.KvPut(context.Background(), &filer_pb.KvPutRequest{
+		// a stalled KvPut must not hold a caller's drain or persistence loop
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.KvPut(ctx, &filer_pb.KvPutRequest{
 			Key:   syncKey,
 			Value: valueBuf,
 		})
