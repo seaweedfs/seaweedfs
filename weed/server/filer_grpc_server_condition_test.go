@@ -382,3 +382,83 @@ func TestUpdateEntryConditionEnforced(t *testing.T) {
 		t.Fatalf("update not applied, mtime %d", got)
 	}
 }
+
+// The delete condition turns verify-then-delete into a check-then-write: the
+// filer drops the entry only while it still matches the version the caller
+// verified, and a stale expectation answers PRECONDITION_FAILED without
+// deleting.
+func TestDeleteEntryConditionEnforced(t *testing.T) {
+	newServer := func() (*FilerServer, *renameTestStore) {
+		store := newRenameTestStore()
+		store.entries["/test/obj"] = &filer.Entry{
+			FullPath: "/test/obj",
+			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644, FileSize: 100},
+			Chunks:   []*filer_pb.FileChunk{chunkFid("3,01637037d6")},
+		}
+		f := newRenameTestFiler(t, store)
+		return &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}, store
+	}
+
+	del := func(expected *filer_pb.Entry) *filer_pb.DeleteEntryRequest {
+		return &filer_pb.DeleteEntryRequest{
+			Directory: "/test",
+			Name:      "obj",
+			Condition: one(&filer_pb.WriteCondition_Clause{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: expected,
+			}),
+		}
+	}
+
+	t.Run("matching version deletes", func(t *testing.T) {
+		fs, store := newServer()
+		expected := store.entries["/test/obj"].ToProtoEntry()
+		resp, err := fs.DeleteEntry(context.Background(), del(expected))
+		if err != nil || resp.Error != "" {
+			t.Fatalf("delete failed: %v %s", err, resp.Error)
+		}
+		if _, ok := store.entries["/test/obj"]; ok {
+			t.Fatal("entry must be deleted when the verified version still matches")
+		}
+	})
+
+	t.Run("stale version keeps the entry", func(t *testing.T) {
+		fs, store := newServer()
+		expected := store.entries["/test/obj"].ToProtoEntry()
+		store.entries["/test/obj"].Chunks = append(store.entries["/test/obj"].Chunks, chunkFid("3,09"))
+		resp, err := fs.DeleteEntry(context.Background(), del(expected))
+		if err != nil {
+			t.Fatalf("DeleteEntry: %v", err)
+		}
+		if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+			t.Fatalf("stale version must report PRECONDITION_FAILED, got %v %q", resp.ErrorCode, resp.Error)
+		}
+		if _, ok := store.entries["/test/obj"]; !ok {
+			t.Fatal("stale version must leave the entry alone")
+		}
+	})
+
+	t.Run("vanished entry reports precondition failed", func(t *testing.T) {
+		fs, store := newServer()
+		expected := store.entries["/test/obj"].ToProtoEntry()
+		delete(store.entries, "/test/obj")
+		resp, err := fs.DeleteEntry(context.Background(), del(expected))
+		if err != nil {
+			t.Fatalf("DeleteEntry: %v", err)
+		}
+		if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+			t.Fatalf("gone entry must report PRECONDITION_FAILED, got %v %q", resp.ErrorCode, resp.Error)
+		}
+	})
+
+	t.Run("unconditional delete still applies", func(t *testing.T) {
+		fs, store := newServer()
+		resp, err := fs.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{Directory: "/test", Name: "obj"})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("delete failed: %v %s", err, resp.Error)
+		}
+		if _, ok := store.entries["/test/obj"]; ok {
+			t.Fatal("unconditional delete must drop the entry")
+		}
+	})
+}

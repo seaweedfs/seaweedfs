@@ -1049,6 +1049,24 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
+	// A condition makes the delete a check-then-write like UpdateEntry's: the
+	// lock serializes it against local writes and replays applied to this
+	// store, so only a write still in flight from a peer can slip past the
+	// check — the same window if_not_modified_after leaves.
+	if conditionIsSet(req.Condition) {
+		current, findErr := fs.filer.FindEntry(ctx, fullpath)
+		switch {
+		case errors.Is(findErr, filer_pb.ErrNotFound):
+			current = nil
+		case findErr != nil:
+			return &filer_pb.DeleteEntryResponse{}, fmt.Errorf("DeleteEntry condition check %s: %w", fullpath, findErr)
+		}
+		if !writeConditionSatisfied(req.Condition, current) {
+			glog.V(3).InfofCtx(ctx, "DeleteEntry %s: precondition failed: %v", fullpath, req.Condition)
+			return &filer_pb.DeleteEntryResponse{Error: "precondition failed", ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+		}
+	}
+
 	if req.KeepRemoteObject {
 		ctx = filer.WithKeepRemoteObject(ctx)
 	}
