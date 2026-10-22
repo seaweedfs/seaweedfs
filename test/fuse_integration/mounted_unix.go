@@ -2,7 +2,10 @@
 
 package fuse
 
-import "syscall"
+import (
+	"path/filepath"
+	"syscall"
+)
 
 // deviceID returns the device ID of the filesystem containing path.
 func deviceID(path string) (uint64, error) {
@@ -11,4 +14,18 @@ func deviceID(path string) (uint64, error) {
 		return 0, err
 	}
 	return uint64(st.Dev), nil
+}
+
+// mountedAt reports whether something is actually mounted at path: a plain
+// directory shares its parent's device, a mount point does not.
+func mountedAt(path string) bool {
+	dev, err := deviceID(path)
+	if err != nil {
+		return false
+	}
+	parentDev, err := deviceID(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	return dev != parentDev
 }

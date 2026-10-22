@@ -103,6 +103,12 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 				return fmt.Errorf("existing mount point not accessible: %v", err)
 			}
 
+			// A plain directory passes every check below; refuse to run the suite
+			// against the local disk
+			if !mountedAt(existingMount) {
+				return fmt.Errorf("mount point %s is not a mounted filesystem", existingMount)
+			}
+
 			// Run inside a private work dir so test files do not pile up in
 			// the shared mount root and cleanup can remove only what it made
 			workDir, err := os.MkdirTemp(existingMount, ".fuse_test_")
