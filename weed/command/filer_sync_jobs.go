@@ -137,6 +137,13 @@ type MetadataProcessor struct {
 	failedSticky     bool
 	oldestFailedTsNs int64
 
+	// earliestFailedTsNs is the smallest timestamp this processor ever failed
+	// on, latched for its lifetime: a redelivery can clear failedTs, but by
+	// then the processor is stopped and has already dropped unrecorded
+	// events — possibly sharing the failure's timestamp — so a resume
+	// position must still sit behind it.
+	earliestFailedTsNs int64
+
 	// resubscribeCh closes once a failure has stopped the processor and all
 	// in-flight jobs have drained, asking the metadata follower to drop the
 	// stream so the caller's reconnect replays the pinned events in order —
@@ -197,6 +204,14 @@ func (t *MetadataProcessor) OldestFailedTsNs() int64 {
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 	return t.oldestFailedTsNs
+}
+
+// EarliestFailedTsNs returns the smallest timestamp this processor has ever
+// failed on, including failures later cleared by a redelivery.
+func (t *MetadataProcessor) EarliestFailedTsNs() int64 {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	return t.earliestFailedTsNs
 }
 
 // ResubscribeCh closes once a job failure has stopped the processor and its
@@ -437,6 +452,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			// whole mechanism exists to remove.
 			t.stopped = true
 			t.activeJobsCond.Broadcast()
+			if t.earliestFailedTsNs == 0 || resp.TsNs < t.earliestFailedTsNs {
+				t.earliestFailedTsNs = resp.TsNs
+			}
 			if t.failedSticky {
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs

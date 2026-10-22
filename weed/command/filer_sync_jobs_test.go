@@ -1073,3 +1073,62 @@ func TestResubscribeWaitsForSameTsSibling(t *testing.T) {
 		t.Fatal("resubscribe channel never closed after the same-ts jobs drained")
 	}
 }
+
+// TestResumeStaysBehindClearedPin verifies the resume floor outlives the
+// ledger pin: a redelivery can clear failedTs, but events dropped while the
+// processor was stopped — including ones sharing the failure's timestamp —
+// still have to replay, so the resume position stays one tick below the
+// earliest failure.
+func TestResumeStaysBehindClearedPin(t *testing.T) {
+	fail := true
+	release := make(chan struct{})
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		name := resp.EventNotification.NewEntry.GetName()
+		if name == "slow.txt" {
+			<-release
+		}
+		if name == "bad.txt" && fail {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 10, 0)
+
+	// the slow job holds the drain — and the resubscribe — open so the
+	// redelivery still lands on this processor
+	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 300, true))
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 200 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	// a same-ts sibling arriving after the stop is dropped
+	p.AddSyncJob(makeResp("/dir", "sib.txt", false, 200, true))
+	p.activeJobsLock.Lock()
+	dropped := p.activeJobTs[200] == 0
+	p.activeJobsLock.Unlock()
+	if !dropped {
+		t.Fatal("sibling admitted after the failure stopped the processor")
+	}
+
+	// the redelivery runs and clears the pin
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	deadline = time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after the redelivery, want 0", got)
+	}
+
+	if got := p.EarliestFailedTsNs(); got != 200 {
+		t.Fatalf("earliest failed = %d, want the floor held at 200", got)
+	}
+	if got := resumeTsNsFor(p); got != 199 {
+		t.Fatalf("resume = %d, want 199 so the dropped sibling replays", got)
+	}
+
+	close(release)
+	waitForJobsToDrain(t, p)
+}

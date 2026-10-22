@@ -264,7 +264,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 		persist := func() {
-			if ts := processor.processedTsWatermark.Load(); ts > lastPersistedTsNs.Load() {
+			if ts := resumeTsNsFor(processor); ts > lastPersistedTsNs.Load() {
 				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); err == nil {
 					lastPersistedTsNs.Store(ts)
 				} else {
@@ -332,7 +332,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		StopTsNs:               0,
 		EventErrorType:         eventErrorType,
 		GetResumeTsNs: func() int64 {
-			return processor.processedTsWatermark.Load()
+			return resumeTsNsFor(processor)
 		},
 		Resubscribe: processor.ResubscribeCh(),
 	}
@@ -349,14 +349,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	case <-time.After(30 * time.Second):
 		glog.Warningf("backup %s offset checkpoint did not finish in 30s; reconnecting anyway", sourceFiler)
 	}
-	// Resume the next attempt at the failure pin when one exists, else at the
-	// processed watermark — never recompute a position that skips events. The
-	// reader treats the position as exclusive, so back one tick off the pin or
-	// the failed event at that timestamp replays nothing.
-	if ts := processor.OldestFailedTsNs(); ts > 0 {
-		return ts - 1, err
-	}
-	return processor.processedTsWatermark.Load(), err
+	// Resume the next attempt at the floored watermark — never recompute a
+	// position that skips events. The floor sits one tick below the earliest
+	// failure and stays there even when a redelivery clears the pin, so
+	// events dropped while the processor was stopped still replay.
+	return resumeTsNsFor(processor), err
 
 }
 

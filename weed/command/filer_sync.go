@@ -223,7 +223,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			if state == nil || state.processor == nil {
 				return
 			}
-			offsetTsNs := state.processor.processedTsWatermark.Load()
+			offsetTsNs := resumeTsNsFor(state.processor)
 			if offsetTsNs == 0 {
 				return
 			}
@@ -476,7 +476,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastProgressedTsNs = offsetTsNs
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, offsetTsNs)
+		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor))
 	})
 
 	prefix := sourcePath
@@ -496,7 +496,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
 		GetResumeTsNs: func() int64 {
-			return processor.processedTsWatermark.Load()
+			return resumeTsNsFor(processor)
 		},
 		Resubscribe: processor.ResubscribeCh(),
 		// While the source has only read activity it emits no metadata events, so
@@ -592,6 +592,18 @@ type offsetCheckpoint struct {
 	sync.Mutex
 	lastWritten    int64
 	hasLastWritten bool
+}
+
+// resumeTsNsFor floors the processed watermark by the earliest failure the
+// processor saw: a redelivery can clear the pin, but events dropped while it
+// was stopped only replay if the resume position stays behind it. The
+// position is exclusive, so it sits one tick below the pin.
+func resumeTsNsFor(p *MetadataProcessor) int64 {
+	ts := p.processedTsWatermark.Load()
+	if failedTsNs := p.EarliestFailedTsNs(); failedTsNs > 0 && failedTsNs-1 < ts {
+		ts = failedTsNs - 1
+	}
+	return ts
 }
 
 func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
