@@ -2165,3 +2165,67 @@ func TestRenameIntoMountUploadsDespiteTheOldStamp(t *testing.T) {
 		t.Errorf("writes = %+v, want the stamped create skipped", remote.writes)
 	}
 }
+
+// TestRenameIntoMountWritesAnEmptyFile: a rename into the mount is reshaped
+// to a create with mustSend, and an empty entry has no data for the HasData
+// gate; the new key still takes a zero-byte object. A remote-only entry holds
+// nothing local to send and is skipped as before.
+func TestRenameIntoMountWritesAnEmptyFile(t *testing.T) {
+	const mountedDir = "/buckets/mount"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	renameIn := func(entry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		resp, inMount := reshapeCrossMountRename(mountedDir, &filer_pb.SubscribeMetadataResponse{
+			Directory:         "/plain",
+			EventNotification: &filer_pb.EventNotification{OldEntry: entry, NewParentPath: mountedDir + "/lock", NewEntry: entry},
+		})
+		if !inMount || !filer_pb.IsCreate(resp) {
+			t.Fatalf("reshape = %+v inMount=%v, want a create", resp, inMount)
+		}
+		return resp
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/lock/empty.txt"}
+
+	t.Run("an empty entry writes a zero-byte object", func(t *testing.T) {
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		if filer.HasData(entry) {
+			t.Fatal("precondition: an empty entry carries no data")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+		}
+	})
+
+	t.Run("a remote-only entry still skips", func(t *testing.T) {
+		stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, RemoteEntry: stamp}
+		if !isRemoteOnly(entry) {
+			t.Fatal("precondition: the entry should be remote-only")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none for a remote-only entry", remote.writes)
+		}
+	})
+
+	// an ordinary create of an empty entry is unchanged: no object
+	t.Run("a plain empty create still writes nothing", func(t *testing.T) {
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), false); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want the empty create skipped", remote.writes)
+		}
+	})
+}
