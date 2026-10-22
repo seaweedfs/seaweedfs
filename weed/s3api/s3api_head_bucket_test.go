@@ -84,9 +84,10 @@ func TestHeadBucketSeparatesLookupFailureFromMissingBucket(t *testing.T) {
 			if rr.Code != tc.wantCode {
 				t.Fatalf("status = %d, want %d", rr.Code, tc.wantCode)
 			}
-			// HEAD responses never carry a body; the status code is the whole answer.
+			// HEAD returns the status without an XML error body, including for
+			// lookup failures and missing buckets.
 			if rr.Body.Len() != 0 {
-				t.Fatalf("HEAD response must not have a body, got %q", rr.Body.String())
+				t.Fatalf("HEAD response must have an empty body, got %q", rr.Body.String())
 			}
 		})
 	}
