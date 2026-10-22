@@ -204,6 +204,22 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
+// datAllocatedSize returns the disk space held by the .dat file, or 0 when it is unknown.
+func (v *Volume) datAllocatedSize() uint64 {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	df, ok := v.DataBackend.(*backend.DiskFile)
+	if !ok {
+		return 0
+	}
+	fi, err := df.File.Stat()
+	if err != nil {
+		return 0
+	}
+	return allocatedSize(fi)
+}
+
 func (v *Volume) ContentSize() uint64 {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()

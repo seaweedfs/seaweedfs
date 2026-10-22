@@ -576,3 +576,97 @@ func TestRecheckObjectAclTagConditionedPolicy(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone,
 		s3a.recheckPolicyWithObjectEntry(putReq, "b", "secret.txt", s3_constants.S3_ACTION_PUT_OBJECT_ACL, publicEntry, "test"))
 }
+
+// A versioned GetObjectAttributes request is authorized against the version
+// read grant, not the attributes action the original request resolves to: an
+// explicit bucket-policy Deny on s3:GetObjectVersion blocks it, while a legacy
+// identity holding only the coarse Read grant is still accepted.
+func TestCheckVersionReadGrant(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+		iam:          &IdentityAccessManagement{},
+	}
+
+	denyPolicyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::deny-bucket", "arn:aws:s3:::deny-bucket/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObjectVersion",
+				"Resource": "arn:aws:s3:::deny-bucket/key"
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("deny-bucket", denyPolicyJSON))
+
+	allowPolicyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::allow-bucket", "arn:aws:s3:::allow-bucket/*"]
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("allow-bucket", allowPolicyJSON))
+
+	identity := &Identity{
+		Name:         "reader",
+		Actions:      []Action{s3_constants.ACTION_READ},
+		PrincipalArn: "arn:aws:iam::000000000000:user/reader",
+	}
+
+	attrsReq := func(bucket string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/key?attributes&versionId=v1", nil)
+		return req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+	}
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.checkVersionReadGrant(attrsReq("deny-bucket"), "deny-bucket", "key", "v1", nil))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(attrsReq("allow-bucket"), "allow-bucket", "key", "v1", nil))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(attrsReq("no-policy-bucket"), "no-policy-bucket", "key", "v1", nil))
+}
+
+// Presigned-URL credentials ride along on the synthesized version-read
+// request, so an s3:authType=REST-QUERY-STRING policy condition decides the
+// recheck the same way it decided the real request.
+func TestCheckVersionReadGrantPreservesQueryAuth(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+		iam:          &IdentityAccessManagement{},
+	}
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Principal": "*",
+			"Action": "s3:*",
+			"Resource": ["arn:aws:s3:::qs-bucket", "arn:aws:s3:::qs-bucket/*"],
+			"Condition": {"StringEquals": {"s3:authType": "REST-QUERY-STRING"}}
+		}]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("qs-bucket", policyJSON))
+
+	presigned := httptest.NewRequest(http.MethodGet,
+		"/qs-bucket/key?attributes&versionId=v1&AWSAccessKeyId=AK&Signature=sig&Expires=9999999999", nil)
+	assert.Equal(t, s3err.ErrNone,
+		s3a.checkVersionReadGrant(presigned, "qs-bucket", "key", "v1", nil))
+
+	keyReq := objectKeyPolicyRequest(presigned, http.MethodGet, "qs-bucket", "key", "v1")
+	q := keyReq.URL.Query()
+	assert.Equal(t, "AK", q.Get("AWSAccessKeyId"))
+	assert.Equal(t, "v1", q.Get("versionId"))
+	assert.False(t, q.Has("attributes"))
+}

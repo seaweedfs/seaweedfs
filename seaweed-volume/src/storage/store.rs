@@ -943,11 +943,7 @@ impl Store {
                 let current = loc.max_volume_count.load(Ordering::Relaxed);
                 let (_, free) = super::disk_location::get_disk_stats(&loc.directory);
 
-                let unused_space = if self.get_preallocate() {
-                    0
-                } else {
-                    loc.unused_space(volume_size_limit)
-                };
+                let unused_space = loc.unused_space(volume_size_limit);
                 let unclaimed = (free as i64) - (unused_space as i64);
 
                 let vol_count = loc.volumes_len() as i32;
@@ -2479,7 +2475,7 @@ mod tests {
     }
 
     #[test]
-    fn test_maybe_adjust_volume_max_honors_preallocate_flag() {
+    fn test_maybe_adjust_volume_max_reserves_plain_volumes_while_preallocating() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
@@ -2494,13 +2490,6 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        // Use a large volume_size_limit so the unused-space difference between
-        // preallocate=true (0) and preallocate=false (~2 × limit) is big enough
-        // that integer-division rounding and disk-free fluctuations between the
-        // two get_disk_stats calls cannot make the quotients equal.
-        store
-            .volume_size_limit
-            .store(100 * 1024 * 1024, Ordering::Relaxed);
         store
             .add_volume(
                 VolumeId(61),
@@ -2511,39 +2500,67 @@ mod tests {
                 },
             )
             .unwrap();
+
+        // Room for 2.5 volumes: the plain volume claims one, leaving one more slot.
+        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+        let volume_size_limit = (free as f64 / 2.5) as u64;
+        if volume_size_limit == 0 {
+            return; // cannot determine free disk space
+        }
         store
-            .add_volume(
-                VolumeId(62),
+            .volume_size_limit
+            .store(volume_size_limit, Ordering::Relaxed);
+        store.locations[0].original_max_volume_count = 0;
+        store.set_preallocate(true);
+
+        store.maybe_adjust_volume_max();
+        assert_eq!(
+            store.locations[0].max_volume_count.load(Ordering::Relaxed),
+            2
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_unused_space_counts_preallocated_volumes_as_full() {
+        const LIMIT: u64 = 1 << 20;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                2,
                 DiskType::HardDrive,
-                &VolumeSpec {
-                    collection: "preallocate_case",
-                    ..Default::default()
-                },
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
             )
             .unwrap();
-        for vid in [VolumeId(61), VolumeId(62)] {
-            let dat_path = store.find_volume(vid).unwrap().1.dat_path();
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(dat_path)
-                .unwrap()
-                .set_len((crate::storage::super_block::SUPER_BLOCK_SIZE + 1) as u64)
+        for (vid, preallocate) in [(VolumeId(71), LIMIT), (VolumeId(72), 0)] {
+            store
+                .add_volume(
+                    vid,
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        collection: "preallocate_case",
+                        preallocate,
+                        ..Default::default()
+                    },
+                )
                 .unwrap();
         }
-        store.locations[0].original_max_volume_count = 0;
-        store.locations[0]
-            .max_volume_count
-            .store(0, Ordering::Relaxed);
+        let preallocated = store.find_volume(VolumeId(71)).unwrap().1;
+        if preallocated.dat_allocated_size() < LIMIT {
+            return; // the filesystem does not support fallocate
+        }
 
-        store.set_preallocate(false);
-        assert!(store.maybe_adjust_volume_max());
-        let without_preallocate = store.locations[0].max_volume_count.load(Ordering::Relaxed);
-
-        store.set_preallocate(true);
-        assert!(store.maybe_adjust_volume_max());
-        let with_preallocate = store.locations[0].max_volume_count.load(Ordering::Relaxed);
-
-        assert!(with_preallocate > without_preallocate);
+        let plain = store.find_volume(VolumeId(72)).unwrap().1;
+        let plain_dat = plain.dat_file_size().unwrap();
+        // The filesystem may round a small file up to a larger allocation unit.
+        let plain_used = plain_dat.max(plain.dat_allocated_size()) + plain.idx_file_size();
+        assert_eq!(store.locations[0].unused_space(LIMIT), LIMIT - plain_used);
     }
 
     #[test]

@@ -704,6 +704,8 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 			continue
 		}
 		datSize, idxSize, _ := vol.FileStat()
+		// A preallocated volume already holds its space on disk.
+		datSize = max(datSize, vol.datAllocatedSize())
 		unUsedSpaceVolume := int64(volumeSizeLimit) - int64(datSize+idxSize)
 		glog.V(4).Infof("Volume stats for %d: volumeSizeLimit=%d, datSize=%d idxSize=%d unused=%d", vol.Id, volumeSizeLimit, datSize, idxSize, unUsedSpaceVolume)
 		if unUsedSpaceVolume >= 0 {

@@ -83,7 +83,7 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 			method:     http.MethodGet,
 			baseAction: s3_constants.ACTION_READ,
 			object:     "key",
-			want:       s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES,
+			want:       s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES,
 		},
 		{
 			name:       "versionId only GET",
@@ -135,6 +135,59 @@ func TestResolveS3Action_VersionTagging(t *testing.T) {
 		{"bucket tagging ignores versionId", http.MethodGet, "", "tagging&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_TAGGING},
 		{"non-empty tagging is still tagging", http.MethodGet, "key", "tagging=x&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING},
 		{"non-empty tagging plain", http.MethodGet, "key", "tagging=x", s3_constants.S3_ACTION_GET_OBJECT_TAGGING},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_READ, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An ACL request carrying versionId targets a specific version and must
+// resolve to the version ACL action so a grant limited to the current-object
+// action cannot reach historical versions.
+func TestResolveS3Action_VersionAcl(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		object string
+		query  string
+		want   string
+	}{
+		{"get current acl", http.MethodGet, "key", "acl", s3_constants.S3_ACTION_GET_OBJECT_ACL},
+		{"put current acl", http.MethodPut, "key", "acl", s3_constants.S3_ACTION_PUT_OBJECT_ACL},
+		{"get version acl", http.MethodGet, "key", "acl&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL},
+		{"head acl resolves as head object", http.MethodHead, "key", "acl", s3_constants.S3_ACTION_GET_OBJECT},
+		{"head version acl resolves as head version", http.MethodHead, "key", "acl&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION},
+		{"put version acl", http.MethodPut, "key", "acl&versionId=v1", s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL},
+		{"empty versionId stays current", http.MethodGet, "key", "acl&versionId=", s3_constants.S3_ACTION_GET_OBJECT_ACL},
+		{"bucket acl ignores versionId", http.MethodGet, "", "acl&versionId=v1", s3_constants.S3_ACTION_GET_BUCKET_ACL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_READ, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An attributes request carrying versionId targets a specific version and
+// must resolve to the version attributes action.
+func TestResolveS3Action_VersionAttributes(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		object string
+		query  string
+		want   string
+	}{
+		{"get current attributes", http.MethodGet, "key", "attributes", s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES},
+		{"get version attributes", http.MethodGet, "key", "attributes&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
