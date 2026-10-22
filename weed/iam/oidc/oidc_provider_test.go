@@ -988,11 +988,26 @@ func TestOIDCProviderJTICleanup(t *testing.T) {
 	assert.True(t, now.Before(entry.expiresAt),
 		"Entry should not be expired yet")
 
-	// Test cleanup logic: manually simulate cleanup with a fake "future" time
-	// to verify the cleanup would work when time comes
-	futureTime := entry.expiresAt.Add(1 * time.Minute)
-	shouldBeDeleted := futureTime.After(entry.expiresAt)
-	assert.True(t, shouldBeDeleted, "Entry should be identified as expired in the future")
+	// Run the periodic cleanup with a short interval and an expired entry:
+	// both the entry and the count must actually be cleared
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	cleanupDone := make(chan struct{})
+	go provider.cleanupExpiredJTIs(cleanupCtx, cleanupDone, 20*time.Millisecond)
+	defer func() {
+		cleanupCancel()
+		<-cleanupDone
+	}()
+
+	provider.jtiStore.Store("expired-cleanup-jti", &jtiEntry{
+		subject:   "expired-user",
+		expiresAt: time.Now().Add(-time.Minute),
+	})
+	provider.jtiCount.Add(1)
+
+	require.Eventually(t, func() bool {
+		_, stillThere := provider.jtiStore.Load("expired-cleanup-jti")
+		return !stillThere && provider.jtiCount.Load() == 1 // only the valid entry remains
+	}, 2*time.Second, 10*time.Millisecond, "periodic cleanup should evict the expired entry")
 }
 
 func TestOIDCProviderReinitialization(t *testing.T) {
@@ -1031,10 +1046,11 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 	require.NoError(t, provider.Initialize(config))
 	require.NotNil(t, provider.jtiCleanupCancel, "Second cleanup cancel should be set")
 
-	// JTI cache should be reset after re-initialization
-	// So the same token should be accepted again (new cache)
+	// The JTI cache survives re-initialization, so the consumed token is
+	// still detected as a replay rather than being usable again
 	_, err = provider.ValidateToken(context.Background(), token1)
-	require.NoError(t, err, "Token should validate after re-initialization (new cache)")
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"Re-initialization must not reopen a consumed token for replay")
 
 	// Third initialization to ensure it works multiple times
 	require.NoError(t, provider.Initialize(config))
