@@ -696,6 +696,9 @@ func (s *POSIXComplianceTestSuite) TestErrorHandling(t *testing.T) {
 	})
 
 	t.Run("PermissionDenied", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: mode bits are not enforced")
+		}
 		testFile := filepath.Join(mountPoint, "readonly.txt")
 
 		// Create read-only file
