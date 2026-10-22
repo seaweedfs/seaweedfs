@@ -2003,6 +2003,24 @@ func TestEmbeddedIamGetUserPolicyMissingName(t *testing.T) {
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
 }
 
+// TestEmbeddedIamGetUserPolicyStoreFailure checks that a store error is a
+// service failure, not a policy rebuilt from the user's actions.
+func TestEmbeddedIamGetUserPolicyStoreFailure(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward", Actions: []string{"Read:b"}}},
+	}
+	api.mockConfig = s3cfg
+	api.credentialManager.Store = &memory.MemoryStore{}
+
+	_, iamErr := api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"read"},
+	})
+	require.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeServiceFailureException, iamErr.Code)
+}
+
 // TestEmbeddedIamGetUserPolicyUserNotFound tests GetUserPolicy with non-existent user
 func TestEmbeddedIamGetUserPolicyUserNotFound(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()

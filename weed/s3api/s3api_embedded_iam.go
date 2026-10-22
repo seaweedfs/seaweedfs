@@ -1291,9 +1291,9 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 			ctx := context.Background()
 			storedDoc, storeErr := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
 			if storeErr != nil {
-				glog.Warningf("GetUserPolicy: failed to read stored inline policy %q for user %s: %v; falling back to reconstruction", policyName, userName, storeErr)
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("read inline policy %s for %s: %w", policyName, userName, storeErr)}
 			}
-			if storeErr == nil && storedDoc != nil {
+			if storedDoc != nil {
 				policyDocumentJSON, err := json.Marshal(storedDoc)
 				if err != nil {
 					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -1302,14 +1302,12 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 				return resp, nil
 			}
 			// The user has stored inline policies, but none by this name
-			if storeErr == nil {
-				policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
-				if err != nil {
-					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
-				}
-				if len(policyNames) > 0 {
-					return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user policy with name %s cannot be found", policyName)}
-				}
+			policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+			if err != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("list inline policies for %s: %w", userName, err)}
+			}
+			if len(policyNames) > 0 {
+				return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user policy with name %s cannot be found", policyName)}
 			}
 		}
 
