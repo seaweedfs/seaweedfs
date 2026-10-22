@@ -4,12 +4,14 @@ package fuse
 
 import (
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // Direct I/O support for Linux
 
 const (
-	O_DIRECT = 0x4000 // Direct I/O flag for Linux
+	O_DIRECT = unix.O_DIRECT
 )
 
 func openDirectIO(path string, flags int, mode uint32) (int, error) {
