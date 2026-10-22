@@ -137,6 +137,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	if config != nil {
 		f.config = config
 	}
+	config = f.config
 
 	dirs := []string{f.mountPoint, f.logDir, f.dataDir}
 	for _, dir := range dirs {

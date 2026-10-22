@@ -90,6 +90,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	if config != nil {
 		f.config = config
 	}
+	config = f.config
 
 	// Check if we should skip cluster setup and use existing mount
 	if os.Getenv("TEST_SKIP_CLUSTER_SETUP") == "true" {
@@ -206,6 +207,7 @@ func (f *FuseTestFramework) Cleanup() {
 	if f.externalMount {
 		if !f.config.SkipCleanup {
 			os.RemoveAll(f.mountPoint)
+			os.RemoveAll(f.tempDir)
 		}
 		return
 	}
