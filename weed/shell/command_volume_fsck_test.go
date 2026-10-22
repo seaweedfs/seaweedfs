@@ -1,12 +1,14 @@
 package shell
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -16,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -308,5 +312,74 @@ func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 	finish()
 	if got := processed.Load(); got != 8 {
 		t.Fatalf("processed %d deletes, want 8", got)
+	}
+}
+
+// Orphans found by the per-volume check go through the same purge queue as
+// the missing-volume path, and the fid file keeps each entry's hard link id
+// so same-id deletes still land on one worker.
+func TestVolumeFsckCheckOneVolumeQueuesOrphansWithHardLinkId(t *testing.T) {
+	tempDir := t.TempDir()
+	var verbose bool
+	var buf bytes.Buffer
+	c := &commandVolumeFsck{tempFolder: tempDir, verbose: &verbose, writer: &buf}
+
+	volumeId := uint32(7)
+	db := needle_map.NewMemDb()
+	if err := db.Set(types.NeedleId(11), types.ToOffset(16), types.Size(1)); err != nil {
+		t.Fatalf("seed volume idx: %v", err)
+	}
+	if err := db.SaveToIdx(getVolumeFileIdFile(tempDir, "dn1", volumeId)); err != nil {
+		t.Fatalf("write volume idx: %v", err)
+	}
+	db.Close()
+
+	f, err := os.Create(getFilerFileIdFile(tempDir, volumeId))
+	if err != nil {
+		t.Fatalf("create fid file: %v", err)
+	}
+	writeFid := func(fileKey uint64, cookie uint32, p string, hardLinkId []byte) {
+		buffer := make([]byte, readbufferSize)
+		util.Uint64toBytes(buffer, fileKey)
+		util.Uint32toBytes(buffer[8:], cookie)
+		util.Uint32toBytes(buffer[12:], uint32(len(p)))
+		if _, err := f.Write(buffer); err != nil {
+			t.Fatalf("write fid header: %v", err)
+		}
+		if _, err := f.Write([]byte(p)); err != nil {
+			t.Fatalf("write fid path: %v", err)
+		}
+		util.Uint32toBytes(buffer[:4], uint32(len(hardLinkId)))
+		if _, err := f.Write(buffer[:4]); err != nil {
+			t.Fatalf("write fid hard link id size: %v", err)
+		}
+		if _, err := f.Write(hardLinkId); err != nil {
+			t.Fatalf("write fid hard link id: %v", err)
+		}
+	}
+	writeFid(11, 1, "/keep/a", nil)
+	writeFid(22, 2, "/orphan/b", []byte{1, 2, 3})
+	writeFid(33, 3, "/orphan/c", nil)
+	if err := f.Close(); err != nil {
+		t.Fatalf("close fid file: %v", err)
+	}
+
+	var queued []purgeItem
+	if err := c.oneVolumeFileIdsCheckOneVolume("dn1", volumeId, func(it purgeItem) {
+		queued = append(queued, it)
+	}); err != nil {
+		t.Fatalf("check volume: %v", err)
+	}
+	if len(queued) != 2 {
+		t.Fatalf("queued %d purges, want 2 (the two orphans): %v", len(queued), queued)
+	}
+	if queued[0].path != "/orphan/b" || queued[1].path != "/orphan/c" {
+		t.Fatalf("queued paths %v, want /orphan/b then /orphan/c", queued)
+	}
+	if !bytes.Equal(queued[0].hardLinkId, []byte{1, 2, 3}) {
+		t.Fatalf("queued hardLinkId %v, want [1 2 3]", queued[0].hardLinkId)
+	}
+	if queued[1].hardLinkId != nil {
+		t.Fatalf("queued hardLinkId %v, want nil", queued[1].hardLinkId)
 	}
 }
