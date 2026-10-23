@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -175,10 +176,22 @@ func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerCl
 		Directory: dir,
 		Name:      fileName,
 	})
+	miss := err != nil && status.Code(err) == codes.NotFound
+	if err == nil && (resp == nil || resp.Entry == nil) {
+		miss = true
+	}
+	if miss {
+		// A percent-escaped reference (a writer escaped a partition directory
+		// name) resolves to a name the filer never holds, because the S3 layer
+		// decoded the key on write. Retry the lookup at the decoded spelling.
+		if decoded, decErr := url.PathUnescape(icebergPath); decErr == nil && decoded != icebergPath {
+			return lookupFileByIcebergPath(ctx, client, bucketName, dataPath, decoded)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup %s/%s: %w", dir, fileName, err)
 	}
-	if resp == nil || resp.Entry == nil {
+	if miss {
 		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
 	}
 	return resp.Entry, nil

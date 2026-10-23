@@ -4516,3 +4516,38 @@ func TestRemoveOrphansKeepsPercentEscapedReferences(t *testing.T) {
 		t.Error("data file referenced through an escaped manifest path was deleted")
 	}
 }
+
+// The sibling of the orphan-sweep case on the read side: a manifest reference
+// carrying a percent-escaped segment must find the object the S3 layer stored
+// at the decoded key.
+func TestLookupFileByIcebergPathDecodesEscapedReference(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	dir := path.Join(s3tables.TablesPath, "bkt", "ns/tbl/data/part=1")
+	fs.putEntry(dir, "f.parquet", &filer_pb.Entry{
+		Name:    "f.parquet",
+		Content: []byte("data"),
+	})
+	literalDir := path.Join(s3tables.TablesPath, "bkt", "ns/tbl/data/part%3D2")
+	fs.putEntry(literalDir, "g.parquet", &filer_pb.Entry{
+		Name:    "g.parquet",
+		Content: []byte("data"),
+	})
+
+	entry, err := lookupFileByIcebergPath(context.Background(), client, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D1/f.parquet")
+	if err != nil {
+		t.Fatalf("escaped reference should resolve to the decoded key: %v", err)
+	}
+	if entry == nil || entry.Name != "f.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+
+	// A file genuinely stored under an escaped name still resolves verbatim.
+	entry, err = lookupFileByIcebergPath(context.Background(), client, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D2/g.parquet")
+	if err != nil {
+		t.Fatalf("literal escaped key should resolve: %v", err)
+	}
+	if entry == nil || entry.Name != "g.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+}
