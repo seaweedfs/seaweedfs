@@ -188,14 +188,15 @@ func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 }
 
 // decodeMarkerEcho reverses the wire encoding on a marker the client echoes
-// back: under encoding-type=url the emitted echo was urlPathEscape'd. A value
-// that fails to unescape could not have come from the encoder, so it is taken
-// as the raw marker.
+// back: under encoding-type=url the emitted echo was urlPathEscape'd. Only a
+// value that is the canonical escaped form of its unescape could have come
+// from that encoder — "a%2541" round-trips to itself, "a%41" does not — so
+// anything else stays the raw key the client sent.
 func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 	if !encodingTypeUrl {
 		return marker
 	}
-	if unescaped, err := url.PathUnescape(marker); err == nil {
+	if unescaped, err := url.PathUnescape(marker); err == nil && urlPathEscape(unescaped) == marker {
 		return unescaped
 	}
 	return marker
