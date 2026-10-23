@@ -64,6 +64,11 @@ type UploadOption struct {
 	MaxAttempts       int                              // <=0 uses the default
 	GenUploadUrl      func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
 	FilerJwt          security.FilerJwtProvider        // credential for proxy chunk URLs; nil → process-wide jwt.filer_signing
+
+	// stallWatchdogDisarmed turns the stall watchdog off for the rest of this
+	// upload's attempts once it has fired: a conn it killed says nothing about
+	// the next conn, and a re-armed watchdog could burn every retry.
+	stallWatchdogDisarmed bool
 }
 
 type UploadResult struct {
@@ -126,6 +131,7 @@ var (
 // StatusCode 0 means the request never got a response — a transport failure.
 type uploadStatusError struct {
 	StatusCode int
+	stalled    bool // the stall watchdog cancelled this attempt's request
 	err        error
 }
 
@@ -354,6 +360,10 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		var statusErr *uploadStatusError
+		if errors.As(err, &statusErr) && statusErr.stalled {
+			option.stallWatchdogDisarmed = true
+		}
 		glog.WarningfCtx(ctx, "uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
 	return
@@ -421,14 +431,15 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			_, err = w.Write(encryptedData)
 			return
 		}, len(encryptedData), &UploadOption{
-			UploadUrl:         option.UploadUrl,
-			Filename:          "",
-			Cipher:            false,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-			Jwt:               option.Jwt,
-			BytesBuffer:       option.BytesBuffer,
+			UploadUrl:             option.UploadUrl,
+			Filename:              "",
+			Cipher:                false,
+			IsInputCompressed:     false,
+			MimeType:              "",
+			PairMap:               nil,
+			Jwt:                   option.Jwt,
+			BytesBuffer:           option.BytesBuffer,
+			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
 		if uploadResult == nil {
 			return
@@ -449,15 +460,16 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			_, err = w.Write(data)
 			return
 		}, len(data), &UploadOption{
-			UploadUrl:         option.UploadUrl,
-			Filename:          option.Filename,
-			Cipher:            false,
-			IsInputCompressed: contentIsGzipped,
-			MimeType:          option.MimeType,
-			PairMap:           option.PairMap,
-			Jwt:               option.Jwt,
-			Md5:               option.Md5,
-			BytesBuffer:       option.BytesBuffer,
+			UploadUrl:             option.UploadUrl,
+			Filename:              option.Filename,
+			Cipher:                false,
+			IsInputCompressed:     contentIsGzipped,
+			MimeType:              option.MimeType,
+			PairMap:               option.PairMap,
+			Jwt:                   option.Jwt,
+			Md5:                   option.Md5,
+			BytesBuffer:           option.BytesBuffer,
+			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
 		if uploadResult == nil {
 			return
@@ -541,7 +553,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	var uploadDone atomic.Bool
 	defer uploadDone.Store(true)
 	var stallTimer *time.Timer
-	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
+	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
 		defer func() {
 			if stallTimer != nil {
 				stallTimer.Stop()
@@ -592,7 +604,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	}
 	if post_err != nil {
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
-		return nil, &uploadStatusError{StatusCode: 0, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
+		return nil, &uploadStatusError{StatusCode: 0, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
 	if uploadMovedHealthy(int64(originalDataSize), time.Since(started)) {
 		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
@@ -611,7 +623,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
-		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
