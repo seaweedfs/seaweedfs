@@ -37,6 +37,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ^1.26
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build SeaweedFS
         run: |
