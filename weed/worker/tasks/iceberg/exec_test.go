@@ -4648,3 +4648,78 @@ func TestExpireSnapshotsDeletesEscapedReferenceAtExistingKey(t *testing.T) {
 		t.Error("expired file at the decoded key should have been deleted")
 	}
 }
+
+// A client that escapes its own percent sign on upload leaves an object under
+// a literal %3D-containing key while the manifest spells the same reference.
+// Expiration must delete the entry that actually exists, not the decoded
+// spelling.
+func TestExpireSnapshotsDeletesLiteralPercentKey(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month%%3D1/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(), iceberg.EntryContentData, escapedPath,
+		iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	literalDir := path.Join(dataDir, "month%3D1")
+	fs.putEntry(dataDir, "month%3D1", &filer_pb.Entry{
+		Name: "month%3D1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+	})
+	fs.putEntry(literalDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	t.Logf("expireSnapshots result: %s", result)
+
+	if fs.getEntry(literalDir, "f.parquet") != nil {
+		t.Error("expired file at the literal percent key should have been deleted")
+	}
+}
