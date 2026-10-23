@@ -110,6 +110,21 @@ func startFailoverCluster(t testing.TB, numVolumes, numMounts int) *failoverClus
 			"mount %d not ready\n%s", i, c.tailLog(fmt.Sprintf("mount%d", i)))
 	}
 	require.NoError(t, c.WaitForVolumeServers(60*time.Second))
+
+	// A mounted filesystem and registered volume servers do not yet guarantee
+	// that the lock ring has settled or the first replicated volume is ready.
+	// Exercise the write/read path during setup so the append latency checks
+	// measure failover on a running cluster rather than its cold start.
+	probeName := ".failover-ready"
+	probeData := []byte("ready\n")
+	probePath := filepath.Join(c.MountDir(0), probeName)
+	require.NoError(t, os.WriteFile(probePath, probeData, 0644),
+		"readiness write failed\n%s", c.tailLog("mount0"))
+	for i := 0; i < numMounts; i++ {
+		_, ready := waitForContent(filepath.Join(c.MountDir(i), probeName), probeData, convergeTimeout)
+		require.True(t, ready, "mount %d did not observe readiness write\n%s", i, c.tailLog(fmt.Sprintf("mount%d", i)))
+	}
+	require.NoError(t, os.Remove(probePath))
 	return c
 }
 
