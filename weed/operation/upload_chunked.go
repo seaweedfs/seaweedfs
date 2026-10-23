@@ -437,14 +437,14 @@ func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt,
 	deleteJwt := jwt
 	for _, host := range hosts {
 		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
-		_, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+		body, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 		if status == http.StatusUnauthorized && opt.LookupJwtFunc != nil {
 			lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
 			token := opt.LookupJwtFunc(lookupCtx, fid)
 			cancel()
 			if token != "" {
 				deleteJwt = token
-				_, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+				body, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 			}
 		}
 		if err != nil {
@@ -454,7 +454,7 @@ func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt,
 		switch status {
 		case http.StatusNotFound, http.StatusNoContent, http.StatusAccepted, http.StatusOK:
 		default:
-			glog.Warningf("replica fan-out cleanup: delete %s from %s: status %d", fid, host, status)
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: status %d: %s", fid, host, status, body)
 		}
 	}
 }
