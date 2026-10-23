@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 
@@ -9,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // uploadEntry is an upload folder as createMultipartUpload leaves it.
@@ -147,5 +151,50 @@ func TestSelectMultipartUploadsCapsRequestedPageSize(t *testing.T) {
 	}
 	if got := *page.result().MaxUploads; got != int64(maxUploadsList) {
 		t.Fatalf("MaxUploads reports %d, want the effective cap %d", got, maxUploadsList)
+	}
+}
+
+// A transient failure mid-stream replays through a fresh page, so the uploads
+// the aborted attempt already handed to the collector must not bleed into the
+// result: each upload lists once and the markers track the retried attempt.
+func TestListMultipartUploadsRetryCollectsEachUploadOnce(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		uploadEntry("1", "c", 10),
+		uploadEntry("2", "a", 30),
+		uploadEntry("3", "b", 10),
+	}
+	client := &listRetryClient{
+		entries:   entries,
+		recvErrs:  []error{status.Error(codes.Unavailable, "transport is closing"), nil},
+		recvAfter: []int{2, 0},
+	}
+	accessor := &listRetryAccessor{client: client}
+	input := listUploadsInput("", "", "", 2)
+
+	var page *multipartUploadPage
+	err := listRetry("/buckets/b/.uploads", func() error {
+		page = newMultipartUploadPage(input)
+		return filer_pb.List(context.Background(), accessor, "/buckets/b/.uploads", "", func(entry *filer_pb.Entry, isLastEntry bool) error {
+			page.add(entry)
+			return nil
+		}, "", false, math.MaxInt32)
+	})
+	if err != nil {
+		t.Fatalf("listRetry: %v", err)
+	}
+	if client.attempts != 2 {
+		t.Fatalf("got %d attempts, want 2", client.attempts)
+	}
+	out := page.result()
+	var got []string
+	for _, u := range out.Upload {
+		got = append(got, *u.Key+"/"+*u.UploadId)
+	}
+	want := []string{"a/2", "b/3"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v (no entry from the aborted attempt may carry over)", got, want)
+	}
+	if !*out.IsTruncated || *out.NextKeyMarker != "b" || *out.NextUploadIdMarker != "3" {
+		t.Fatalf("truncation markers got (%v, %v, %v)", *out.IsTruncated, *out.NextKeyMarker, *out.NextUploadIdMarker)
 	}
 }
