@@ -721,3 +721,48 @@ func TestDeleteChunkFromHoldersRenewsExpiredJwt(t *testing.T) {
 		t.Fatalf("expected the delete retried with the fresh jwt, got %d fresh deletes", freshDeletes)
 	}
 }
+
+// A later holder that rejects the renewed token can trigger another renewal:
+// the one-retry limit is per holder, not per cleanup pass.
+func TestDeleteChunkFromHoldersRenewsPerHolder(t *testing.T) {
+	var acceptedDeletes int32
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer jwt-2" {
+			atomic.AddInt32(&acceptedDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"wrong jwt"}`)
+	}))
+	defer holder.Close()
+
+	tokens := []security.EncodedJwt{"jwt-1", "jwt-2"}
+	lookups := 0
+	deleteChunkFromHolders(
+		[]string{
+			strings.TrimPrefix(holder.URL, "http://"),
+			strings.TrimPrefix(holder.URL, "http://"),
+		},
+		"1,0a0b0c0d",
+		"stale-jwt",
+		&ChunkedUploadOption{
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
+				token := tokens[lookups]
+				lookups++
+				return token
+			},
+		},
+	)
+
+	if lookups != 2 {
+		t.Fatalf("expected a renewal per rejecting holder, got %d", lookups)
+	}
+	if atomic.LoadInt32(&acceptedDeletes) != 1 {
+		t.Fatalf("expected the second holder's retried delete to land, got %d", acceptedDeletes)
+	}
+}

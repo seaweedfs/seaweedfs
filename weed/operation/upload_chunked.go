@@ -431,22 +431,20 @@ const cleanupJwtLookupTimeout = 10 * time.Second
 // delete falls back to vacuum reclaiming the orphan.
 func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt, opt *ChunkedUploadOption) {
 	// An unresponsive holder can stall the upload past the write JWT's expiry,
-	// so renew the token once a holder rejects the delete as unauthorized.
+	// so renew the token whenever a holder rejects the delete as unauthorized.
+	// Each holder's delete is retried at most once, and a slow holder that
+	// outlives the renewed token can still trigger another renewal.
 	deleteJwt := jwt
-	renewed := false
 	for _, host := range hosts {
 		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
 		_, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
-		if status == http.StatusUnauthorized && !renewed {
-			renewed = true
-			if opt.LookupJwtFunc != nil {
-				lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
-				token := opt.LookupJwtFunc(lookupCtx, fid)
-				cancel()
-				if token != "" {
-					deleteJwt = token
-					_, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
-				}
+		if status == http.StatusUnauthorized && opt.LookupJwtFunc != nil {
+			lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
+			token := opt.LookupJwtFunc(lookupCtx, fid)
+			cancel()
+			if token != "" {
+				deleteJwt = token
+				_, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 			}
 		}
 		if err != nil {
