@@ -281,9 +281,9 @@ const leaderSettleInterval = time.Second
 // ListExistingPeerUpdates returns the peer list to bootstrap from. The
 // leader's list is authoritative: after a leader change an old master keeps
 // its registrations until its streams end, so the longest answer is not
-// necessarily the current one. The leader's answer wins whenever it can be
-// found and queried; only when the leader is unreachable does the scan fall
-// back to the fullest answer from the other masters. It returns an error when
+// necessarily the current one. A non-empty answer from the leader wins; a
+// leader that is unreachable or reports an empty list falls back to the
+// fullest answer from the other masters. It returns an error when
 // no master answers, so a failed lookup is not mistaken for an empty cluster.
 func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate, err error) {
 	masters := f.MasterClient.ListMasters()
