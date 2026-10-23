@@ -111,7 +111,7 @@ func TestNewSignV4ChunkedReaderStreamingUnsignedPayloadTrailer(t *testing.T) {
 	runWithRequest(iam, req, t, expectedPayload)
 }
 
-func runWithRequest(iam IdentityAccessManagement, req *http.Request, t *testing.T, expectedPayload string) {
+func runWithRequest(iam *IdentityAccessManagement, req *http.Request, t *testing.T, expectedPayload string) {
 	reader, errCode := iam.newChunkedReader(req)
 	assert.NotNil(t, reader)
 	assert.Equal(t, s3err.ErrNone, errCode)
@@ -124,11 +124,11 @@ func runWithRequest(iam IdentityAccessManagement, req *http.Request, t *testing.
 	assert.Equal(t, expectedPayload, string(data))
 }
 
-func setupIam() IdentityAccessManagement {
+func setupIam() *IdentityAccessManagement {
 	// Create an IdentityAccessManagement instance
 	// Add default access keys and secrets
 
-	iam := IdentityAccessManagement{
+	iam := &IdentityAccessManagement{
 		identities:        []*Identity{},
 		accessKeyIdent:    map[string]*Identity{},
 		accounts:          map[string]*Account{},

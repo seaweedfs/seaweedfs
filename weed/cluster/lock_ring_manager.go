@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 const LockRingStabilizationInterval = 1 * time.Second
@@ -102,9 +103,7 @@ func (lrm *LockRingManager) GetLastUpdate(filerGroup FilerGroupName) *master_pb.
 	if !ok || update == nil {
 		return nil
 	}
-	cp := *update
-	cp.Servers = append([]string(nil), update.Servers...)
-	return &cp
+	return proto.Clone(update).(*master_pb.LockRingUpdate)
 }
 
 // scheduleBroadcast resets the stabilization timer. If another change arrives

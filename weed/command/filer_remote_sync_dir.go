@@ -232,6 +232,10 @@ func processCreateEvent(
 	if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 		return nil
 	}
+	if isSystemPath(message.NewParentPath, message.NewEntry.Name) {
+		glog.V(2).Infof("skipping create of system path: %s/%s", message.NewParentPath, message.NewEntry.Name)
+		return nil
+	}
 	// Propagate delete markers as deletions on the remote.
 	// Delete markers are zero-content version entries, so they
 	// would be filtered out by the HasData check below.
@@ -309,6 +313,10 @@ func processDeleteEvent(
 	// deletes should not propagate to the remote object
 	if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
 		glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+		return nil
+	}
+	if isSystemPath(resp.Directory, message.OldEntry.Name) {
+		glog.V(2).Infof("skipping delete of system path: %s/%s", resp.Directory, message.OldEntry.Name)
 		return nil
 	}
 	if filer.IsMetadataOnlyDelete(message.OldEntry) {
@@ -421,6 +429,10 @@ func processUpdateEvent(
 		glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 		return nil
 	}
+	if isSystemPath(message.NewParentPath, message.NewEntry.Name) {
+		glog.V(2).Infof("skipping update of system path: %s/%s", message.NewParentPath, message.NewEntry.Name)
+		return nil
+	}
 	oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 	eventSource := renameSource{path: util.NewFullPath(resp.Directory, message.OldEntry.Name), loc: oldDest, stamp: message.OldEntry.GetRemoteEntry()}
@@ -510,7 +522,7 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
-			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) || isSystemPath(resp.Directory, message.OldEntry.Name) {
 				return nil
 			}
 			if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
@@ -961,6 +973,23 @@ func isMultipartUploadFile(dir string, name string) bool {
 func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
 		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
+}
+
+// isSystemPath returns true if the dir and name refer to the internal .system folder
+// under /buckets (such as the bucket-owner index at /buckets/.system/owners/...)
+// or any entry inside it. These paths are internal to SeaweedFS and must not
+// be synced to remote storage.
+func isSystemPath(dir string, name string) bool {
+	fullPath := string(util.NewFullPath(dir, name))
+	trimmed := strings.Trim(fullPath, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) >= 1 && parts[0] == s3_constants.SystemFolder {
+		return true
+	}
+	if len(parts) >= 2 && parts[1] == s3_constants.SystemFolder {
+		return true
+	}
+	return false
 }
 
 // isDeleteMarker returns true if the entry is an S3 delete marker
