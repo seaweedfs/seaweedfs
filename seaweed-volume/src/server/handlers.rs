@@ -5818,6 +5818,44 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
+    /// A ranged read served from the data file reports its outcome to the
+    /// io-error streak, like readNeedleDataInto: a finished range clears the
+    /// count a failed meta read left.
+    #[test]
+    fn test_range_from_source_reports_to_io_error_streak() {
+        use std::io::Write;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(tmp.path().join("1.dat"))
+            .unwrap();
+        let data: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        (&file).write_all(&data).unwrap();
+
+        let io_errors = Arc::new(crate::storage::io_error::IoErrorTracker::default());
+        let eio = crate::storage::volume::media_error_for_test();
+        io_errors.check_read_write_error(Some(&eio));
+        io_errors.check_read_write_error(Some(&eio));
+        assert_eq!(io_errors.get_io_error_state().1, 2);
+
+        let info = crate::storage::volume::NeedleStreamInfo {
+            source: crate::storage::volume::NeedleStreamSource::Local(file),
+            data_file_offset: 0,
+            data_size: data.len() as u32,
+            data_file_access_control: Arc::default(),
+            io_unavailable: Arc::default(),
+            io_errors: io_errors.clone(),
+            needle_id: NeedleId(1),
+            checksum: 0,
+        };
+        let resp = handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None);
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(io_errors.get_io_error_state().1, 0);
+    }
+
     /// Range is read as Go reads it: a byte its parseRange cannot parse is a
     /// 416, Unicode whitespace around a range is trimmed, an empty value is no
     /// range, and HEAD ignores it.

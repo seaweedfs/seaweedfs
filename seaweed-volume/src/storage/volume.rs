@@ -6118,7 +6118,7 @@ fn preallocate_file(file: &File, size: u64) {
 /// An OS error the platform reports for failing storage media, which is
 /// what counts toward the I/O error streak.
 #[cfg(test)]
-fn media_error_for_test() -> io::Error {
+pub(crate) fn media_error_for_test() -> io::Error {
     #[cfg(unix)]
     {
         io::Error::from_raw_os_error(libc::EIO)
