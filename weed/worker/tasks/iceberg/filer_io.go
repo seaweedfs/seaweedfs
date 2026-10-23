@@ -210,7 +210,7 @@ func addFilerPathSpellings(set map[string]struct{}, filerPath string) {
 		if err != nil || decoded == spelling {
 			return
 		}
-		spelling = decoded
+		spelling = path.Clean(decoded)
 	}
 }
 
