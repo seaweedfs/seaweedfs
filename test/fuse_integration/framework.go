@@ -72,22 +72,11 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_fuse_test_")
 	require.NoError(t, err)
 
-	allocated := make(map[int]bool)
-	masterPort := freeServicePort(t, allocated)
-	volumePort := freeServicePort(t, allocated)
-	filerPort := freeServicePort(t, allocated)
-
 	return &FuseTestFramework{
 		t:          t,
 		tempDir:    tempDir,
 		mountPoint: filepath.Join(tempDir, "mount"),
 		dataDir:    filepath.Join(tempDir, "data"),
-		masterPort: masterPort,
-		volumePort: volumePort,
-		filerPort:  filerPort,
-		masterAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(masterPort)),
-		volumeAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(volumePort)),
-		filerAddr:  net.JoinHostPort("127.0.0.1", strconv.Itoa(filerPort)),
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
 		config:     config,
@@ -169,6 +158,16 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 			return nil
 		}
 	}
+
+	// Ports are picked here rather than in the constructor so an external
+	// mount never probes the service port band.
+	allocated := make(map[int]bool)
+	f.masterPort = freeServicePort(f.t, allocated)
+	f.volumePort = freeServicePort(f.t, allocated)
+	f.filerPort = freeServicePort(f.t, allocated)
+	f.masterAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(f.masterPort))
+	f.volumeAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(f.volumePort))
+	f.filerAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(f.filerPort))
 
 	// Create directories for full cluster setup; weed volume refuses a -dir
 	// that does not already exist.
