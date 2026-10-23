@@ -114,7 +114,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
 	}, testutil.MiniAdminArgs(ports[4])...)
-	miniArgs = append(miniArgs, "-webdav=false", "-webdav.port=0", "-s3.port.lance=0")
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0")
 	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
