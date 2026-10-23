@@ -280,7 +280,7 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 		"master",
 		"-ip=127.0.0.1",
 		"-port="+strconv.Itoa(f.masterPort),
-		"-mdir=" + filepath.Join(f.dataDir, "master"),
+		"-mdir="+filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
 	)
 
@@ -300,10 +300,10 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 	}
 	args = append(args,
 		"volume",
-		"-mserver=" + f.masterAddr,
+		"-mserver="+f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port="+strconv.Itoa(f.volumePort),
-		"-dir=" + filepath.Join(f.dataDir, "volume"),
+		"-dir="+filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	)
 
@@ -323,7 +323,7 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 	}
 	args = append(args,
 		"filer",
-		"-master=" + f.masterAddr,
+		"-master="+f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port="+strconv.Itoa(f.filerPort),
 	)
@@ -344,8 +344,8 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	}
 	args = append(args,
 		"mount",
-		"-filer=" + f.filerAddr,
-		"-dir=" + f.mountPoint,
+		"-filer="+f.filerAddr,
+		"-dir="+f.mountPoint,
 		"-filer.path=/",
 		"-dirAutoCreate",
 	)
@@ -403,7 +403,7 @@ func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, ti
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("service at %s not ready within timeout", addr)
+	return fmt.Errorf("service at %s not ready within timeout: %s", addr, logTail(proc.logPath))
 }
 
 // waitForMount waits for the FUSE mount to be ready
@@ -427,7 +427,7 @@ func (f *FuseTestFramework) waitForMount(proc *managedProcess, timeout time.Dura
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("mount point not ready within timeout")
+	return fmt.Errorf("mount point not ready within timeout: %s", logTail(proc.logPath))
 }
 
 // managedProcess tracks a started weed sub-command so a wait can bail out
