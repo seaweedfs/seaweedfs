@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/url"
 	"path"
 	"sort"
 	"time"
@@ -90,8 +91,13 @@ func (h *Handler) expireSnapshots(
 	// Resolve kept file paths for consistent comparison
 	keptFilerPaths := make(map[string]struct{}, len(keptFiles))
 	for f := range keptFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, f); err == nil {
-			keptFilerPaths[filerPath] = struct{}{}
+		filerPath, err := icebergFilerPath(bucketName, dataPath, f)
+		if err != nil {
+			continue
+		}
+		keptFilerPaths[filerPath] = struct{}{}
+		if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
+			keptFilerPaths[decoded] = struct{}{}
 		}
 	}
 
@@ -124,6 +130,11 @@ func (h *Handler) expireSnapshots(
 		if err != nil {
 			glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
 			continue
+		}
+		// The S3 layer stores objects at the decoded key, so an escaped
+		// reference deletes at its decoded spelling.
+		if decoded, err := url.PathUnescape(resolved); err == nil && decoded != resolved {
+			resolved = decoded
 		}
 		if _, stillReferenced := keptFilerPaths[resolved]; stillReferenced {
 			continue
@@ -357,8 +368,17 @@ func collectOrphanCandidates(
 
 	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, ref); err == nil {
-			referencedFilerPaths[filerPath] = struct{}{}
+		filerPath, err := icebergFilerPath(bucketName, dataPath, ref)
+		if err != nil {
+			continue
+		}
+		referencedFilerPaths[filerPath] = struct{}{}
+		// Writers percent-escape partition directory names (e.g. "a=1" stored
+		// as "a%3D1" in the manifest path), but the S3 layer decodes the key
+		// before it lands on the filer. Match the decoded spelling too, or a
+		// live file is counted as an orphan and deleted.
+		if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
+			referencedFilerPaths[decoded] = struct{}{}
 		}
 	}
 

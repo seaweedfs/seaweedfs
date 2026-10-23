@@ -4435,3 +4435,84 @@ func TestResolveCompactionRewritePlanFallsBackForUnsupportedSortTransform(t *tes
 		t.Fatalf("expected fallback to %q for unsupported transform, got %+v", defaultRewriteStrategy, plan)
 	}
 }
+
+// A writer may percent-escape a partition directory name ("part=1" becomes
+// "part%3D1") in the file paths it records in manifests, while the S3 layer
+// decodes the key before storing it. Orphan cleanup must match the decoded
+// spelling or it deletes live data files once they pass the age window.
+func TestRemoveOrphansKeepsPercentEscapedReferences(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	oldTime := time.Now().Add(-200 * time.Hour).Unix()
+
+	// Rewrite the manifest so its entries carry the escaped spelling the
+	// writer recorded.
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month_collected_at_1%%3D681/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(),
+		iceberg.EntryContentData,
+		escapedPath,
+		iceberg.ParquetFile,
+		map[int]any{},
+		nil, nil,
+		10,
+		4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: oldTime, FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	// The object lives at the decoded key, the same place the S3 PUT landed it.
+	fs.putEntry(dataDir, "month_collected_at_1=681", &filer_pb.Entry{
+		Name:        "month_collected_at_1=681",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: oldTime},
+	})
+	partDir := path.Join(dataDir, "month_collected_at_1=681")
+	fs.putEntry(partDir, "f.parquet", &filer_pb.Entry{
+		Name:       "f.parquet",
+		Attributes: &filer_pb.FuseAttributes{Mtime: oldTime, FileSize: 4096},
+		Content:    []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{OrphanOlderThanHours: 0, MaxCommitRetries: 3}
+
+	result, _, err := handler.removeOrphans(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("removeOrphans failed: %v", err)
+	}
+	if !strings.Contains(result, "removed 1 orphan") {
+		t.Errorf("expected only the unreferenced snap-1-data.parquet removed, got %q", result)
+	}
+	if fs.getEntry(partDir, "f.parquet") == nil {
+		t.Error("data file referenced through an escaped manifest path was deleted")
+	}
+}
