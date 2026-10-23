@@ -159,7 +159,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Create directories for full cluster setup
-	dirs := []string{f.mountPoint, f.dataDir}
+	dirs := []string{f.mountPoint, f.dataDir, filepath.Join(f.dataDir, "volume")}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
@@ -351,7 +351,7 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 		args = append(args, fmt.Sprintf("-chunkSizeLimitMB=%d", config.ChunkSizeMB))
 	}
 	if config.CacheSizeMB > 0 {
-		args = append(args, fmt.Sprintf("-cacheSizeMB=%d", config.CacheSizeMB))
+		args = append(args, fmt.Sprintf("-cacheCapacityMB=%d", config.CacheSizeMB))
 	}
 
 	args = append(args, config.MountOptions...)
