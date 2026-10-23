@@ -389,8 +389,9 @@ func (f *FuseTestFramework) unmountFuse() error {
 // foreign listener on the port cannot pass for readiness.
 func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		resp, err := http.Get("http://" + addr + "/healthz")
+		resp, err := client.Get("http://" + addr + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
