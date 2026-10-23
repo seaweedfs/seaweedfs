@@ -117,6 +117,10 @@ type Topology struct {
 	quarantinePushLocks   map[quarantinedVolume]*quarantinePushLock
 	quarantinePushLocksMu sync.Mutex
 
+	// duplicateFlagChecks tracks in-flight flagDuplicateVolumeId passes so
+	// tests can wait for the async checks a registration started.
+	duplicateFlagChecks sync.WaitGroup
+
 	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
 	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
 	// layout level only.
@@ -766,11 +770,19 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 		t.quarantineLock.Unlock()
 		if registered {
 			vl.EnsureCorrectWritables(&v)
-			go t.flagDuplicateVolumeId(v, dn)
+			t.flagDuplicateVolumeIdAsync(v, dn)
 			return
 		}
 		// Dropped with its collection; the next lookup creates a fresh one.
 	}
+}
+
+func (t *Topology) flagDuplicateVolumeIdAsync(v storage.VolumeInfo, dn *DataNode) {
+	t.duplicateFlagChecks.Add(1)
+	go func() {
+		defer t.duplicateFlagChecks.Done()
+		t.flagDuplicateVolumeId(v, dn)
+	}()
 }
 
 // flagDuplicateVolumeId reports and quarantines v.Id when another data node
@@ -1149,7 +1161,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 				// one, which the calls below must use too.
 				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 			}
-			go t.flagDuplicateVolumeId(v, dn)
+			t.flagDuplicateVolumeIdAsync(v, dn)
 			// Volumes new to the disk map were registered above, so reaching
 			// here means only the lookup index had lost it. Clients were told
 			// it went when the node dropped out, so the repair has to tell them
@@ -1263,7 +1275,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
 		if becameServable {
-			go t.flagDuplicateVolumeId(vi, dn)
+			t.flagDuplicateVolumeIdAsync(vi, dn)
 		}
 		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)

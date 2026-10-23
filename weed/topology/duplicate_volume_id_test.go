@@ -140,6 +140,9 @@ func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
 	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
 	topo.RegisterVolumeLayout(v1, dn1)
 	topo.RegisterVolumeLayout(v2, dn2)
+	// Registrations flag duplicates asynchronously; let them settle so no
+	// late mark can land after the release assertions below.
+	topo.duplicateFlagChecks.Wait()
 	topo.flagDuplicateVolumeId(v2, dn2)
 
 	// the conflict resolves while the surviving copy is unreachable: the
