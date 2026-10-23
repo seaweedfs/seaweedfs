@@ -570,7 +570,7 @@ func (fs *FilerServer) awaitPeerBootstrap() (peers []pb.ServerAddress) {
 			time.Sleep(time.Second)
 			continue
 		}
-		bootstrapFrom := time.Now()
+		bootstrapFrom := time.Now().Add(-filer.LogFlushInterval)
 		if err := fs.filer.MaybeBootstrapFromOnePeer(fs.option.Host, remotes, bootstrapFrom); err != nil {
 			glog.Warningf("%s bootstrap from late peers %+v: %v; retrying", fs.option.Host, remotes, err)
 			time.Sleep(2 * time.Second)
