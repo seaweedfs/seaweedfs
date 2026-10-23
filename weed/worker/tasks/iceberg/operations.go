@@ -91,11 +91,7 @@ func (h *Handler) expireSnapshots(
 	// Resolve kept file paths for consistent comparison
 	keptFilerPaths := make(map[string]struct{}, len(keptFiles))
 	for f := range keptFiles {
-		filerPath, err := icebergFilerPath(bucketName, dataPath, f)
-		if err != nil {
-			continue
-		}
-		addFilerPathSpellings(keptFilerPaths, filerPath)
+		addFilerPathSpellings(keptFilerPaths, bucketName, dataPath, f)
 	}
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
@@ -367,15 +363,11 @@ func collectOrphanCandidates(
 
 	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
-		filerPath, err := icebergFilerPath(bucketName, dataPath, ref)
-		if err != nil {
-			continue
-		}
 		// Writers percent-escape partition directory names (e.g. "a=1" stored
 		// as "a%3D1" in the manifest path), but the S3 layer decodes the key
 		// before it lands on the filer. Match every spelling the resolver can
 		// return, or a live file is counted as an orphan and deleted.
-		addFilerPathSpellings(referencedFilerPaths, filerPath)
+		addFilerPathSpellings(referencedFilerPaths, bucketName, dataPath, ref)
 	}
 
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, dataPath)

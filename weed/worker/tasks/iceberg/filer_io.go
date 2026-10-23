@@ -199,18 +199,22 @@ func lookupResolvedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return nil, "", err
 }
 
-// addFilerPathSpellings records a filer path and every successive
-// percent-decoding of it, covering each spelling lookupResolvedEntry can
-// resolve. An extra spelling only keeps a file; a missing one can drop a
-// referenced file.
-func addFilerPathSpellings(set map[string]struct{}, filerPath string) {
-	for spelling := filerPath; ; {
-		set[spelling] = struct{}{}
+// addFilerPathSpellings records every filer path lookupResolvedEntry can
+// return for a reference: each successive decoding of the reference, with the
+// rest of the path left verbatim. An extra spelling only keeps a file; a
+// missing one can drop a referenced file.
+func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, icebergPath string) {
+	for spelling := icebergPath; ; {
+		filerPath, err := icebergFilerPath(bucketName, dataPath, spelling)
+		if err != nil {
+			return
+		}
+		set[filerPath] = struct{}{}
 		decoded, err := url.PathUnescape(spelling)
 		if err != nil || decoded == spelling {
 			return
 		}
-		spelling = path.Clean(decoded)
+		spelling = decoded
 	}
 }
 
