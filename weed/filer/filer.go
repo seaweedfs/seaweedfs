@@ -270,6 +270,14 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 // cannot stall the peer scan.
 const peerLookupTimeout = 10 * time.Second
 
+// leaderSettleTimeout bounds how long an empty peer list from the leader is
+// re-polled: a freshly elected leader may not yet have the filers' reconnects,
+// so an immediate empty answer can just mean membership has not migrated yet.
+// It must stay below the health window a fresh filer gets to start serving
+// (weed mini allows 6s) — a filerless cluster pays the whole window per start.
+const leaderSettleTimeout = 3 * time.Second
+const leaderSettleInterval = time.Second
+
 // ListExistingPeerUpdates returns the peer list to bootstrap from. The
 // leader's list is authoritative: after a leader change an old master keeps
 // its registrations until its streams end, so the longest answer is not
@@ -299,13 +307,25 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 		}
 	}
 	if leader != "" {
-		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
-		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
-		cancel()
-		if listErr != nil {
-			queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
-		} else if len(nodes) > 0 {
-			return nodes, nil
+		settleDeadline := time.Now().Add(leaderSettleTimeout)
+		for {
+			lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+			nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+			cancel()
+			if listErr != nil {
+				queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
+				break
+			}
+			if len(nodes) > 0 {
+				return nodes, nil
+			}
+			if ctx.Err() != nil || !time.Now().Before(settleDeadline) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(leaderSettleInterval):
+			}
 		}
 	}
 
