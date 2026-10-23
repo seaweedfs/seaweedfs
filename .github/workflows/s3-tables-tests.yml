@@ -800,6 +800,7 @@ jobs:
 
       - name: Restore python:3 image cache
         id: python-image
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: /tmp/python3-image.tar

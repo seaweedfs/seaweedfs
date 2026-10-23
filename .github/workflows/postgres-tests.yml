@@ -57,6 +57,7 @@ jobs:
       uses: docker/setup-buildx-action@v4
 
     - name: Cache Docker layers
+      if: runner.environment == 'github-hosted'
       uses: actions/cache@v6
       with:
         path: /tmp/.buildx-cache
