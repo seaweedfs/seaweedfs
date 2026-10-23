@@ -67,7 +67,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
 			// A must-meta-only read ends here, so its success may reset the
-			// streak. A streamed GET's meta read precedes the payload read,
+			// streak. For a streamed GET the meta read precedes the payload read,
 			// which reports the outcome itself.
 			if readOption.MustMetaOnly {
 				v.checkReadWriteError(nil)
