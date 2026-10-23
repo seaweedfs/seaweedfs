@@ -573,15 +573,41 @@ func (v VolumeServerOptions) isSeparatedPublicPort() bool {
 	return *v.publicPort != *v.port
 }
 
+// multiHttpdownServer gracefully stops an http server serving on both the
+// bound ip and the localhost listeners as if it were a single server.
+type multiHttpdownServer []httpdown.Server
+
+func (m multiHttpdownServer) Wait() error {
+	for _, s := range m {
+		if err := s.Wait(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m multiHttpdownServer) Stop() error {
+	var firstErr error
+	for _, s := range m {
+		if err := s.Stop(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
 	grpcPort := *v.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*v.bindIp, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*v.bindIp, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, vs)
 	reflection.Register(grpcS)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go func() {
 		if err := grpcS.Serve(grpcL); err != nil {
 			glog.Fatalf("start gRPC service failed, %s", err)
@@ -594,13 +620,16 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
 	glog.V(0).Infoln("Start Seaweed volume server", version.Version(), "public at", publicListeningAddress)
-	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	publicListener, publicLocalListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.publicPort, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
 
 	pubHttp := httpdown.HTTP{StopTimeout: 5 * time.Minute, KillTimeout: 5 * time.Minute}
-	publicHttpDown := pubHttp.Serve(&http.Server{Handler: handler}, publicListener)
+	publicHttpDown := multiHttpdownServer{pubHttp.Serve(&http.Server{Handler: handler}, publicListener)}
+	if publicLocalListener != nil {
+		publicHttpDown = append(publicHttpDown, pubHttp.Serve(&http.Server{Handler: handler}, publicLocalListener))
+	}
 	go func() {
 		if err := publicHttpDown.Wait(); err != nil {
 			glog.Errorf("public http down wait failed, %v", err)
@@ -627,7 +656,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 
 	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", version.Version(), listeningAddress)
-	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	listener, localListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.port, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
@@ -659,11 +688,15 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 		httpS.TLSConfig.GetCertificate = getCert
 	}
 
-	clusterHttpServer := httpDown.Serve(httpS, listener)
+	clusterHttpServers := multiHttpdownServer{httpDown.Serve(httpS, listener)}
+	if localListener != nil {
+		localHttpS := &http.Server{Handler: handler, TLSConfig: httpS.TLSConfig}
+		clusterHttpServers = append(clusterHttpServers, httpDown.Serve(localHttpS, localListener))
+	}
 	go func() {
-		if e := clusterHttpServer.Wait(); e != nil {
+		if e := clusterHttpServers.Wait(); e != nil {
 			glog.Fatalf("Volume server fail to serve: %v", e)
 		}
 	}()
-	return clusterHttpServer, closeCert
+	return clusterHttpServers, closeCert
 }
