@@ -807,13 +807,14 @@ func (t *Topology) flagDuplicateVolumeIdAsync(v storage.VolumeInfo, dn *DataNode
 // quarantined: either could be the impostor, and arrival order must not
 // decide which copy stays writable.
 func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
+	// Every pass ends with a release: a conflict could resolve between the
+	// scan below and the marks, and a check finding no hits is also the retry
+	// a kept record waits for once its replica reports a readable layout.
+	defer t.releaseResolvedQuarantine(v.Id)
 	hits := t.findDuplicateVolumeLayouts(v, dn)
 	if len(hits) == 0 {
 		return
 	}
-	// A conflict could resolve between the scan above and the marks below;
-	// re-run the release so a stale quarantine is cleared instead of kept.
-	defer t.releaseResolvedQuarantine(v.Id)
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
 	var otherKeys []string
 	for _, h := range hits {

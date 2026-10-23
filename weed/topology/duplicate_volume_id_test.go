@@ -196,7 +196,8 @@ func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
 	}
 
 	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
-	topo.releaseResolvedQuarantine(v1.Id)
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.duplicateFlagChecks.Wait()
 	if !isWritable(t, topo, v1) {
 		t.Fatal("once readable again and sole, the copy must be released to writable")
 	}
