@@ -2,9 +2,11 @@ package policy_engine
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -441,8 +443,11 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
 	// passed to EvaluatePolicy, not extracted from the request.
 
-	for key, value := range requestObjectTags(r) {
-		values[RequestObjectTagPrefix+key] = []string{value}
+	if tags := requestObjectTags(r); len(tags) > 0 {
+		for key, value := range tags {
+			values[RequestObjectTagPrefix+key] = []string{value}
+		}
+		values[RequestObjectTagKeys] = slices.Sorted(maps.Keys(tags))
 	}
 
 	// S3 bucket-level conditions

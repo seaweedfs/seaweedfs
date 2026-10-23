@@ -72,6 +72,15 @@ func TestParseTagsHeader(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:  "empty segments add no tag",
+			input: "&key1=value1&&key2=value2&",
+			expected: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+			expectError: false,
+		},
+		{
 			name:  "unescaped equals in value",
 			input: "token=part1=part2&normal=test",
 			expected: map[string]string{
