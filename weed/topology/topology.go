@@ -105,6 +105,11 @@ type Topology struct {
 	// vid collided across layouts. Kept separate from the reported flag so
 	// later heartbeats from the same server cannot quietly undo it.
 	quarantinedVolumeIds sync.Map
+	// quarantineLock serializes each quarantine record update with the layout
+	// mark it justifies: a release pass and a heartbeat read-only flag update
+	// each observe record and mark as one state, never a mark whose record
+	// was already deleted or a cleared mark whose record is not yet visible.
+	quarantineLock sync.Mutex
 
 	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
 	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
@@ -134,19 +139,40 @@ func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 // disagree with the server's and force a full volume list on every heartbeat.
 func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storage.VolumeInfo {
 	q := quarantinedVolume{dn.Id(), vi.Id}
-	if v, ok := t.quarantinedVolumeIds.Load(q); ok {
-		state := v.(quarantinedVolumeState)
-		if !state.enforced {
-			state.reported = vi.ReadOnly
-		}
-		if t.QuarantineVolumeFn != nil && (!state.enforced || !vi.ReadOnly) {
-			// The mark never landed, or the server lost it (restart, manual
-			// unquarantine); push it while the conflict stands.
-			if t.QuarantineVolumeFn(dn, vi.Id, true) == nil {
-				state.enforced = true
-			}
-		}
+	t.quarantineLock.Lock()
+	v, ok := t.quarantinedVolumeIds.Load(q)
+	if !ok {
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	state := v.(quarantinedVolumeState)
+	if !state.enforced {
+		state.reported = vi.ReadOnly
+	}
+	if t.QuarantineVolumeFn == nil || (state.enforced && vi.ReadOnly) {
 		t.quarantinedVolumeIds.Store(q, state)
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	t.quarantineLock.Unlock()
+
+	// The mark never landed on the server, or the server lost it (restart,
+	// manual unquarantine); push it while the conflict stands. The call is
+	// remote, so it runs outside the lock.
+	if t.QuarantineVolumeFn(dn, vi.Id, true) == nil {
+		state.enforced = true
+	}
+	t.quarantineLock.Lock()
+	if _, still := t.quarantinedVolumeIds.Load(q); still {
+		t.quarantinedVolumeIds.Store(q, state)
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	t.quarantineLock.Unlock()
+	if state.enforced && !state.reported {
+		// The conflict resolved while the push was in flight; leave the
+		// server consistent with the released layout.
+		_ = t.QuarantineVolumeFn(dn, vi.Id, false)
 	}
 	return vi
 }
@@ -668,9 +694,11 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	for {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		if vl.RegisterVolume(&v, dn) {
+			t.quarantineLock.Lock()
 			if t.isQuarantined(dn, v.Id) {
 				vl.SetVolumeQuarantined(dn, v.Id)
 			}
+			t.quarantineLock.Unlock()
 			vl.EnsureCorrectWritables(&v)
 			go t.flagDuplicateVolumeId(v, dn)
 			return
@@ -705,16 +733,29 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 		if vi, err := n.GetVolumesById(v.Id); err == nil {
 			reported = vi.ReadOnly
 		}
+		t.quarantineLock.Lock()
 		t.quarantinedVolumeIds.LoadOrStore(q, quarantinedVolumeState{reported: reported})
 		if vl != nil {
 			vl.SetVolumeQuarantined(n, v.Id)
 		}
-		if t.QuarantineVolumeFn != nil && t.QuarantineVolumeFn(n, v.Id, true) == nil {
-			if val, ok := t.quarantinedVolumeIds.Load(q); ok {
-				state := val.(quarantinedVolumeState)
-				state.enforced = true
-				t.quarantinedVolumeIds.Store(q, state)
-			}
+		t.quarantineLock.Unlock()
+		if t.QuarantineVolumeFn == nil || t.QuarantineVolumeFn(n, v.Id, true) != nil {
+			return
+		}
+		t.quarantineLock.Lock()
+		val, ok := t.quarantinedVolumeIds.Load(q)
+		if ok {
+			state := val.(quarantinedVolumeState)
+			state.enforced = true
+			t.quarantinedVolumeIds.Store(q, state)
+			t.quarantineLock.Unlock()
+			return
+		}
+		t.quarantineLock.Unlock()
+		if !reported {
+			// The conflict resolved while the push was in flight; leave the
+			// server consistent with the released layout.
+			_ = t.QuarantineVolumeFn(n, v.Id, false)
 		}
 	}
 	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
@@ -727,7 +768,13 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 
 // releaseResolvedQuarantine lifts read-only marks once the conflicting copy
 // is gone, so a finished move does not leave the surviving copy quarantined.
+// The writable push is a remote call, so the locked pass only applies the
+// layout marks and records which replicas still need it; the pushes run
+// after the lock is dropped, and a failed push re-adds the record so a
+// later release pass retries it.
 func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
+	var writablePushes []*DataNode
+	t.quarantineLock.Lock()
 	t.quarantinedVolumeIds.Range(func(key, val any) bool {
 		q := key.(quarantinedVolume)
 		if q.vid != vid {
@@ -748,16 +795,20 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 		} else {
 			vl.SetVolumeWritable(dn, vid)
 			if state.enforced && t.QuarantineVolumeFn != nil {
-				if err := t.QuarantineVolumeFn(dn, vid, false); err != nil {
-					// The server still rejects writes; keep the mark so a
-					// later release pass retries the writable push.
-					return true
-				}
+				writablePushes = append(writablePushes, dn)
 			}
 		}
 		t.quarantinedVolumeIds.Delete(key)
 		return true
 	})
+	t.quarantineLock.Unlock()
+	for _, dn := range writablePushes {
+		if err := t.QuarantineVolumeFn(dn, vid, false); err != nil {
+			t.quarantineLock.Lock()
+			t.quarantinedVolumeIds.Store(quarantinedVolume{dn.Id(), vid}, quarantinedVolumeState{enforced: true})
+			t.quarantineLock.Unlock()
+		}
+	}
 }
 
 func (t *Topology) findQuarantinedVolume(dnId NodeId, vid needle.VolumeId) (*DataNode, *VolumeLayout, storage.VolumeInfo) {
@@ -796,7 +847,6 @@ func ttlEqual(a, b *needle.TTL) bool {
 	}
 	return a.ToUint32() == b.ToUint32()
 }
-
 
 // findDuplicateVolumeLayouts reports every layout that already holds v.Id on
 // data nodes other than dn. Volume ids are global, so the same id held by two
@@ -973,7 +1023,9 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		if v.ReplicaPlacement == nil {
 			continue
 		}
+		t.quarantineLock.Lock()
 		t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)).SetReplicaReadOnlyFlag(dn, v.Id, v.ReadOnly || t.isQuarantined(dn, v.Id))
+		t.quarantineLock.Unlock()
 	}
 	// Update effective sizes for all reported volumes (decay pending estimates).
 	// If decay brings a volume eagerly removed by RecordAssign back under the
@@ -1109,7 +1161,9 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			newVolumes = append(newVolumes, vi)
 		}
 		if isChanged {
+			t.quarantineLock.Lock()
 			vl.SetReplicaReadOnlyFlag(dn, vi.Id, vi.ReadOnly || t.isQuarantined(dn, vi.Id))
+			t.quarantineLock.Unlock()
 		}
 		vl.UpdateOversizedState(&vi, dn)
 		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {

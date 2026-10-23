@@ -2,6 +2,7 @@ package topology
 
 import (
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -104,8 +105,15 @@ func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
 
 	topo.UnRegisterVolumeLayout(v2, dn2)
 
-	if !isWritable(t, topo, v1) {
-		t.Fatal("the surviving copy must be released once the conflict is gone")
+	// Registration flags duplicates asynchronously, so a flag that was still
+	// in flight when the conflict resolved releases the surviving copy only
+	// once it settles. Wait for that release instead of reading once.
+	deadline := time.Now().Add(5 * time.Second)
+	for !isWritable(t, topo, v1) {
+		if time.Now().After(deadline) {
+			t.Fatal("the surviving copy must be released once the conflict is gone")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
