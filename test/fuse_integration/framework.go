@@ -159,7 +159,12 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Create directories for full cluster setup
-	dirs := []string{f.mountPoint, f.dataDir}
+	dirs := []string{
+		f.mountPoint,
+		f.dataDir,
+		filepath.Join(f.dataDir, "master"),
+		filepath.Join(f.dataDir, "volume"),
+	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
