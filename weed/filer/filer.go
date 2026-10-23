@@ -205,8 +205,13 @@ func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAdd
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 
 	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
-			return f.Store.InsertEntry(ctx, FromPbEntry(string(parentPath), entry))
+		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
+			entry := FromPbEntry(string(parentPath), pbEntry)
+			peerTsNs := entryTsNs
+			if peerTsNs == 0 {
+				peerTsNs = entry.Attr.Mtime.UnixNano()
+			}
+			return f.applyTraversedEntry(ctx, entry, peerTsNs)
 		})
 	})
 
