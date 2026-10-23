@@ -98,7 +98,11 @@ jobs:
         
         # Set permissions on FUSE device
         sudo chmod 666 /dev/fuse
-        
+
+        # Allow non-root mounts to pass -o allow_other (weed -allowOthers)
+        echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+        sudo chmod 644 /etc/fuse.conf
+
         # Ensure fuse module is loaded
         sudo modprobe fuse || true
         
@@ -680,6 +684,8 @@ jobs:
         sudo apt-get install -y fuse libfuse-dev fio
         sudo usermod -a -G fuse $USER
         sudo chmod 666 /dev/fuse
+        # The posix suites mount with -allowOthers; allow_other needs this
+        echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
     
     - name: Build SeaweedFS
       run: make
@@ -729,6 +735,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y fuse libfuse-dev
         pip3 install --user nfstest
+        # The posix suites mount with -allowOthers; allow_other needs this
+        echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
     
     - name: Build SeaweedFS
       run: make
