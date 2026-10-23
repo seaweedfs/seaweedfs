@@ -5,16 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
@@ -72,48 +68,6 @@ func RunShell(options ShellOptions) error {
 		err := fmt.Errorf("cannot connect to master %s within %s", *options.Masters, connectTimeout)
 		fmt.Fprintln(os.Stderr, err)
 		return err
-	}
-
-	if commandEnv.option.FilerAddress == "" {
-		var filers []pb.ServerAddress
-		discoverCtx, cancelDiscover := context.WithTimeout(ctx, connectTimeout)
-		defer cancelDiscover()
-		var listErr error
-		for len(filers) == 0 && discoverCtx.Err() == nil {
-			filers = filers[:0]
-			listErr = commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
-				resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
-					ClientType: cluster.FilerType,
-					FilerGroup: *options.FilerGroup,
-				})
-				if err != nil {
-					return err
-				}
-
-				for _, clusterNode := range resp.ClusterNodes {
-					filers = append(filers, pb.ServerAddress(clusterNode.Address))
-				}
-				return nil
-			})
-			if len(filers) == 0 {
-				select {
-				case <-discoverCtx.Done():
-				case <-time.After(time.Second):
-				}
-			}
-		}
-		if len(filers) > 0 {
-			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
-		} else if listErr != nil {
-			fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *options.Masters, listErr)
-		}
-		if options.Debug {
-			if len(filers) > 0 {
-				fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *options.Masters, filers)
-			} else {
-				fmt.Fprintf(os.Stderr, "master: %s\n", *options.Masters)
-			}
-		}
 	}
 
 	if interactive {

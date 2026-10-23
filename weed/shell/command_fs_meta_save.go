@@ -75,7 +75,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	if fileName == "" {
 		t := time.Now()
 		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta.gz",
-			commandEnv.option.FilerAddress.ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+			commandEnv.FilerAddress().ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	var dst io.Writer
@@ -143,7 +143,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	})
 
 	if err == nil {
-		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
+		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.FilerAddress().ToHttpAddress(), path, fileName)
 	}
 
 	return err

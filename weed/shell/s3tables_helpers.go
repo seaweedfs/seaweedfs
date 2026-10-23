@@ -20,7 +20,7 @@ func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFile
 	return pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(conn)
 		return fn(client)
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	}, commandEnv.FilerAddress().ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
 
 func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, resp interface{}, accountID string) error {

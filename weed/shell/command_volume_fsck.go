@@ -765,7 +765,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 
 	req.URL = &url.URL{
 		Scheme: "http",
-		Host:   c.env.option.FilerAddress.ToHttpAddress(),
+		Host:   c.env.FilerAddress().ToHttpAddress(),
 		Path:   string(path),
 	}
 
