@@ -412,6 +412,9 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		// catalog's vended sessions name it (never a key re-read from the request).
 		// Recorded before the retarget check so that refusal names it too.
 		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
+		if found {
+			s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey, cred.SecretKey)
+		}
 		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
 			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
 				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
@@ -496,6 +499,19 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		return nil, nil, s3err.ErrExpiredToken
 	}
 
+	// A session the table catalog vended for a static access key is bound to
+	// that key, as a role session is bound to its role's ID: deleting or
+	// deactivating the key, or deleting or disabling its identity, ends the
+	// session at its next request instead of at its expiry. Sessions minted
+	// before the binding existed carry only the audit field and stay unbound.
+	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.BoundAccessKeyId != "" {
+		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.BoundAccessKeyId, sessionInfo.BoundAccessKeyFingerprint); errCode != s3err.ErrNone {
+			glog.V(2).Infof("vended STS session %s: identity %q or the access key it was vended for is gone, disabled or inactive",
+				sessionInfo.SessionId, sessionInfo.ExternalUserId)
+			return nil, nil, errCode
+		}
+	}
+
 	// Validate required credential fields
 	if sessionInfo.Credentials.SecretAccessKey == "" {
 		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
@@ -552,6 +568,38 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
+}
+
+// vendedSessionKeyLive answers ErrNone while owner is a known, enabled
+// identity holding accessKey as an active, unexpired credential, and
+// ErrInvalidAccessKeyID (as for an unknown key) otherwise. A fingerprint set
+// at mint time must still match, so a key re-created under the same id does
+// not revive sessions the deleted original had carried. One map lookup under
+// the read lock.
+func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fingerprint string) s3err.ErrorCode {
+	if owner == "" || accessKey == "" {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	fingerprintKey := iam.stsSigningKey()
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	identity, ok := iam.nameToIdentity[owner]
+	if !ok || identity == nil || identity.Disabled {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	for _, credential := range identity.Credentials {
+		if credential == nil || credential.AccessKey != accessKey {
+			continue
+		}
+		if credential.Status == iamAccessKeyStatusInactive || credential.isCredentialExpired() {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		if fingerprint != "" && s3_constants.StoredCredentialFingerprint(fingerprintKey, accessKey, credential.SecretKey) != fingerprint {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		return s3err.ErrNone
+	}
+	return s3err.ErrInvalidAccessKeyID
 }
 
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
@@ -874,6 +922,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey, cred.SecretKey)
 	return identity, s3err.ErrNone
 }
 

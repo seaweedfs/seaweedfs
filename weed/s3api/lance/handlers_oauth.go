@@ -147,27 +147,27 @@ func mintToken(identityName, accessKey, secret string, ttlSeconds int) (string, 
 // authenticateBearer validates a Bearer token from the Authorization header.
 // Returns the identity name, identity object, and whether auth succeeded.
 func (s *Server) authenticateBearer(r *http.Request) (string, interface{}, bool) {
-	identityName, identity, _, ok := s.authenticateBearerKey(r)
+	identityName, identity, _, _, ok := s.authenticateBearerKey(r)
 	return identityName, identity, ok
 }
 
 // authenticateBearerKey is authenticateBearer that also returns the access key
 // the token was minted from (its verified access_key claim).
-func (s *Server) authenticateBearerKey(r *http.Request) (string, interface{}, string, bool) {
+func (s *Server) authenticateBearerKey(r *http.Request) (string, interface{}, string, string, bool) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 	tokenString := strings.TrimSpace(auth[7:])
 	if tokenString == "" {
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	if s.credentialValidator == nil {
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	// Parse the token without verification first to get the access key,
@@ -177,17 +177,17 @@ func (s *Server) authenticateBearerKey(r *http.Request) (string, interface{}, st
 	_, _, err := parser.ParseUnverified(tokenString, unverified)
 	if err != nil {
 		glog.V(2).Infof("Lance OAuth: failed to parse token: %v", err)
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	if unverified.AccessKey == "" {
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	identityName, identity, secretKey, err := s.credentialValidator.GetCredentialByAccessKey(unverified.AccessKey)
 	if err != nil {
 		glog.V(2).Infof("Lance OAuth: failed to get credential for access key: %v", err)
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	signingKey := deriveSigningKey(unverified.AccessKey, secretKey)
@@ -200,12 +200,12 @@ func (s *Server) authenticateBearerKey(r *http.Request) (string, interface{}, st
 	})
 	if err != nil || !verified.Valid {
 		glog.V(2).Infof("Lance OAuth: token verification failed: %v", err)
-		return "", nil, "", false
+		return "", nil, "", "", false
 	}
 
 	// The token's signing key is derived from this access key, so a verified
 	// token was minted from it.
-	return identityName, identity, unverified.AccessKey, true
+	return identityName, identity, unverified.AccessKey, secretKey, true
 }
 
 // authenticateApiKey validates an x-api-key header carrying an S3 credential

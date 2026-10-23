@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"cmp"
+	"container/heap"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -1292,7 +1293,15 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	glog.V(2).Infof("listMultipartUploads input %v", input)
 
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", "", false, math.MaxInt32)
+	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
+	var page *multipartUploadPage
+	err := listRetry(uploadsFolder, func() error {
+		page = newMultipartUploadPage(input)
+		return filer_pb.List(context.Background(), s3a, uploadsFolder, "", func(entry *filer_pb.Entry, isLastEntry bool) error {
+			page.add(entry)
+			return nil
+		}, "", false, math.MaxInt32)
+	})
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
@@ -1304,55 +1313,104 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		return nil, s3err.ErrInternalError
 	}
 
-	return selectMultipartUploads(input, entries), s3err.ErrNone
+	return page.result(), s3err.ErrNone
 }
 
 // selectMultipartUploads orders uploads by key, then by upload id, and resumes
 // after the (key-marker, upload-id-marker) position, so an aborted marker
 // upload does not hide the rest of its key.
 func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*filer_pb.Entry) *ListMultipartUploadsResult {
+	page := newMultipartUploadPage(input)
+	for _, entry := range entries {
+		page.add(entry)
+	}
+	return page.result()
+}
+
+// multipartUploadPage accumulates one page of a ListMultipartUploads result.
+// Upload order is the object key kept in extended attributes, not the upload
+// id the filer sorts by, so every entry has to be seen; keeping only the
+// maxUploads smallest candidates bounds the heap by the page, not the folder.
+type multipartUploadPage struct {
+	input *s3.ListMultipartUploadsInput
+	limit int
+	top   candidateHeap
+	more  bool
+}
+
+type multipartCandidate struct {
+	key   string
+	entry *filer_pb.Entry
+}
+
+func compareMultipartCandidate(a, b multipartCandidate) int {
+	return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
+}
+
+// candidateHeap is a max-heap on (key, upload id): the root sorts last of the
+// candidates held, so popping it keeps the page's smallest entries.
+type candidateHeap []multipartCandidate
+
+func (h candidateHeap) Len() int { return len(h) }
+func (h candidateHeap) Less(i, j int) bool {
+	return compareMultipartCandidate(h[i], h[j]) > 0
+}
+func (h candidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *candidateHeap) Push(x any)   { *h = append(*h, x.(multipartCandidate)) }
+func (h *candidateHeap) Pop() any {
+	old := *h
+	n := len(old)
+	*h = old[:n-1]
+	return old[n-1]
+}
+
+func newMultipartUploadPage(input *s3.ListMultipartUploadsInput) *multipartUploadPage {
+	limit := maxUploadsList
+	if *input.MaxUploads < int64(limit) {
+		limit = int(*input.MaxUploads)
+	}
+	return &multipartUploadPage{input: input, limit: limit}
+}
+
+func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
+	if p.limit <= 0 || !isMultipartUploadEntry(entry) {
+		return
+	}
+	input := p.input
+	key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
+	if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+		return
+	}
+	if *input.KeyMarker != "" && (key < *input.KeyMarker || key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker)) {
+		return
+	}
+	c := multipartCandidate{key: key, entry: entry}
+	if p.top.Len() >= p.limit {
+		p.more = true
+		if compareMultipartCandidate(c, p.top[0]) >= 0 {
+			return
+		}
+		heap.Pop(&p.top)
+	}
+	heap.Push(&p.top, c)
+}
+
+func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
+	input := p.input
 	output := &ListMultipartUploadsResult{
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
 		EncodingType:   input.EncodingType,
 		KeyMarker:      input.KeyMarker,
-		MaxUploads:     input.MaxUploads,
+		MaxUploads:     aws.Int64(int64(p.limit)),
 		Prefix:         input.Prefix,
 		UploadIdMarker: input.UploadIdMarker,
 		IsTruncated:    aws.Bool(false),
 	}
-	if *input.MaxUploads <= 0 {
-		return output
-	}
-	type candidate struct {
-		key   string
-		entry *filer_pb.Entry
-	}
-	var candidates []candidate
-	for _, entry := range entries {
-		if !isMultipartUploadEntry(entry) {
-			continue
-		}
-		key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
-		if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
-			continue
-		}
-		if *input.KeyMarker != "" && (key < *input.KeyMarker || key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker)) {
-			continue
-		}
-		candidates = append(candidates, candidate{key: key, entry: entry})
-	}
-	slices.SortFunc(candidates, func(a, b candidate) int {
-		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
-	})
-
+	candidates := make([]multipartCandidate, len(p.top))
+	copy(candidates, p.top)
+	slices.SortFunc(candidates, compareMultipartCandidate)
 	for _, c := range candidates {
-		if int64(len(output.Upload)) >= *input.MaxUploads {
-			last := output.Upload[len(output.Upload)-1]
-			output.IsTruncated = aws.Bool(true)
-			output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
-			return output
-		}
 		upload := &s3.MultipartUpload{
 			Key:      aws.String(c.key),
 			UploadId: aws.String(c.entry.Name),
@@ -1361,6 +1419,11 @@ func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*file
 			upload.Initiated = aws.Time(time.Unix(c.entry.Attributes.Crtime, int64(c.entry.Attributes.CrtimeNs)))
 		}
 		output.Upload = append(output.Upload, upload)
+	}
+	if p.more {
+		last := output.Upload[len(output.Upload)-1]
+		output.IsTruncated = aws.Bool(true)
+		output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
 	}
 	return output
 }

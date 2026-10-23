@@ -75,6 +75,17 @@ func (m *MockOIDCProvider) Authenticate(ctx context.Context, token string) (*pro
 	return identity, nil
 }
 
+// AuthenticateSingleUse stays on the mock path: the embedded provider's
+// method would bypass the mock's test data and demand a real JWKS.
+func (m *MockOIDCProvider) AuthenticateSingleUse(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return m.Authenticate(ctx, token)
+}
+
+// ValidateTokenSingleUse stays on the mock path; see AuthenticateSingleUse.
+func (m *MockOIDCProvider) ValidateTokenSingleUse(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return m.ValidateToken(ctx, token)
+}
+
 // ValidateToken validates tokens using test data
 func (m *MockOIDCProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
 	if !m.initialized {

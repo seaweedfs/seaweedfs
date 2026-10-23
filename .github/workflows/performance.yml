@@ -45,8 +45,8 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/performance
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -67,6 +67,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build weed
         run: go build -o weed_bin ./weed
@@ -175,13 +176,14 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and target
-        if: matrix.impl == 'rust'
+        if: matrix.impl == 'rust' && runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -327,13 +329,14 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and target
-        if: matrix.impl == 'rust'
+        if: matrix.impl == 'rust' && runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |

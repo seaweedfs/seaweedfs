@@ -46,6 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -114,6 +115,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |

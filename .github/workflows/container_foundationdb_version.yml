@@ -24,6 +24,10 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.event.inputs.image_tag || format('foundationdb_{0}_seaweedfs_{1}', github.event.inputs.fdb_version || '7.4.5', github.event.inputs.seaweedfs_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 permissions:
   contents: read
 
@@ -64,6 +68,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Run FoundationDB tagged tests
         env:

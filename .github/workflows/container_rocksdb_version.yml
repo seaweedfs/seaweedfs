@@ -16,6 +16,11 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.image_tag || format('rocksdb_{0}_seaweedfs_{1}', github.event.inputs.rocksdb_version, github.event.inputs.seaweedfs_ref) }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

@@ -105,6 +105,13 @@ type STSSessionClaims struct {
 	// a SeaweedFS service minted the session for it (AssumeRoleForPrincipal);
 	// empty for every other session type.
 	SourceAccessKeyId string `json:"src_ak,omitempty"`
+
+	// BoundAccessKeyId is the stored credential the session is bound to: the
+	// session ends when that key is gone. It is a claim of its own because
+	// tokens minted before the binding existed carry SourceAccessKeyId as an
+	// audit field, never a binding — enforcing those would break them.
+	BoundAccessKeyId          string `json:"bind_ak,omitempty"`
+	BoundAccessKeyFingerprint string `json:"bind_fp,omitempty"`
 }
 
 // NewSTSSessionClaims creates new STS session claims with all required information
@@ -163,6 +170,9 @@ func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionI
 		ParentUser:       c.ParentUser,
 		// The access key the session was minted for, if recorded
 		SourceAccessKeyId: c.SourceAccessKeyId,
+		// The stored credential the session is bound to, if any
+		BoundAccessKeyId:          c.BoundAccessKeyId,
+		BoundAccessKeyFingerprint: c.BoundAccessKeyFingerprint,
 		// Provide the Subject (sub) from registered claims
 		Subject:     c.Subject,
 		Credentials: credentials,
@@ -260,6 +270,14 @@ func (c *STSSessionClaims) WithSessionName(sessionName string) *STSSessionClaims
 // WithSourceAccessKeyId records the access key the session was minted for.
 func (c *STSSessionClaims) WithSourceAccessKeyId(accessKeyId string) *STSSessionClaims {
 	c.SourceAccessKeyId = accessKeyId
+	return c
+}
+
+// WithBoundAccessKey binds the session to a stored credential: the key id it
+// was vended for and a fingerprint of its secret at mint time.
+func (c *STSSessionClaims) WithBoundAccessKey(accessKeyId, fingerprint string) *STSSessionClaims {
+	c.BoundAccessKeyId = accessKeyId
+	c.BoundAccessKeyFingerprint = fingerprint
 	return c
 }
 
