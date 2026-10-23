@@ -546,8 +546,8 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 // waitForWritable probes the mount with a real write+read+remove until one
 // succeeds, covering the window where a fresh cluster cannot yet assign a
 // file id (volume not registered, grow pending, leader settle). Each attempt
-// runs off the loop because a wedged mount can hold a file op open past the
-// deadline; the loop only waits on it up to the remaining time.
+// runs off the loop because a wedged mount can hold a file op open, and one
+// attempt stays in flight until it finishes or the overall deadline passes.
 func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
 	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
 	payload := []byte("probe")
@@ -574,19 +574,32 @@ func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
 			}
 			result <- os.Remove(probe)
 		}()
-		attemptDeadline := time.Now().Add(5 * time.Second)
-		if attemptDeadline.After(deadline) {
-			attemptDeadline = deadline
-		}
-		select {
-		case err := <-result:
-			if err == nil {
-				return nil
+		tick := time.NewTicker(500 * time.Millisecond)
+		attemptOpen := true
+		for attemptOpen {
+			select {
+			case err := <-result:
+				attemptOpen = false
+				if err == nil {
+					tick.Stop()
+					return nil
+				}
+				lastErr = err
+			case <-tick.C:
+				if exitErr := f.mountProcess.exited(); exitErr != nil {
+					tick.Stop()
+					return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
+				}
+				if !time.Now().Before(deadline) {
+					tick.Stop()
+					if lastErr == nil {
+						return fmt.Errorf("write probe did not complete within timeout")
+					}
+					return fmt.Errorf("write probe failed within timeout: %v", lastErr)
+				}
 			}
-			lastErr = err
-		case <-time.After(time.Until(attemptDeadline)):
-			lastErr = fmt.Errorf("probe attempt did not finish within %v of the deadline", time.Until(attemptDeadline).Round(time.Millisecond))
 		}
+		tick.Stop()
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("write probe failed within timeout: %v", lastErr)
