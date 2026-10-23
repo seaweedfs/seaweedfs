@@ -42,10 +42,11 @@ type IamS3ApiConfigure struct {
 }
 
 type IamServerOption struct {
-	Masters        map[string]pb.ServerAddress
-	Filers         []pb.ServerAddress
-	Port           int
-	GrpcDialOption grpc.DialOption
+	Masters                     map[string]pb.ServerAddress
+	Filers                      []pb.ServerAddress
+	Port                        int
+	GrpcDialOption              grpc.DialOption
+	IamSelfServiceRequiresGrant bool
 }
 
 type IamApiServer struct {
@@ -87,8 +88,9 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	s3ApiConfigure = configure
 
 	s3Option := s3api.S3ApiServerOption{
-		Filers:         option.Filers,
-		GrpcDialOption: option.GrpcDialOption,
+		Filers:                      option.Filers,
+		GrpcDialOption:              option.GrpcDialOption,
+		IamSelfServiceRequiresGrant: option.IamSelfServiceRequiresGrant,
 	}
 
 	// Initialize FilerClient for IAM - explicit filers only (no discovery as FilerGroup unspecified)

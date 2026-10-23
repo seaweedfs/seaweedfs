@@ -23,14 +23,20 @@ type SqlGenerator interface {
 	GetSqlDeleteFolderChildren(tableName string) string
 	GetSqlListExclusive(tableName string) string
 	GetSqlListInclusive(tableName string) string
+	// GetSqlScanPage returns the query and arguments selecting dirhash, name,
+	// directory and meta of up to limit rows after the (dirhash, name) cursor.
+	GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{})
 	GetSqlCreateTable(tableName string) string
 	GetSqlDropTable(tableName string) string
 }
 
 type AbstractSqlStore struct {
 	SqlGenerator
-	DB                     *sql.DB
-	KvDB                   *sql.DB
+	DB   *sql.DB
+	KvDB *sql.DB
+	// ScanDB, when set, is the pool snapshot scans run on (SQLite's main pool
+	// is a single connection that a long scan must not hold).
+	ScanDB                 *sql.DB
 	SupportBucketTable     bool
 	SkipDDL                bool
 	dbs                    map[string]bool
@@ -456,6 +462,9 @@ func (store *AbstractSqlStore) Shutdown() {
 	store.DB.Close()
 	if store.KvDB != nil {
 		store.KvDB.Close()
+	}
+	if store.ScanDB != nil {
+		store.ScanDB.Close()
 	}
 }
 

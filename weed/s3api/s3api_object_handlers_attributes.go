@@ -129,6 +129,10 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 
 	// Check for specific version ID
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	var (
 		entry *filer_pb.Entry
@@ -219,9 +223,22 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		}
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES, entry.Extended, "GetObjectAttributesHandler"); errCode != s3err.ErrNone {
+	action := s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectAttributesHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	// AWS also asks for the version read grant on a versioned attributes
+	// request: s3:GetObjectVersionAttributes alone is not sufficient.
+	if versionId != "" {
+		if errCode := s3a.checkVersionReadGrant(r, bucket, object, versionId, entry.Extended); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	// Evaluate conditional headers against the resolved entry (after version resolution)

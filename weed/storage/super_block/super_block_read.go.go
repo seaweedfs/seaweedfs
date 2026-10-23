@@ -2,6 +2,7 @@ package super_block
 
 import (
 	"fmt"
+	"io"
 
 	"google.golang.org/protobuf/proto"
 
@@ -15,11 +16,12 @@ import (
 func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBlock, err error) {
 
 	header := make([]byte, SuperBlockSize)
-	if n, e := datBackend.ReadAt(header, 0); e != nil {
-		if n != SuperBlockSize {
-			err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.Name(), e)
-			return
+	if n, e := datBackend.ReadAt(header, 0); n != SuperBlockSize {
+		if e == nil {
+			e = io.ErrUnexpectedEOF
 		}
+		err = fmt.Errorf("cannot read volume %s super block: %v", datBackend.Name(), e)
+		return
 	}
 
 	superBlock.Version = needle.Version(header[0])
@@ -34,10 +36,17 @@ func ReadSuperBlock(datBackend backend.BackendStorageFile) (superBlock SuperBloc
 	if superBlock.ExtraSize > 0 {
 		// read more
 		extraData := make([]byte, int(superBlock.ExtraSize))
+		if n, e := datBackend.ReadAt(extraData, SuperBlockSize); n != len(extraData) {
+			if e == nil {
+				e = io.ErrUnexpectedEOF
+			}
+			err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.Name(), e)
+			return
+		}
 		superBlock.Extra = &master_pb.SuperBlockExtra{}
 		err = proto.Unmarshal(extraData, superBlock.Extra)
 		if err != nil {
-			err = fmt.Errorf("cannot read volume %s super block extra: %v", datBackend.Name(), err)
+			err = fmt.Errorf("cannot unmarshal volume %s super block extra: %v", datBackend.Name(), err)
 			return
 		}
 	}

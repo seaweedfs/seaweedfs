@@ -84,6 +84,8 @@ type S3Options struct {
 	readerCacheSizeMB         *int64
 
 	allowUntrustedRemoteEndpoints *bool
+	allowBackslashInKey           *bool
+	iamSelfServiceRequiresGrant   *bool
 	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
@@ -140,6 +142,8 @@ func init() {
 	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	s3StandaloneOptions.readerCacheSizeMB = cmdS3.Flag.Int64("readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	s3StandaloneOptions.allowBackslashInKey = cmdS3.Flag.Bool("allowBackslashInKey", false, allowBackslashInKeyUsage)
+	s3StandaloneOptions.iamSelfServiceRequiresGrant = cmdS3.Flag.Bool("iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 }
 
 var cmdS3 = &Command{
@@ -337,7 +341,8 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	router := mux.NewRouter().SkipClean(true)
 	var localFilerSocket string
-	if s3opt.localFilerSocket != nil {
+	// The filer only listens on its local socket outside Windows.
+	if s3opt.localFilerSocket != nil && runtime.GOOS != "windows" {
 		localFilerSocket = *s3opt.localFilerSocket
 	}
 	var s3ApiServer *s3api.S3ApiServer
@@ -399,6 +404,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		MaxMB:                     filerMaxMB,
 
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
+		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
+		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

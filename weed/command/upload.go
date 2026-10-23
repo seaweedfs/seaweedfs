@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -31,6 +32,7 @@ type UploadOptions struct {
 	diskType     *string
 	maxMB        *int
 	usePublicUrl *bool
+	concurrency  *int
 }
 
 func init() {
@@ -46,6 +48,7 @@ func init() {
 	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	upload.maxMB = cmdUpload.Flag.Int("maxMB", 4, "split files larger than the limit")
 	upload.usePublicUrl = cmdUpload.Flag.Bool("usePublicUrl", false, "upload to public url from volume server")
+	upload.concurrency = cmdUpload.Flag.Int("c", 8, "concurrent file upload goroutines when uploading a folder")
 }
 
 var cmdUpload = &Command{
@@ -85,6 +88,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if *upload.dir == "" {
 			return false
 		}
+		var filePaths []string
 		err = filepath.Walk(util.ResolvePath(*upload.dir), func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
@@ -93,23 +97,7 @@ func runUpload(cmd *Command, args []string) bool {
 							return nil
 						}
 					}
-					parts, e := operation.NewFileParts([]string{path})
-					if e != nil {
-						return e
-					}
-					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
-						Replication: *upload.replication,
-						Collection:  *upload.collection,
-						DataCenter:  *upload.dataCenter,
-						Ttl:         *upload.ttl,
-						DiskType:    *upload.diskType,
-						MaxMB:       *upload.maxMB,
-					}, *upload.usePublicUrl)
-					bytes, _ := json.Marshal(results)
-					fmt.Println(string(bytes))
-					if e != nil {
-						return e
-					}
+					filePaths = append(filePaths, path)
 				}
 			} else {
 				fmt.Println(err)
@@ -118,6 +106,72 @@ func runUpload(cmd *Command, args []string) bool {
 		})
 		if err != nil {
 			fmt.Println(err.Error())
+		}
+
+		concurrency := *upload.concurrency
+		if concurrency < 1 {
+			concurrency = 1
+		}
+		masterFn := func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }
+		pref := operation.StoragePreference{
+			Replication: *upload.replication,
+			Collection:  *upload.collection,
+			DataCenter:  *upload.dataCenter,
+			Ttl:         *upload.ttl,
+			DiskType:    *upload.diskType,
+			MaxMB:       *upload.maxMB,
+		}
+		results := make([][]operation.SubmitResult, len(filePaths))
+		ready := make([]chan struct{}, len(filePaths))
+		for index := range ready {
+			ready[index] = make(chan struct{})
+		}
+		printDone := make(chan bool, 1)
+		go func() {
+			failed := false
+			for index := range ready {
+				<-ready[index]
+				bytes, _ := json.Marshal(results[index])
+				fmt.Println(string(bytes))
+				for _, r := range results[index] {
+					if r.Error != "" {
+						failed = true
+					}
+				}
+			}
+			printDone <- failed
+		}()
+
+		sem := make(chan struct{}, concurrency)
+		var wg sync.WaitGroup
+		for index, filePath := range filePaths {
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(index int, filePath string) {
+				defer close(ready[index])
+				defer wg.Done()
+				defer func() { <-sem }()
+				parts, e := operation.NewFileParts([]string{filePath})
+				if e != nil {
+					results[index] = []operation.SubmitResult{{FileName: filepath.Base(filePath), Error: e.Error()}}
+					return
+				}
+				fileResults, e := operation.SubmitFiles(masterFn, grpcDialOption, parts, pref, *upload.usePublicUrl)
+				if e != nil {
+					for i := range fileResults {
+						if fileResults[i].Error == "" {
+							fileResults[i].Error = e.Error()
+						}
+					}
+				}
+				results[index] = fileResults
+			}(index, filePath)
+		}
+		wg.Wait()
+		if <-printDone {
+			return false
+		}
+		if err != nil {
 			return false
 		}
 	} else {
@@ -134,12 +188,12 @@ func runUpload(cmd *Command, args []string) bool {
 			DiskType:    *upload.diskType,
 			MaxMB:       *upload.maxMB,
 		}, *upload.usePublicUrl)
+		bytes, _ := json.Marshal(results)
+		fmt.Println(string(bytes))
 		if err != nil {
 			fmt.Println(err.Error())
 			return false
 		}
-		bytes, _ := json.Marshal(results)
-		fmt.Println(string(bytes))
 	}
 	return true
 }

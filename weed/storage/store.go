@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -1292,6 +1293,11 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 
 func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 
+	rp, err := super_block.NewReplicaPlacementFromString(replication)
+	if err != nil {
+		return fmt.Errorf("volume %d replication %q: %v", i, replication, err)
+	}
+
 	for _, location := range s.Locations {
 		fileInfo, found := location.LocateVolume(i)
 		if !found {
@@ -1309,10 +1315,40 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		if err != nil {
 			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
-		return nil
+		if v := s.GetVolume(i); v != nil {
+			return v.UpdateReplicaPlacement(rp)
+		}
+		return updateDatReplicaPlacement(filepath.Join(location.Directory, baseFileName+".dat"), i, rp)
 	}
 
 	return fmt.Errorf("volume %d not found on disk", i)
+}
+
+// updateDatReplicaPlacement rewrites the replica placement in a .dat header
+// for a volume that is not mounted; a mounted volume goes through
+// UpdateReplicaPlacement so the change lands under its data-file locks.
+func updateDatReplicaPlacement(datFileName string, vid needle.VolumeId, rp *super_block.ReplicaPlacement) error {
+	f, err := os.OpenFile(datFileName, os.O_RDWR, 0644)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // remote-only volume: the .vif carries the placement
+		}
+		return fmt.Errorf("volume %d failed to open %s: %v", vid, datFileName, err)
+	}
+	defer f.Close()
+	datBackend := backend.NewDiskFile(f)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
+	if err != nil {
+		return fmt.Errorf("volume %d failed to parse superblock: %v", vid, err)
+	}
+	superBlock.ReplicaPlacement = rp
+	if _, err := datBackend.WriteAt(superBlock.Bytes(), 0); err != nil {
+		return fmt.Errorf("volume %d failed to write superblock: %v", vid, err)
+	}
+	if err := datBackend.Sync(); err != nil {
+		return fmt.Errorf("volume %d failed to sync superblock: %v", vid, err)
+	}
+	return nil
 }
 
 func (s *Store) SetVolumeSizeLimit(x uint64) {
@@ -1341,12 +1377,8 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
-			var unusedSpace uint64 = 0
-			unclaimedSpaces := int64(diskStatus.Free)
-			if !s.GetPreallocate() {
-				unusedSpace = diskLocation.UnUsedSpace(volumeSizeLimit)
-				unclaimedSpaces -= int64(unusedSpace)
-			}
+			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
+			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)

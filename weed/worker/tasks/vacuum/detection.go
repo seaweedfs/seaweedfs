@@ -109,10 +109,14 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 }
 
 // pickPrimaryReplica returns the eligible replica with the highest garbage
-// ratio. Returns nil if no replica satisfies both gates.
+// ratio. Returns nil if no replica satisfies both gates. Replicas tiered to
+// remote storage are skipped: the volume server cannot compact them.
 func pickPrimaryReplica(replicas []*types.VolumeHealthMetrics, garbageThreshold float64, minAge time.Duration) *types.VolumeHealthMetrics {
 	var best *types.VolumeHealthMetrics
 	for _, m := range replicas {
+		if m.HasRemoteCopy {
+			continue
+		}
 		if m.GarbageRatio < garbageThreshold {
 			continue
 		}
@@ -144,7 +148,7 @@ func recordSkipReasons(replicas []*types.VolumeHealthMetrics, garbageThreshold f
 }
 
 // createVacuumTaskParams creates typed parameters for a vacuum task whose
-// Sources list contains every replica of the volume. Worker-side
+// Sources list contains every non-tiered replica of the volume. Worker-side
 // performVacuum iterates over Sources and vacuums each replica.
 func createVacuumTaskParams(task *types.TaskDetectionResult, replicas []*types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
 	garbageThreshold := 0.3
@@ -164,6 +168,9 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, replicas []*types.V
 	sources := make([]*worker_pb.TaskSource, 0, len(replicas))
 	seen := make(map[string]struct{}, len(replicas))
 	for _, m := range replicas {
+		if m.HasRemoteCopy {
+			continue
+		}
 		address, err := util.ResolveServerAddress(m.Server, clusterInfo.ActiveTopology)
 		if err != nil {
 			glog.Warningf("Failed to resolve address for server %s for vacuum task on volume %d, dropping replica: %v", m.Server, task.VolumeID, err)

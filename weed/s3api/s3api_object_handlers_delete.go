@@ -479,29 +479,44 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(validationCode, object.Key, object.VersionId))
 				continue
 			}
-			if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object.Key); err != nil {
+			key := s3_constants.NormalizeObjectKey(object.Key)
+			if key == "" {
+				// A key of only slashes can never name a stored entry; like a
+				// missing key the delete is an idempotent no-op, and a
+				// conditional delete has no target to match.
+				if object.ETag != "" {
+					deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrNoSuchKey, object.Key, object.VersionId))
+					continue
+				}
+				deletedCount++
+				if !deleteObjects.Quiet {
+					deletedObjects = append(deletedObjects, ObjectIdentifier{Key: object.Key, VersionId: object.VersionId})
+				}
+				continue
+			}
+			if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
 				continue
 			}
-			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
+			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, key, object.VersionId); authErr != s3err.ErrNone {
 				// Defer to the recheck, mirroring the copy-source fallback: a
 				// tag-conditioned Allow may still grant what phase one denied.
-				if authErr != s3err.ErrAccessDenied || s3a.recheckPolicyForKeyWithLookup(r, http.MethodDelete, bucket, object.Key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler") != s3err.ErrNone {
+				if authErr != s3err.ErrAccessDenied || s3a.recheckPolicyForKeyWithLookup(r, http.MethodDelete, bucket, key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler") != s3err.ErrNone {
 					deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
 					continue
 				}
 			}
-			if errCode := s3a.recheckTagConditionedPolicyWithLookup(objectKeyPolicyRequest(r, http.MethodDelete, bucket, object.Key, object.VersionId), bucket, object.Key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler"); errCode != s3err.ErrNone {
+			if errCode := s3a.recheckTagConditionedPolicyWithLookup(objectKeyPolicyRequest(r, http.MethodDelete, bucket, key, object.VersionId), bucket, key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler"); errCode != s3err.ErrNone {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(errCode, object.Key, object.VersionId))
 				continue
 			}
 
 			var deleteResult deleteMutationResult
-			deleteCode := s3a.withObjectWriteLock(bucket, object.Key, func() s3err.ErrorCode {
-				return s3a.checkDeleteIfMatch(bucket, object.Key, object.VersionId, versioningState, object.ETag, s3err.ErrNoSuchKey)
+			deleteCode := s3a.withObjectWriteLock(bucket, key, func() s3err.ErrorCode {
+				return s3a.checkDeleteIfMatch(bucket, key, object.VersionId, versioningState, object.ETag, s3err.ErrNoSuchKey)
 			}, func() s3err.ErrorCode {
 				if versioningConfigured {
-					result, errCode := s3a.deleteVersionedObject(r, bucket, object.Key, object.VersionId, versioningState)
+					result, errCode := s3a.deleteVersionedObject(r, bucket, key, object.VersionId, versioningState)
 					if errCode != s3err.ErrNone {
 						return errCode
 					}
@@ -509,18 +524,18 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					return s3err.ErrNone
 				}
 
-				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, "", governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, object.Key, err)
+				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, key)
+				if err := s3a.enforceObjectLockProtections(r, bucket, key, "", governanceBypassAllowed); err != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, key, err)
 					return s3err.ErrAccessDenied
 				}
 
-				if strings.HasSuffix(object.Key, "/") {
-					return s3a.deleteDirectoryMarker(r, bucket, object.Key)
+				if strings.HasSuffix(key, "/") {
+					return s3a.deleteDirectoryMarker(r, bucket, key)
 				}
 
-				if err := s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object.Key, false); err != nil {
-					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, object.Key, err)
+				if err := s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, key, false); err != nil {
+					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, key, err)
 					return s3err.ErrInternalError
 				}
 

@@ -119,6 +119,11 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 	recordReachable(request.URL.Host)
 	defer CloseResponse(response)
 
+	if response.StatusCode >= 400 {
+		retryable := response.StatusCode >= 500
+		return nil, retryable, StatusError(url, response)
+	}
+
 	var reader io.ReadCloser
 	switch response.Header.Get("Content-Encoding") {
 	case "gzip":
@@ -132,10 +137,6 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 	}
 
 	b, err := io.ReadAll(reader)
-	if response.StatusCode >= 400 {
-		retryable := response.StatusCode >= 500
-		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
-	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, false, ctxErr
@@ -334,7 +335,7 @@ func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCom
 	defer CloseResponse(r)
 
 	if r.StatusCode >= 400 {
-		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return 0, StatusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -414,7 +415,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 			return false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return retryable, StatusError(fileUrl, r)
 	}
 
 	var reader io.ReadCloser
@@ -504,8 +505,9 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
+		err = StatusError(fileUrl, r)
 		CloseResponse(r)
-		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return nil, nil, err
 	}
 
 	var reader io.ReadCloser
@@ -521,6 +523,29 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 	}
 
 	return r, reader, nil
+}
+
+// StatusError adds the message a server writes into the body of a failed
+// request, such as a volume server CRC mismatch, to the status line.
+func StatusError(fileUrl string, r *http.Response) error {
+	var reader io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		if gz, err := gzip.NewReader(r.Body); err == nil {
+			reader = gz
+		}
+	}
+	body, _ := io.ReadAll(io.LimitReader(reader, 1024))
+	msg := strings.TrimSpace(string(body))
+	var m struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &m) == nil && m.Error != "" {
+		msg = m.Error
+	}
+	if msg == "" {
+		return fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
+	return fmt.Errorf("%s: %s: %s", fileUrl, r.Status, msg)
 }
 
 func CloseResponse(resp *http.Response) {
@@ -782,7 +807,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 			return 0, false, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrTooManyRequests)
 		}
 		retryable = r.StatusCode >= 499
-		return 0, retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return 0, retryable, StatusError(fileUrl, r)
 	}
 
 	// Read directly into the buffer without intermediate copying

@@ -177,9 +177,10 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 		// different error that clients cannot act on.
 		// The auth scheme is case-insensitive (RFC 7235).
 		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
-			if identityName, identity, ok := s.authenticateBearer(r); ok {
+			if identityName, identity, accessKey, ok := s.authenticateBearerKey(r); ok {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}
@@ -194,8 +195,10 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
 			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
+				accessKey, _, _ := strings.Cut(apiKey, ":")
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
 				if identity != nil {
 					ctx = s3_constants.SetIdentityInContext(ctx, identity)
 				}
@@ -212,6 +215,9 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// The verifier records the key of the credential that matched into
+		// this holder; the vended credentials name it.
+		r = s3_constants.EnsureIdentityHolder(r)
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
 			apiErr := s3err.GetAPIError(errCode)

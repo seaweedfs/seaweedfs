@@ -30,6 +30,31 @@ func (store *SqliteStore) GetName() string {
 	return "sqlite"
 }
 
+// sqliteSqlGen is the MySQL generator with SQLite's own page cursor: SQLite
+// seeks a row-value comparison on the primary key but scans the OR form.
+type sqliteSqlGen struct {
+	*mysql.SqlGenMysql
+}
+
+func (gen sqliteSqlGen) GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{}) {
+	return fmt.Sprintf("SELECT `dirhash`, `name`, `directory`, `meta` FROM `%s` WHERE (`dirhash`, `name`) > (?, ?) ORDER BY `dirhash` ASC, `name` ASC LIMIT ?", tableName),
+		[]interface{}{dirhash, name, limit}
+}
+
+// ScanEntries offers the snapshot scan only in WAL mode: with a rollback
+// journal a long read transaction holds a shared lock and writers fail after
+// the busy timeout.
+func (store *SqliteStore) ScanEntries(ctx context.Context, dirPath util.FullPath, fn func(ctx context.Context, entry *filer.Entry) error) error {
+	var mode string
+	if err := store.DB.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		return fmt.Errorf("%w: journal_mode: %v", filer.ErrUnsupportedEntryScan, err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("%w: sqlite journal_mode is %q, the scan needs wal", filer.ErrUnsupportedEntryScan, mode)
+	}
+	return store.AbstractSqlStore.ScanEntries(ctx, dirPath, fn)
+}
+
 func (store *SqliteStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	dbFile := configuration.GetString(prefix + "dbFile")
 	createTable := `CREATE TABLE IF NOT EXISTS "%s" (
@@ -69,11 +94,11 @@ func sqliteDSN(dbFile string) string {
 func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (err error) {
 
 	store.SupportBucketTable = true
-	store.SqlGenerator = &mysql.SqlGenMysql{
+	store.SqlGenerator = sqliteSqlGen{&mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   "drop table if exists `%s`",
 		UpsertQueryTemplate:    upsertQuery,
-	}
+	}}
 
 	dsn := sqliteDSN(dbFile)
 
@@ -94,6 +119,11 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 	}, 1, 1, 0); err != nil {
 		return err
 	}
+	// The main pool is one connection, which a long scan must not hold.
+	if store.ScanDB, err = sql.Open("sqlite", dsn); err != nil {
+		return fmt.Errorf("open scan connection to %s: %v", dbFile, err)
+	}
+	store.ScanDB.SetMaxOpenConns(1)
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)

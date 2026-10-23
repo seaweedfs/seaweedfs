@@ -242,6 +242,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeManagerError(w, err)
 			return
 		}
+		if reqErr := s.authorizeCommit(r.Context(), bucketARN, namespace, tableName, identityName); reqErr != nil {
+			writeError(w, reqErr.status, reqErr.errType, reqErr.message)
+			return
+		}
 
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {

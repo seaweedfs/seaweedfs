@@ -386,3 +386,36 @@ func TestCompactDataFilesKeepsRunsWhenRepackFails(t *testing.T) {
 		t.Fatalf("expected the ordered run to survive the failed repack, got %q", result)
 	}
 }
+
+// Geometry bounds have no order, so they never order a bin's files: a table
+// whose first column is a geometry is ordered by the next column with bounds.
+func TestResolveCompactionOrderSkipsGeometry(t *testing.T) {
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Type: iceberg.GeometryType{}, Name: "geom"},
+		iceberg.NestedField{ID: 2, Type: iceberg.PrimitiveTypes.Int64, Name: "id", Required: true})
+	meta, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, "s3://tb/ns/geo", iceberg.Properties{"format-version": "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	geomField, _ := meta.CurrentSchema().FindFieldByName("geom")
+	idField, _ := meta.CurrentSchema().FindFieldByName("id")
+	snap := int64(1)
+	var entries []iceberg.ManifestEntry
+	for i, name := range []string{"a.parquet", "b.parquet", "c.parquet"} {
+		b, err := iceberg.NewDataFileBuilder(*iceberg.UnpartitionedSpec, iceberg.EntryContentData, "s3://tb/ns/geo/data/"+name, iceberg.ParquetFile, map[int]any{}, nil, nil, 1, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.LowerBoundValues(map[int][]byte{geomField.ID: xyBound(float64(i), 0), idField.ID: geoLE64(int64(10 - i))})
+		b.UpperBoundValues(map[int][]byte{geomField.ID: xyBound(float64(i)+1, 1), idField.ID: geoLE64(int64(10 - i))})
+		entries = append(entries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snap, nil, nil, b.Build()))
+	}
+	order := resolveCompactionOrder(meta, entries)
+	if order == nil || order.fieldID != idField.ID {
+		t.Fatalf("order %+v, want the id column (field %d), not the geometry (field %d)", order, idField.ID, geomField.ID)
+	}
+	order.sortEntries(entries)
+	if first := entries[0].DataFile().FilePath(); !strings.HasSuffix(first, "c.parquet") {
+		t.Errorf("first file %s, want c.parquet (the lowest id)", first)
+	}
+}

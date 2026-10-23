@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -12,10 +13,11 @@ import (
 )
 
 var (
-	shellOptions      shell.ShellOptions
-	shellInitialFiler *string
-	shellCluster      *string
-	shellDebug        *bool
+	shellOptions        shell.ShellOptions
+	shellInitialFiler   *string
+	shellCluster        *string
+	shellDebug          *bool
+	shellConnectTimeout *time.Duration
 )
 
 func init() {
@@ -25,6 +27,7 @@ func init() {
 	shellInitialFiler = cmdShell.Flag.String("filer", "", "filer host and port for initial connection, e.g. localhost:8888")
 	shellCluster = cmdShell.Flag.String("cluster", "", "cluster defined in shell.toml")
 	shellDebug = cmdShell.Flag.Bool("debug", false, "print informational logs to stderr")
+	shellConnectTimeout = cmdShell.Flag.Duration("connectTimeout", 30*time.Second, "timeout for the initial master connection and filer discovery")
 }
 
 var cmdShell = &Command{
@@ -64,6 +67,7 @@ func runShell(command *Command, args []string) bool {
 	}
 	shellOptions.FilerAddress = pb.ServerAddress(filerAddress)
 	shellOptions.Debug = *shellDebug
+	shellOptions.ConnectTimeout = *shellConnectTimeout
 	if shellOptions.Debug {
 		fmt.Fprintf(os.Stderr, "master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
 	}

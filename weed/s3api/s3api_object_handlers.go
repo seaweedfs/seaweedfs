@@ -2251,8 +2251,9 @@ func (s3a *S3ApiServer) readChunkRange(ctx context.Context, fileId string, offse
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		err = util_http.StatusError(chunkUrl, resp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code %d for chunk %s", resp.StatusCode, fileId)
+		return nil, err
 	}
 
 	return resp.Body, nil

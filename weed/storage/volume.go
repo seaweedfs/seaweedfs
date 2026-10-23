@@ -188,6 +188,35 @@ func (v *Volume) Version() needle.Version {
 	return v.SuperBlock.Version
 }
 
+// UpdateReplicaPlacement records rp in the live volume — the in-memory .vif
+// copy and the superblock — and rewrites the .dat header when the data file
+// is local. Keeps a mounted volume consistent with the .vif the caller just
+// configured on disk, so heartbeats and later compactions report and rewrite
+// the same placement.
+func (v *Volume) UpdateReplicaPlacement(rp *super_block.ReplicaPlacement) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	v.superBlockAccessLock.Lock()
+	defer v.superBlockAccessLock.Unlock()
+	v.volumeInfoRWLock.Lock()
+	defer v.volumeInfoRWLock.Unlock()
+
+	v.SuperBlock.ReplicaPlacement = rp
+	if v.volumeInfo != nil {
+		v.volumeInfo.Replication = rp.String()
+	}
+	diskFile, ok := v.DataBackend.(*backend.DiskFile)
+	if !ok {
+		return nil // remote-tiered: the .vif carries the placement
+	}
+	if _, err := diskFile.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+		return fmt.Errorf("volume %d failed to write superblock: %v", v.Id, err)
+	}
+	return diskFile.Sync()
+}
+
 func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
@@ -202,6 +231,22 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	}
 	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
+}
+
+// datAllocatedSize returns the disk space held by the .dat file, or 0 when it is unknown.
+func (v *Volume) datAllocatedSize() uint64 {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	df, ok := v.DataBackend.(*backend.DiskFile)
+	if !ok {
+		return 0
+	}
+	fi, err := df.File.Stat()
+	if err != nil {
+		return 0
+	}
+	return allocatedSize(fi)
 }
 
 func (v *Volume) ContentSize() uint64 {

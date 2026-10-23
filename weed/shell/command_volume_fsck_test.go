@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,5 +225,88 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
 
 	if len(stub.deleted) > 0 {
 		t.Errorf("deleted %v, expected a directory written to after the lookup to be kept", stub.deleted)
+	}
+}
+
+// The purge pool may run at most `workers` deletes at once, and at least one
+// even when the flag is set to zero.
+func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
+	gate := make(chan struct{})
+	var inFlight, maxSeen, processed atomic.Int32
+	queue, finish := startPurgeWorkers(3, func(util.FullPath) {
+		n := inFlight.Add(1)
+		for {
+			m := maxSeen.Load()
+			if n <= m || maxSeen.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-gate
+		inFlight.Add(-1)
+		processed.Add(1)
+	})
+
+	for i := 0; i < 10; i++ {
+		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for inFlight.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := inFlight.Load(); got != 3 {
+		t.Fatalf("in-flight deletes %d, want the 3-worker limit", got)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if got := maxSeen.Load(); got > 3 {
+		t.Fatalf("saw %d concurrent deletes, want at most 3", got)
+	}
+	close(gate)
+	finish()
+	if got := processed.Load(); got != 10 {
+		t.Fatalf("processed %d deletes, want all 10 drained", got)
+	}
+}
+
+func TestVolumeFsckPurgeWorkersAtLeastOne(t *testing.T) {
+	var processed atomic.Int32
+	queue, finish := startPurgeWorkers(0, func(util.FullPath) { processed.Add(1) })
+	for i := 0; i < 5; i++ {
+		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
+	}
+	finish()
+	if got := processed.Load(); got != 5 {
+		t.Fatalf("processed %d deletes, want 5", got)
+	}
+}
+
+// Deletes of paths sharing a hard link id must never overlap: the filer
+// decrements a shared counter non-atomically, so concurrent deletes of the
+// same id would both read N and write back N-1.
+func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
+	var inFlight, maxSeen, processed atomic.Int32
+	gate := make(chan struct{})
+	queue, finish := startPurgeWorkers(8, func(util.FullPath) {
+		n := inFlight.Add(1)
+		for {
+			m := maxSeen.Load()
+			if n <= m || maxSeen.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-gate
+		inFlight.Add(-1)
+		processed.Add(1)
+	})
+	for i := 0; i < 8; i++ {
+		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/hl/%d", i)), hardLinkId: []byte{9, 9, 9}})
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := maxSeen.Load(); got > 1 {
+		t.Fatalf("saw %d concurrent deletes on one hard link id, want 1", got)
+	}
+	close(gate)
+	finish()
+	if got := processed.Load(); got != 8 {
+		t.Fatalf("processed %d deletes, want 8", got)
 	}
 }
