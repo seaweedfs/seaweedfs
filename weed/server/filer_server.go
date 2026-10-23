@@ -373,7 +373,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
-		if err := fs.filer.MaybeBootstrapFromOnePeer(option.Host, existingNodes, startFromTime); err != nil {
+		if err := fs.filer.MaybeBootstrapFromOnePeer(context.Background(), option.Host, existingNodes, startFromTime); err != nil {
 			glog.Fatalf("%s bootstrap from %+v: %v", option.Host, existingNodes, err)
 		}
 		// An empty scan can be a settling master rather than an empty cluster;
@@ -507,14 +507,16 @@ func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart ti
 	if ma == nil {
 		return
 	}
+	// The bootstrap re-check and the catch-up wait share one deadline so a
+	// late peer cannot stretch the registration hold past the cap.
+	deadline := time.Now().Add(announceCatchUpCap)
 	peers := fs.startupPeers
 	if fs.peerBootstrapPending {
-		peers = append(peers, fs.awaitPeerBootstrap()...)
+		peers = append(peers, fs.awaitPeerBootstrap(deadline)...)
 	}
 	if len(peers) == 0 {
 		return
 	}
-	deadline := time.Now().Add(announceCatchUpCap)
 	for {
 		// Take the channel before reading the watermarks so a rise in
 		// between still wakes this wait (see DeliveryWatermarkAdvancedChan).
@@ -545,9 +547,9 @@ const emptyMembershipConfirmTimeout = 10 * time.Second
 // scan can still be disproved: masters restarted or re-elected report no
 // filers until the existing ones reconnect. Peers found late are backfilled
 // from before their streams start, then reported so the caller waits for
-// their catch-up like startup peers.
-func (fs *FilerServer) awaitPeerBootstrap() (peers []pb.ServerAddress) {
-	deadline := time.Now().Add(announceCatchUpCap)
+// their catch-up like startup peers. The whole wait — including each peer
+// metadata copy — is bounded by the shared announce deadline.
+func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.ServerAddress) {
 	confirmBy := time.Now().Add(emptyMembershipConfirmTimeout)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -571,7 +573,10 @@ func (fs *FilerServer) awaitPeerBootstrap() (peers []pb.ServerAddress) {
 			continue
 		}
 		bootstrapFrom := time.Now().Add(-filer.LogFlushInterval)
-		if err := fs.filer.MaybeBootstrapFromOnePeer(fs.option.Host, remotes, bootstrapFrom); err != nil {
+		ctx, cancel = context.WithDeadline(context.Background(), deadline)
+		err := fs.filer.MaybeBootstrapFromOnePeer(ctx, fs.option.Host, remotes, bootstrapFrom)
+		cancel()
+		if err != nil {
 			glog.Warningf("%s bootstrap from late peers %+v: %v; retrying", fs.option.Host, remotes, err)
 			time.Sleep(2 * time.Second)
 			continue
