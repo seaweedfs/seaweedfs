@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -433,24 +432,12 @@ func (s3opt *S3Options) startS3Server() bool {
 		if !explicit {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
 		}
-		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			if explicit {
-				glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
-			}
-			glog.Warningf("Failed to remove %s, error: %s", localSocket, err.Error())
-		}
-		s3SocketListener, err := net.Listen("unix", localSocket)
-		if err != nil {
-			if explicit {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			glog.Errorf("Failed to listen on %s, skipping local socket server: %v", localSocket, err)
-		} else {
+		if s3SocketListener := pb.ListenOnLocalSocket(localSocket); s3SocketListener != nil {
 			socketServer := newHttpServer(router, nil)
 			httpServers = append(httpServers, socketServer)
 			go func() {
 				if err := socketServer.Serve(s3SocketListener); err != nil && err != http.ErrServerClosed {
-					glog.Errorf("Failed to start S3 http server on %s: %v", localSocket, err)
+					glog.Fatalf("Failed to start S3 http server: %v", err)
 				}
 			}()
 		}

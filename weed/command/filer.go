@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -522,27 +521,14 @@ func (fo *FilerOptions) startFiler() {
 	}
 	stopGrpcServer := func() { gracefulStopGrpc(grpcS, gracefulTimeout) }
 
-	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		explicit := localSocket != ""
 		if !explicit {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
-		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			if explicit {
-				glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
-			}
-			glog.Warningf("Failed to remove %s, error: %s", localSocket, err.Error())
-		}
-		filerSocketListener, err := net.Listen("unix", localSocket)
-		if err != nil {
-			if explicit {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			glog.Errorf("Failed to listen on %s, skipping local socket server: %v", localSocket, err)
-		} else {
-			socketServer = newHttpServer(defaultHandler, nil)
+		if filerSocketListener := pb.ListenOnLocalSocket(localSocket); filerSocketListener != nil {
+			socketServer := newHttpServer(defaultHandler, nil)
 			httpServers = append(httpServers, socketServer)
 			go socketServer.Serve(filerSocketListener)
 		}

@@ -140,6 +140,22 @@ func resolveLocalGrpcSocket(address string) string {
 	return localGrpcSockets[port]
 }
 
+// ListenOnLocalSocket binds a unix socket listener for a local fast path
+// next to the TCP listener. A stale socket file is removed first; a path
+// that cannot be cleared or bound is skipped, since the socket is optional.
+func ListenOnLocalSocket(socketPath string) net.Listener {
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		glog.Warningf("Failed to remove old socket %s: %v", socketPath, err)
+	}
+	lc := net.ListenConfig{Control: setLocalSocketBuffers}
+	listener, err := lc.Listen(context.Background(), "unix", socketPath)
+	if err != nil {
+		glog.Errorf("Failed to listen on Unix socket %s: %v", socketPath, err)
+		return nil
+	}
+	return listener
+}
+
 // ServeGrpcOnLocalSocket starts serving a gRPC server on a Unix socket
 // if one is registered for the given port.
 func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
@@ -147,13 +163,8 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if socketPath == "" {
 		return
 	}
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		glog.Warningf("Failed to remove old gRPC socket %s: %v", socketPath, err)
-	}
-	lc := net.ListenConfig{Control: setLocalSocketBuffers}
-	listener, err := lc.Listen(context.Background(), "unix", socketPath)
-	if err != nil {
-		glog.Errorf("Failed to listen on gRPC Unix socket %s: %v", socketPath, err)
+	listener := ListenOnLocalSocket(socketPath)
+	if listener == nil {
 		return
 	}
 	listener = &localSocketListener{Listener: listener}
