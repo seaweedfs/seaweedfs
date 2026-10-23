@@ -72,9 +72,10 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_fuse_test_")
 	require.NoError(t, err)
 
-	masterPort := freeServicePort(t)
-	volumePort := freeServicePort(t)
-	filerPort := freeServicePort(t)
+	allocated := make(map[int]bool)
+	masterPort := freeServicePort(t, allocated)
+	volumePort := freeServicePort(t, allocated)
+	filerPort := freeServicePort(t, allocated)
 
 	return &FuseTestFramework{
 		t:          t,
@@ -522,14 +523,21 @@ func portIsFree(port int) bool {
 }
 
 // freeServicePort returns a free service HTTP port whose gRPC sibling
-// (port+grpcPortOffset) is free too.
-func freeServicePort(t *testing.T) int {
+// (port+grpcPortOffset) is free too. A probed port is released again before
+// the service binds it, so ports already handed out are tracked in
+// allocated and skipped — otherwise two sequential checks can return the
+// same still-unbound port.
+func freeServicePort(t *testing.T, allocated map[int]bool) int {
 	t.Helper()
 	portCount := maxServicePort - minServicePort + 1
 	start := minServicePort + int(time.Now().UnixNano()%int64(portCount))
 	for attempt := 0; attempt < portCount; attempt++ {
 		port := minServicePort + (start-minServicePort+attempt)%portCount
+		if allocated[port] {
+			continue
+		}
 		if portIsFree(port) && portIsFree(port+grpcPortOffset) {
+			allocated[port] = true
 			return port
 		}
 	}
