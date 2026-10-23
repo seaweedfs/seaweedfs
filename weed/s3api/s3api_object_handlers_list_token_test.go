@@ -142,6 +142,17 @@ func TestDecodeListContinuationTokenKeepsForeignTokensRaw(t *testing.T) {
 	}
 }
 
+// Some tokens are ambiguous: "base64:AQ" is both a possible legacy bare key
+// and the encoded form of "\x01". The encoded reading wins because a decoded
+// key that cannot travel bare is a shape only encodeListContinuationToken
+// writes — and a wrong raw reading skips entries, while a wrong encoded
+// reading only re-lists them.
+func TestDecodeListContinuationTokenResolvesCollisionEncoded(t *testing.T) {
+	assert.Equal(t, "\x01", decodeListContinuationToken("base64:AQ"))
+	assert.Equal(t, "\xff", decodeListContinuationToken("base64:_w"))
+	assert.Equal(t, "base64:AQ", decodeListContinuationToken("base64:YmFzZTY0OkFR"))
+}
+
 type listV1TestPage struct {
 	XMLName     xml.Name `xml:"ListBucketResult"`
 	IsTruncated bool     `xml:"IsTruncated"`

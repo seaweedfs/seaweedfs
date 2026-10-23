@@ -194,6 +194,11 @@ func decodeListContinuationToken(token string) string {
 	if isXMLText(decodedKey) && !strings.HasPrefix(decodedKey, continuationTokenEncodingPrefix) {
 		return token
 	}
+	// A decoded key that could not travel bare makes the token ambiguous
+	// ("base64:AQ" reads as both the encoded form of "\x01" and a literal
+	// legacy key). The encoded reading wins: preferring the raw one would
+	// resume past real entries for every token this server writes, while a
+	// legacy token aliasing the encoded form only re-lists keys.
 	return decodedKey
 }
 
