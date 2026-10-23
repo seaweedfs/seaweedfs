@@ -539,6 +539,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	request_id.InjectToRequest(ctx, req)
 
 	var uploadDone atomic.Bool
+	defer uploadDone.Store(true)
 	var stallTimer *time.Timer
 	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
 		defer func() {
@@ -593,8 +594,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, &uploadStatusError{StatusCode: 0, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
-	uploadDone.Store(true)
-	if post_err == nil && uploadMovedHealthy(int64(originalDataSize), time.Since(started)) {
+	if uploadMovedHealthy(int64(originalDataSize), time.Since(started)) {
 		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
 	}
 
@@ -658,5 +658,5 @@ func uploadStallTimeout(size int64) time.Duration {
 // uploadMovedHealthy keeps tiny uploads and genuinely slow links from marking a
 // host fast: the mark is what lets a later stall blame the conn, not the link.
 func uploadMovedHealthy(size int64, elapsed time.Duration) bool {
-	return size >= 256*1024 && elapsed > 0 && int64(elapsed)*uploadHealthyBps <= size*int64(time.Second)
+	return size >= 256*1024 && elapsed > 0 && float64(size)/elapsed.Seconds() >= float64(uploadHealthyBps)
 }
