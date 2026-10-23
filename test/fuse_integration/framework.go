@@ -424,6 +424,10 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		// -v is a global flag; before the subcommand or flag parsing dies
 		args = append(args, "-v=4")
 	}
+	adminPort := freePort(f.t)
+	for adminPort == f.filerPort {
+		adminPort = freePort(f.t)
+	}
 	args = append(args,
 		"mini",
 		"-dir="+f.dataDir,
@@ -433,12 +437,8 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-s3=false",
 		"-webdav=false",
 		"-admin.ui=false",
-	)
-	args = append(args,
-		// admin is unused; pin it off the fixed defaults so it cannot
-		// collide with a co-located mini (this module cannot use testutil)
-		"-admin.port="+strconv.Itoa(freePort(f.t)),
-		"-admin.port.grpc="+strconv.Itoa(freePort(f.t)),
+		"-admin.port="+strconv.Itoa(adminPort),
+		"-admin.port.grpc="+strconv.Itoa(adminPort+grpcPortOffset),
 		"-admin.port.legacy=0",
 	)
 
