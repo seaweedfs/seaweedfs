@@ -156,6 +156,7 @@ func TestDecodeListContinuationTokenResolvesCollisionEncoded(t *testing.T) {
 type listV1TestPage struct {
 	XMLName     xml.Name `xml:"ListBucketResult"`
 	IsTruncated bool     `xml:"IsTruncated"`
+	Marker      string   `xml:"Marker"`
 	NextMarker  string   `xml:"NextMarker"`
 	Contents    []struct {
 		Key string `xml:"Key"`
@@ -200,4 +201,18 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 		marker = result.NextMarker
 	}
 	require.Len(t, got, len(keys))
+}
+
+// The echoed request marker carries the client's token, not the decoded key:
+// echoing the raw key would mangle an XML-unsafe name to U+FFFD, and under
+// encoding-type=url the echo takes the same escaped form as the listed keys.
+func TestListObjectsV1MarkerEchoStaysXMLSafe(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a\x01b", "b", "c"})
+
+	token := encodeListContinuationToken("a\x01b")
+	result := listV1Page(t, s3a, url.Values{"max-keys": {"2"}, "marker": {token}})
+	assert.Equal(t, token, result.Marker)
+
+	result = listV1Page(t, s3a, url.Values{"max-keys": {"2"}, "marker": {"a b"}, "encoding-type": {"url"}})
+	assert.Equal(t, urlPathEscape("a b"), result.Marker)
 }

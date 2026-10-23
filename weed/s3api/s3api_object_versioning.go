@@ -448,7 +448,7 @@ func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, 
 	result := &S3ListObjectVersionsResult{
 		Name:                bucket,
 		Prefix:              prefix,
-		KeyMarker:           keyMarker,
+		KeyMarker:           encodeListContinuationToken(keyMarker),
 		VersionIdMarker:     versionIdMarker,
 		MaxKeys:             maxKeys,
 		Delimiter:           delimiter,

@@ -1401,11 +1401,13 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
 		EncodingType:   input.EncodingType,
-		KeyMarker:      input.KeyMarker,
 		MaxUploads:     aws.Int64(int64(p.limit)),
 		Prefix:         input.Prefix,
 		UploadIdMarker: input.UploadIdMarker,
 		IsTruncated:    aws.Bool(false),
+	}
+	if input.KeyMarker != nil {
+		output.KeyMarker = aws.String(encodeListContinuationToken(*input.KeyMarker))
 	}
 	candidates := make([]multipartCandidate, len(p.top))
 	copy(candidates, p.top)

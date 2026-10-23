@@ -72,7 +72,7 @@ func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 		Metadata:       in.Metadata,
 		Name:           in.Name,
 		Prefix:         in.Prefix,
-		Marker:         in.Marker,
+		Marker:         encodeMarkerEcho(in.Marker, in.EncodingType == s3.EncodingTypeUrl),
 		NextMarker:     encodeListContinuationToken(in.NextMarker),
 		MaxKeys:        in.MaxKeys,
 		Delimiter:      in.Delimiter,
@@ -174,6 +174,17 @@ func encodeListContinuationToken(key string) string {
 		return key
 	}
 	return continuationTokenEncodingPrefix + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+// encodeMarkerEcho renders a decoded request marker for the response echo:
+// the token encoding keeps an XML-unsafe key legible, and urlPathEscape applies
+// the encoding-type=url form the keys in the same response already carry.
+func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	marker = encodeListContinuationToken(marker)
+	if encodingTypeUrl {
+		marker = urlPathEscape(marker)
+	}
+	return marker
 }
 
 func decodeListContinuationToken(token string) string {
