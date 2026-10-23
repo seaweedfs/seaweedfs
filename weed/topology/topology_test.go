@@ -851,7 +851,7 @@ func TestSetVolumeAvailableRepairsMissingVolume(t *testing.T) {
 	}
 
 	// The vacuum commit re-marks the volume available; it must re-register it.
-	vl.SetVolumeAvailable(dn, vid, false, false)
+	vl.SetVolumeAvailable(dn, vid, false, false, false)
 	if got := topo.Lookup("", vid); len(got) != 1 {
 		t.Fatalf("after SetVolumeAvailable: lookup %d got %v, want 1 location", vid, got)
 	}

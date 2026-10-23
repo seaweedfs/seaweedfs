@@ -1091,7 +1091,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) (becameWritable bool) {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity, quarantined bool) (becameWritable bool) {
 	restoreActiveVolumeCount := false
 	vl.accessLock.Lock()
 	defer func() {
@@ -1112,8 +1112,13 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	// A disconnect during a long vacuum can drop the entry while the volume is
 	// still on the node; re-create it instead of dereferencing a nil location,
 	// so the commit also repairs the split.
-	moveLookupOwnership(vid, vl.getOrCreateLocationList(vid).Set(dn), dn)
+	location := vl.getOrCreateLocationList(vid)
+	moveLookupOwnership(vid, location.Set(dn), dn)
 
+	if quarantined {
+		location.SetReadOnly(dn, true)
+		return false
+	}
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}

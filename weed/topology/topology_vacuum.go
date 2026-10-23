@@ -226,7 +226,9 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 		vl.accessLock.Unlock()
 
 		for _, dn := range vacuumLocationList.list {
-			vl.SetVolumeAvailable(dn, vid, isReadOnly, isFullCapacity)
+			t.quarantineLock.Lock()
+			vl.SetVolumeAvailable(dn, vid, isReadOnly, isFullCapacity, t.isQuarantined(dn, vid))
+			t.quarantineLock.Unlock()
 		}
 	}
 	return isCommitSuccess

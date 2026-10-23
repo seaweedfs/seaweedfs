@@ -98,7 +98,7 @@ func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T
 	dn := vl.vid2location[1].list[0]
 	vl.accessLock.RUnlock()
 
-	if !vl.SetVolumeAvailable(dn, 1, false, false) {
+	if !vl.SetVolumeAvailable(dn, 1, false, false, false) {
 		t.Fatalf("SetVolumeAvailable should report the volume became writable")
 	}
 	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
