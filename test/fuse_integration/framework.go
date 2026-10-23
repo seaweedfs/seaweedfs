@@ -545,7 +545,9 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 
 // waitForWritable probes the mount with a real write+read+remove until one
 // succeeds, covering the window where a fresh cluster cannot yet assign a
-// file id (volume not registered, grow pending, leader settle).
+// file id (volume not registered, grow pending, leader settle). Each attempt
+// runs off the loop because a wedged mount can hold a file op open past the
+// deadline; the loop only waits on it up to the remaining time.
 func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
 	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
 	payload := []byte("probe")
@@ -555,15 +557,35 @@ func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
 		if exitErr := f.mountProcess.exited(); exitErr != nil {
 			return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
 		}
-		if err := os.WriteFile(probe, payload, 0644); err != nil {
+		result := make(chan error, 1)
+		go func() {
+			if err := os.WriteFile(probe, payload, 0644); err != nil {
+				result <- err
+				return
+			}
+			data, err := os.ReadFile(probe)
+			if err != nil {
+				result <- err
+				return
+			}
+			if len(data) != len(payload) {
+				result <- fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
+				return
+			}
+			result <- os.Remove(probe)
+		}()
+		attemptDeadline := time.Now().Add(5 * time.Second)
+		if attemptDeadline.After(deadline) {
+			attemptDeadline = deadline
+		}
+		select {
+		case err := <-result:
+			if err == nil {
+				return nil
+			}
 			lastErr = err
-		} else if data, err := os.ReadFile(probe); err != nil {
-			lastErr = err
-		} else if len(data) != len(payload) {
-			lastErr = fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
-		} else {
-			os.Remove(probe)
-			return nil
+		case <-time.After(time.Until(attemptDeadline)):
+			lastErr = fmt.Errorf("probe attempt did not finish within %v of the deadline", time.Until(attemptDeadline).Round(time.Millisecond))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
