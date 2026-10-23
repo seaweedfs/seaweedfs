@@ -3,9 +3,12 @@ package erasure_coding
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -47,17 +51,15 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 	defer cluster.Stop()
 
 	// Wait for servers to be ready
-	require.NoError(t, waitForServer("127.0.0.1:9333", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8080", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8081", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8082", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8083", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8084", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8085", 30*time.Second))
+	require.NoError(t, waitForServer(cluster.masterAddr, 30*time.Second))
+	for _, addr := range cluster.volumeAddrs {
+		require.NoError(t, waitForServer(addr, 30*time.Second))
+	}
+	require.NoError(t, waitForMasterLeader(cluster.masterAddr, 30*time.Second))
 
 	// Create command environment
 	options := &shell.ShellOptions{
-		Masters:        stringPtr("127.0.0.1:9333"),
+		Masters:        stringPtr(cluster.masterAddr),
 		GrpcDialOption: grpc.WithInsecure(),
 		FilerGroup:     stringPtr("default"),
 	}
@@ -71,7 +73,7 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 
 	// Upload some test data to create volumes
 	testData := []byte("This is test data for EC encoding integration test")
-	volumeId, err := uploadTestData(testData, "127.0.0.1:9333")
+	volumeId, err := uploadTestData(testData, cluster.masterAddr)
 	require.NoError(t, err)
 	t.Logf("Created volume %d with test data", volumeId)
 
@@ -257,12 +259,13 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 	defer cluster.Stop()
 
 	// Wait for servers to be ready
-	require.NoError(t, waitForServer("127.0.0.1:9333", 30*time.Second))
-	require.NoError(t, waitForServer("127.0.0.1:8080", 30*time.Second))
+	require.NoError(t, waitForServer(cluster.masterAddr, 30*time.Second))
+	require.NoError(t, waitForServer(cluster.volumeAddrs[0], 30*time.Second))
+	require.NoError(t, waitForMasterLeader(cluster.masterAddr, 30*time.Second))
 
 	// Create command environment
 	options := &shell.ShellOptions{
-		Masters:        stringPtr("127.0.0.1:9333"),
+		Masters:        stringPtr(cluster.masterAddr),
 		GrpcDialOption: grpc.WithInsecure(),
 		FilerGroup:     stringPtr("default"),
 	}
@@ -276,7 +279,7 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 
 	// Upload test data
 	testData := []byte("Race condition test data")
-	volumeId, err := uploadTestData(testData, "127.0.0.1:9333")
+	volumeId, err := uploadTestData(testData, cluster.masterAddr)
 	require.NoError(t, err)
 	t.Logf("Created volume %d for race condition test", volumeId)
 
@@ -366,6 +369,8 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 type TestCluster struct {
 	masterCmd     *exec.Cmd
 	volumeServers []*exec.Cmd
+	masterAddr    string
+	volumeAddrs   []string
 }
 
 func (c *TestCluster) Stop() {
@@ -402,9 +407,23 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 	securityToml := filepath.Join(dataDir, "security.toml")
 	os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
 
+	// Allocate ports instead of using the defaults: on a shared or reused
+	// runner a stale weed process can still hold 9333/808x, which kills the
+	// freshly started master at bind time and leaves the test talking to a
+	// raft follower that answers every assign with "not current leader".
+	// Mini-safe ports guarantee each HTTP port's derived gRPC port
+	// (port + 10000) is free as well.
+	ports, err := testutil.AllocateMiniPorts(7)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate ports: %v", err)
+	}
+	masterPort := ports[0]
+	masterAddr := fmt.Sprintf("127.0.0.1:%d", masterPort)
+	cluster.masterAddr = masterAddr
+
 	// Start master server
 	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
-		"-port", "9333",
+		"-port", fmt.Sprintf("%d", masterPort),
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10", // Small volumes for testing
 		"-ip", "127.0.0.1",
@@ -432,13 +451,14 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		volumeDir := filepath.Join(dataDir, fmt.Sprintf("volume%d", i))
 		os.MkdirAll(volumeDir, 0755)
 
-		port := fmt.Sprintf("808%d", i)
+		port := fmt.Sprintf("%d", ports[1+i])
+		cluster.volumeAddrs = append(cluster.volumeAddrs, fmt.Sprintf("127.0.0.1:%d", ports[1+i]))
 		rack := fmt.Sprintf("rack%d", i)
 		volumeCmd := exec.CommandContext(ctx, weedBinary, "volume",
 			"-port", port,
 			"-dir", volumeDir,
 			"-max", "10",
-			"-master", "127.0.0.1:9333",
+			"-master", masterAddr,
 			"-volume.allowUntrustedRemoteEndpoints",
 			"-ip", "127.0.0.1",
 			"-dataCenter", "dc1",
@@ -498,13 +518,37 @@ func findWeedBinary() string {
 func waitForServer(address string, timeout time.Duration) error {
 	start := time.Now()
 	for time.Since(start) < timeout {
-		if conn, err := grpc.NewClient(address, grpc.WithInsecure()); err == nil {
+		conn, err := net.DialTimeout("tcp", address, time.Second)
+		if err == nil {
 			conn.Close()
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for server %s", address)
+}
+
+// waitForMasterLeader polls the master's /cluster/status endpoint until it
+// reports itself as the raft leader. A goraft master can take up to the
+// configured election timeout (10s by default) before it is ready to serve
+// raft-gated requests like volume assign, so a bare port check is not enough.
+func waitForMasterLeader(masterAddr string, timeout time.Duration) error {
+	start := time.Now()
+	for time.Since(start) < timeout {
+		resp, err := http.Get(fmt.Sprintf("http://%s/cluster/status", masterAddr))
+		if err == nil {
+			var status struct {
+				IsLeader bool `json:"IsLeader"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&status)
+			resp.Body.Close()
+			if err == nil && status.IsLeader {
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for master %s to become raft leader", masterAddr)
 }
 
 func uploadTestData(data []byte, masterAddress string) (needle.VolumeId, error) {
@@ -2209,14 +2253,15 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	defer cluster.Stop()
 
 	// Wait for servers to be ready
-	require.NoError(t, waitForServer("127.0.0.1:9333", 30*time.Second))
-	for i := 0; i < 6; i++ {
-		require.NoError(t, waitForServer(fmt.Sprintf("127.0.0.1:%d", 8080+i), 30*time.Second))
+	require.NoError(t, waitForServer(cluster.masterAddr, 30*time.Second))
+	for _, addr := range cluster.volumeAddrs {
+		require.NoError(t, waitForServer(addr, 30*time.Second))
 	}
+	require.NoError(t, waitForMasterLeader(cluster.masterAddr, 30*time.Second))
 
 	// Create command environment
 	options := &shell.ShellOptions{
-		Masters:        stringPtr("127.0.0.1:9333"),
+		Masters:        stringPtr(cluster.masterAddr),
 		GrpcDialOption: grpc.WithInsecure(),
 		FilerGroup:     stringPtr("default"),
 	}
@@ -2240,7 +2285,7 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		var volumeId needle.VolumeId
 		var uploadErr error
 		for retry := 0; retry < 5; retry++ {
-			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
+			volumeId, uploadErr = uploadTestDataWithReplication(t, cluster.masterAddr, testCollection, testReplication)
 			if uploadErr == nil {
 				break
 			}
@@ -2290,7 +2335,7 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		var volumeId needle.VolumeId
 		var uploadErr error
 		for retry := 0; retry < 5; retry++ {
-			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
+			volumeId, uploadErr = uploadTestDataWithReplication(t, cluster.masterAddr, testCollection, testReplication)
 			if uploadErr == nil {
 				break
 			}

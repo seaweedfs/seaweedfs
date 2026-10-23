@@ -105,6 +105,7 @@ type S3ApiServer struct {
 	randomClientId        int32
 	filerGuard            *security.Guard
 	filerClient           *wdclient.FilerClient
+	masterClient          *wdclient.MasterClient
 	client                util_http_client.HTTPClientInterface
 	bucketRegistry        *BucketRegistry
 	credentialManager     *credential.CredentialManager
@@ -345,6 +346,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		randomClientId:        util.RandomInt32(),
 		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		filerClient:           filerClient,
+		masterClient:          masterClient,
 		cb:                    NewCircuitBreaker(option),
 		credentialManager:     iam.credentialManager,
 		bucketConfigCache:     NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven

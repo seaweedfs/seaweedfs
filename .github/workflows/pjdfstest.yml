@@ -38,6 +38,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Start local Docker registry
       run: docker run -d --restart=always -p 5000:5000 --name registry registry:2

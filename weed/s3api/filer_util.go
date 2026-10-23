@@ -93,22 +93,32 @@ func isRetryableListError(err error) bool {
 	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
 }
 
-// listWithRetry replays doList while the filer answers with a transient error.
+// listRetry replays doList while the filer answers with a transient error.
 // Both failure points, the ListEntries call itself and the stream.Recv that
 // follows it, surface as a plain error out of filer_pb.List, so a single retry
-// point above it covers both.
-func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+// point above it covers both. A replayed attempt may re-deliver entries the
+// last attempt already saw, so a doList that accumulates must reset first.
+func listRetry(parentDirectoryPath string, doList func() error) (err error) {
 
 	backoff := listRetryInitialBackoff
 	for attempt := 1; ; attempt++ {
-		entries, isLast, err = doList()
-		if err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
-			return entries, isLast, err
+		if err = doList(); err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
+			return err
 		}
 		glog.V(1).Infof("list %s attempt %d/%d hit a transient error, retrying in %v: %v", parentDirectoryPath, attempt, listRetryAttempts, backoff, err)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
+
+}
+
+func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+
+	err = listRetry(parentDirectoryPath, func() error {
+		entries, isLast, err = doList()
+		return err
+	})
+	return entries, isLast, err
 
 }
 

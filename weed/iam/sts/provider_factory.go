@@ -1,6 +1,7 @@
 package sts
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -152,6 +153,21 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 
 	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
 		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
+	}
+
+	if enabled, ok := configMap[ConfigFieldJTIReplayProtectionEnabled].(bool); ok {
+		config.JTIReplayProtectionEnabled = &enabled
+	}
+
+	switch maxSize := configMap[ConfigFieldJTICacheMaxSize].(type) {
+	case float64:
+		config.JTICacheMaxSize = int(maxSize)
+	case int:
+		config.JTICacheMaxSize = maxSize
+	case json.Number:
+		if n, err := maxSize.Int64(); err == nil {
+			config.JTICacheMaxSize = int(n)
+		}
 	}
 
 	// Convert claims mapping
