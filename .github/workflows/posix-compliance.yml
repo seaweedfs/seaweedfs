@@ -96,6 +96,10 @@ jobs:
         # Add user to fuse group
         sudo usermod -a -G fuse $USER
         
+        # allow_other mounts need the flag set for non-root callers
+        echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+        sudo chmod 644 /etc/fuse.conf
+        
         # Set permissions on FUSE device
         sudo chmod 666 /dev/fuse
         
