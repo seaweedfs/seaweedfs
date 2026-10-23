@@ -110,6 +110,10 @@ type Topology struct {
 	// each observe record and mark as one state, never a mark whose record
 	// was already deleted or a cleared mark whose record is not yet visible.
 	quarantineLock sync.Mutex
+	// quarantinePushLock serializes the remote mark/unmark calls so a push
+	// decided under an older record state cannot land on the volume server
+	// after a newer one.
+	quarantinePushLock sync.Mutex
 
 	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
 	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
@@ -130,6 +134,22 @@ type quarantinedVolumeState struct {
 func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 	_, ok := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
 	return ok
+}
+
+// pushQuarantine sends the remote mark only while it still matches the
+// record: a read-only push requires the pair to exist, a writable push
+// requires it to be gone. The bool reports whether the remote call was
+// actually made, so callers can tell a skipped stale push from a failed one.
+func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
+	t.quarantinePushLock.Lock()
+	defer t.quarantinePushLock.Unlock()
+	t.quarantineLock.Lock()
+	_, exists := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
+	t.quarantineLock.Unlock()
+	if exists != readOnly {
+		return false, nil
+	}
+	return true, t.QuarantineVolumeFn(dn, vid, readOnly)
 }
 
 // enforceQuarantine keeps the latest reported read-only flag for a quarantined
@@ -159,7 +179,8 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 	// The mark never landed on the server, or the server lost it (restart,
 	// manual unquarantine); push it while the conflict stands. The call is
 	// remote, so it runs outside the lock.
-	if t.QuarantineVolumeFn(dn, vi.Id, true) == nil {
+	pushed, err := t.pushQuarantine(dn, vi.Id, true)
+	if pushed && err == nil {
 		state.enforced = true
 	}
 	t.quarantineLock.Lock()
@@ -178,7 +199,7 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 	if state.enforced && !state.reported {
 		// The conflict resolved while the push was in flight; leave the
 		// server consistent with the released layout.
-		if err := t.QuarantineVolumeFn(dn, vi.Id, false); err != nil {
+		if _, err := t.pushQuarantine(dn, vi.Id, false); err != nil {
 			t.restoreQuarantineRecord(dn, vi.Id)
 		}
 	}
@@ -750,23 +771,27 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 			vl.SetVolumeQuarantined(n, v.Id)
 		}
 		t.quarantineLock.Unlock()
-		if t.QuarantineVolumeFn == nil || t.QuarantineVolumeFn(n, v.Id, true) != nil {
+		if t.QuarantineVolumeFn == nil {
+			return
+		}
+		pushed, err := t.pushQuarantine(n, v.Id, true)
+		if err != nil {
 			return
 		}
 		t.quarantineLock.Lock()
 		val, ok := t.quarantinedVolumeIds.Load(q)
 		if ok {
 			state := val.(quarantinedVolumeState)
-			state.enforced = true
+			state.enforced = state.enforced || pushed
 			t.quarantinedVolumeIds.Store(q, state)
 			t.quarantineLock.Unlock()
 			return
 		}
 		t.quarantineLock.Unlock()
-		if !reported {
+		if pushed && !reported {
 			// The conflict resolved while the push was in flight; leave the
 			// server consistent with the released layout.
-			if err := t.QuarantineVolumeFn(n, v.Id, false); err != nil {
+			if _, err := t.pushQuarantine(n, v.Id, false); err != nil {
 				t.restoreQuarantineRecord(n, v.Id)
 			}
 		}
@@ -783,8 +808,9 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 // is gone, so a finished move does not leave the surviving copy quarantined.
 // The writable push is a remote call, so the locked pass only applies the
 // layout marks and records which replicas still need it; the pushes run
-// after the lock is dropped, and a failed push re-adds the record so a
-// later release pass retries it.
+// after the lock is dropped, a skipped push means a newer record re-armed
+// the pair so its quarantine stands, and a failed push re-adds the record
+// so a later release pass retries it.
 func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 	var writablePushes []*DataNode
 	t.quarantineLock.Lock()
@@ -816,7 +842,7 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 	})
 	t.quarantineLock.Unlock()
 	for _, dn := range writablePushes {
-		if err := t.QuarantineVolumeFn(dn, vid, false); err != nil {
+		if _, err := t.pushQuarantine(dn, vid, false); err != nil {
 			t.restoreQuarantineRecord(dn, vid)
 		}
 	}
