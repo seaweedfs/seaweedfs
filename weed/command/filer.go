@@ -531,9 +531,6 @@ func (fo *FilerOptions) startFiler() {
 			socketServer := newHttpServer(defaultHandler, nil)
 			httpServers = append(httpServers, socketServer)
 			go socketServer.Serve(filerSocketListener)
-		} else {
-			// s3.localFilerSocket shares this flag; keep its filer client on TCP
-			*fo.localSocket = ""
 		}
 	}
 
