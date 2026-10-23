@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,12 +49,15 @@ func startMini(t *testing.T, dir string, args ...string) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err)
 	miniLogPaths = append(miniLogPaths, logPath)
-	cmd := exec.Command(weedBinary, append([]string{"mini",
+	miniArgs := append([]string{"mini",
 		"-dir=" + dir,
 		"-s3.config=s3_config.json",
 		"-s3.allowDeleteBucketNotEmpty=true",
 		"-ip=127.0.0.1", "-ip.bind=127.0.0.1",
-	}, args...)...)
+	}, args...)
+	miniArgs = append(miniArgs, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-s3.port.lance=0", "-s3.port.iceberg=0")
+	cmd := exec.Command(weedBinary, miniArgs...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	require.NoError(t, cmd.Start())

@@ -295,8 +295,8 @@ func TestIAMPolicyManagement(t *testing.T) {
 		assert.Equal(t, true, aws.BoolValue(listVersionsResp.Versions[0].IsDefaultVersion))
 
 		getVersionResp, err := iamClient.GetPolicyVersion(&iam.GetPolicyVersionInput{
-			PolicyArn:  createResp.Policy.Arn,
-			VersionId:  aws.String("v1"),
+			PolicyArn: createResp.Policy.Arn,
+			VersionId: aws.String("v1"),
 		})
 		require.NoError(t, err)
 		require.NotNil(t, getVersionResp.PolicyVersion)

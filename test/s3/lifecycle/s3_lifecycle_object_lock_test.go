@@ -116,4 +116,3 @@ func TestLifecycleSkipsObjectLockedObjects(t *testing.T) {
 	})
 	require.NoError(t, err, "object under GOVERNANCE retention must survive the sweep")
 }
-
