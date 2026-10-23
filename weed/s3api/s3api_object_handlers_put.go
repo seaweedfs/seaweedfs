@@ -3025,11 +3025,11 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 
 // lookupVolumeJwt mints a fresh volume-server JWT for an existing file id, so a
 // cleanup delete that runs past the assignment JWT's expiry still authenticates.
-func (s3a *S3ApiServer) lookupVolumeJwt(fileId string) security.EncodedJwt {
+func (s3a *S3ApiServer) lookupVolumeJwt(ctx context.Context, fileId string) security.EncodedJwt {
 	if s3a.masterClient == nil {
 		return ""
 	}
-	return operation.LookupJwt(s3a.masterClient.GetMaster(context.Background()), s3a.option.GrpcDialOption, fileId)
+	return operation.LookupJwt(ctx, s3a.masterClient.GetMaster(ctx), s3a.option.GrpcDialOption, fileId)
 }
 
 // deleteOrphanedChunks attempts to delete chunks that were uploaded but whose entry creation failed

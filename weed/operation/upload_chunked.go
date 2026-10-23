@@ -46,7 +46,7 @@ type ChunkedUploadOption struct {
 	Cipher          bool // encrypt data on volume servers
 	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
-	LookupJwtFunc   func(fileId string) security.EncodedJwt                                             // Optional: renews the volume JWT for a cleanup delete
+	LookupJwtFunc   func(ctx context.Context, fileId string) security.EncodedJwt                        // Optional: renews the volume JWT for a cleanup delete
 }
 
 var chunkBufferPool = sync.Pool{
@@ -421,6 +421,11 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 	return first, nil
 }
 
+// cleanupJwtLookupTimeout bounds a cleanup-token renewal, covering the wait
+// for a master plus the lookup RPC, so a master outage cannot stall the
+// rollback of a failed fan-out.
+const cleanupJwtLookupTimeout = 10 * time.Second
+
 // deleteChunkFromHolders best-effort removes a needle from each holder it landed
 // on, using type=replicate so the volume drops only its local copy. A failed
 // delete falls back to vacuum reclaiming the orphan.
@@ -435,7 +440,10 @@ func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt,
 		if status == http.StatusUnauthorized && !renewed {
 			renewed = true
 			if opt.LookupJwtFunc != nil {
-				if token := opt.LookupJwtFunc(fid); token != "" {
+				lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
+				token := opt.LookupJwtFunc(lookupCtx, fid)
+				cancel()
+				if token != "" {
 					deleteJwt = token
 					_, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 				}

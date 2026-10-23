@@ -707,7 +707,7 @@ func TestDeleteChunkFromHoldersRenewsExpiredJwt(t *testing.T) {
 		"1,0a0b0c0d",
 		"stale-jwt",
 		&ChunkedUploadOption{
-			LookupJwtFunc: func(fileId string) security.EncodedJwt {
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
 				lookups++
 				return "fresh-jwt"
 			},

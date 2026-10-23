@@ -153,8 +153,8 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 		ChunkSize:  adminUploadChunkSize,
 		MimeType:   mimeType,
 		AssignFunc: assignFunc,
-		LookupJwtFunc: func(fileId string) security.EncodedJwt {
-			return operation.LookupJwt(h.adminServer.GetMasterClient().GetMaster(ctx), h.adminServer.GetGrpcDialOption(), fileId)
+		LookupJwtFunc: func(lookupCtx context.Context, fileId string) security.EncodedJwt {
+			return operation.LookupJwt(lookupCtx, h.adminServer.GetMasterClient().GetMaster(lookupCtx), h.adminServer.GetGrpcDialOption(), fileId)
 		},
 	})
 	if err != nil {
