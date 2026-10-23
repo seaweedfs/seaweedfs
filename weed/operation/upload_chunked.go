@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type ChunkedUploadOption struct {
 	Cipher          bool // encrypt data on volume servers
 	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
+	LookupJwtFunc   func(fileId string) security.EncodedJwt                                             // Optional: renews the volume JWT for a cleanup delete
 }
 
 var chunkBufferPool = sync.Pool{
@@ -213,7 +215,7 @@ uploadLoop:
 				// failed write can still leave a copy behind. No chunk will name
 				// this fid whether we retry or give up here, and an unreferenced
 				// needle is not garbage vacuum can find, so drop it either way.
-				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
+				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt, opt)
 				if attempt == chunkAssignAttempts || !ShouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
 				}
@@ -413,7 +415,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 	if firstErr != nil {
 		// A failed fan-out records no chunk, so roll back the copies that landed
 		// before the cancel rather than leaking them as orphans.
-		deleteChunkFromHolders(succeeded, fid, jwt)
+		deleteChunkFromHolders(succeeded, fid, jwt, opt)
 		return nil, firstErr
 	}
 	return first, nil
@@ -422,10 +424,31 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 // deleteChunkFromHolders best-effort removes a needle from each holder it landed
 // on, using type=replicate so the volume drops only its local copy. A failed
 // delete falls back to vacuum reclaiming the orphan.
-func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt) {
+func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt, opt *ChunkedUploadOption) {
+	// An unresponsive holder can stall the upload past the write JWT's expiry,
+	// so renew the token once a holder rejects the delete as unauthorized.
+	deleteJwt := jwt
+	renewed := false
 	for _, host := range hosts {
-		if err := util_http.Delete(fmt.Sprintf("http://%s/%s?type=replicate", host, fid), string(jwt)); err != nil {
+		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+		_, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+		if status == http.StatusUnauthorized && !renewed {
+			renewed = true
+			if opt.LookupJwtFunc != nil {
+				if token := opt.LookupJwtFunc(fid); token != "" {
+					deleteJwt = token
+					_, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+				}
+			}
+		}
+		if err != nil {
 			glog.Warningf("replica fan-out cleanup: delete %s from %s: %v", fid, host, err)
+			continue
+		}
+		switch status {
+		case http.StatusNotFound, http.StatusNoContent, http.StatusAccepted, http.StatusOK:
+		default:
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: status %d", fid, host, status)
 		}
 	}
 }
