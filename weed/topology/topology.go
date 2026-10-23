@@ -701,9 +701,15 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	diskType := types.ToDiskType(v.DiskType)
 	for {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		if vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+		// RegisterVolume reads the quarantine record and marks under
+		// accessLock; holding quarantineLock keeps that pair serialized with
+		// releaseResolvedQuarantine's clear-and-delete.
+		t.quarantineLock.Lock()
+		registered := vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
 			return t.isQuarantined(n, v.Id)
-		}) {
+		})
+		t.quarantineLock.Unlock()
+		if registered {
 			vl.EnsureCorrectWritables(&v)
 			go t.flagDuplicateVolumeId(v, dn)
 			return
@@ -1063,9 +1069,15 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			for !vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
-				return t.isQuarantined(n, v.Id)
-			}) {
+			for {
+				t.quarantineLock.Lock()
+				registered := vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+					return t.isQuarantined(n, v.Id)
+				})
+				t.quarantineLock.Unlock()
+				if registered {
+					break
+				}
 				// Dropped with its collection; the next lookup creates a fresh
 				// one, which the calls below must use too.
 				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
@@ -1171,9 +1183,15 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		// volume only that index had lost is an arrival as far as clients are
 		// concerned: they were told it went when the node dropped out.
 		becameServable := !vl.HasDataNode(vi.Id, dn)
-		for becameServable && !vl.RegisterVolume(&vi, dn, func(n *DataNode) bool {
-			return t.isQuarantined(n, vi.Id)
-		}) {
+		for becameServable {
+			t.quarantineLock.Lock()
+			registered := vl.RegisterVolume(&vi, dn, func(n *DataNode) bool {
+				return t.isQuarantined(n, vi.Id)
+			})
+			t.quarantineLock.Unlock()
+			if registered {
+				break
+			}
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
