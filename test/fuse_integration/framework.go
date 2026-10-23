@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -384,14 +385,17 @@ func (f *FuseTestFramework) unmountFuse() error {
 	return nil
 }
 
-// waitForService waits for a service to be available
+// waitForService waits until the weed process answers its own /healthz, so a
+// foreign listener on the port cannot pass for readiness.
 func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		resp, err := http.Get("http://" + addr + "/healthz")
 		if err == nil {
-			conn.Close()
-			return nil
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
 		}
 		if exitErr := proc.exited(); exitErr != nil {
 			return fmt.Errorf("process exited (%v) before %s accepted connections: %s", exitErr, addr, logTail(proc.logPath))
