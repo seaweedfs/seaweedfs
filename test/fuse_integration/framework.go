@@ -394,7 +394,7 @@ func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, ti
 		resp, err := client.Get("http://" + addr + "/healthz")
 		if err == nil {
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == http.StatusOK && proc.exited() == nil {
 				return nil
 			}
 		}
