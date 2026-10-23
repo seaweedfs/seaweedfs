@@ -42,21 +42,23 @@ const (
 
 // Configuration Field Names
 const (
-	ConfigFieldFilerAddress          = "filerAddress"
-	ConfigFieldBasePath              = "basePath"
-	ConfigFieldIssuer                = "issuer"
-	ConfigFieldClientID              = "clientId"
-	ConfigFieldClientIDs             = "clientIds"
-	ConfigFieldThumbprints           = "thumbprints"
-	ConfigFieldAllowedPrincipalTagKeys = "allowedPrincipalTagKeys"
-	ConfigFieldPolicyClaim             = "policyClaim"
-	ConfigFieldClientSecret          = "clientSecret"
-	ConfigFieldJWKSUri               = "jwksUri"
-	ConfigFieldScopes                = "scopes"
-	ConfigFieldUserInfoUri           = "userInfoUri"
-	ConfigFieldRedirectUri           = "redirectUri"
-	ConfigFieldTLSCACert             = "tlsCaCert"
-	ConfigFieldTLSInsecureSkipVerify = "tlsInsecureSkipVerify"
+	ConfigFieldFilerAddress               = "filerAddress"
+	ConfigFieldBasePath                   = "basePath"
+	ConfigFieldIssuer                     = "issuer"
+	ConfigFieldClientID                   = "clientId"
+	ConfigFieldClientIDs                  = "clientIds"
+	ConfigFieldThumbprints                = "thumbprints"
+	ConfigFieldAllowedPrincipalTagKeys    = "allowedPrincipalTagKeys"
+	ConfigFieldPolicyClaim                = "policyClaim"
+	ConfigFieldClientSecret               = "clientSecret"
+	ConfigFieldJWKSUri                    = "jwksUri"
+	ConfigFieldScopes                     = "scopes"
+	ConfigFieldUserInfoUri                = "userInfoUri"
+	ConfigFieldRedirectUri                = "redirectUri"
+	ConfigFieldTLSCACert                  = "tlsCaCert"
+	ConfigFieldTLSInsecureSkipVerify      = "tlsInsecureSkipVerify"
+	ConfigFieldJTIReplayProtectionEnabled = "jtiReplayProtectionEnabled"
+	ConfigFieldJTICacheMaxSize            = "jtiCacheMaxSize"
 )
 
 // Error Messages
