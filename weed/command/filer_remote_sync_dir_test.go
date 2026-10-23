@@ -2016,3 +2016,74 @@ func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 		t.Fatalf("stamped RemoteEntry = %+v, want the entry's own stamp kept (mtime 100)", filerClient.updated.Entry.RemoteEntry)
 	}
 }
+
+func TestIsSystemPath(t *testing.T) {
+	tests := []struct {
+		dir      string
+		name     string
+		expected bool
+	}{
+		{dir: "/buckets", name: ".system", expected: true},
+		{dir: "/buckets/.system", name: "owners", expected: true},
+		{dir: "/buckets/.system/owners", name: "alice", expected: true},
+		{dir: "/buckets/.system/owners/alice", name: "mybucket", expected: true},
+		{dir: "/", name: ".system", expected: true},
+		{dir: "/.system", name: "config", expected: true},
+		{dir: "/custom-mount", name: ".system", expected: true},
+		{dir: "/custom-mount/.system/owners", name: "alice", expected: true},
+		// Bucket contents should not match
+		{dir: "/buckets/mybucket", name: "file.txt", expected: false},
+		{dir: "/buckets/mybucket", name: ".system", expected: false},
+		{dir: "/buckets/mybucket/.system", name: "data", expected: false},
+		{dir: "/buckets", name: ".system-other", expected: false},
+		{dir: "/buckets/.system-other", name: "sub", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/%s", tt.dir, tt.name), func(t *testing.T) {
+			got := isSystemPath(tt.dir, tt.name)
+			if got != tt.expected {
+				t.Errorf("isSystemPath(%q, %q) = %v, want %v", tt.dir, tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRemoteSyncSkipsSystemFolder(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "project-storage", Path: "/"}
+
+	// Test update event on /buckets/.system/owners/... is skipped
+	updateResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/.system/owners/structify-api",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "structify-copy-canary"},
+			NewParentPath: "/buckets/.system/owners/structify-api",
+			NewEntry:      &filer_pb.Entry{Name: "structify-copy-canary"},
+		},
+	}
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, updateResp); err != nil {
+		t.Fatalf("processUpdateEvent failed: %v", err)
+	}
+	if len(remote.writes) != 0 || len(remote.metadataUpdates) != 0 {
+		t.Fatalf("expected 0 remote writes or metadata updates for system path, got %d writes and %d metadata updates",
+			len(remote.writes), len(remote.metadataUpdates))
+	}
+
+	// Test delete event on /buckets/.system/owners/... is skipped
+	deleteResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/.system/owners/structify-api",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "structify-copy-canary"},
+		},
+	}
+	if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, deleteResp); err != nil {
+		t.Fatalf("processDeleteEvent failed: %v", err)
+	}
+	if len(remote.deletes) != 0 {
+		t.Fatalf("expected 0 remote deletes for system path, got %d deletes", len(remote.deletes))
+	}
+}
+
