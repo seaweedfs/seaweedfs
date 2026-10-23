@@ -33,15 +33,10 @@ env:
   SHARD_COUNT: 3
 
 jobs:
-  volume-server-integration-tests:
-    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
+  build-weed:
+    name: Build SeaweedFS Binary
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        test-type: [grpc, http]
-        shard: [1, 2, 3]
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -58,6 +53,42 @@ jobs:
           go build -o weed .
           chmod +x weed
           ./weed version
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: weed-binary
+          if-no-files-found: error
+          retention-days: 1
+          path: weed/weed
+
+  volume-server-integration-tests:
+    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    needs: [build-weed]
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: [grpc, http]
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Download binary
+        uses: actions/download-artifact@v7
+        with:
+          name: weed-binary
+
+      - name: Restore binary permissions
+        run: chmod +x weed/weed && ./weed/weed version
 
       # Dealing the listed tests out one by one keeps the shards even. Bucketing
       # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of
