@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -435,7 +434,13 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-webdav=false",
 		"-admin.ui=false",
 	)
-	args = append(args, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(f.t, "admin"))...)
+	args = append(args,
+		// admin is unused; pin it off the fixed defaults so it cannot
+		// collide with a co-located mini (this module cannot use testutil)
+		"-admin.port="+strconv.Itoa(freePort(f.t)),
+		"-admin.port.grpc="+strconv.Itoa(freePort(f.t)),
+		"-admin.port.legacy=0",
+	)
 
 	proc, err := f.startProcess("mini", args)
 	if err != nil {

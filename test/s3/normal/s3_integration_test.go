@@ -187,7 +187,7 @@ func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
-			"-webdav.port=0",               // Disable WebDAV
+			"-webdav=false", "-webdav.port=0", // Disable WebDAV
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
 			"-ip=127.0.0.1",

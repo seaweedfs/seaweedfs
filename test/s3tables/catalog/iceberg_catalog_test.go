@@ -172,7 +172,7 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	}, testutil.MiniAdminArgs(env.adminPort)...)
-	miniArgs = append(miniArgs, "-webdav.port=0")
+	miniArgs = append(miniArgs, "-webdav=false", "-webdav.port=0")
 	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

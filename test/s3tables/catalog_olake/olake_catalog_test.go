@@ -293,7 +293,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
-	miniArgs = append(miniArgs, "-webdav.port=0", "-s3.port.lance=0")
+	miniArgs = append(miniArgs, "-webdav=false", "-webdav.port=0", "-s3.port.lance=0")
 	cmd := exec.Command(env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout

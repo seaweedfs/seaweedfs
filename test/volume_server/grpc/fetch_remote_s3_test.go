@@ -54,7 +54,7 @@ func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
 		fmt.Sprintf("-volume.port=%d", miniVolumePort),
 		fmt.Sprintf("-filer.port=%d", miniFilerPort),
 		fmt.Sprintf("-s3.port=%d", miniS3Port),
-		"-webdav.port=0",
+		"-webdav=false", "-webdav.port=0",
 		"-s3.port.lance=0",
 		"-s3.port.iceberg=0",
 	}, testutil.MiniAdminArgs(miniAdminPort)...)

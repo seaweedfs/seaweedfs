@@ -155,7 +155,7 @@ func startCluster(testDir string) (*testCluster, error) {
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpc),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3Grpc),
-			"-webdav.port=0",   // Disable WebDAV
+			"-webdav=false", "-webdav.port=0", // Disable WebDAV
 			"-s3.port.lance=0", // Disable Lance
 			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-master.volumeSizeLimitMB=32",

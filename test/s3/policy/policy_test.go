@@ -786,7 +786,7 @@ enabled = true
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
-			"-webdav.port=0",
+			"-webdav=false", "-webdav.port=0",
 			"-s3.port.lance=0",
 			"-s3.port.iceberg=0",
 			"-admin.ui=false",

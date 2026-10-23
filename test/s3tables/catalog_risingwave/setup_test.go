@@ -113,7 +113,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg", "Admin"})
 	env.masterPort = ports[0]
 	env.filerPort = ports[1]
 	env.s3Port = ports[2]
@@ -143,8 +143,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
-	miniArgs = append(miniArgs, "-webdav.port=0", "-s3.port.lance=0")
+	}, testutil.MiniAdminArgs(ports[4])...)
+	miniArgs = append(miniArgs, "-webdav=false", "-webdav.port=0", "-s3.port.lance=0")
 	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Stdout = logFile
 	env.masterProcess.Stderr = logFile
