@@ -37,23 +37,28 @@ func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
 		}
 	}
 
-	miniPorts := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3"})
+	miniPorts := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3", "Admin"})
 	miniMasterPort := miniPorts[0]
 	miniVolumePort := miniPorts[1]
 	miniFilerPort := miniPorts[2]
 	miniS3Port := miniPorts[3]
+	miniAdminPort := miniPorts[4]
 	miniDir := t.TempDir()
 	os.WriteFile(filepath.Join(miniDir, "security.toml"), []byte("# empty\n"), 0644)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	miniCmd := exec.CommandContext(ctx, weedBin, "mini",
+	miniArgs := append([]string{"mini",
 		fmt.Sprintf("-dir=%s", miniDir),
 		fmt.Sprintf("-master.port=%d", miniMasterPort),
 		fmt.Sprintf("-volume.port=%d", miniVolumePort),
 		fmt.Sprintf("-filer.port=%d", miniFilerPort),
 		fmt.Sprintf("-s3.port=%d", miniS3Port),
-	)
+		"-webdav=false",
+		"-s3.port.lance=0",
+		"-s3.port.iceberg=0",
+	}, testutil.MiniAdminArgs(miniAdminPort)...)
+	miniCmd := exec.CommandContext(ctx, weedBin, miniArgs...)
 	miniCmd.Env = append(os.Environ(), "AWS_ACCESS_KEY_ID=admin", "AWS_SECRET_ACCESS_KEY=admin")
 	miniCmd.Dir = miniDir
 	logFile, _ := os.CreateTemp("", "weed-mini-*.log")

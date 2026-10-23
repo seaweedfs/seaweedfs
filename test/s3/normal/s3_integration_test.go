@@ -117,7 +117,8 @@ func TestS3Integration(t *testing.T) {
 // Extra flags can be appended via extraArgs.
 func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 	// Allocate non-colliding ports (including gRPC offsets) for weed mini.
-	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3", "Admin"})
+	adminPort := ports[4]
 	masterPort := ports[0]
 	volumePort := ports[1]
 	filerPort := ports[2]
@@ -186,13 +187,15 @@ func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
-			"-webdav.port=0",               // Disable WebDAV
+			"-webdav=false", // Disable WebDAV
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
 			"-ip=127.0.0.1",
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
 		}, extraArgs...)
+		os.Args = append(os.Args, testutil.MiniAdminArgs(adminPort)...)
+		os.Args = append(os.Args, "-s3.port.lance=0", "-s3.port.iceberg=0")
 
 		// Suppress most logging during tests
 		glog.MaxSize = 1024 * 1024

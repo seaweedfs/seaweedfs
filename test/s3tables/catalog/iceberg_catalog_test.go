@@ -63,6 +63,7 @@ type TestEnvironment struct {
 	s3GrpcPort      int
 	icebergPort     int
 	lancePort       int
+	adminPort       int
 	masterPort      int
 	masterGrpcPort  int
 	filerPort       int
@@ -117,6 +118,10 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
+	adminPorts, err := testutil.AllocateMiniPorts(1)
+	if err != nil {
+		return nil, fmt.Errorf("allocate admin port: %w", err)
+	}
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
@@ -132,6 +137,7 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		volumePort:      ports[7],
 		volumeGrpcPort:  ports[8],
 		lancePort:       ports[9],
+		adminPort:       adminPorts[0],
 		dockerAvailable: testutil.HasDocker(),
 	}, nil
 }
@@ -152,7 +158,7 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -165,7 +171,9 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(env.adminPort)...)
+	miniArgs = append(miniArgs, "-webdav=false")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
