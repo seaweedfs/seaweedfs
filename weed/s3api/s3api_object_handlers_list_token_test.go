@@ -205,6 +205,17 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 	require.Equal(t, keys, got)
 }
 
+// A url-encoded marker is only a wire echo when re-escaping its unescaped
+// form reproduces it: a real echo decodes, a raw key merely containing '%'
+// or a malformed escape passes through untouched.
+func TestDecodeMarkerEchoKeepsNonCanonicalRawKey(t *testing.T) {
+	assert.Equal(t, "a b", decodeMarkerEcho("a%20b", true))
+	assert.Equal(t, "a%41", decodeMarkerEcho("a%2541", true))
+	assert.Equal(t, "a%41", decodeMarkerEcho("a%41", true))
+	assert.Equal(t, "a%2G", decodeMarkerEcho("a%2G", true))
+	assert.Equal(t, "a%20b", decodeMarkerEcho("a%20b", false))
+}
+
 // A url-encoded marker that is not the canonical urlPathEscape form of any key
 // is the client's raw key, not an encoded echo: "a%41" must resume after that
 // literal key instead of decoding to "aA" and skipping the keys between them.
