@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -178,7 +179,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for master to be ready
 	if err := f.waitForService(f.masterAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("master not ready: %v", err)
+		return fmt.Errorf("master not ready: %v%s", err, f.serviceLogTail("master"))
 	}
 
 	// Start volume servers
@@ -188,7 +189,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for volume server to be ready
 	if err := f.waitForService(f.volumeAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("volume server not ready: %v", err)
+		return fmt.Errorf("volume server not ready: %v%s", err, f.serviceLogTail("volume"))
 	}
 
 	// Start filer
@@ -198,7 +199,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for filer to be ready
 	if err := f.waitForService(f.filerAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("filer not ready: %v", err)
+		return fmt.Errorf("filer not ready: %v%s", err, f.serviceLogTail("filer"))
 	}
 
 	// Skip rather than fail on a host with no FUSE device to mount through
@@ -213,7 +214,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for mount to be ready
 	if err := f.waitForMount(30 * time.Second); err != nil {
-		return fmt.Errorf("FUSE mount not ready: %v", err)
+		return fmt.Errorf("FUSE mount not ready: %v%s", err, f.serviceLogTail("mount"))
 	}
 
 	f.isSetup = true
@@ -273,13 +274,12 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 		"master",
 		"-ip=127.0.0.1",
 		"-port=19333",
-		"-mdir=" + filepath.Join(f.dataDir, "master"),
+		"-mdir="+filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	cmd, err := f.startWeed("master", args...)
+	if err != nil {
 		return err
 	}
 	f.masterProcess = cmd.Process
@@ -294,16 +294,15 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 	}
 	args = append(args,
 		"volume",
-		"-mserver=" + f.masterAddr,
+		"-mserver="+f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18080",
-		"-dir=" + filepath.Join(f.dataDir, "volume"),
+		"-dir="+filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	cmd, err := f.startWeed("volume", args...)
+	if err != nil {
 		return err
 	}
 	f.volumeProcess = cmd.Process
@@ -318,14 +317,13 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 	}
 	args = append(args,
 		"filer",
-		"-master=" + f.masterAddr,
+		"-master="+f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18888",
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	cmd, err := f.startWeed("filer", args...)
+	if err != nil {
 		return err
 	}
 	f.filerProcess = cmd.Process
@@ -340,8 +338,8 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	}
 	args = append(args,
 		"mount",
-		"-filer=" + f.filerAddr,
-		"-dir=" + f.mountPoint,
+		"-filer="+f.filerAddr,
+		"-dir="+f.mountPoint,
 		"-filer.path=/",
 		"-dirAutoCreate",
 	)
@@ -361,9 +359,8 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 
 	args = append(args, config.MountOptions...)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	cmd, err := f.startWeed("mount", args...)
+	if err != nil {
 		return err
 	}
 	f.mountProcess = cmd.Process
@@ -427,6 +424,36 @@ func fuseAvailable() bool {
 		}
 	}
 	return false
+}
+
+// startWeed runs the weed binary with the service's combined output in
+// <tempDir>/<name>.log, kept so a failed readiness wait can be diagnosed.
+func (f *FuseTestFramework) startWeed(name string, args ...string) (*exec.Cmd, error) {
+	cmd := exec.Command(f.weedBinary, args...)
+	cmd.Dir = f.tempDir
+	if logf, err := os.Create(filepath.Join(f.tempDir, name+".log")); err == nil {
+		defer logf.Close()
+		cmd.Stdout = logf
+		cmd.Stderr = logf
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
+}
+
+// serviceLogTail returns the trailing lines of a service log for inclusion
+// in a readiness failure.
+func (f *FuseTestFramework) serviceLogTail(name string) string {
+	content, err := os.ReadFile(filepath.Join(f.tempDir, name+".log"))
+	if err != nil || len(content) == 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	if len(lines) > 20 {
+		lines = lines[len(lines)-20:]
+	}
+	return "\n" + name + " log tail:\n" + strings.Join(lines, "\n")
 }
 
 // findWeedBinary locates the weed binary. Candidates are resolved to
