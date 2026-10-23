@@ -1402,7 +1402,7 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		Delimiter:      input.Delimiter,
 		EncodingType:   input.EncodingType,
 		KeyMarker:      input.KeyMarker,
-		MaxUploads:     input.MaxUploads,
+		MaxUploads:     aws.Int64(int64(p.limit)),
 		Prefix:         input.Prefix,
 		UploadIdMarker: input.UploadIdMarker,
 		IsTruncated:    aws.Bool(false),

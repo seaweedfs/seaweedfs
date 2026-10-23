@@ -145,4 +145,7 @@ func TestSelectMultipartUploadsCapsRequestedPageSize(t *testing.T) {
 	if page.limit != maxUploadsList {
 		t.Fatalf("page limit %d, want capped at %d", page.limit, maxUploadsList)
 	}
+	if got := *page.result().MaxUploads; got != int64(maxUploadsList) {
+		t.Fatalf("MaxUploads reports %d, want the effective cap %d", got, maxUploadsList)
+	}
 }
