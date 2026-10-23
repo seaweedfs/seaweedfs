@@ -144,6 +144,12 @@ type MetadataProcessor struct {
 	// position must still sit behind it.
 	earliestFailedTsNs int64
 
+	// newestSeenTsNs is the largest TsNs the stream has offered, job or
+	// marker. A watermark equal to it is not a safe resume point: more
+	// events at the same timestamp can still sit unread in the log, so the
+	// persisted position has to stay one tick below it.
+	newestSeenTsNs int64
+
 	// resubscribeCh closes once a failure has stopped the processor and all
 	// in-flight jobs have drained, asking the metadata follower to drop the
 	// stream so the caller's reconnect replays the pinned events in order —
@@ -212,6 +218,13 @@ func (t *MetadataProcessor) EarliestFailedTsNs() int64 {
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 	return t.earliestFailedTsNs
+}
+
+// NewestSeenTsNs returns the largest TsNs the stream has offered so far.
+func (t *MetadataProcessor) NewestSeenTsNs() int64 {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	return t.newestSeenTsNs
 }
 
 // ResubscribeCh closes once a job failure has stopped the processor and its
@@ -366,6 +379,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		// to it so idle stretches still advance the resume point.
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
+		if resp.TsNs > t.newestSeenTsNs {
+			t.newestSeenTsNs = resp.TsNs
+		}
 		if resp.TsNs > t.filteredTsNs {
 			t.filteredTsNs = resp.TsNs
 		}
@@ -380,6 +396,10 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
+
+	if resp.TsNs > t.newestSeenTsNs {
+		t.newestSeenTsNs = resp.TsNs
+	}
 
 	p, newPath, kind := extractJobInfo(resp)
 	eventKey := failedEventKey{tsNs: resp.TsNs, path: p, newPath: newPath, kind: kind}

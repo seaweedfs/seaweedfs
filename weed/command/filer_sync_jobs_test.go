@@ -1132,3 +1132,48 @@ func TestResumeStaysBehindClearedPin(t *testing.T) {
 	close(release)
 	waitForJobsToDrain(t, p)
 }
+
+// TestResumeStaysBelowNewestSeen covers the frontier case: when every admitted
+// job has finished, the watermark sits on the newest timestamp seen — but the
+// log can still hold same-timestamp events the stream has not delivered yet.
+// An exclusive resume there would skip them, so the position stays one tick
+// below until a newer timestamp proves the block is closed.
+func TestResumeStaysBelowNewestSeen(t *testing.T) {
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	}, 10, 0)
+
+	// the event at 100 finishes before a same-timestamp sibling could even be
+	// read; the watermark reaches the frontier but cannot persist there
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+	if got := resumeTsNsFor(p); got != 99 {
+		t.Fatalf("resume = %d at the frontier, want 99 so an unread same-ts event replays", got)
+	}
+
+	// once a newer timestamp is seen the 100-block is closed: a slow job at
+	// 200 in flight pins nothing below it, so 100 is now a safe position
+	release := make(chan struct{})
+	p2 := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 200 {
+			<-release
+		}
+		return nil
+	}, 10, 0)
+	p2.AddSyncJob(makeResp("/dir", "c.txt", false, 100, true))
+	p2.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p2.processedTsWatermark.Load() != 100 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := resumeTsNsFor(p2); got != 100 {
+		t.Fatalf("resume = %d below the frontier, want 100", got)
+	}
+
+	// finishing the 200 job lands the watermark back on the frontier
+	close(release)
+	waitForJobsToDrain(t, p2)
+	if got := resumeTsNsFor(p2); got != 199 {
+		t.Fatalf("resume = %d at the frontier, want 199", got)
+	}
+}

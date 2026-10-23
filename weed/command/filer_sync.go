@@ -598,10 +598,16 @@ type offsetCheckpoint struct {
 
 // resumeTsNsFor floors the processed watermark by the earliest failure the
 // processor saw: a redelivery can clear the pin, but events dropped while it
-// was stopped only replay if the resume position stays behind it. The
-// position is exclusive, so it sits one tick below the pin.
+// was stopped only replay if the resume position stays behind it. It also
+// stays one tick below the newest timestamp seen — a watermark on the
+// frontier can have finished every job it admitted while more events at the
+// same timestamp still sit unread in the log, and an exclusive resume there
+// would skip them.
 func resumeTsNsFor(p *MetadataProcessor) int64 {
 	ts := p.processedTsWatermark.Load()
+	if newestTsNs := p.NewestSeenTsNs(); newestTsNs > 0 && ts >= newestTsNs {
+		ts = newestTsNs - 1
+	}
 	if failedTsNs := p.EarliestFailedTsNs(); failedTsNs > 0 && failedTsNs-1 < ts {
 		ts = failedTsNs - 1
 	}
