@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -110,5 +111,38 @@ func TestSelectMultipartUploadsPaginatesEveryUploadOnce(t *testing.T) {
 	}
 	if len(seen) != len(entries) {
 		t.Fatalf("listed %d of %d uploads", len(seen), len(entries))
+	}
+}
+
+func TestSelectMultipartUploadsHoldsOnlyThePage(t *testing.T) {
+	// a folder far larger than the page must not accumulate in the collector:
+	// peak memory tracks maxUploads, not the open-upload count
+	page := newMultipartUploadPage(listUploadsInput("", "", "", 3))
+	const total = 20000
+	for i := 0; i < total; i++ {
+		page.add(uploadEntry(fmt.Sprintf("%05d", i), fmt.Sprintf("k%05d", total-1-i), int64(i)))
+	}
+	if page.top.Len() != 3 {
+		t.Fatalf("collector holds %d candidates, want the 3-entry page", page.top.Len())
+	}
+	out := page.result()
+	var got []string
+	for _, u := range out.Upload {
+		got = append(got, *u.Key+"/"+*u.UploadId)
+	}
+	want := []string{"k00000/19999", "k00001/19998", "k00002/19997"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if !*out.IsTruncated || *out.NextKeyMarker != "k00002" || *out.NextUploadIdMarker != "19997" {
+		t.Fatalf("truncation markers got (%v, %v, %v)", *out.IsTruncated, *out.NextKeyMarker, *out.NextUploadIdMarker)
+	}
+}
+
+func TestSelectMultipartUploadsCapsRequestedPageSize(t *testing.T) {
+	// max-uploads is caller-controlled; the page stays bounded at the server cap
+	page := newMultipartUploadPage(listUploadsInput("", "", "", 10*maxUploadsList))
+	if page.limit != maxUploadsList {
+		t.Fatalf("page limit %d, want capped at %d", page.limit, maxUploadsList)
 	}
 }
