@@ -320,7 +320,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	// loses its parent, and a later GetRack call would panic.
 	limiter := make(map[NodeId]int)
 	rackLimiter := make(map[Node]int)
-	dnRack := make(map[NodeId]Node)
+	dnRack := make(map[*DataNode]Node)
 	var limiterLock sync.Mutex
 	for _, locationList := range todoVolumeMap {
 		for _, dn := range locationList.list {
@@ -328,11 +328,11 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 				limiter[dn.Id()] = maxParallelVacuumPerServer
 			}
 			if maxParallelVacuumPerRack > 0 {
-				if _, ok := dnRack[dn.Id()]; !ok {
-					dnRack[dn.Id()] = vacuumRackKey(dn)
+				if _, ok := dnRack[dn]; !ok {
+					dnRack[dn] = vacuumRackKey(dn)
 				}
-				if _, ok := rackLimiter[dnRack[dn.Id()]]; !ok {
-					rackLimiter[dnRack[dn.Id()]] = maxParallelVacuumPerRack
+				if _, ok := rackLimiter[dnRack[dn]]; !ok {
+					rackLimiter[dnRack[dn]] = maxParallelVacuumPerRack
 				}
 			}
 		}
@@ -354,7 +354,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			for _, dn := range locationList.list {
 				serverNeeds[dn.Id()]++
 				if maxParallelVacuumPerRack > 0 {
-					rackNeeds[dnRack[dn.Id()]]++
+					rackNeeds[dnRack[dn]]++
 				}
 			}
 			limiterLock.Lock()
