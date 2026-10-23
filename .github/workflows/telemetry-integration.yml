@@ -30,6 +30,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Build telemetry server
       run: cd telemetry/server && go build -o telemetry-server .
