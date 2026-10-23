@@ -224,6 +224,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
+	// A mounted filesystem still cannot write until a volume registers and a
+	// grow round finishes, so gate on a real write instead of letting the
+	// first test hits ride out the startup window as EIO on close.
+	if err := f.waitForWritable(90 * time.Second); err != nil {
+		return fmt.Errorf("FUSE mount not writable: %v", err)
+	}
+
 	f.isSetup = true
 	return nil
 }
@@ -466,6 +473,33 @@ func (f *FuseTestFramework) waitForMount(proc *managedProcess, timeout time.Dura
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout: %s", logTail(proc.logPath))
+}
+
+// waitForWritable probes the mount with a real write+read+remove until one
+// succeeds, covering the window where a fresh cluster cannot yet assign a
+// file id (volume not registered, grow pending, leader settle).
+func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
+	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
+	payload := []byte("probe")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if exitErr := f.mountProcess.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
+		}
+		if err := os.WriteFile(probe, payload, 0644); err != nil {
+			lastErr = err
+		} else if data, err := os.ReadFile(probe); err != nil {
+			lastErr = err
+		} else if len(data) != len(payload) {
+			lastErr = fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
+		} else {
+			os.Remove(probe)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("write probe failed within timeout: %v", lastErr)
 }
 
 // managedProcess tracks a started weed sub-command so a wait can bail out
