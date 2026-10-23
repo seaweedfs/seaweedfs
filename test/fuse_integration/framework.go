@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -396,11 +397,16 @@ func (f *FuseTestFramework) dumpLog(name string) {
 	f.t.Logf("[%s log tail (%d bytes)]\n%s", name, len(data), string(data))
 }
 
-// copyLogsForCI copies SeaweedFS process logs to /tmp/seaweedfs-fuse-logs/
-// so the CI workflow can upload them as artifacts.
+// copyLogsForCI copies SeaweedFS process logs under a per-test directory in
+// /tmp/seaweedfs-fuse-logs/ so the CI workflow can upload them as artifacts.
+// Each framework instance gets its own directory: every test in the suite
+// builds one, and fixed filenames would let a later passing test overwrite
+// the logs of an earlier failing one.
 func (f *FuseTestFramework) copyLogsForCI() {
-	ciLogDir := "/tmp/seaweedfs-fuse-logs"
-	os.MkdirAll(ciLogDir, 0755)
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-logs", strings.NewReplacer("/", "_", " ", "_").Replace(f.t.Name()))
+	if err := os.MkdirAll(ciLogDir, 0755); err != nil {
+		return
+	}
 	for _, name := range []string{"mini", "mount"} {
 		src := filepath.Join(f.logDir, name+".log")
 		data, err := os.ReadFile(src)
