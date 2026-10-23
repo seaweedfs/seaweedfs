@@ -818,3 +818,41 @@ func TestBuildTargetsDisabledFlat(t *testing.T) {
 		t.Fatalf("expected only the named target, got %v", targets)
 	}
 }
+
+// A failing endpoint must be retried maxRetries times before the event is
+// dead-lettered — the poison middleware has to sit outside the retry chain
+// or it swallows the first error and retries never run.
+func TestQueueRetriesBeforeDeadLetter(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := &config{
+		endpoint:          server.URL,
+		timeoutSeconds:    5,
+		maxRetries:        2,
+		backoffSeconds:    1,
+		maxBackoffSeconds: 1,
+		nWorkers:          1,
+		bufferSize:        10,
+	}
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
+
+	msg := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}}
+	if err := q.SendMessage("/test/path", msg); err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+
+	want := int32(cfg.maxRetries + 1)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) && hits.Load() < want {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := hits.Load(); got != want {
+		t.Errorf("expected %d delivery attempts (1 + %d retries), got %d", want, cfg.maxRetries, got)
+	}
+}

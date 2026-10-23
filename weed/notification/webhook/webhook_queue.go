@@ -283,14 +283,15 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 
 		router.AddPlugin(plugin.SignalsHandler)
 		// outermost: the reservation SendMessage took releases once the whole
-		// chain (retries, dead letter) is done, bounding in-flight deliveries
+		// chain (retries, dead letter) is done, bounding in-flight deliveries.
+		// poison wraps retry so the delivery is retried before dead-lettering.
 		releasePending := func(h message.HandlerFunc) message.HandlerFunc {
 			return func(msg *message.Message) ([]*message.Message, error) {
 				defer t.releasePending()
 				return h(msg)
 			}
 		}
-		router.AddMiddleware(releasePending, retryMiddleware, poisonQueue)
+		router.AddMiddleware(releasePending, poisonQueue, retryMiddleware)
 
 		t := t
 		router.AddConsumerHandler(
