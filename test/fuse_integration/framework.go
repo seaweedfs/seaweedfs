@@ -241,6 +241,10 @@ func (f *FuseTestFramework) Cleanup() {
 		return
 	}
 
+	if f.t.Failed() {
+		f.DumpLogs()
+	}
+
 	if f.mountProcess != nil {
 		f.unmountFuse()
 	}
@@ -253,9 +257,43 @@ func (f *FuseTestFramework) Cleanup() {
 		}
 	}
 
+	f.copyLogsForCI()
+
 	// Remove temp directory
 	if !f.config.SkipCleanup {
 		os.RemoveAll(f.tempDir)
+	}
+}
+
+// DumpLogs prints the tail of each SeaweedFS process log to the test output.
+func (f *FuseTestFramework) DumpLogs() {
+	for _, name := range []string{"master", "volume", "filer", "mount"} {
+		data, err := os.ReadFile(filepath.Join(f.tempDir, name+".log"))
+		if err != nil {
+			f.t.Logf("[%s log] (not available: %v)", name, err)
+			continue
+		}
+		const maxTail = 16 * 1024
+		if len(data) > maxTail {
+			data = data[len(data)-maxTail:]
+		}
+		f.t.Logf("[%s log tail (%d bytes)]\n%s", name, len(data), string(data))
+	}
+}
+
+// copyLogsForCI copies the per-service logs under a standalone/ subdir of the
+// CI log dir so they survive next to the mini-framework's logs.
+func (f *FuseTestFramework) copyLogsForCI() {
+	ciLogDir := "/tmp/seaweedfs-fuse-logs/standalone"
+	if err := os.MkdirAll(ciLogDir, 0755); err != nil {
+		return
+	}
+	for _, name := range []string{"master", "volume", "filer", "mount"} {
+		data, err := os.ReadFile(filepath.Join(f.tempDir, name+".log"))
+		if err != nil {
+			continue
+		}
+		os.WriteFile(filepath.Join(ciLogDir, name+".log"), data, 0644)
 	}
 }
 
