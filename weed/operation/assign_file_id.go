@@ -157,11 +157,11 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 	return ret, lastError
 }
 
-func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
+func LookupJwt(ctx context.Context, master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	WithMasterServerClient(context.Background(), false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	WithMasterServerClient(ctx, false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
-		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
+		resp, grpcErr := masterClient.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
 		})
 		if grpcErr != nil {

@@ -229,8 +229,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 
 	manifestDataChunks := make([]*filer_pb.FileChunk, len(replicatedResolvedChunks))
 	for i, chunk := range replicatedResolvedChunks {
-		copied := *chunk
-		manifestDataChunks[i] = &copied
+		manifestDataChunks[i] = proto.Clone(chunk).(*filer_pb.FileChunk)
 	}
 	filer_pb.BeforeEntrySerialization(manifestDataChunks)
 	manifestData, err := proto.Marshal(&filer_pb.FileChunkManifest{

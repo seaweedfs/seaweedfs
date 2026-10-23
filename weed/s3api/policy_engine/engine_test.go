@@ -896,6 +896,161 @@ func TestExistingObjectTagCondition(t *testing.T) {
 	}
 }
 
+func TestRequestObjectTagCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:RequestObjectTag/department": ["engineering"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	copyHeaders := map[string]string{"X-Amz-Copy-Source": "/src-bucket/src-object"}
+	replaceHeaders := map[string]string{
+		"X-Amz-Copy-Source":                    "/src-bucket/src-object",
+		s3_constants.AmzObjectTaggingDirective: "REPLACE",
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		headers  map[string]string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"matching tag allows", "", "", nil, "department=engineering", PolicyResultAllow},
+		{"matching tag among others allows", "", "", nil, "project=alpha&department=engineering", PolicyResultAllow},
+		{"url-encoded value is decoded", "", "", nil, "department=engin%65ering", PolicyResultAllow},
+		{"other value is not allowed", "", "", nil, "department=sales", PolicyResultIndeterminate},
+		{"missing tag is not allowed", "", "", nil, "project=alpha", PolicyResultIndeterminate},
+		{"no tagging header is not allowed", "", "", nil, "", PolicyResultIndeterminate},
+		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
+		{"last value of a repeated key counts", "", "", nil, "department=sales&department=engineering", PolicyResultAllow},
+		{"earlier value of a repeated key is ignored", "", "", nil, "department=engineering&department=sales", PolicyResultIndeterminate},
+		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header counts with an unrelated query parameter", "", "?foo=bar", nil, "department=engineering", PolicyResultAllow},
+		{"header counts on a Signature V2 presigned PUT", "", "?AWSAccessKeyId=k&Signature=s&Expires=1", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a renameObject subresource", "", "?renameObject", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy that replaces tags", "", "", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a multipart copy that replaces tags", "", "?partNumber=1&uploadId=x", replaceHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy with a lone partNumber", "", "?partNumber=1", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header counts on a multipart create", "POST", "?uploads", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on multipart completion", "POST", "?uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a directory marker", "", "/", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on an acl subresource", "", "?acl", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a GET", "GET", "", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a DELETE", "DELETE", "", nil, "department=engineering", PolicyResultIndeterminate},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			method := tt.method
+			if method == "" {
+				method = http.MethodPut
+			}
+			req := httptest.NewRequest(method, "/test-bucket/test-object"+tt.target, nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			if tt.tagging != "" {
+				req.Header.Set(s3_constants.AmzObjectTagging, tt.tagging)
+			}
+
+			args := &PolicyEvaluationArgs{
+				Action:     "s3:PutObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				Conditions: engine.ExtractConditionValuesFromRequest(req),
+			}
+
+			if result := engine.EvaluatePolicy("test-bucket", args); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRequestObjectTagConditionDeny(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringNotEquals": {
+						"s3:RequestObjectTag/department": ["engineering"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		target   string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"required tag passes", "", "department=engineering", PolicyResultAllow},
+		{"other value is denied", "", "department=sales", PolicyResultDeny},
+		{"missing tag is denied", "", "project=alpha", PolicyResultDeny},
+		{"repeated key ending in another value is denied", "", "department=engineering&department=sales", PolicyResultDeny},
+		{"malformed header is denied", "", "department=engineering&%zz", PolicyResultDeny},
+		{"unrelated query parameter does not hide the tag", "?foo=bar", "department=sales", PolicyResultDeny},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-object"+tt.target, nil)
+			req.Header.Set(s3_constants.AmzObjectTagging, tt.tagging)
+
+			args := &PolicyEvaluationArgs{
+				Action:     "s3:PutObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				Conditions: engine.ExtractConditionValuesFromRequest(req),
+			}
+
+			if result := engine.EvaluatePolicy("test-bucket", args); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
 // TestExistingObjectTagConditionMultipleTags tests policies with multiple tag conditions
 func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
 	engine := NewPolicyEngine()

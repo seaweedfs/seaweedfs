@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -614,7 +615,7 @@ func deriveSchedulerAdminRuntime(
 	descriptor *plugin_pb.JobTypeDescriptor,
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
-		adminConfig := *cfg.AdminRuntime
+		adminConfig := proto.Clone(cfg.AdminRuntime).(*plugin_pb.AdminRuntimeConfig)
 		// Overlay descriptor defaults for any zero numeric fields. Persisted
 		// configs from older versions have no execution_timeout_seconds, and
 		// without this overlay the scheduler would fall back to the 90s
@@ -646,7 +647,7 @@ func deriveSchedulerAdminRuntime(
 				adminConfig.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
 			}
 		}
-		return &adminConfig
+		return adminConfig
 	}
 
 	if descriptor == nil || descriptor.AdminRuntimeDefaults == nil {

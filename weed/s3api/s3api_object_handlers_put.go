@@ -696,6 +696,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		MimeType:        r.Header.Get("Content-Type"),
 		Cipher:          s3a.cipher, // encrypt data on volume servers
 		AssignFunc:      assignFunc,
+		LookupJwtFunc:   s3a.lookupVolumeJwt,
 	})
 	if err != nil {
 		glog.Errorf("putToFiler: chunked upload failed: %v", err)
@@ -3020,6 +3021,15 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
+}
+
+// lookupVolumeJwt mints a fresh volume-server JWT for an existing file id, so a
+// cleanup delete that runs past the assignment JWT's expiry still authenticates.
+func (s3a *S3ApiServer) lookupVolumeJwt(ctx context.Context, fileId string) security.EncodedJwt {
+	if s3a.masterClient == nil {
+		return ""
+	}
+	return operation.LookupJwt(ctx, s3a.masterClient.GetMaster(ctx), s3a.option.GrpcDialOption, fileId)
 }
 
 // deleteOrphanedChunks attempts to delete chunks that were uploaded but whose entry creation failed

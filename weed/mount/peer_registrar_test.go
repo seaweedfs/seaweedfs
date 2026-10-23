@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeFilerClient captures MountRegister/MountList calls and lets the test
@@ -17,22 +18,21 @@ type fakeFilerClient struct {
 	filer_pb.SeaweedFilerClient // embed for methods we don't need
 
 	mu            sync.Mutex
-	registerCalls []filer_pb.MountRegisterRequest
+	registerCalls []*filer_pb.MountRegisterRequest
 	listResponse  filer_pb.MountListResponse
 }
 
 func (f *fakeFilerClient) MountRegister(ctx context.Context, req *filer_pb.MountRegisterRequest, opts ...grpc.CallOption) (*filer_pb.MountRegisterResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.registerCalls = append(f.registerCalls, *req)
+	f.registerCalls = append(f.registerCalls, proto.Clone(req).(*filer_pb.MountRegisterRequest))
 	return &filer_pb.MountRegisterResponse{}, nil
 }
 
 func (f *fakeFilerClient) MountList(ctx context.Context, req *filer_pb.MountListRequest, opts ...grpc.CallOption) (*filer_pb.MountListResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	resp := f.listResponse // value copy
-	return &resp, nil
+	return proto.Clone(&f.listResponse).(*filer_pb.MountListResponse), nil
 }
 
 // fakeFilerFleet maps each addr to its own fakeFilerClient so a test can
