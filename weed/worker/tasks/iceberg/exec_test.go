@@ -4799,3 +4799,74 @@ func TestExpireSnapshotsKeepsDoublyEscapedKeptReference(t *testing.T) {
 		t.Error("file referenced by the kept snapshot through a doubly-escaped path was deleted")
 	}
 }
+
+// A kept reference whose decoded spelling contains a parent segment resolves
+// to the cleaned path. The kept set must record the cleaned spelling, or the
+// expiry pass misses the protection and deletes a file a live snapshot still
+// references.
+func TestExpireSnapshotsKeepsDecodedParentReference(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	writeRefManifest := func(fileName string, snapID int64, filePath string) {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			meta.PartitionSpec(), iceberg.EntryContentData, filePath,
+			iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+		)
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		var manifestBuf bytes.Buffer
+		if _, err := iceberg.WriteManifest(
+			setup.fileRef("metadata", fileName), &manifestBuf,
+			meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+			[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+		); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		fs.putEntry(metaDir, fileName, &filer_pb.Entry{
+			Name:       fileName,
+			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+			Content:    manifestBuf.Bytes(),
+		})
+	}
+	writeRefManifest("manifest-1.avro", 1, fmt.Sprintf("s3://%s/%s/data/f.parquet", setup.BucketName, setup.tablePath()))
+	writeRefManifest("manifest-2.avro", 2, fmt.Sprintf("s3://%s/%s/data/tmp/%%2e%%2e/f.parquet", setup.BucketName, setup.tablePath()))
+
+	fs.putEntry(dataDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	if fs.getEntry(dataDir, "f.parquet") == nil {
+		t.Error("file referenced by the kept snapshot through a decoded parent segment was deleted")
+	}
+}
