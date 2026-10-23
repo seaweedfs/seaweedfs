@@ -594,10 +594,15 @@ func testTargetOperations(t *testing.T, client *S3TablesClient) {
 // directory. It does not require a *testing.T so it can be called from TestMain.
 // extraArgs are appended to the default mini command flags.
 func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, error) {
-	// We need 10 unique ports: Master(2), Volume(2), Filer(2), S3(2), Admin(2)
-	ports, err := testutil.AllocatePorts(11)
+	// We need 9 unique ports: Master(2), Volume(2), Filer(2), S3(2), Iceberg(1);
+	// the admin pair comes from the mini-safe range.
+	ports, err := testutil.AllocatePorts(9)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available ports: %v", err)
+	}
+	adminPorts, err := testutil.AllocateMiniPorts(1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate admin port: %v", err)
 	}
 
 	masterPort := ports[0]
@@ -608,9 +613,8 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 	filerGrpcPort := ports[5]
 	s3Port := ports[6]
 	s3GrpcPort := ports[7]
-	adminPort := ports[8]
-	adminGrpcPort := ports[9]
-	icebergPort := ports[10]
+	adminPort := adminPorts[0]
+	icebergPort := ports[8]
 
 	// Ensure no configuration file from previous runs
 	configFile := filepath.Join(testDir, "mini.options")
@@ -675,11 +679,8 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
-			"-admin.port=" + strconv.Itoa(adminPort),
-			"-admin.port.grpc=" + strconv.Itoa(adminGrpcPort),
-			"-admin.port.legacy=0", // Disable admin legacy compat listener
-			"-webdav.port=0",       // Disable WebDAV
-			"-s3.port.lance=0",     // Disable Lance
+			"-webdav.port=0",   // Disable WebDAV
+			"-s3.port.lance=0", // Disable Lance
 			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
@@ -687,6 +688,7 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
 		}
+		baseArgs = append(baseArgs, testutil.MiniAdminArgs(adminPort)...)
 		if len(extraArgs) > 0 {
 			baseArgs = append(baseArgs, extraArgs...)
 		}
