@@ -204,6 +204,8 @@ func (ce *CommandEnv) discoverFiler() {
 		ce.option.FilerAddress = filers[rand.IntN(len(filers))]
 	} else if listErr != nil {
 		fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *ce.option.Masters, listErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "no filer registered with master %s within %s\n", *ce.option.Masters, connectTimeout)
 	}
 	if ce.option.Debug {
 		if len(filers) > 0 {
