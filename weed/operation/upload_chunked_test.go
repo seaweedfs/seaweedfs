@@ -26,13 +26,11 @@ func TestUploadReaderInChunksReturnsPartialResultsOnError(t *testing.T) {
 	testData := bytes.Repeat([]byte("test data for chunk upload failure testing"), 1000) // ~40KB
 	reader := bytes.NewReader(testData)
 
-	uploadAttempts := 0
+	var uploadAttempts int32
 
 	// Create a mock assign function that succeeds for first chunk, then fails
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
-		uploadAttempts++
-
-		if uploadAttempts == 1 {
+		if atomic.AddInt32(&uploadAttempts, 1) == 1 {
 			// First chunk succeeds
 			return nil, &AssignResult{
 				Fid:       "test-fid-1,1234",
