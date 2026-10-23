@@ -73,7 +73,7 @@ func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 		Name:           in.Name,
 		Prefix:         in.Prefix,
 		Marker:         in.Marker,
-		NextMarker:     in.NextMarker,
+		NextMarker:     encodeListContinuationToken(in.NextMarker),
 		MaxKeys:        in.MaxKeys,
 		Delimiter:      in.Delimiter,
 		IsTruncated:    in.IsTruncated,
@@ -226,9 +226,9 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, listMarker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, marker, delimiter, maxKeys)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, listMarker, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -244,8 +244,8 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
-	requestMarker := marker
-	marker = adjustMarkerForDelimiter(marker, originalPrefix, delimiter)
+	requestMarker := decodeListContinuationToken(listMarker)
+	marker := adjustMarkerForDelimiter(requestMarker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
 		bucket:          bucket,

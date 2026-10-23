@@ -135,3 +135,52 @@ func TestDecodeListContinuationTokenKeepsForeignTokensRaw(t *testing.T) {
 	// An empty payload is never something encodeListContinuationToken wrote.
 	assert.Equal(t, "base64:", decodeListContinuationToken("base64:"))
 }
+
+type listV1TestPage struct {
+	XMLName     xml.Name `xml:"ListBucketResult"`
+	IsTruncated bool     `xml:"IsTruncated"`
+	NextMarker  string   `xml:"NextMarker"`
+	Contents    []struct {
+		Key string `xml:"Key"`
+	} `xml:"Contents"`
+}
+
+func listV1Page(t *testing.T, s3a *S3ApiServer, query url.Values) listV1TestPage {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/test?"+query.Encode(), nil)
+	r = mux.SetURLVars(r, map[string]string{"bucket": "test"})
+	w := httptest.NewRecorder()
+	s3a.ListObjectsV1Handler(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var page listV1TestPage
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &page), w.Body.String())
+	return page
+}
+
+// The V1 marker carries the same resume position as the V2 token, so it gets
+// the same treatment: a page ending on an XML-unsafe key must still resume
+// right after it.
+func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
+	keys := []string{"a\x01b", "a\x02b", "a\x1fb", "a b", "b", "c"}
+	s3a := newListTokenTestServer(t, keys)
+
+	var got []string
+	marker := ""
+	for page := 0; ; page++ {
+		require.Less(t, page, len(keys), "listing did not terminate")
+		query := url.Values{"max-keys": {"2"}}
+		if marker != "" {
+			query.Set("marker", marker)
+		}
+		result := listV1Page(t, s3a, query)
+		for _, content := range result.Contents {
+			got = append(got, content.Key)
+		}
+		if !result.IsTruncated {
+			break
+		}
+		require.NotEmpty(t, result.NextMarker)
+		marker = result.NextMarker
+	}
+	require.Len(t, got, len(keys))
+}
