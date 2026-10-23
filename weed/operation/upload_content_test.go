@@ -199,6 +199,103 @@ func (c *bodyCapturingHTTPClient) Do(req *http.Request) (*http.Response, error) 
 	}, nil
 }
 
+// stallingHTTPClient drains the request body, parks the first stalls calls
+// until the request ctx is cancelled (a conn that never drains), and delays
+// the rest by slowFor.
+type stallingHTTPClient struct {
+	mu          sync.Mutex
+	stalls      int
+	slowFor     time.Duration
+	requestCtxs []context.Context
+}
+
+func (c *stallingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	c.mu.Lock()
+	c.requestCtxs = append(c.requestCtxs, req.Context())
+	stall := c.stalls > 0
+	if stall {
+		c.stalls--
+	}
+	c.mu.Unlock()
+
+	if stall {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	if c.slowFor > 0 {
+		time.Sleep(c.slowFor)
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
+// A host that just served a fast upload arms the stall watchdog: a request
+// parked well past the floor is riding a wedged conn, so it is cancelled and
+// the retry runs on a fresh conn without the watchdog.
+func TestUploadStallWatchdogRetriesOnFreshConn(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 50 * time.Millisecond
+
+	client := &stallingHTTPClient{stalls: 1}
+	uploader := newUploader(client)
+	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("upload should have retried on a fresh conn: %v", err)
+	}
+	if result.RetryCount != 1 || len(client.requestCtxs) != 2 {
+		t.Fatalf("got retries=%d calls=%d, want one retry on a fresh conn", result.RetryCount, len(client.requestCtxs))
+	}
+	if err := client.requestCtxs[0].Err(); err == nil {
+		t.Fatalf("first attempt context was not cancelled")
+	}
+}
+
+// Without a recent fast upload the watchdog stays off: a chronically slow link
+// is the link, not a conn, and must not get its uploads cancelled.
+func TestUploadStallWatchdogKeepsUnprovenHost(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 20 * time.Millisecond
+
+	client := &stallingHTTPClient{slowFor: 60 * time.Millisecond}
+	uploader := newUploader(client)
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://slow-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("unproven host upload should not be cancelled: %v", err)
+	}
+	if result.RetryCount != 0 || len(client.requestCtxs) != 1 {
+		t.Fatalf("got retries=%d calls=%d, want a single unbounded attempt", result.RetryCount, len(client.requestCtxs))
+	}
+}
+
+// Only a genuinely fast transfer marks the host: a trickle success (below the
+// healthy bar) and a too-small upload leave the host unproven.
+func TestUploadMovedHealthy(t *testing.T) {
+	if !uploadMovedHealthy(4<<20, 3*time.Second) {
+		t.Fatalf("4MiB in 3s is a healthy upload")
+	}
+	if uploadMovedHealthy(4<<20, 10*time.Second) {
+		t.Fatalf("4MiB in 10s is below the healthy bar")
+	}
+	if uploadMovedHealthy(64*1024, time.Millisecond) {
+		t.Fatalf("a small upload says nothing about host speed")
+	}
+}
+
 type fsyncAssignClient struct {
 	filer_pb.SeaweedFilerClient
 	response *filer_pb.AssignVolumeResponse

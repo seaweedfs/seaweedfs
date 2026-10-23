@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -163,6 +164,11 @@ type HTTPClient interface {
 // Uploader
 type Uploader struct {
 	httpClient HTTPClient
+	// fastUploadHosts records the last time an upload to a host ran at a
+	// healthy rate, so a later upload stalling far below it can be blamed on
+	// that one connection rather than the link and get cancelled for a retry
+	// on a fresh conn.
+	fastUploadHosts sync.Map
 }
 
 func NewUploader() (*Uploader, error) {
@@ -514,7 +520,10 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	} else {
 		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
 	}
-	req, postErr := http.NewRequestWithContext(ctx, http.MethodPost, option.UploadUrl, reqReader)
+	reqCtx, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+
+	req, postErr := http.NewRequestWithContext(reqCtx, http.MethodPost, option.UploadUrl, reqReader)
 	if postErr != nil {
 		glog.V(1).InfofCtx(ctx, "create upload request %s: %v", option.UploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)
@@ -529,7 +538,28 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 
 	request_id.InjectToRequest(ctx, req)
 
+	var uploadDone atomic.Bool
+	var stallTimer *time.Timer
+	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
+		defer func() {
+			if stallTimer != nil {
+				stallTimer.Stop()
+			}
+		}()
+		stallTimer = time.AfterFunc(uploadStallTimeout(int64(originalDataSize)), func() {
+			if uploadDone.CompareAndSwap(false, true) {
+				// The host was moving chunks at full rate a moment ago, so an
+				// upload still trickling past its floor rides a wedged pooled
+				// conn; cancel drops the conn so the retry dials a fresh one.
+				uploader.fastUploadHosts.Delete(req.URL.Host)
+				glog.WarningfCtx(ctx, "upload %d bytes to %s stalled on a pooled connection, retrying on a fresh one", originalDataSize, option.UploadUrl)
+				cancelUpload()
+			}
+		})
+	}
+
 	// print("+")
+	started := time.Now()
 	resp, post_err := uploader.httpClient.Do(req)
 	defer util_http.CloseResponse(resp)
 	if post_err != nil {
@@ -563,6 +593,11 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, &uploadStatusError{StatusCode: 0, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
+	uploadDone.Store(true)
+	if post_err == nil && uploadMovedHealthy(int64(originalDataSize), time.Since(started)) {
+		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+	}
+
 	// print("-")
 
 	var ret UploadResult
@@ -600,4 +635,28 @@ func getEtag(r *http.Response) (etag string) {
 		etag = etag[1 : len(etag)-1]
 	}
 	return
+}
+
+const uploadHealthyBps = int64(1 << 20) // marks a host as able to drain chunks quickly
+
+var (
+	uploadStallBps       = int64(256 << 10)
+	uploadStallMinWait   = 10 * time.Second
+	fastUploadHostMemory = time.Minute
+)
+
+// uploadStallTimeout is the most an upload to a recently-fast host may take
+// before its connection is presumed wedged; a healthy pooled conn moves the
+// body orders of magnitude faster.
+func uploadStallTimeout(size int64) time.Duration {
+	if d := time.Duration(size/uploadStallBps) * time.Second; d > uploadStallMinWait {
+		return d
+	}
+	return uploadStallMinWait
+}
+
+// uploadMovedHealthy keeps tiny uploads and genuinely slow links from marking a
+// host fast: the mark is what lets a later stall blame the conn, not the link.
+func uploadMovedHealthy(size int64, elapsed time.Duration) bool {
+	return size >= 256*1024 && elapsed > 0 && int64(elapsed)*uploadHealthyBps <= size*int64(time.Second)
 }
