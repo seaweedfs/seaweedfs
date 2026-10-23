@@ -870,6 +870,12 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 			t.quarantinedVolumeIds.Delete(key)
 			return true
 		}
+		if vi.ReplicaPlacement == nil {
+			// The replica is in the lookup index but unreadable on its node,
+			// so its layout key is unknown and the conflict cannot be ruled
+			// out; keep the mark for a later pass.
+			return true
+		}
 		if hits := t.findDuplicateVolumeLayouts(vi, dn); len(hits) > 0 {
 			return true
 		}

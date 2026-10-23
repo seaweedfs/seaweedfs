@@ -166,6 +166,42 @@ func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
 	}
 }
 
+func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.duplicateFlagChecks.Wait()
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// the surviving copy drops out of its node's disk map while the lookup
+	// index still holds it; its layout key is then unknown, so the release
+	// pass must keep the mark rather than assume the conflict resolved
+	dn1.UpdateVolumes(nil)
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	if !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("an unreadable replica must not lose its quarantine record")
+	}
+	if isWritable(t, topo, v1) {
+		t.Fatal("a replica whose conflict cannot be ruled out must stay read-only")
+	}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	topo.releaseResolvedQuarantine(v1.Id)
+	if !isWritable(t, topo, v1) {
+		t.Fatal("once readable again and sole, the copy must be released to writable")
+	}
+}
+
 func TestQuarantineSurvivesResync(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
