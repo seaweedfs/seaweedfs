@@ -110,10 +110,12 @@ type Topology struct {
 	// each observe record and mark as one state, never a mark whose record
 	// was already deleted or a cleared mark whose record is not yet visible.
 	quarantineLock sync.Mutex
-	// quarantinePushLock serializes the remote mark/unmark calls so a push
-	// decided under an older record state cannot land on the volume server
-	// after a newer one.
-	quarantinePushLock sync.Mutex
+	// quarantinePushLocks serialize the remote mark/unmark calls per replica
+	// so a push decided under an older record state cannot land on the
+	// volume server after a newer one. Keyed by replica so a slow server
+	// does not stall pushes to the others.
+	quarantinePushLocks   map[quarantinedVolume]*quarantinePushLock
+	quarantinePushLocksMu sync.Mutex
 
 	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
 	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
@@ -131,6 +133,11 @@ type quarantinedVolumeState struct {
 	enforced bool
 }
 
+type quarantinePushLock struct {
+	sync.Mutex
+	refs int
+}
+
 func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 	_, ok := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
 	return ok
@@ -141,8 +148,8 @@ func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 // requires it to be gone. The bool reports whether the remote call was
 // actually made, so callers can tell a skipped stale push from a failed one.
 func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
-	t.quarantinePushLock.Lock()
-	defer t.quarantinePushLock.Unlock()
+	unlock := t.lockQuarantinePush(quarantinedVolume{dn.Id(), vid})
+	defer unlock()
 	t.quarantineLock.Lock()
 	_, exists := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
 	t.quarantineLock.Unlock()
@@ -150,6 +157,32 @@ func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bo
 		return false, nil
 	}
 	return true, t.QuarantineVolumeFn(dn, vid, readOnly)
+}
+
+// lockQuarantinePush returns the release for q's push lock, creating the lock
+// on first use and dropping it once the last holder lets go.
+func (t *Topology) lockQuarantinePush(q quarantinedVolume) func() {
+	t.quarantinePushLocksMu.Lock()
+	if t.quarantinePushLocks == nil {
+		t.quarantinePushLocks = make(map[quarantinedVolume]*quarantinePushLock)
+	}
+	l, ok := t.quarantinePushLocks[q]
+	if !ok {
+		l = &quarantinePushLock{}
+		t.quarantinePushLocks[q] = l
+	}
+	l.refs++
+	t.quarantinePushLocksMu.Unlock()
+	l.Lock()
+	return func() {
+		t.quarantinePushLocksMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(t.quarantinePushLocks, q)
+		}
+		t.quarantinePushLocksMu.Unlock()
+		l.Unlock()
+	}
 }
 
 // enforceQuarantine keeps the latest reported read-only flag for a quarantined
@@ -227,6 +260,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 	t.Configuration = &Configuration{}
 	t.dataNodeIndex = make(map[string]*DataNode)
+	t.quarantinePushLocks = make(map[quarantinedVolume]*quarantinePushLock)
 
 	return t
 }
