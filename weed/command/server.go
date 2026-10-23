@@ -422,7 +422,6 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingSftp {
 		go func() {
 			time.Sleep(2 * time.Second)
-			sftpOptions.localSocket = filerOptions.localSocket
 			sftpOptions.startSftpServer()
 		}()
 	}
