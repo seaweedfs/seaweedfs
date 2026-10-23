@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -124,17 +125,19 @@ func (h *Handler) expireSnapshots(
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
+	tableBase := path.Join(s3tables.TablesPath, bucketName, dataPath) + "/"
 	deletedCount := 0
 	for filePath := range expiredFiles {
-		resolved, err := icebergFilerPath(bucketName, dataPath, filePath)
+		resolved, err := resolveFilerPath(ctx, filerClient, bucketName, dataPath, filePath)
 		if err != nil {
-			glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			if !isFilerNotFound(err) {
+				glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			}
 			continue
 		}
-		// The S3 layer stores objects at the decoded key, so an escaped
-		// reference deletes at its decoded spelling.
-		if decoded, err := url.PathUnescape(resolved); err == nil && decoded != resolved {
-			resolved = decoded
+		if !strings.HasPrefix(resolved, tableBase) {
+			glog.Warningf("iceberg maintenance: refusing to delete %s outside table path", resolved)
+			continue
 		}
 		if _, stillReferenced := keptFilerPaths[resolved]; stillReferenced {
 			continue

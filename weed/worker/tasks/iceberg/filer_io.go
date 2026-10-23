@@ -163,36 +163,48 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return state, nil
 }
 
+func isFilerNotFound(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound
+}
+
+// resolveFilerPath returns the filer path that actually holds a referenced
+// file: the verbatim spelling first, then the percent-decoded one. Writers
+// may record a path with escaped segments while the S3 layer decoded the key
+// before storing the object.
+func resolveFilerPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (string, error) {
+	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
+	if err != nil {
+		return "", err
+	}
+	_, err = filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: path.Dir(fullPath),
+		Name:      path.Base(fullPath),
+	})
+	if err == nil {
+		return fullPath, nil
+	}
+	if !isFilerNotFound(err) {
+		return "", err
+	}
+	if decoded, decErr := url.PathUnescape(icebergPath); decErr == nil && decoded != icebergPath {
+		return resolveFilerPath(ctx, client, bucketName, dataPath, decoded)
+	}
+	return "", err
+}
+
 // lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
 // path. dataPath is the bucket-relative directory the table's files live in.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
-	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
+	fullPath, err := resolveFilerPath(ctx, client, bucketName, dataPath, icebergPath)
 	if err != nil {
 		return nil, err
 	}
-	dir, fileName := path.Dir(fullPath), path.Base(fullPath)
-
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      fileName,
+		Directory: path.Dir(fullPath),
+		Name:      path.Base(fullPath),
 	})
-	miss := err != nil && status.Code(err) == codes.NotFound
-	if err == nil && (resp == nil || resp.Entry == nil) {
-		miss = true
-	}
-	if miss {
-		// A percent-escaped reference (a writer escaped a partition directory
-		// name) resolves to a name the filer never holds, because the S3 layer
-		// decoded the key on write. Retry the lookup at the decoded spelling.
-		if decoded, decErr := url.PathUnescape(icebergPath); decErr == nil && decoded != icebergPath {
-			return lookupFileByIcebergPath(ctx, client, bucketName, dataPath, decoded)
-		}
-	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup %s/%s: %w", dir, fileName, err)
-	}
-	if miss {
-		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
+		return nil, err
 	}
 	return resp.Entry, nil
 }

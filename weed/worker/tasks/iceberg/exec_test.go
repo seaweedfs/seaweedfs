@@ -4550,4 +4550,101 @@ func TestLookupFileByIcebergPathDecodesEscapedReference(t *testing.T) {
 	if entry == nil || entry.Name != "g.parquet" {
 		t.Fatalf("resolved to wrong entry: %+v", entry)
 	}
+
+	// A real filer reports misses as filer_pb.ErrNotFound, not a gRPC NotFound
+	// status; the decoded retry must trigger on that shape too.
+	entry, err = lookupFileByIcebergPath(context.Background(), errNotFoundClient{client}, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D1/f.parquet")
+	if err != nil {
+		t.Fatalf("escaped reference should resolve under ErrNotFound misses: %v", err)
+	}
+	if entry == nil || entry.Name != "f.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+}
+
+// errNotFoundClient converts gRPC NotFound misses into filer_pb.ErrNotFound,
+// the shape a real filer produces through filer_pb.LookupEntry.
+type errNotFoundClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+func (c errNotFoundClient) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	resp, err := c.SeaweedFilerClient.LookupDirectoryEntry(ctx, req, opts...)
+	if status.Code(err) == codes.NotFound {
+		return nil, filer_pb.ErrNotFound
+	}
+	return resp, err
+}
+
+func TestExpireSnapshotsDeletesEscapedReferenceAtExistingKey(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	// Snapshot 1 (expired) references a file the S3 layer stored at the decoded
+	// key; snapshot 2 (kept) does not reference it.
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month%%3D1/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(), iceberg.EntryContentData, escapedPath,
+		iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	partDir := path.Join(dataDir, "month=1")
+	fs.putEntry(dataDir, "month=1", &filer_pb.Entry{
+		Name: "month=1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+	})
+	fs.putEntry(partDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	t.Logf("expireSnapshots result: %s", result)
+
+	if fs.getEntry(partDir, "f.parquet") != nil {
+		t.Error("expired file at the decoded key should have been deleted")
+	}
 }
