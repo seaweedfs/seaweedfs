@@ -205,6 +205,22 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 	require.Equal(t, keys, got)
 }
 
+// A url-encoded marker that is not the canonical urlPathEscape form of any key
+// is the client's raw key, not an encoded echo: "a%41" must resume after that
+// literal key instead of decoding to "aA" and skipping the keys between them.
+func TestListObjectsV1UrlMarkerKeepsNonCanonicalRawKey(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a%41", "a%42", "aA", "b"})
+
+	result := listV1Page(t, s3a, url.Values{"encoding-type": {"url"}, "marker": {"a%41"}})
+	var got []string
+	for _, content := range result.Contents {
+		key, err := url.QueryUnescape(content.Key)
+		require.NoError(t, err)
+		got = append(got, key)
+	}
+	assert.Equal(t, []string{"a%42", "aA", "b"}, got)
+}
+
 // The echoed request marker carries the client's token, not the decoded key:
 // echoing the raw key would mangle an XML-unsafe name to U+FFFD, and under
 // encoding-type=url the echo takes the same escaped form as the listed keys.
