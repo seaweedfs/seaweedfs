@@ -283,6 +283,7 @@ jobs:
           - TestLifecycleSuspendedVersioningExpiration
           - TestLifecycleTagFilter
           - TestLifecycleVersionedBucketCreatesDeleteMarker
+          - TestLifecycleVersionedBucketExpiresOnSecondRun
 
     steps:
       - name: Check out code
