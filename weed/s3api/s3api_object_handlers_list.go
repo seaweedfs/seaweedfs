@@ -538,6 +538,18 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				if excludedKey != "" && !entry.IsDirectory && fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):] == excludedKey {
 					return
 				}
+				// A delimiter marker excludes the entire folded prefix, not just
+				// the key bearing its name. This also applies to delimiters such as
+				// "_", whose groups are not directory blocks in the filer walk.
+				if delimiter != "" {
+					name := entry.Name
+					if entry.IsDirectory && !entry.IsPrefixObject() {
+						name += "/"
+					}
+					if folded := prefixForKey(dir, name); folded != "" && folded <= requestMarker {
+						return
+					}
+				}
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if originalPrefix != "" {
@@ -1170,13 +1182,12 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
 			matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
 			if cursor.prefixEndsOnDelimiter {
-				if entry.Name == prefix && entry.IsDirectory {
-					if delimiter != "/" {
-						cursor.prefixEndsOnDelimiter = false
-					}
-				} else {
+				if !matchedPrefixDir {
 					continue
 				}
+				// Keep the exact-directory filter until emitDir descends into
+				// the deferred block. Clearing it at the name position lets
+				// siblings like "a.txt" leak into a listing for "a/".
 			}
 			if entry.IsDirectory {
 				// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
