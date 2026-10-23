@@ -1423,7 +1423,7 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	if p.more {
 		last := output.Upload[len(output.Upload)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(encodeListContinuationToken(*last.Key)), last.UploadId
 	}
 	return output
 }

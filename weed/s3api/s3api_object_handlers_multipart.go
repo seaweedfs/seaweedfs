@@ -260,11 +260,12 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	prefix, keyMarker, uploadIDMarker, delimiter, maxUploads, encodingType := getBucketMultipartResources(r.URL.Query())
+	prefix, multipartKeyMarker, uploadIDMarker, delimiter, maxUploads, encodingType := getBucketMultipartResources(r.URL.Query())
 	if maxUploads < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxUploads)
 		return
 	}
+	keyMarker := decodeListContinuationToken(multipartKeyMarker)
 	if keyMarker != "" {
 		// Marker not common with prefix is not implemented.
 		if !strings.HasPrefix(keyMarker, prefix) {
