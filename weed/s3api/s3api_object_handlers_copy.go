@@ -900,13 +900,13 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 				}
 
 				bucket, object = pathToBucketAndObject(pathForBucket)
-				return bucket, object, versionId
+				return bucket, s3_constants.NormalizeObjectKey(object), versionId
 			}
 		}
 	}
 
 	bucket, object = pathToBucketAndObject(pathForBucket)
-	return bucket, object, versionId
+	return bucket, s3_constants.NormalizeObjectKey(object), versionId
 }
 
 type CopyPartResult struct {

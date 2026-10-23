@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -142,6 +143,41 @@ func (v *Volume) loadRemoteFileLocked() error {
 	return nil
 }
 
+// AttachRemoteDatFile records remoteFile, a copy of the .dat read from source,
+// in the volume's .vif and switches the data backend to it. It refuses when
+// source is no longer the volume's data backend: a compaction commit since the
+// copy replaced the .dat and the index, and the copy has the old layout. The
+// check, the .vif write and the switch happen under the data-file locks, so a
+// commit either lands before (and is seen here) or after (and refuses a tiered
+// volume).
+func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFile *volume_server_pb.RemoteFile) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.DataBackend != source {
+		return fmt.Errorf("volume %d data file changed during the copy (compacted or reloaded)", v.Id)
+	}
+	files := v.volumeInfo.GetFiles()
+	v.volumeInfo.Files = append(files, remoteFile)
+	if err := v.SaveVolumeInfo(); err != nil {
+		// A NotCrashDurableError means the rename committed: the .vif names
+		// the copy, so keep the entry and serve from the copy, and still
+		// report the error so the caller keeps the local .dat. Any other
+		// failure left the old .vif in place.
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			v.volumeInfo.Files = files
+			return fmt.Errorf("save remote file info: %w", err)
+		}
+		if loadErr := v.loadRemoteFileLocked(); loadErr != nil {
+			return fmt.Errorf("save remote file info: %w; load remote file: %v", err, loadErr)
+		}
+		return fmt.Errorf("save remote file info: %w", err)
+	}
+	return v.loadRemoteFileLocked()
+}
+
 func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
@@ -149,6 +185,9 @@ func (v *Volume) SaveVolumeInfo() error {
 		v.volumeInfo.ExpireAtSec = expireAtSec
 	}
 
-	return volume_info.SaveVolumeInfo(tierFileName, v.volumeInfo)
+	return saveVolumeInfoFile(tierFileName, v.volumeInfo)
 
 }
+
+// saveVolumeInfoFile writes a .vif; tests replace it to inject failures.
+var saveVolumeInfoFile = volume_info.SaveVolumeInfo

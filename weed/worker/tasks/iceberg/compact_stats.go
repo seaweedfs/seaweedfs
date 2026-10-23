@@ -64,6 +64,7 @@ func collectColumnStats(data []byte, schema *iceberg.Schema) (*columnStats, erro
 	stats := &columnStats{sizes: map[int]int64{}, values: map[int]int64{}, nulls: map[int]int64{},
 		lower: map[int][]byte{}, upper: map[int][]byte{}}
 	agg := map[int]*bounds{}
+	geoAgg := map[int]*geometryBounds{}
 	meta := file.Metadata()
 	for rgIdx, rg := range file.RowGroups() {
 		stats.splitOffsets = append(stats.splitOffsets, rowGroupOffset(&meta.RowGroups[rgIdx]))
@@ -82,9 +83,24 @@ func collectColumnStats(data []byte, schema *iceberg.Schema) (*columnStats, erro
 			chunk, ok := cc.(*parquet.FileColumnChunk)
 			if !ok {
 				b.invalid = true
+				geoAgg[field.ID] = &geometryBounds{invalid: true}
 				continue
 			}
 			stats.nulls[field.ID] += chunk.NullCount()
+			switch field.Type.(type) {
+			case iceberg.GeometryType:
+				// the bound comes from the row group's geospatial statistics
+				g := geoAgg[field.ID]
+				if g == nil {
+					g = &geometryBounds{}
+					geoAgg[field.ID] = g
+				}
+				g.add(meta.RowGroups[rgIdx].Columns[col].MetaData.GeospatialStatistics, chunk.NumValues(), chunk.NullCount())
+				continue
+			case iceberg.GeographyType:
+				// no bound: edges are geodesic and a box may cross the antimeridian
+				continue
+			}
 			if chunk.NullCount() == chunk.NumValues() {
 				continue // an all-null chunk constrains nothing
 			}
@@ -120,6 +136,11 @@ func collectColumnStats(data []byte, schema *iceberg.Schema) (*columnStats, erro
 		}
 		if raw, err := hi.MarshalBinary(); err == nil && okHi {
 			stats.upper[id] = raw
+		}
+	}
+	for id, g := range geoAgg {
+		if lower, upper, ok := g.encoded(); ok {
+			stats.lower[id], stats.upper[id] = lower, upper
 		}
 	}
 	sort.Slice(stats.splitOffsets, func(i, j int) bool { return stats.splitOffsets[i] < stats.splitOffsets[j] })

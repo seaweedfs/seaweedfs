@@ -137,16 +137,30 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
+}
+
 func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, response []byte, mType mimeType) {
 	setCommonHeaders(w, r)
-	if response != nil {
+	canHaveBody := bodyAllowedForStatus(statusCode)
+	if response != nil && canHaveBody {
 		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
 	}
 	if mType != mimeNone {
 		w.Header().Set("Content-Type", string(mType))
 	}
 	w.WriteHeader(statusCode)
-	if response != nil {
+	if response != nil && canHaveBody && r.Method != http.MethodHead {
 		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {

@@ -37,8 +37,9 @@ func (a *PasswordAuthenticator) Authenticate(conn ssh.ConnMetadata, password []b
 		return nil, fmt.Errorf("password authentication disabled")
 	}
 
-	// Validate password against user store
-	if a.userStore.ValidatePassword(username, password) {
+	// An empty password is never valid; skip the store so a store without its
+	// own empty-secret check cannot match on zero-length input.
+	if len(password) != 0 && a.userStore.ValidatePassword(username, password) {
 		return &ssh.Permissions{
 			Extensions: map[string]string{
 				"username": username,

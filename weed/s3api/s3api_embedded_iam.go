@@ -2609,8 +2609,8 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 	}
 }
 
-// iamSelfServiceActions are actions that users can perform on their own resources without admin rights.
-// According to AWS IAM, users can manage their own access keys without requiring full admin permissions.
+// iamSelfServiceActions are actions that users can perform on their own resources without admin rights,
+// unless selfServiceRequiresGrant is set, in which case they need an iam:<Action> grant like any other.
 var iamSelfServiceActions = map[string]bool{
 	"CreateAccessKey": true,
 	"DeleteAccessKey": true,
@@ -2656,15 +2656,18 @@ func iamTargetUserName(action string, r *http.Request) string {
 // data-plane policy, which says nothing about administering the credential
 // store.
 //
-// Users may run self-service actions against their own identity without any
-// IAM grant, matching AWS.
+// By default users may run self-service actions against their own identity
+// without any IAM grant. With selfServiceRequiresGrant set they need the
+// iam:<Action> grant as AWS requires, authorized against the target user's
+// ARN (the caller's own when UserName is empty), so a policy can confine it
+// to the caller's own keys.
 func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identity *Identity, action, targetUserName string) s3err.ErrorCode {
 	// The anonymous identity has no user of its own, so every self-service
 	// action it names would run against someone else's.
 	if identity == nil || identity.Name == s3_constants.AccountAnonymousId {
 		return s3err.ErrAccessDenied
 	}
-	if iamRequiresAdminForOthers(action) && (targetUserName == "" || targetUserName == identity.Name) {
+	if !iam.selfServiceRequiresGrant && iamRequiresAdminForOthers(action) && (targetUserName == "" || targetUserName == identity.Name) {
 		return s3err.ErrNone
 	}
 	if identity.isAdmin() {
@@ -2676,6 +2679,13 @@ func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identit
 	resource := "arn:aws:iam:::*"
 	if iamRequiresSelfTarget(action) && targetUserName != "" {
 		resource = fmt.Sprintf("arn:aws:iam:::user/%s", targetUserName)
+	}
+	if iam.selfServiceRequiresGrant && iamRequiresAdminForOthers(action) {
+		target := targetUserName
+		if target == "" {
+			target = identity.Name
+		}
+		resource = fmt.Sprintf("arn:aws:iam:::user/%s", target)
 	}
 	return iam.VerifyActionPermission(r, identity, Action("iam:"+action), resource, "")
 }

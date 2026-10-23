@@ -30,6 +30,10 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -89,7 +93,11 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_ACL, entry.Extended, "GetObjectAclHandler"); errCode != s3err.ErrNone {
+	action := s3_constants.S3_ACTION_GET_OBJECT_ACL
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectAclHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
@@ -142,6 +150,10 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -201,7 +213,11 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_PUT_OBJECT_ACL, entry.Extended, "PutObjectAclHandler"); errCode != s3err.ErrNone {
+	putAction := s3_constants.S3_ACTION_PUT_OBJECT_ACL
+	if versionId != "" {
+		putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, putAction, entry.Extended, "PutObjectAclHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}

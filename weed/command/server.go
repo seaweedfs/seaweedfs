@@ -195,10 +195,12 @@ func init() {
 	s3Options.iamReadOnly = cmdServer.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 	s3Options.cipher = cmdServer.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	s3Options.externalUrl = cmdServer.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	s3Options.allowBackslashInKey = cmdServer.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	s3Options.defaultFileMode = cmdServer.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3Options.cacheSizeMB = cmdServer.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	s3Options.readerCacheSizeMB = cmdServer.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	s3Options.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	s3Options.iamSelfServiceRequiresGrant = cmdServer.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
@@ -214,6 +216,7 @@ func init() {
 	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
+	iamOptions.selfServiceRequiresGrant = s3Options.iamSelfServiceRequiresGrant
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")

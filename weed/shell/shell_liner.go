@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -57,14 +58,28 @@ func RunShell(options ShellOptions) error {
 
 	commandEnv := NewCommandEnv(&options)
 
+	connectTimeout := options.ConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 30 * time.Second
+	}
 	ctx := context.Background()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	reconnectCtx, cancelReconnect := context.WithCancel(ctx)
+	defer cancelReconnect()
+	go commandEnv.MasterClient.KeepConnectedToMaster(reconnectCtx)
+	if commandEnv.MasterClient.GetMaster(connectCtx) == "" {
+		err := fmt.Errorf("cannot connect to master %s within %s", *options.Masters, connectTimeout)
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+		discoverCtx, cancelDiscover := context.WithTimeout(ctx, connectTimeout)
+		defer cancelDiscover()
+		listErr := commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 				FilerGroup: *options.FilerGroup,
 			})
@@ -79,6 +94,8 @@ func RunShell(options ShellOptions) error {
 		})
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
+		} else if listErr != nil {
+			fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *options.Masters, listErr)
 		}
 		if options.Debug {
 			if len(filers) > 0 {
