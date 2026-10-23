@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,5 +219,98 @@ func TestRepairIdxHeadTombstones_KeepsDeletedNeedlesDeleted(t *testing.T) {
 	}
 	if _, err := v.readNeedle(newEmptyNeedle(1), nil, nil); err != nil {
 		t.Fatalf("needle 1 should have been recovered: %v", err)
+	}
+}
+
+// TestStaleIndexEntry_HealsOnWrite covers a damaged index entry that resolves
+// to a different needle: reads must miss instead of serving the wrong needle,
+// and the next write for the key must re-index it rather than be rejected as
+// a cookie conflict.
+func TestStaleIndexEntry_HealsOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	written := writeTestVolume(t, dir, 5)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	// point key 9 at needle 2's record with a size that does not match the
+	// record, as a corrupt index entry would look
+	const staleKey = 9
+	nv, ok := v.nm.Get(types.Uint64ToNeedleId(2))
+	if !ok {
+		t.Fatal("needle 2 missing from index")
+	}
+	if err := v.nm.Put(types.Uint64ToNeedleId(staleKey), nv.Offset, nv.Size+1); err != nil {
+		t.Fatalf("plant stale index entry: %v", err)
+	}
+
+	if _, err := v.readNeedle(newEmptyNeedle(staleKey), nil, nil); err == nil {
+		t.Fatal("stale-index read served needle 2's data")
+	}
+
+	stream := newEmptyNeedle(staleKey)
+	stream.DataSize = written[2].DataSize
+	if err := v.readNeedleDataInto(stream, &ReadOption{ReadBufferSize: 1024}, &bytes.Buffer{}, 0, int64(stream.DataSize)); err != ErrorNotFound {
+		t.Fatalf("stale-index stream: want ErrorNotFound, got %v", err)
+	}
+
+	n := newRandomNeedle(staleKey)
+	n.Cookie = 0xABCD
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+		t.Fatalf("write over stale index entry: %v", err)
+	}
+	if got := mustRead(t, v, staleKey); !bytes.Equal(got, n.Data) {
+		t.Fatalf("needle %d after re-index: got %d bytes, want %d", staleKey, len(got), len(n.Data))
+	}
+}
+
+// TestStaleIndexEntry_SurvivesFailedWrite checks that a stale index entry is
+// only replaced once the new record commits: a durable write rolled back by
+// a failed fsync leaves the index exactly as it found it.
+func TestStaleIndexEntry_SurvivesFailedWrite(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	existing := fixedNeedle(2, "existing")
+	if _, _, _, err := v.writeNeedle2(existing, true, true, true); err != nil {
+		t.Fatalf("write needle 2: %v", err)
+	}
+	nv, ok := v.nm.Get(existing.Id)
+	if !ok {
+		t.Fatal("needle 2 missing from index")
+	}
+
+	staleId := types.Uint64ToNeedleId(9)
+	if err := v.nm.Put(staleId, nv.Offset, nv.Size+1); err != nil {
+		t.Fatalf("plant stale index entry: %v", err)
+	}
+
+	counting.syncErr = errors.New("batch fsync failed")
+	if _, _, _, err := v.writeNeedle2(fixedNeedle(9, "replacement"), true, true, false); err == nil {
+		t.Fatal("a write whose fsync failed must not be acknowledged")
+	}
+
+	entry, ok := v.nm.Get(staleId)
+	if !ok {
+		t.Fatal("a failed write dropped the index entry it meant to replace")
+	}
+	if entry.Offset != nv.Offset || entry.Size != nv.Size+1 {
+		t.Fatalf("index entry changed under a failed write: %+v, want %+v", entry, nv)
+	}
+}
+
+// TestStaleIndexEntry_KeepsCookieConflictForSameKey checks that an entry
+// resolving to the same needle id still enforces the cookie check: only
+// cross-key corruption is dropped.
+func TestStaleIndexEntry_KeepsCookieConflictForSameKey(t *testing.T) {
+	dir := t.TempDir()
+	writeTestVolume(t, dir, 3)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	n := newRandomNeedle(2)
+	n.Cookie = 0xABCD
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err == nil {
+		t.Fatal("write with a foreign cookie over an existing key should be rejected")
 	}
 }

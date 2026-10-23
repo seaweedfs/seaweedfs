@@ -61,10 +61,17 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 			err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 		}
 		if err != nil {
+			v.checkReadWriteError(err)
 			return 0, err
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
+			// A must-meta-only read ends here, so its success may reset the
+			// streak. For a streamed GET the meta read precedes the payload read,
+			// which reports the outcome itself.
+			if readOption.MustMetaOnly {
+				v.checkReadWriteError(nil)
+			}
 		}
 	}
 	if readOption == nil || !readOption.IsMetaOnly {
@@ -89,6 +96,13 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		return
 	}
 	return -1, ErrorNotFound
+}
+
+// NoteMetaOnlySuccess records a request that ended at the metadata read
+// (e.g. a HEAD or a cookie mismatch), so its success may reset the streak —
+// unlike a meta read that precedes a payload read.
+func (v *Volume) NoteMetaOnlySuccess() {
+	v.checkReadWriteError(nil)
 }
 
 // read needle at a specific offset
@@ -176,6 +190,55 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		}
 	}()
 
+	// The header is not part of the streamed body, so verify the indexed
+	// offset really holds this needle before sending another needle's data.
+	// A slow read dropped the access lock after the index lookup; take it
+	// back for the probe so a compaction commit cannot swap the backend
+	// under it, and resolve the offset the way the streaming loop does.
+	probeHeader := func() error {
+		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
+			if v.nm == nil {
+				return ErrorNotFound
+			}
+			refreshed, found := v.nm.Get(n.Id)
+			if !found || refreshed.Offset.IsZero() {
+				return ErrorNotFound
+			}
+			nv = refreshed
+			actualOffset = nv.Offset.ToActualOffset()
+			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+		}
+		header := make([]byte, NeedleHeaderSize)
+		headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
+		if headerErr == io.EOF && headerCount == NeedleHeaderSize {
+			headerErr = nil
+		}
+		if headerErr != nil {
+			if headerErr != io.EOF {
+				v.checkReadWriteError(headerErr)
+			}
+			return fmt.Errorf("ReadNeedleData header: %w", headerErr)
+		}
+		probe := new(needle.Needle)
+		probe.ParseNeedleHeader(header)
+		if probe.Id != n.Id && probe.Size != nv.Size {
+			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+				v.Id, uint64(n.Id), uint64(probe.Id))
+			return ErrorNotFound
+		}
+		return nil
+	}
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RLock()
+	}
+	probeErr := probeHeader()
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RUnlock()
+	}
+	if probeErr != nil {
+		return probeErr
+	}
+
 	// read needle data
 	crc := needle.CRC(0)
 	var pending []byte
@@ -255,11 +318,6 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			break
 		}
 	}
-	// Whole-needle read completed without a backend error — clear any
-	// pending EIO streak. If a non-EIO failure happens later (CRC etc.)
-	// we still return that error to the caller, but the disk itself
-	// produced clean bytes.
-	v.checkReadWriteError(nil)
 	if checkCRC && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
 		// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
@@ -268,6 +326,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
 	}
+	// The read succeeded only once the checksum passes; a failed needle
+	// leaves the io error streak untouched, matching the streamed path.
+	v.checkReadWriteError(nil)
 	if pending != nil {
 		if _, err = writer.Write(pending); err != nil {
 			return fmt.Errorf("ReadNeedleData write: %w", err)

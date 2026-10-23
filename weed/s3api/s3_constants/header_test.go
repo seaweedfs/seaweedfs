@@ -313,3 +313,20 @@ func TestGetIdentityNameFromContextWithoutHolder(t *testing.T) {
 		t.Errorf("requester = %q, want admin", got)
 	}
 }
+
+func TestStoredCredentialFingerprintIsKeyed(t *testing.T) {
+	key := []byte("test-signing-key-32-characters!!")
+	fp := StoredCredentialFingerprint(key, "AKIAEXAMPLE", "secret")
+	if fp == "" {
+		t.Fatal("fingerprint is empty with a key")
+	}
+	if again := StoredCredentialFingerprint(key, "AKIAEXAMPLE", "secret"); again != fp {
+		t.Error("fingerprint is not deterministic")
+	}
+	if other := StoredCredentialFingerprint([]byte("another-signing-key-padded-out"), "AKIAEXAMPLE", "secret"); other == fp {
+		t.Error("fingerprint ignores the server key, leaving the secret guessable")
+	}
+	if noKey := StoredCredentialFingerprint(nil, "AKIAEXAMPLE", "secret"); noKey != "" {
+		t.Error("an empty key must yield an empty fingerprint")
+	}
+}

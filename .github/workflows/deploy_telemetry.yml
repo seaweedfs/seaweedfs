@@ -27,6 +27,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'telemetry/server/go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build Telemetry Server
         if: github.event_name == 'workflow_dispatch' && inputs.deploy

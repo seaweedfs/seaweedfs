@@ -164,6 +164,55 @@ func TestLifecycleVersionedBucketCreatesDeleteMarker(t *testing.T) {
 	require.True(t, sawMarker, "ListObjectVersions must show a delete marker as latest for %s", key)
 }
 
+// TestLifecycleVersionedBucketExpiresOnSecondRun covers the reported
+// regression where Expiration.Days only fired on the cold-start walk: a
+// versioned PUT surfaces in the meta-log as a version-file event, which
+// the router used to drop, so once every shard had a saved cursor no
+// daily run ever scheduled another delete marker. The first run here
+// establishes the cursor; the second must expire an object that arrived
+// in between, with no rule change to force a recovery walk.
+func TestLifecycleVersionedBucketExpiresOnSecondRun(t *testing.T) {
+	c := s3Client(t)
+	fc, fcClose := filerClient(t)
+	defer fcClose()
+
+	bucket := uniqueBucket("vexp2")
+	mustCreateBucket(t, c, bucket)
+	putVersioningEnabled(t, c, bucket)
+	putExpirationLifecycle(t, c, bucket, "expire/", 1)
+
+	// First pass: any object will do — what matters is the cursor saved
+	// afterward, which switches later passes from the recovery walk to
+	// meta-log replay.
+	putObject(t, c, bucket, "expire/first.txt", "v1")
+	runLifecycleShard(t)
+
+	const key = "expire/daily.txt"
+	putObject(t, c, bucket, key, "v1")
+	headOut, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	versionID := aws.ToString(headOut.VersionId)
+	require.NotEmpty(t, versionID)
+	backdateVersionedMtime(t, fc, bucket, key, versionID, 30)
+
+	runLifecycleShard(t)
+
+	require.Eventuallyf(t, func() bool {
+		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(key),
+		})
+		return isS3NotFound(err)
+	}, 30*time.Second, 500*time.Millisecond, "second run must create a delete marker for %s/%s", bucket, key)
+
+	directHead, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(versionID),
+	})
+	require.NoError(t, err, "original version must still exist")
+	require.NotNil(t, directHead)
+}
+
 // TestLifecycleNoncurrentVersionExpiration: NoncurrentVersionExpiration
 // only fires on noncurrent versions. PUT v1, PUT v2 (so v1 → noncurrent),
 // backdate v1, run worker. v1 must be removed; v2 stays current.
