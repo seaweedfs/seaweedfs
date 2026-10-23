@@ -522,8 +522,35 @@ func (s *STSService) SetIAMManagedOIDCProviders(byIssuer map[string][]ScopedOIDC
 		}
 	}
 	s.iamManagedOIDCMu.Lock()
+	old := s.iamManagedOIDCByIssuer
 	s.iamManagedOIDCByIssuer = cp
 	s.iamManagedOIDCMu.Unlock()
+
+	// Providers dropped by the swap may own background workers (the JTI
+	// cleanup goroutine); stop them so a replaced provider does not leak.
+	kept := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range cp {
+		for _, sp := range scoped {
+			kept[sp.Provider] = struct{}{}
+		}
+	}
+	stopped := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range old {
+		for _, sp := range scoped {
+			if _, ok := kept[sp.Provider]; ok {
+				continue
+			}
+			if _, ok := stopped[sp.Provider]; ok {
+				continue
+			}
+			stopped[sp.Provider] = struct{}{}
+			if sd, ok := sp.Provider.(interface{ Shutdown(context.Context) error }); ok {
+				if err := sd.Shutdown(context.Background()); err != nil {
+					glog.Warningf("OIDC provider %q shutdown after replacement: %v", sp.Provider.Name(), err)
+				}
+			}
+		}
+	}
 }
 
 // lookupOIDCProviderForAccount returns the provider that should validate
@@ -597,7 +624,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// caller passed a legacy or claim-based ARN, in which case lookup falls
 	// back to a global (account-less) record only.
 	roleAccountID := utils.ParseRoleARN(request.RoleArn).AccountID
-	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken, roleAccountID)
+	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken, roleAccountID, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate web identity token: %w", err)
 	}
@@ -1002,7 +1029,7 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
 // SECURITY: JWT tokens with a specific issuer claim MUST only be validated by the provider for that issuer
 // SECURITY: This method only accepts JWT tokens. Non-JWT authentication must use AssumeRoleWithCredentials with explicit ProviderName.
-func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAccountID string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAccountID string, singleUse bool) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
 	// Try to extract issuer from JWT token for strict validation
 	issuer, err := s.extractIssuerFromJWT(token)
 	if err != nil {
@@ -1025,8 +1052,10 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAc
 		return nil, nil, fmt.Errorf("no identity provider registered for issuer: %s", issuer)
 	}
 
-	// Authenticate with the correct provider for this issuer
-	identity, err := provider.Authenticate(ctx, token)
+	// Authenticate with the correct provider for this issuer. Only the STS
+	// exchange authenticates single-use: a bearer token is presented on every
+	// request, so consuming it here would reject all but the first one.
+	identity, err := authenticateOIDCProvider(ctx, provider, token, singleUse)
 	if err != nil {
 		// Map provider errors to STS errors using errors.Is() for robust error checking
 		// This eliminates fragile string matching and provides reliable error classification
@@ -1058,14 +1087,29 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAc
 // only, then static-config); call ValidateWebIdentityTokenForAccount when the assumed-role account
 // is known.
 func (s *STSService) ValidateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	return s.validateWebIdentityToken(ctx, token, "")
+	return s.validateWebIdentityToken(ctx, token, "", false)
 }
 
 // ValidateWebIdentityTokenForAccount mirrors ValidateWebIdentityToken but
 // scopes the IAM-managed provider lookup to roleAccountID. Pass "" for
 // callers that don't yet know the account (e.g. claim-based mode).
 func (s *STSService) ValidateWebIdentityTokenForAccount(ctx context.Context, token, roleAccountID string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	return s.validateWebIdentityToken(ctx, token, roleAccountID)
+	return s.validateWebIdentityToken(ctx, token, roleAccountID, false)
+}
+
+// authenticateOIDCProvider authenticates the token, consuming it for replay
+// protection when the caller is the single-use STS exchange and the provider
+// supports it. Other providers and non-exchange callers authenticate without
+// consuming.
+func authenticateOIDCProvider(ctx context.Context, provider providers.IdentityProvider, token string, singleUse bool) (*providers.ExternalIdentity, error) {
+	if singleUse {
+		if su, ok := provider.(interface {
+			AuthenticateSingleUse(context.Context, string) (*providers.ExternalIdentity, error)
+		}); ok {
+			return su.AuthenticateSingleUse(ctx, token)
+		}
+	}
+	return provider.Authenticate(ctx, token)
 }
 
 // extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification

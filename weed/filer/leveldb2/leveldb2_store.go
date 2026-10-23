@@ -127,6 +127,15 @@ func (store *LevelDB2Store) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
+var syncWriteOptions = &opt.WriteOptions{Sync: true}
+
+func writeOptions(ctx context.Context) *opt.WriteOptions {
+	if filer.SyncWrite(ctx) {
+		return syncWriteOptions
+	}
+	return nil
+}
+
 func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	dir, name := entry.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
@@ -140,7 +149,7 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		value = weed_util.MaybeGzipData(value)
 	}
 
-	err = store.dbs[partitionId].Put(key, value, nil)
+	err = store.dbs[partitionId].Put(key, value, writeOptions(ctx))
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -186,7 +195,7 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
 
-	err = store.dbs[partitionId].Delete(key, nil)
+	err = store.dbs[partitionId].Delete(key, writeOptions(ctx))
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -213,7 +222,7 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	}
 	iter.Release()
 
-	err = store.dbs[partitionId].Write(batch, nil)
+	err = store.dbs[partitionId].Write(batch, writeOptions(ctx))
 
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)

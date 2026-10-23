@@ -660,8 +660,7 @@ func (w *Worker) buildHeartbeat() *plugin_pb.WorkerHeartbeat {
 		if work == nil {
 			continue
 		}
-		cloned := *work
-		running = append(running, &cloned)
+		running = append(running, proto.Clone(work).(*plugin_pb.RunningWork))
 	}
 	w.runningMu.RUnlock()
 

@@ -728,6 +728,10 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 // ExistingObjectTagPrefix is the prefix for S3 policy condition keys
 const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
 
+// RequestObjectTagPrefix is the prefix for condition keys on the tags a
+// request sets through the X-Amz-Tagging header.
+const RequestObjectTagPrefix = "s3:RequestObjectTag/"
+
 // getConditionContextValue resolves the value(s) for a condition key.
 // For s3:ExistingObjectTag/<key> conditions, it looks up the tag in objectEntry.
 // For other condition keys, it looks up the value in contextValues.
