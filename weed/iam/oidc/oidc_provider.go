@@ -515,22 +515,25 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 
 	p.jtiMu.Lock()
 	p.stopJTICleanupWorkerLocked()
-	p.jtiEnabled.Store(jtiEnabled)
 	if jtiEnabled {
 		maxSize := int64(oidcConfig.JTICacheMaxSize)
 		if maxSize <= 0 {
 			maxSize = defaultJTICacheSize
 		}
+		// the bound must land before the flag: a consume that sees enabled
+		// with a zero bound would reject the first token it registers
 		p.jtiMaxSize.Store(maxSize)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		p.jtiCleanupCancel = cancel
 		p.jtiCleanupDone = done
+		p.jtiEnabled.Store(true)
 		p.jtiMu.Unlock()
 
 		go p.cleanupExpiredJTIs(ctx, done, defaultCleanupInterval)
 		glog.V(2).Infof("OIDC provider %q: JTI replay protection enabled (max size: %d)", p.name, maxSize)
 	} else {
+		p.jtiEnabled.Store(false)
 		p.jtiMu.Unlock()
 		glog.Warningf("OIDC provider %q: JTI replay protection is DISABLED", p.name)
 	}
