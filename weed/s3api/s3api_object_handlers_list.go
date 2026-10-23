@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -104,7 +106,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	marker := continuationToken.string
+	marker := decodeListContinuationToken(continuationToken.string)
 	if !continuationToken.set {
 		marker = startAfter
 	}
@@ -145,7 +147,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		IsTruncated:           response.IsTruncated,
 		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
 		MaxKeys:               uint16(response.MaxKeys),
-		NextContinuationToken: response.NextMarker,
+		NextContinuationToken: encodeListContinuationToken(response.NextMarker),
 		Prefix:                response.Prefix,
 		StartAfter:            startAfter,
 	}
@@ -155,6 +157,67 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
 	writeSuccessResponseXML(w, r, responseV2)
+}
+
+// continuationTokenEncodingPrefix tags a NextContinuationToken whose payload is the
+// base64url encoding of the raw key. XML 1.0 cannot carry control characters, and the
+// XML encoder replaces them with U+FFFD, so a token holding such a key would resume
+// past a mangled name and skip every key sorting between the two. Keys that are valid
+// XML text still travel as the bare key, so the token is unchanged for them.
+const continuationTokenEncodingPrefix = "base64:"
+
+func encodeListContinuationToken(key string) string {
+	if key == "" {
+		return ""
+	}
+	if isXMLText(key) && !strings.HasPrefix(key, continuationTokenEncodingPrefix) {
+		return key
+	}
+	return continuationTokenEncodingPrefix + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func decodeListContinuationToken(token string) string {
+	key, ok := strings.CutPrefix(token, continuationTokenEncodingPrefix)
+	if !ok {
+		return token
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil {
+		// Not a token this server wrote; resume at the token as the raw key.
+		return token
+	}
+	return string(decoded)
+}
+
+// isXMLText reports whether s survives an XML 1.0 round trip unchanged, i.e. the
+// encoder does not replace any of its characters with U+FFFD.
+func isXMLText(s string) bool {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return false
+		}
+		if !isXMLChar(r) {
+			return false
+		}
+		i += size
+	}
+	return true
+}
+
+// isXMLChar follows the XML 1.0 Char production the encoding/xml encoder enforces.
+func isXMLChar(r rune) bool {
+	switch {
+	case r == 0x9 || r == 0xA || r == 0xD:
+		return true
+	case r >= 0x20 && r <= 0xD7FF:
+		return true
+	case r >= 0xE000 && r <= 0xFFFD:
+		return true
+	case r >= 0x10000 && r <= 0x10FFFF:
+		return true
+	}
+	return false
 }
 
 func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
