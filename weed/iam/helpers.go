@@ -98,11 +98,13 @@ var fineGrainedActionMap = map[string]string{
 // prefixed (s3:Action) and unprefixed (Action) variants in init().
 var baseS3ActionMap = map[string]string{
 	// Object operations
-	"DeleteObject":        s3_constants.ACTION_WRITE,
-	"PutObject":           s3_constants.ACTION_WRITE,
-	"GetObject":           s3_constants.ACTION_READ,
-	"DeleteObjectVersion": s3_constants.ACTION_WRITE,
-	"GetObjectVersion":    s3_constants.ACTION_READ,
+	"DeleteObject":               s3_constants.ACTION_WRITE,
+	"PutObject":                  s3_constants.ACTION_WRITE,
+	"GetObject":                  s3_constants.ACTION_READ,
+	"DeleteObjectVersion":        s3_constants.ACTION_WRITE,
+	"GetObjectVersion":           s3_constants.ACTION_READ,
+	"GetObjectAttributes":        s3_constants.ACTION_READ,
+	"GetObjectVersionAttributes": s3_constants.ACTION_READ,
 	// Tagging operations
 	"GetObjectTagging":           s3_constants.ACTION_TAGGING,
 	"GetObjectVersionTagging":    s3_constants.ACTION_TAGGING,
@@ -115,6 +117,7 @@ var baseS3ActionMap = map[string]string{
 	"DeleteBucketTagging":        s3_constants.ACTION_TAGGING,
 	// ACL operations
 	"PutObjectAcl":        s3_constants.ACTION_WRITE_ACP,
+	"PutObjectVersionAcl": s3_constants.ACTION_WRITE_ACP,
 	"GetObjectAcl":        s3_constants.ACTION_READ_ACP,
 	"GetObjectVersionAcl": s3_constants.ACTION_READ_ACP,
 	"PutBucketAcl":        s3_constants.ACTION_WRITE_ACP,

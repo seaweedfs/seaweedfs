@@ -69,6 +69,11 @@ type IdentityAccessManagement struct {
 	// IAM Integration for advanced features
 	iamIntegration IAMIntegration
 
+	// selfServiceRequiresGrant makes the self-service IAM actions (an
+	// identity's own access keys, GetUser on itself) need an iam:<Action>
+	// grant like every other IAM action. Off by default.
+	selfServiceRequiresGrant bool
+
 	// Serializes resyncs of the policy set into the advanced IAM manager so that
 	// concurrent policy updates can't apply stale views out of order. See
 	// resyncIAMManagerPolicies.
@@ -337,6 +342,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 		hashCounters: make(map[string]*int32),
 		filerClient:  filerClient,
 	}
+	iam.selfServiceRequiresGrant = option.IamSelfServiceRequiresGrant
 
 	// Always initialize credential manager with fallback to defaults
 	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.CredentialStoreTypeName(explicitStore))
@@ -3061,11 +3067,21 @@ func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Requ
 // its query describe. versionId, when set, and the STS session token ride along
 // for policy conditions. Returns ErrNone when auth is disabled (checked by the
 // callers) or the identity is an admin.
+// authQueryParams are the query keys carrying a request's authentication
+// material (SigV2 and SigV4 presign parameters). None steer ResolveS3Action,
+// so they can ride along on a synthesized request.
+var authQueryParams = []string{
+	"AWSAccessKeyId", "Signature", "Expires",
+	"X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date", "X-Amz-Expires",
+	"X-Amz-Signature", "X-Amz-SignedHeaders", "X-Amz-Security-Token",
+}
+
 // objectKeyPolicyRequest synthesizes a <method> /<bucket>/<objectKey> request
 // for policy evaluation against a key the real URL does not name. The query is
 // built from scratch so a param on the real request (delete, uploadId,
 // partNumber, ...) cannot steer ResolveS3Action off the intended action; the
-// STS token and versionId ride along for policy conditions.
+// versionId and the auth-material params ride along so auth-derived policy
+// conditions (s3:authType) evaluate as they did on the real request.
 func objectKeyPolicyRequest(r *http.Request, method, bucket, objectKey, versionId string) *http.Request {
 	keyReq := new(http.Request)
 	*keyReq = *r
@@ -3078,9 +3094,9 @@ func objectKeyPolicyRequest(r *http.Request, method, bucket, objectKey, versionI
 	if versionId != "" {
 		keyQuery.Set("versionId", versionId)
 	}
-	if strings.Contains(r.URL.RawQuery, "X-Amz-Security-Token") {
-		if token := r.URL.Query().Get("X-Amz-Security-Token"); token != "" {
-			keyQuery.Set("X-Amz-Security-Token", token)
+	for _, key := range authQueryParams {
+		if vals, ok := r.URL.Query()[key]; ok {
+			keyQuery[key] = vals
 		}
 	}
 	if len(keyQuery) > 0 {

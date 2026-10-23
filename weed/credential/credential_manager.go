@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // FilerAddressSetter is an interface for credential stores that need a dynamic filer address
@@ -168,15 +169,16 @@ func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_
 	staticNames := cm.staticNames
 	cm.staticMu.RUnlock()
 	if len(staticNames) > 0 {
-		var dynamicOnly []*iam_pb.Identity
-		for _, ident := range config.Identities {
+		configCopy := proto.Clone(config).(*iam_pb.S3ApiConfiguration)
+		dynamicOnly := configCopy.Identities[:0]
+		for _, ident := range configCopy.Identities {
 			if !staticNames[ident.Name] {
 				dynamicOnly = append(dynamicOnly, ident)
 			}
 		}
-		configCopy := *config
+		clear(configCopy.Identities[len(dynamicOnly):])
 		configCopy.Identities = dynamicOnly
-		return cm.Store.SaveConfiguration(ctx, &configCopy)
+		return cm.Store.SaveConfiguration(ctx, configCopy)
 	}
 	return cm.Store.SaveConfiguration(ctx, config)
 }

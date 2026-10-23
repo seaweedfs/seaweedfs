@@ -78,6 +78,14 @@ type S3ApiServerOption struct {
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only object dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
+	// AllowBackslashInKey keeps '\' a literal object-key character instead of
+	// normalizing it to '/', matching AWS S3 where the two are distinct keys.
+	AllowBackslashInKey bool
+	// IamSelfServiceRequiresGrant makes managing one's own access keys
+	// (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys,
+	// GetUser) need an explicit iam: grant instead of being allowed to every
+	// authenticated identity.
+	IamSelfServiceRequiresGrant bool
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -97,6 +105,7 @@ type S3ApiServer struct {
 	randomClientId        int32
 	filerGuard            *security.Guard
 	filerClient           *wdclient.FilerClient
+	masterClient          *wdclient.MasterClient
 	client                util_http_client.HTTPClientInterface
 	bucketRegistry        *BucketRegistry
 	credentialManager     *credential.CredentialManager
@@ -337,6 +346,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		randomClientId:        util.RandomInt32(),
 		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		filerClient:           filerClient,
+		masterClient:          masterClient,
 		cb:                    NewCircuitBreaker(option),
 		credentialManager:     iam.credentialManager,
 		bucketConfigCache:     NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
@@ -532,6 +542,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// pointer-to-missing-file states without waiting for a client GET.
 	s3ApiServer.versionsReconcilerStop = s3ApiServer.startVersioningReconciler()
 
+	// Publish the key mode only once the server is fully constructed so a
+	// failed construction cannot flip the mode of a running server.
+	SetAllowBackslashInObjectKey(option.AllowBackslashInKey)
+
 	return s3ApiServer, nil
 }
 
@@ -679,6 +693,21 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 	principal := buildPrincipalARN(identity, r)
 	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
 	return errCode
+}
+
+// checkVersionReadGrant enforces the version read grant AWS requires alongside
+// a version-scoped action such as s3:GetObjectVersionAttributes. The check runs
+// on a request shaped like a plain versioned GET so the s3:GetObjectVersion
+// action resolves from the request instead of the caller's subresource, and a
+// legacy Read grant still applies.
+func (s3a *S3ApiServer) checkVersionReadGrant(r *http.Request, bucket, object, versionId string, objectEntry map[string][]byte) s3err.ErrorCode {
+	versionReadReq := objectKeyPolicyRequest(r, http.MethodGet, bucket, object, versionId)
+	if identity, ok := GetIdentityFromContext(r).(*Identity); ok && identity != nil {
+		if errCode := s3a.iam.VerifyActionPermission(versionReadReq, identity, ACTION_READ, bucket, object); errCode != s3err.ErrNone {
+			return errCode
+		}
+	}
+	return s3a.recheckPolicyWithObjectEntry(versionReadReq, bucket, object, ACTION_READ, objectEntry, "checkVersionReadGrant")
 }
 
 // recheckCopySourcePolicy repeats the source object's policy check once its
@@ -894,6 +923,9 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// runs before subrouter matching so Queries() matchers see the fixed query
 	router.Use(util_http.EscapeSemicolonsInQuery)
+	// a request naming two subresources routes one way and authorizes another;
+	// reject it rather than guess
+	router.Use(rejectAmbiguousSubresource)
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
 	apiRouter.Use(request_id.Middleware)

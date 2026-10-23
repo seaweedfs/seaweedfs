@@ -145,3 +145,75 @@ func TestAuthorizeIamActionCreateServiceAccountScopedByPolicyResource(t *testing
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeIamAction(iamPostRequest(""), admin, "CreateServiceAccount", "victim"))
 }
+
+var iamSelfServiceActionNames = []string{"CreateAccessKey", "DeleteAccessKey", "UpdateAccessKey", "ListAccessKeys", "GetUser"}
+
+func ownKeysPolicy(resource string) string {
+	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateAccessKey","iam:DeleteAccessKey","iam:UpdateAccessKey","iam:ListAccessKeys","iam:GetUser"],"Resource":["` + resource + `"]}]}`
+}
+
+// With selfServiceRequiresGrant, an identity holding only data-plane rights may
+// no longer manage its own access keys: a leaked key cannot mint further keys
+// that outlive its own revocation, nor deactivate the keys it was issued.
+func TestAuthorizeIamActionSelfServiceRequiresGrantWhenConfigured(t *testing.T) {
+	iam := newIamAuthzTestIam(t)
+	iam.selfServiceRequiresGrant = true
+	powerUser := &Identity{Name: "power_user", PolicyNames: []string{"PowerUserPolicy"}}
+	bare := &Identity{Name: "bare_user"}
+
+	for _, action := range iamSelfServiceActionNames {
+		for _, identity := range []*Identity{powerUser, bare} {
+			for _, target := range []string{"", identity.Name, "victim"} {
+				assert.Equal(t, s3err.ErrAccessDenied, iam.AuthorizeIamAction(iamPostRequest(""), identity, action, target),
+					"%s by %s on %q", action, identity.Name, target)
+			}
+		}
+	}
+}
+
+// The grant is authorized against the target user's ARN, the caller's own when
+// UserName is empty, so a policy can confine it to the caller's own keys.
+func TestAuthorizeIamActionSelfServiceGrantIsScopedByResource(t *testing.T) {
+	for _, resource := range []string{"arn:aws:iam:::user/key_owner", "arn:aws:iam:::user/${aws:username}"} {
+		t.Run(resource, func(t *testing.T) {
+			iam := newIamAuthzTestIam(t)
+			iam.selfServiceRequiresGrant = true
+			require.NoError(t, iam.PutPolicy("OwnKeysPolicy", ownKeysPolicy(resource)))
+			owner := &Identity{Name: "key_owner", PolicyNames: []string{"OwnKeysPolicy"}}
+
+			for _, action := range iamSelfServiceActionNames {
+				assert.Equal(t, s3err.ErrNone, iam.AuthorizeIamAction(iamPostRequest(""), owner, action, ""), "%s on itself, implicit", action)
+				assert.Equal(t, s3err.ErrNone, iam.AuthorizeIamAction(iamPostRequest(""), owner, action, "key_owner"), "%s on itself", action)
+				assert.Equal(t, s3err.ErrAccessDenied, iam.AuthorizeIamAction(iamPostRequest(""), owner, action, "victim"), "%s on another user", action)
+			}
+			assert.Equal(t, s3err.ErrAccessDenied, iam.AuthorizeIamAction(iamPostRequest(""), owner, "CreateUser", "victim"))
+		})
+	}
+}
+
+// The setting changes nothing for the admin, nor for an iam:* grant.
+func TestAuthorizeIamActionSelfServiceRequiresGrantKeepsAdmin(t *testing.T) {
+	iam := newIamAuthzTestIam(t)
+	iam.selfServiceRequiresGrant = true
+	admin := &Identity{Name: "admin", Actions: []Action{s3_constants.ACTION_ADMIN}}
+	operator := &Identity{Name: "iam_operator", PolicyNames: []string{"IamAdminPolicy"}}
+
+	for _, action := range iamSelfServiceActionNames {
+		for _, identity := range []*Identity{admin, operator} {
+			for _, target := range []string{"", identity.Name, "victim"} {
+				assert.Equal(t, s3err.ErrNone, iam.AuthorizeIamAction(iamPostRequest(""), identity, action, target),
+					"%s by %s on %q", action, identity.Name, target)
+			}
+		}
+	}
+}
+
+// Off by default: self-service stays allowed without a grant.
+func TestAuthorizeIamActionSelfServiceDefaultUnchanged(t *testing.T) {
+	iam := newIamAuthzTestIam(t)
+	powerUser := &Identity{Name: "power_user", PolicyNames: []string{"PowerUserPolicy"}}
+	for _, action := range iamSelfServiceActionNames {
+		assert.Equal(t, s3err.ErrNone, iam.AuthorizeIamAction(iamPostRequest(""), powerUser, action, ""), action)
+		assert.Equal(t, s3err.ErrNone, iam.AuthorizeIamAction(iamPostRequest(""), powerUser, action, "power_user"), action)
+	}
+}

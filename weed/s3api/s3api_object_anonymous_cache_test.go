@@ -238,10 +238,12 @@ func TestAnonymousObjectACLVersionedDirectoryIdentity(t *testing.T) {
 							f.entries["/buckets/b/folder/.versions"] = &filer_pb.Entry{IsDirectory: true, Extended: map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte("")}}
 						}
 						// Equivalent filer-path spellings must not recover a different object's data.
-						assertMissing(serveAnonymousRead(s3a, method, "folder/", route.query, headers))
+						for _, object := range []string{"folder/", "folder//", "folder\\"} {
+							assertMissing(serveAnonymousRead(s3a, method, object, route.query, headers))
+						}
 						// Spellings the policy's folder/ grant does not cover are
 						// masked: a miss must be indistinguishable from a denied read.
-						for _, object := range []string{"folder//", "folder\\"} {
+						for _, object := range []string{"folder//x", "folder\\x"} {
 							rr := serveAnonymousRead(s3a, method, object, route.query, headers)
 							require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 						}
@@ -279,5 +281,42 @@ func TestAnonymousObjectACLVersionedDirectoryIdentity(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A literal-backslash key is a different object than its slash spelling only
+// when allowBackslashInObjectKey is set. A public grant on b/folder/ must not
+// authorize an anonymous read of the separate folder\ object under that mode.
+func TestAnonymousObjectACLBackslashKeyIdentity(t *testing.T) {
+	for _, allowBackslash := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowBackslashInKey=%v", allowBackslash), func(t *testing.T) {
+			s3a, f := newAnonymousReadTestServer(t)
+			s3_constants.SetAllowBackslashInObjectKey(allowBackslash)
+			t.Cleanup(func() { s3_constants.SetAllowBackslashInObjectKey(false) })
+			require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("b", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject*","Resource":"arn:aws:s3:::b/folder/"}]}`))
+			slash := anonymousReadEntry([]byte(`[]`))
+			slash.Name = "folder"
+			slash.MarkPrefixObject()
+			f.entries["/buckets/b/folder"] = slash
+			backslash := anonymousReadEntry([]byte(`[]`))
+			backslash.Name = `folder\`
+			f.entries[`/buckets/b/folder\`] = backslash
+
+			rr := serveAnonymousRead(s3a, http.MethodGet, "folder/", "", nil)
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+			require.Equal(t, "hello world", rr.Body.String())
+
+			rr = serveAnonymousRead(s3a, http.MethodGet, `folder\`, "", nil)
+			if !allowBackslash {
+				// Default mode folds the spelling onto the slash key the policy covers.
+				require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+			} else {
+				require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+				backslash.Extended[s3_constants.ExtAmzAclKey] = anonymousReadGrant("READ")
+				rr = serveAnonymousRead(s3a, http.MethodGet, `folder\`, "", nil)
+				require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+				require.Equal(t, "hello world", rr.Body.String())
+			}
+		})
 	}
 }

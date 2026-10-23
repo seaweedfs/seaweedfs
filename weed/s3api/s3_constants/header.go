@@ -216,10 +216,21 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	return
 }
 
-// IsValidObjectKey rejects S3 object keys that — after normalization
-// (backslash→slash, slash collapse) — contain a `.` or `..` path segment, or
-// embed a NUL byte. Such keys are collapsed by filepath.Join inside the filer
-// and would escape the bucket directory, so they must not reach the gRPC layer.
+// allowBackslashInObjectKey keeps '\' a literal object-key character instead
+// of normalizing it to '/'. It is a process-wide mode set once at S3 server
+// startup; the filer only treats '/' as a path separator, so a verbatim '\'
+// stays inside one filer entry name.
+var allowBackslashInObjectKey atomic.Bool
+
+func SetAllowBackslashInObjectKey(allow bool) {
+	allowBackslashInObjectKey.Store(allow)
+}
+
+// IsValidObjectKey rejects S3 object keys that — after the mode-dependent
+// normalization NormalizeObjectKey applies — contain a `.` or `..` path
+// segment, or embed a NUL byte. Such keys are collapsed by filepath.Join
+// inside the filer and would escape the bucket directory, so they must not
+// reach the gRPC layer.
 // Gorilla mux URL-decodes captured vars before this runs, so `%2e%2e` is
 // already `..` here.
 func IsValidObjectKey(object string) bool {
@@ -229,7 +240,9 @@ func IsValidObjectKey(object string) bool {
 	if strings.ContainsRune(object, '\x00') {
 		return false
 	}
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	for _, seg := range strings.Split(object, "/") {
 		if seg == "." || seg == ".." {
 			return false
@@ -263,7 +276,8 @@ func IsValidPathSegment(value string) bool {
 
 // NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
-// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility,
+// unless allowBackslashInObjectKey is set.
 // Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
 // Preserves trailing slash if present (e.g., "foo/" stays "foo/").
 func NormalizeObjectKey(object string) string {
@@ -271,7 +285,9 @@ func NormalizeObjectKey(object string) string {
 	hasTrailingSlash := strings.HasSuffix(object, "/")
 
 	// Convert Windows-style backslashes to forward slashes
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	object = removeDuplicateSlashes(object)
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
@@ -338,6 +354,7 @@ const (
 	contextKeyIdentityClaim       contextKey = "s3-identity-claim"
 	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
 	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
+	contextKeyAccessKeyId         contextKey = "s3-access-key-id"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -351,6 +368,7 @@ type identityHolder struct {
 	name          atomic.Pointer[string]
 	principalArn  atomic.Pointer[string]
 	identityClaim atomic.Pointer[string]
+	accessKeyId   atomic.Pointer[string]
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -476,6 +494,62 @@ func SetOriginalRequestPathInContext(ctx context.Context, path string) context.C
 func GetOriginalRequestPathFromContext(r *http.Request) string {
 	if path, ok := r.Context().Value(contextKeyOriginalRequestPath).(string); ok {
 		return path
+	}
+	return ""
+}
+
+// SetAccessKeyIdInContext stores the access key id the request authenticated
+// with: a static key's id, or an STS session's temporary key id. Several keys
+// can belong to one identity, so the identity name alone cannot tell their
+// holders apart in the audit log. An access key id is not a secret (AWS logs
+// it in CloudTrail); the secret key never reaches the context.
+func SetAccessKeyIdInContext(ctx context.Context, accessKeyId string) context.Context {
+	if accessKeyId == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.accessKeyId.Store(&accessKeyId)
+	}
+	return context.WithValue(ctx, contextKeyAccessKeyId, accessKeyId)
+}
+
+// RecordAccessKeyId stores the access key id of a credential whose signature
+// was just verified into the request's identity holder, so the outer
+// middleware (the audit fallback) and the handler both see it. A no-op without
+// a holder (EnsureIdentityHolder) or without a key. Only a verifier calls it:
+// the key comes from the credential that matched, never from re-reading the
+// request, whose shape the verifier already resolved.
+func RecordAccessKeyId(ctx context.Context, accessKeyId string) {
+	if ctx == nil || accessKeyId == "" {
+		return
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.accessKeyId.Store(&accessKeyId)
+	}
+}
+
+// GetAccessKeyIdFromContext retrieves the access key id the request
+// authenticated with, or "" when it carried none (anonymous, OIDC bearer).
+func GetAccessKeyIdFromContext(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return AccessKeyIdFromContext(r.Context())
+}
+
+// AccessKeyIdFromContext is GetAccessKeyIdFromContext for code that holds
+// only the request's context, such as the Iceberg credential vendor.
+func AccessKeyIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(contextKeyAccessKeyId).(string); ok && id != "" {
+		return id
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if id := h.accessKeyId.Load(); id != nil {
+			return *id
+		}
 	}
 	return ""
 }

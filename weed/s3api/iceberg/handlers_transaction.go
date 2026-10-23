@@ -140,6 +140,9 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		glog.V(1).Infof("Iceberg: CommitTransaction GetTable error: %v", err)
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", err.Error()}
 	}
+	if reqErr := s.authorizeCommit(ctx, bucketARN, namespace, tableName, identityName); reqErr != nil {
+		return nil, reqErr
+	}
 
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
