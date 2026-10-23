@@ -354,7 +354,7 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 		args = append(args, fmt.Sprintf("-chunkSizeLimitMB=%d", config.ChunkSizeMB))
 	}
 	if config.CacheSizeMB > 0 {
-		args = append(args, fmt.Sprintf("-cacheSizeMB=%d", config.CacheSizeMB))
+		args = append(args, fmt.Sprintf("-cacheCapacityMB=%d", config.CacheSizeMB))
 	}
 
 	args = append(args, config.MountOptions...)
