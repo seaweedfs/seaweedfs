@@ -291,8 +291,9 @@ jobs:
         with:
           name: rust-test-binaries
 
-      - name: Restore binary permissions
+      - name: Restore binaries
         run: |
+          tar xf rust-test-binaries.tar
           chmod +x weed/weed seaweed-volume/target/release/weed-volume
           ./weed/weed version
           ./seaweed-volume/target/release/weed-volume --help >/dev/null || true
