@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,6 +116,50 @@ func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
 			t.Fatal("the surviving copy must be released once the conflict is gone")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+
+	var pushFails atomic.Bool
+	topo.QuarantineVolumeFn = func(dn *DataNode, vid needle.VolumeId, readOnly bool) error {
+		if !readOnly && pushFails.Load() {
+			return errors.New("volume server unreachable")
+		}
+		return nil
+	}
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// the conflict resolves while the surviving copy is unreachable: the
+	// writable push fails, so the record and the layout read-only mark must
+	// both come back instead of advertising a writable replica the server
+	// still holds read-only
+	pushFails.Store(true)
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	if !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("a failed writable push must keep the quarantine record for the retry")
+	}
+	if isWritable(t, topo, v1) {
+		t.Fatal("the layout must not advertise a replica the server still holds read-only")
+	}
+
+	pushFails.Store(false)
+	topo.releaseResolvedQuarantine(v1.Id)
+	if !isWritable(t, topo, v1) {
+		t.Fatal("the retried release must return the surviving copy to writable")
 	}
 }
 

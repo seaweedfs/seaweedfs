@@ -885,6 +885,9 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 // restoreQuarantineRecord re-adds a released record after a failed writable
 // push so a later release pass retries it. An existing record keeps its
 // reported flag; the server is known read-only, so only enforced is set.
+// A record restored from scratch also gets its layout read-only mark back:
+// the release pass cleared it with the record, and leaving it cleared would
+// advertise a writable replica the server still holds read-only.
 func (t *Topology) restoreQuarantineRecord(dn *DataNode, vid needle.VolumeId) {
 	t.quarantineLock.Lock()
 	defer t.quarantineLock.Unlock()
@@ -893,6 +896,10 @@ func (t *Topology) restoreQuarantineRecord(dn *DataNode, vid needle.VolumeId) {
 		state := cur.(quarantinedVolumeState)
 		state.enforced = true
 		t.quarantinedVolumeIds.Store(key, state)
+		return
+	}
+	if _, vl, _ := t.findQuarantinedVolume(dn.Id(), vid); vl != nil {
+		vl.SetVolumeReadOnly(dn, vid)
 	}
 }
 
