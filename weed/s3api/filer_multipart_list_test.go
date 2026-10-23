@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"slices"
 	"testing"
 
@@ -140,6 +141,42 @@ func TestSelectMultipartUploadsHoldsOnlyThePage(t *testing.T) {
 	}
 	if !*out.IsTruncated || *out.NextKeyMarker != "k00002" || *out.NextUploadIdMarker != "19997" {
 		t.Fatalf("truncation markers got (%v, %v, %v)", *out.IsTruncated, *out.NextKeyMarker, *out.NextUploadIdMarker)
+	}
+}
+
+// With encoding-type=url the markers and upload keys take the wire form the
+// object listings already use: a client that echoes the escaped marker back
+// still resumes at the decoded key.
+func TestSelectMultipartUploadsUrlEncodesMarkersAndKeys(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		uploadEntry("1", "a\x01b", 10),
+		uploadEntry("2", "a b", 20),
+		uploadEntry("3", "b", 30),
+	}
+	input := listUploadsInput("", "", "", 1)
+	input.EncodingType = aws.String(s3.EncodingTypeUrl)
+
+	out := selectMultipartUploads(input, entries)
+	if *out.Upload[0].Key != "a%01b" || *out.NextUploadIdMarker != "1" {
+		t.Fatalf("page got key %q upload-id-marker %q", *out.Upload[0].Key, *out.NextUploadIdMarker)
+	}
+	marker, err := url.QueryUnescape(*out.NextKeyMarker)
+	if err != nil || decodeListContinuationToken(marker) != "a\x01b" {
+		t.Fatalf("next key marker %q does not resume at %q", *out.NextKeyMarker, "a\x01b")
+	}
+
+	input.KeyMarker = aws.String(decodeListContinuationToken(marker))
+	input.UploadIdMarker = out.NextUploadIdMarker
+	out = selectMultipartUploads(input, entries)
+	if *out.KeyMarker != encodeMarkerEcho("a\x01b", true) || *out.Upload[0].Key != "a%20b" || *out.NextKeyMarker != "a%20b" {
+		t.Fatalf("page got marker %q key %q next %q", *out.KeyMarker, *out.Upload[0].Key, *out.NextKeyMarker)
+	}
+
+	input.KeyMarker = aws.String("a b")
+	input.UploadIdMarker = out.NextUploadIdMarker
+	out = selectMultipartUploads(input, entries)
+	if *out.IsTruncated || *out.Upload[0].Key != "b" {
+		t.Fatalf("last page got truncated=%v key %q", *out.IsTruncated, *out.Upload[0].Key)
 	}
 }
 

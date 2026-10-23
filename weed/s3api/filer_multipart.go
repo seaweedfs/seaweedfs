@@ -1397,6 +1397,7 @@ func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
 
 func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	input := p.input
+	encodingTypeUrl := input.EncodingType != nil && *input.EncodingType == s3.EncodingTypeUrl
 	output := &ListMultipartUploadsResult{
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
@@ -1407,14 +1408,18 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		IsTruncated:    aws.Bool(false),
 	}
 	if input.KeyMarker != nil {
-		output.KeyMarker = aws.String(encodeListContinuationToken(*input.KeyMarker))
+		output.KeyMarker = aws.String(encodeMarkerEcho(*input.KeyMarker, encodingTypeUrl))
 	}
 	candidates := make([]multipartCandidate, len(p.top))
 	copy(candidates, p.top)
 	slices.SortFunc(candidates, compareMultipartCandidate)
 	for _, c := range candidates {
+		key := c.key
+		if encodingTypeUrl {
+			key = urlPathEscape(key)
+		}
 		upload := &s3.MultipartUpload{
-			Key:      aws.String(c.key),
+			Key:      aws.String(key),
 			UploadId: aws.String(c.entry.Name),
 		}
 		if c.entry.Attributes != nil {
@@ -1423,9 +1428,9 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		output.Upload = append(output.Upload, upload)
 	}
 	if p.more {
-		last := output.Upload[len(output.Upload)-1]
+		last := candidates[len(candidates)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(encodeListContinuationToken(*last.Key)), last.UploadId
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(encodeMarkerEcho(last.key, encodingTypeUrl)), aws.String(last.entry.Name)
 	}
 	return output
 }
