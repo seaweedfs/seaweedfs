@@ -261,6 +261,64 @@ func TestUploadStallWatchdogRetriesOnFreshConn(t *testing.T) {
 	}
 }
 
+// readStallHTTPClient answers with a response body that never delivers until
+// the request ctx is cancelled — the conn that took the request then wedged on
+// the read side.
+type readStallHTTPClient struct {
+	mu    sync.Mutex
+	stall bool
+}
+
+func (c *readStallHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	c.mu.Lock()
+	stall := c.stall
+	c.stall = false
+	c.mu.Unlock()
+	var body io.ReadCloser = io.NopCloser(strings.NewReader(`{"size":1}`))
+	if stall {
+		body = &ctxBlockedBody{ctx: req.Context()}
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       body,
+	}, nil
+}
+
+type ctxBlockedBody struct{ ctx context.Context }
+
+func (b *ctxBlockedBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (b *ctxBlockedBody) Close() error { return nil }
+
+// The watchdog stays armed through the response read: a conn that accepts the
+// body then wedges on the reply is as wedged as one that never drains.
+func TestUploadStallWatchdogCoversResponseRead(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 50 * time.Millisecond
+
+	client := &readStallHTTPClient{stall: true}
+	uploader := newUploader(client)
+	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("upload should have retried past the stalled read: %v", err)
+	}
+	if result.RetryCount != 1 {
+		t.Fatalf("got retries=%d, want one retry on a fresh conn", result.RetryCount)
+	}
+}
+
 // Without a recent fast upload the watchdog stays off: a chronically slow link
 // is the link, not a conn, and must not get its uploads cancelled.
 func TestUploadStallWatchdogKeepsUnprovenHost(t *testing.T) {
