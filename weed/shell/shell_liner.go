@@ -3,6 +3,7 @@ package shell
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -24,6 +25,47 @@ import (
 )
 
 var historyPath = path.Join(os.TempDir(), "weed-shell")
+
+// errNoFilersDiscovered marks a successful ListClusterNodes call that came
+// back empty, which usually means the filer has not registered with the
+// master yet. Unlike an RPC failure it is expected at startup, so filer
+// discovery retries on it until the connect timeout expires.
+var errNoFilersDiscovered = errors.New("no filer registered with master yet")
+
+// listFilers polls ListClusterNodes until at least one filer is registered
+// with the master or ctx expires. An empty list is expected while a filer is
+// still starting, so it retries like a transient failure. On return, a nil
+// error with an empty list means the master answered but no filer registered
+// in time; a non-nil error is the last attempt's failure.
+func listFilers(ctx context.Context, commandEnv *CommandEnv, filerGroup string, maxWait time.Duration) (filers []pb.ServerAddress, listErr error) {
+	util.RetryWithBackoff(ctx, "filer discovery", maxWait,
+		func(err error) bool {
+			return errors.Is(err, errNoFilersDiscovered) || util.IsTransientError(err)
+		}, func() error {
+			filers = filers[:0]
+			listErr = commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+				resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
+					ClientType: cluster.FilerType,
+					FilerGroup: filerGroup,
+				})
+				if err != nil {
+					return err
+				}
+				for _, clusterNode := range resp.ClusterNodes {
+					filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				}
+				return nil
+			})
+			if listErr != nil {
+				return listErr
+			}
+			if len(filers) == 0 {
+				return errNoFilersDiscovered
+			}
+			return nil
+		})
+	return filers, listErr
+}
 
 // Piped stdin returns the last command failure; an interactive session shows
 // the error to the operator and keeps going.
@@ -75,27 +117,15 @@ func RunShell(options ShellOptions) error {
 	}
 
 	if commandEnv.option.FilerAddress == "" {
-		var filers []pb.ServerAddress
 		discoverCtx, cancelDiscover := context.WithTimeout(ctx, connectTimeout)
 		defer cancelDiscover()
-		listErr := commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
-				ClientType: cluster.FilerType,
-				FilerGroup: *options.FilerGroup,
-			})
-			if err != nil {
-				return err
-			}
-
-			for _, clusterNode := range resp.ClusterNodes {
-				filers = append(filers, pb.ServerAddress(clusterNode.Address))
-			}
-			return nil
-		})
+		filers, listErr := listFilers(discoverCtx, commandEnv, *options.FilerGroup, connectTimeout)
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		} else if listErr != nil {
 			fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *options.Masters, listErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "no filer registered with master %s within %s\n", *options.Masters, connectTimeout)
 		}
 		if options.Debug {
 			if len(filers) > 0 {

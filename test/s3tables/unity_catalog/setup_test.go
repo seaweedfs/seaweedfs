@@ -183,6 +183,8 @@ func (env *testEnv) startSeaweedFS(t *testing.T, iamJSON string) {
 	if enableSTS {
 		weedArgs = append(weedArgs, "-s3.iam.config", iamConfigPath, "-s3.iam.readOnly=false")
 	}
+	weedArgs = append(weedArgs, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	weedArgs = append(weedArgs, "-webdav=false", "-s3.port.lance=0", "-s3.port.iceberg=0")
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, weedArgs...)
 	cmd.Dir = env.dataDir

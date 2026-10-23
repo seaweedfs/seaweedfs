@@ -525,19 +525,27 @@ func (fo *FilerOptions) startFiler() {
 	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
-		if localSocket == "" {
+		explicit := localSocket != ""
+		if !explicit {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			if explicit {
+				glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			}
+			glog.Warningf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		filerSocketListener, err := net.Listen("unix", localSocket)
 		if err != nil {
-			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+			if explicit {
+				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+			}
+			glog.Errorf("Failed to listen on %s, skipping local socket server: %v", localSocket, err)
+		} else {
+			socketServer = newHttpServer(defaultHandler, nil)
+			httpServers = append(httpServers, socketServer)
+			go socketServer.Serve(filerSocketListener)
 		}
-		socketServer = newHttpServer(defaultHandler, nil)
-		httpServers = append(httpServers, socketServer)
-		go socketServer.Serve(filerSocketListener)
 	}
 
 	if viper.GetString("https.filer.key") != "" {
