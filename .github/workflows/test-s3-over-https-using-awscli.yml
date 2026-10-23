@@ -27,6 +27,10 @@ defaults:
   run:
     working-directory: weed
 
+concurrency:
+  group: ${{ github.head_ref }}/test-s3-over-https-using-awscli
+  cancel-in-progress: true
+
 jobs:
   awscli-tests:
     runs-on: ubuntu-latest

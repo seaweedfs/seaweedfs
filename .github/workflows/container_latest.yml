@@ -30,6 +30,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: ${{ github.head_ref }}/container_latest
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write

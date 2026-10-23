@@ -8,6 +8,10 @@ on:
     branches: [ master ]
     paths: ['terraform/**', '.github/workflows/terraform_ci.yml']
 
+concurrency:
+  group: ${{ github.head_ref }}/terraform_ci
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

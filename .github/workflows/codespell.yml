@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [master]
 
+concurrency:
+  group: ${{ github.head_ref }}/codespell
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

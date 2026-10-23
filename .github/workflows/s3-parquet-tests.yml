@@ -23,6 +23,10 @@ env:
   S3_ENDPOINT_URL: http://localhost:8333
   BUCKET_NAME: test-parquet-bucket
 
+concurrency:
+  group: ${{ github.head_ref }}/s3-parquet-tests
+  cancel-in-progress: true
+
 jobs:
   parquet-integration-tests:
     name: PyArrow Parquet Tests (Python ${{ matrix.python-version }})

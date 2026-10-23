@@ -15,6 +15,10 @@ on:
       - '.github/workflows/spark-integration-tests.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.head_ref }}/spark-integration-tests
+  cancel-in-progress: true
+
 permissions:
   contents: read
   checks: write

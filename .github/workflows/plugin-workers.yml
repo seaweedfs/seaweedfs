@@ -18,6 +18,10 @@ on:
       - 'go.sum'
       - '.github/workflows/plugin-workers.yml'
 
+concurrency:
+  group: ${{ github.head_ref }}/plugin-workers
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

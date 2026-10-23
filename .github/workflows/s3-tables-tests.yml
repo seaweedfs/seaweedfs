@@ -12,6 +12,10 @@ on:
       - 'go.sum'
       - '.github/workflows/s3-tables-tests.yml'
 
+concurrency:
+  group: ${{ github.head_ref }}/s3-tables-tests
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

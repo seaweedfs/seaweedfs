@@ -18,6 +18,10 @@ on:
       - 'go.sum'
       - '.github/workflows/tls-rotation-tests.yml'
 
+concurrency:
+  group: ${{ github.head_ref }}/tls-rotation-tests
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

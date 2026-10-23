@@ -1,6 +1,10 @@
 name: 'Dependency Review'
 on: [pull_request]
 
+concurrency:
+  group: ${{ github.head_ref }}/depsreview
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

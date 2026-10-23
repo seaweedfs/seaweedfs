@@ -12,6 +12,10 @@ on:
       - 'other/java/**'
       - '.github/workflows/java_unit_tests.yml'
 
+concurrency:
+  group: ${{ github.head_ref }}/java_unit_tests
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Java Unit Tests

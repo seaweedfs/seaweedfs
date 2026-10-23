@@ -18,6 +18,10 @@ on:
       - 'go.sum'
       - '.github/workflows/vacuum-integration-tests.yml'
 
+concurrency:
+  group: ${{ github.head_ref }}/vacuum-integration-tests
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

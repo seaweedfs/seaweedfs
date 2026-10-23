@@ -11,6 +11,10 @@ on:
         required: true
         default: ''
 
+concurrency:
+  group: ${{ github.head_ref }}/container_release_foundationdb
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
