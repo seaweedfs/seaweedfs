@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -434,6 +435,7 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-webdav=false",
 		"-admin.ui=false",
 	)
+	args = append(args, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(f.t, "admin"))...)
 
 	proc, err := f.startProcess("mini", args)
 	if err != nil {

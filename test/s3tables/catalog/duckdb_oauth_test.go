@@ -135,6 +135,8 @@ func (env *oauthTestEnv) start(t *testing.T) {
 	if env.s3ExternalURL != "" {
 		args = append(args, "-s3.externalUrl", env.s3ExternalURL)
 	}
+	args = append(args, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	args = append(args, "-s3.port.lance=0")
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, args...)
 	cmd.Dir = env.dataDir

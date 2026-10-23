@@ -104,8 +104,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
-	env.masterProcess = exec.Command(
-		"weed", "mini",
+	miniArgs := append([]string{"mini",
 		"-ip", bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -114,7 +113,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	)
+	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-webdav.port=0", "-s3.port.lance=0")
+	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,

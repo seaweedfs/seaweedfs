@@ -92,7 +92,7 @@ func TestMain(m *testing.M) {
 }
 
 func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
-	ports, err := testutil.AllocatePorts(10)
+	ports, err := testutil.AllocatePorts(11)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +101,7 @@ func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
 	filerPort, filerGrpc := ports[4], ports[5]
 	s3Port, s3Grpc := ports[6], ports[7]
 	adminPort, adminGrpc := ports[8], ports[9]
+	icebergPort := ports[10]
 
 	_ = os.Remove(filepath.Join(testDir, "mini.options"))
 
@@ -148,7 +149,10 @@ func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
 			"-s3.port.grpc=" + strconv.Itoa(s3Grpc),
 			"-admin.port=" + strconv.Itoa(adminPort),
 			"-admin.port.grpc=" + strconv.Itoa(adminGrpc),
-			"-webdav.port=0",
+			"-admin.port.legacy=0", // Disable admin legacy compat listener
+			"-webdav.port=0",       // Disable WebDAV
+			"-s3.port.lance=0",     // Disable Lance
+			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-admin.ui=false",
 			"-master.volumeSizeLimitMB=32",
 			"-ip=127.0.0.1",

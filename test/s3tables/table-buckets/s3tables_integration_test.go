@@ -595,7 +595,7 @@ func testTargetOperations(t *testing.T, client *S3TablesClient) {
 // extraArgs are appended to the default mini command flags.
 func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, error) {
 	// We need 10 unique ports: Master(2), Volume(2), Filer(2), S3(2), Admin(2)
-	ports, err := testutil.AllocatePorts(10)
+	ports, err := testutil.AllocatePorts(11)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available ports: %v", err)
 	}
@@ -610,6 +610,7 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 	s3GrpcPort := ports[7]
 	adminPort := ports[8]
 	adminGrpcPort := ports[9]
+	icebergPort := ports[10]
 
 	// Ensure no configuration file from previous runs
 	configFile := filepath.Join(testDir, "mini.options")
@@ -676,7 +677,10 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
 			"-admin.port=" + strconv.Itoa(adminPort),
 			"-admin.port.grpc=" + strconv.Itoa(adminGrpcPort),
-			"-webdav.port=0",               // Disable WebDAV
+			"-admin.port.legacy=0", // Disable admin legacy compat listener
+			"-webdav.port=0",       // Disable WebDAV
+			"-s3.port.lance=0",     // Disable Lance
+			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
 			"-ip=127.0.0.1",
