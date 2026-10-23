@@ -83,15 +83,15 @@ func RunShell(options ShellOptions) error {
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		var reachedMaster bool
+		var listErr error
 		discoverCtx, cancelDiscover := context.WithTimeout(ctx, connectTimeout)
 		defer cancelDiscover()
-		listErr := util.RetryWithBackoff(discoverCtx, "filer discovery", connectTimeout,
+		util.RetryWithBackoff(discoverCtx, "filer discovery", connectTimeout,
 			func(err error) bool {
 				return errors.Is(err, errNoFilersDiscovered) || util.IsTransientError(err)
 			}, func() error {
 				filers = filers[:0]
-				if err := commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
+				listErr = commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
 					resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
 						ClientType: cluster.FilerType,
 						FilerGroup: *options.FilerGroup,
@@ -99,13 +99,13 @@ func RunShell(options ShellOptions) error {
 					if err != nil {
 						return err
 					}
-					reachedMaster = true
 					for _, clusterNode := range resp.ClusterNodes {
 						filers = append(filers, pb.ServerAddress(clusterNode.Address))
 					}
 					return nil
-				}); err != nil {
-					return err
+				})
+				if listErr != nil {
+					return listErr
 				}
 				if len(filers) == 0 {
 					return errNoFilersDiscovered
@@ -114,10 +114,10 @@ func RunShell(options ShellOptions) error {
 			})
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
-		} else if reachedMaster || errors.Is(listErr, errNoFilersDiscovered) {
-			fmt.Fprintf(os.Stderr, "no filer registered with master %s within %s\n", *options.Masters, connectTimeout)
 		} else if listErr != nil {
 			fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *options.Masters, listErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "no filer registered with master %s within %s\n", *options.Masters, connectTimeout)
 		}
 		if options.Debug {
 			if len(filers) > 0 {
