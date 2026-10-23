@@ -216,3 +216,41 @@ func TestListObjectsV1MarkerEchoStaysXMLSafe(t *testing.T) {
 	result = listV1Page(t, s3a, url.Values{"max-keys": {"2"}, "marker": {"a b"}, "encoding-type": {"url"}})
 	assert.Equal(t, urlPathEscape("a b"), result.Marker)
 }
+
+// A raw-key token resuming at an XML-unsafe prefix must not lose keys when a
+// sibling directory shares the key's leading bytes: the start window begins at
+// the marker's first path segment and descends only into blocks that can still
+// hold keys past it.
+func TestListObjectsV2ResumeXMLUnsafePrefixWithSiblingDir(t *testing.T) {
+	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets/test/x": {
+			{Name: "a\x01", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			listTokenTestFile("a\x01b"),
+			{Name: "a\x01b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			listTokenTestFile("a\x01b0"),
+		},
+		"/buckets/test/x/a\x01": {
+			listTokenTestFile("b"),
+		},
+		"/buckets/test/x/a\x01b": {
+			listTokenTestFile("0"),
+		},
+	}}
+	s3a := newFailoverTestServer(t, startFakeFiler(t, filer))
+	s3a.option.BucketsPath = "/buckets"
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("test", &BucketConfig{Name: "test"})
+
+	result := listV2Page(t, s3a, url.Values{
+		"list-type":          {"2"},
+		"encoding-type":      {"url"},
+		"prefix":             {"x/a\x01b"},
+		"max-keys":           {"1"},
+		"continuation-token": {"x/a\x01b"},
+	})
+	require.Len(t, result.Contents, 1)
+	got, err := url.QueryUnescape(result.Contents[0].Key)
+	require.NoError(t, err)
+	assert.Equal(t, "x/a\x01b/0", got)
+	assert.True(t, result.IsTruncated)
+}
