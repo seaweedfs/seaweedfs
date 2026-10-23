@@ -199,6 +199,17 @@ func lookupResolvedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return nil, "", err
 }
 
+// addFilerPathSpellings records a filer path and every successive
+// percent-decoding of it, covering each spelling lookupResolvedEntry can
+// resolve. An extra spelling only keeps a file; a missing one can drop a
+// referenced file.
+func addFilerPathSpellings(set map[string]struct{}, filerPath string) {
+	set[filerPath] = struct{}{}
+	if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
+		set[decoded] = struct{}{}
+	}
+}
+
 // lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
 // path. dataPath is the bucket-relative directory the table's files live in.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {

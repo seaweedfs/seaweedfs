@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -96,10 +95,7 @@ func (h *Handler) expireSnapshots(
 		if err != nil {
 			continue
 		}
-		keptFilerPaths[filerPath] = struct{}{}
-		if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
-			keptFilerPaths[decoded] = struct{}{}
-		}
+		addFilerPathSpellings(keptFilerPaths, filerPath)
 	}
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
@@ -375,14 +371,11 @@ func collectOrphanCandidates(
 		if err != nil {
 			continue
 		}
-		referencedFilerPaths[filerPath] = struct{}{}
 		// Writers percent-escape partition directory names (e.g. "a=1" stored
 		// as "a%3D1" in the manifest path), but the S3 layer decodes the key
-		// before it lands on the filer. Match the decoded spelling too, or a
-		// live file is counted as an orphan and deleted.
-		if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
-			referencedFilerPaths[decoded] = struct{}{}
-		}
+		// before it lands on the filer. Match every spelling the resolver can
+		// return, or a live file is counted as an orphan and deleted.
+		addFilerPathSpellings(referencedFilerPaths, filerPath)
 	}
 
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, dataPath)
