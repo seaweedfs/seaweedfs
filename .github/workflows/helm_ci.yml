@@ -9,7 +9,7 @@ on:
     paths: ['k8s/**', '.github/workflows/helm_ci.yml', '.github/scripts/helm_jwt_keys.py']
 
 concurrency:
-  group: ${{ github.head_ref }}/helm_ci
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

@@ -9,7 +9,7 @@ on:
       - '.github/workflows/codeql.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/codeql
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

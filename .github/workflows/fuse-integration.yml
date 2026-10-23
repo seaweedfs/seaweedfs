@@ -17,7 +17,7 @@ on:
       - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
-  group: ${{ github.head_ref }}/fuse-integration
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

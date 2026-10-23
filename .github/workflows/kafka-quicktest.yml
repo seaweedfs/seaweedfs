@@ -24,7 +24,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 concurrency:
-  group: ${{ github.head_ref }}/kafka-quicktest
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

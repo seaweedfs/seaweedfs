@@ -28,7 +28,7 @@ defaults:
     working-directory: weed
 
 concurrency:
-  group: ${{ github.head_ref }}/test-s3-over-https-using-awscli
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -14,7 +14,7 @@ on:
       - '.github/workflows/container_dev.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/container_dev
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

@@ -25,7 +25,7 @@ on:
         default: ''
 
 concurrency:
-  group: ${{ github.head_ref }}/container_foundationdb_version
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

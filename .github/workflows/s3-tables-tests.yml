@@ -13,7 +13,7 @@ on:
       - '.github/workflows/s3-tables-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-tables-tests
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

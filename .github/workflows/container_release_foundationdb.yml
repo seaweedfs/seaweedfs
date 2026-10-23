@@ -12,7 +12,7 @@ on:
         default: ''
 
 concurrency:
-  group: ${{ github.head_ref }}/container_release_foundationdb
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
