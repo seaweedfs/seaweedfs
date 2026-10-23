@@ -219,7 +219,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for mount to be ready
-	if err := f.waitForMount(30 * time.Second); err != nil {
+	if err := f.waitForMount(f.mountProcess, 30*time.Second); err != nil {
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
@@ -402,7 +402,7 @@ func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, ti
 }
 
 // waitForMount waits for the FUSE mount to be ready
-func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
+func (f *FuseTestFramework) waitForMount(proc *managedProcess, timeout time.Duration) error {
 	// The mount point is created before weed mount starts, so Stat/ReadDir
 	// alone succeed on the plain directory. The device id only differs from
 	// its parent's once a filesystem is actually mounted on it.
@@ -416,6 +416,9 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 			if _, err := os.ReadDir(f.mountPoint); err == nil {
 				return nil
 			}
+		}
+		if exitErr := proc.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(proc.logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
