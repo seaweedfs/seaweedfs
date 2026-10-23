@@ -163,8 +163,14 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 		state.enforced = true
 	}
 	t.quarantineLock.Lock()
-	if _, still := t.quarantinedVolumeIds.Load(q); still {
-		t.quarantinedVolumeIds.Store(q, state)
+	cur, still := t.quarantinedVolumeIds.Load(q)
+	if still {
+		latest := cur.(quarantinedVolumeState)
+		if !latest.enforced {
+			latest.reported = state.reported
+		}
+		latest.enforced = latest.enforced || state.enforced
+		t.quarantinedVolumeIds.Store(q, latest)
 		t.quarantineLock.Unlock()
 		return vi
 	}
@@ -172,7 +178,9 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 	if state.enforced && !state.reported {
 		// The conflict resolved while the push was in flight; leave the
 		// server consistent with the released layout.
-		_ = t.QuarantineVolumeFn(dn, vi.Id, false)
+		if err := t.QuarantineVolumeFn(dn, vi.Id, false); err != nil {
+			t.restoreQuarantineRecord(dn, vi.Id)
+		}
 	}
 	return vi
 }
@@ -752,7 +760,9 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 		if !reported {
 			// The conflict resolved while the push was in flight; leave the
 			// server consistent with the released layout.
-			_ = t.QuarantineVolumeFn(n, v.Id, false)
+			if err := t.QuarantineVolumeFn(n, v.Id, false); err != nil {
+				t.restoreQuarantineRecord(n, v.Id)
+			}
 		}
 	}
 	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
@@ -801,10 +811,22 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 	t.quarantineLock.Unlock()
 	for _, dn := range writablePushes {
 		if err := t.QuarantineVolumeFn(dn, vid, false); err != nil {
-			t.quarantineLock.Lock()
-			t.quarantinedVolumeIds.Store(quarantinedVolume{dn.Id(), vid}, quarantinedVolumeState{enforced: true})
-			t.quarantineLock.Unlock()
+			t.restoreQuarantineRecord(dn, vid)
 		}
+	}
+}
+
+// restoreQuarantineRecord re-adds a released record after a failed writable
+// push so a later release pass retries it. An existing record keeps its
+// reported flag; the server is known read-only, so only enforced is set.
+func (t *Topology) restoreQuarantineRecord(dn *DataNode, vid needle.VolumeId) {
+	t.quarantineLock.Lock()
+	defer t.quarantineLock.Unlock()
+	key := quarantinedVolume{dn.Id(), vid}
+	if cur, ok := t.quarantinedVolumeIds.LoadOrStore(key, quarantinedVolumeState{enforced: true}); ok {
+		state := cur.(quarantinedVolumeState)
+		state.enforced = true
+		t.quarantinedVolumeIds.Store(key, state)
 	}
 }
 
