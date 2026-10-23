@@ -30,6 +30,11 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.event.inputs.image_tag || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
   security-events: write

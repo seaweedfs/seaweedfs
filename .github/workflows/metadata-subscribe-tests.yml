@@ -25,8 +25,8 @@ on:
       - '.github/workflows/metadata-subscribe-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/metadata-subscribe-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
