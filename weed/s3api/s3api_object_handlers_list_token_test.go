@@ -134,6 +134,12 @@ func TestDecodeListContinuationTokenKeepsForeignTokensRaw(t *testing.T) {
 	assert.Equal(t, "base64:%%%", decodeListContinuationToken("base64:%%%"))
 	// An empty payload is never something encodeListContinuationToken wrote.
 	assert.Equal(t, "base64:", decodeListContinuationToken("base64:"))
+	// A legacy bare token is a raw key even when its suffix is valid base64:
+	// the decoded key could have traveled bare, so the input never was an
+	// encoded token.
+	for _, legacy := range []string{"base64:Yw", "base64:YQ", "base64:cGFy", "base64:a2V5LXdpdGg"} {
+		assert.Equal(t, legacy, decodeListContinuationToken(legacy), "token %q", legacy)
+	}
 }
 
 type listV1TestPage struct {

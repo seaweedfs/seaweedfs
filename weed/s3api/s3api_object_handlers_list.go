@@ -182,11 +182,19 @@ func decodeListContinuationToken(token string) string {
 		return token
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(key)
-	if err != nil || len(decoded) == 0 {
+	if err != nil {
 		// Not a token this server wrote; resume at the token as the raw key.
 		return token
 	}
-	return string(decoded)
+	decodedKey := string(decoded)
+	// encodeListContinuationToken only writes a token for a key that cannot
+	// travel bare, so a decoded key that could have stayed bare — valid XML
+	// text without the prefix — means the input was a legacy raw-key token,
+	// not something to decode.
+	if isXMLText(decodedKey) && !strings.HasPrefix(decodedKey, continuationTokenEncodingPrefix) {
+		return token
+	}
+	return decodedKey
 }
 
 // isXMLText reports whether s survives an XML 1.0 round trip unchanged, i.e. the
