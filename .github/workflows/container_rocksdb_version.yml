@@ -17,7 +17,7 @@ on:
         default: ''
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.image_tag || format('rocksdb_{0}_seaweedfs_{1}', github.event.inputs.rocksdb_version, github.event.inputs.seaweedfs_ref) }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -29,8 +29,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
 
     steps:
+      - name: Wait for earlier publishing runs
+        uses: softprops/turnstyle@3805450be63b8c80577dc253e8c17e9132036df4 # v3.3.3
+        with:
+          same-branch-only: false
+          poll-interval-seconds: 30
+          abort-after-seconds: 7200
+          initial-wait-seconds: 30
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v2
 

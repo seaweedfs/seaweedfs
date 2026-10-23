@@ -31,12 +31,13 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.event.inputs.image_tag || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
   security-events: write
+  actions: read
 
 jobs:
   setup:
@@ -45,6 +46,14 @@ jobs:
       variants: ${{ steps.set-variants.outputs.variants }}
       publish: ${{ steps.set-publish.outputs.publish }}
     steps:
+      - name: Wait for earlier publishing runs
+        if: inputs.publish
+        uses: softprops/turnstyle@3805450be63b8c80577dc253e8c17e9132036df4 # v3.3.3
+        with:
+          same-branch-only: false
+          poll-interval-seconds: 30
+          abort-after-seconds: 7200
+          initial-wait-seconds: 30
       - name: Select variants for this run
         id: set-variants
         run: |

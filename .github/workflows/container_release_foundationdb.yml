@@ -12,7 +12,7 @@ on:
         default: ''
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || format('refs/tags/{0}', github.event.inputs.release_tag) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
@@ -28,8 +28,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
 
     steps:
+      - name: Wait for earlier publishing runs
+        uses: softprops/turnstyle@3805450be63b8c80577dc253e8c17e9132036df4 # v3.3.3
+        with:
+          same-branch-only: false
+          poll-interval-seconds: 30
+          abort-after-seconds: 7200
+          initial-wait-seconds: 30
       -
         name: Checkout
         uses: actions/checkout@v7
