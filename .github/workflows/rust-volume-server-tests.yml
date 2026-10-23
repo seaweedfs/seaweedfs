@@ -96,15 +96,18 @@ jobs:
       - name: Build Rust volume binary
         run: cd seaweed-volume && cargo build --release
 
+      - name: Package binaries
+        run: tar cf rust-test-binaries.tar weed/weed seaweed-volume/target/release/weed-volume
+
       - name: Upload test binaries
         uses: actions/upload-artifact@v7
         with:
+          # archive layout mirrors the workspace: weed/weed and
+          # seaweed-volume/target/release/weed-volume
           name: rust-test-binaries
           if-no-files-found: error
           retention-days: 1
-          path: |
-            weed/weed
-            seaweed-volume/target/release/weed-volume
+          path: rust-test-binaries.tar
 
   rust-unit-tests:
     name: Rust Unit Tests
@@ -224,11 +227,11 @@ jobs:
         with:
           name: rust-test-binaries
 
-      - name: Restore binary permissions
+      - name: Restore binaries
         run: |
+          tar xf rust-test-binaries.tar
           chmod +x weed/weed seaweed-volume/target/release/weed-volume
           ./weed/weed version
-          ./seaweed-volume/target/release/weed-volume --help >/dev/null || true
 
       - name: Run integration tests
         env:

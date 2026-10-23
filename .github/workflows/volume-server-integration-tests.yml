@@ -54,13 +54,16 @@ jobs:
           chmod +x weed
           ./weed version
 
+      - name: Package binary
+        run: tar cf weed-binary.tar weed/weed
+
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
           name: weed-binary
           if-no-files-found: error
           retention-days: 1
-          path: weed/weed
+          path: weed-binary.tar
 
   volume-server-integration-tests:
     name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
@@ -87,8 +90,11 @@ jobs:
         with:
           name: weed-binary
 
-      - name: Restore binary permissions
-        run: chmod +x weed/weed && ./weed/weed version
+      - name: Restore binary
+        run: |
+          tar xf weed-binary.tar
+          chmod +x weed/weed
+          ./weed/weed version
 
       # Dealing the listed tests out one by one keeps the shards even. Bucketing
       # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of
