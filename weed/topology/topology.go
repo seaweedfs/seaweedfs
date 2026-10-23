@@ -154,6 +154,12 @@ func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
 func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
 	unlock := t.lockQuarantinePush(quarantinedVolume{dn.Id(), vid})
 	defer unlock()
+	return t.sendQuarantine(dn, vid, readOnly)
+}
+
+// sendQuarantine runs the record check and remote mark; the caller holds
+// the replica's push lock.
+func (t *Topology) sendQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
 	t.quarantineLock.Lock()
 	_, exists := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
 	t.quarantineLock.Unlock()
@@ -161,6 +167,17 @@ func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bo
 		return false, nil
 	}
 	return true, t.QuarantineVolumeFn(dn, vid, readOnly)
+}
+
+// releaseQuarantineWritable pushes the writable mark and re-arms the record
+// on failure, all under the replica's push lock so a queued stale push cannot
+// slip between the failure and the restore and undo the re-armed record.
+func (t *Topology) releaseQuarantineWritable(dn *DataNode, vid needle.VolumeId) {
+	unlock := t.lockQuarantinePush(quarantinedVolume{dn.Id(), vid})
+	defer unlock()
+	if _, err := t.sendQuarantine(dn, vid, false); err != nil {
+		t.restoreQuarantineRecord(dn, vid)
+	}
 }
 
 // lockQuarantinePush returns the release for q's push lock, creating the lock
@@ -236,9 +253,7 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 	if state.enforced && !state.reported {
 		// The conflict resolved while the push was in flight; leave the
 		// server consistent with the released layout.
-		if _, err := t.pushQuarantine(dn, vi.Id, false); err != nil {
-			t.restoreQuarantineRecord(dn, vi.Id)
-		}
+		t.releaseQuarantineWritable(dn, vi.Id)
 	}
 	return vi
 }
@@ -837,9 +852,7 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 		if pushed && !reported {
 			// The conflict resolved while the push was in flight; leave the
 			// server consistent with the released layout.
-			if _, err := t.pushQuarantine(n, v.Id, false); err != nil {
-				t.restoreQuarantineRecord(n, v.Id)
-			}
+			t.releaseQuarantineWritable(n, v.Id)
 		}
 	}
 	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
@@ -894,9 +907,7 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 	})
 	t.quarantineLock.Unlock()
 	for _, dn := range writablePushes {
-		if _, err := t.pushQuarantine(dn, vid, false); err != nil {
-			t.restoreQuarantineRecord(dn, vid)
-		}
+		t.releaseQuarantineWritable(dn, vid)
 	}
 }
 
