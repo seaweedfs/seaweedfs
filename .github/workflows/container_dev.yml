@@ -193,6 +193,8 @@ jobs:
           platforms: linux/amd64, linux/arm64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Sign
         if: github.event_name != 'pull_request'
