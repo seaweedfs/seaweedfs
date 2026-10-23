@@ -2155,9 +2155,21 @@ fn handle_range_request_from_source(
             return Ok(Vec::new());
         }
         let mut buf = vec![0u8; length as usize];
-        info.source
-            .read_exact_at(&mut buf, info.data_file_offset + start as u64)?;
-        Ok(buf)
+        match info
+            .source
+            .read_exact_at(&mut buf, info.data_file_offset + start as u64)
+        {
+            // A finished range read clears the streak a failed meta read
+            // counted, like readNeedleDataInto's terminal report.
+            Ok(()) => {
+                info.io_errors.check_read_write_error(None);
+                Ok(buf)
+            }
+            Err(e) => {
+                info.io_errors.check_read_write_error(Some(&e));
+                Err(e)
+            }
+        }
     };
 
     if ranges.len() == 1 {
