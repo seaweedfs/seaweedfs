@@ -78,20 +78,30 @@ func RunShell(options ShellOptions) error {
 		var filers []pb.ServerAddress
 		discoverCtx, cancelDiscover := context.WithTimeout(ctx, connectTimeout)
 		defer cancelDiscover()
-		listErr := commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
-				ClientType: cluster.FilerType,
-				FilerGroup: *options.FilerGroup,
-			})
-			if err != nil {
-				return err
-			}
+		var listErr error
+		for len(filers) == 0 && discoverCtx.Err() == nil {
+			filers = filers[:0]
+			listErr = commandEnv.MasterClient.WithClient(discoverCtx, false, func(client master_pb.SeaweedClient) error {
+				resp, err := client.ListClusterNodes(discoverCtx, &master_pb.ListClusterNodesRequest{
+					ClientType: cluster.FilerType,
+					FilerGroup: *options.FilerGroup,
+				})
+				if err != nil {
+					return err
+				}
 
-			for _, clusterNode := range resp.ClusterNodes {
-				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				for _, clusterNode := range resp.ClusterNodes {
+					filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				}
+				return nil
+			})
+			if len(filers) == 0 {
+				select {
+				case <-discoverCtx.Done():
+				case <-time.After(time.Second):
+				}
 			}
-			return nil
-		})
+		}
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		} else if listErr != nil {
