@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -20,10 +21,13 @@ type FuseTestFramework struct {
 	tempDir       string
 	mountPoint    string
 	dataDir       string
-	masterProcess *os.Process
-	volumeProcess *os.Process
-	filerProcess  *os.Process
-	mountProcess  *os.Process
+	masterProcess *managedProcess
+	volumeProcess *managedProcess
+	filerProcess  *managedProcess
+	mountProcess  *managedProcess
+	masterPort    int
+	volumePort    int
+	filerPort     int
 	masterAddr    string
 	volumeAddr    string
 	filerAddr     string
@@ -68,14 +72,21 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_fuse_test_")
 	require.NoError(t, err)
 
+	masterPort := freeServicePort(t)
+	volumePort := freeServicePort(t)
+	filerPort := freeServicePort(t)
+
 	return &FuseTestFramework{
 		t:          t,
 		tempDir:    tempDir,
 		mountPoint: filepath.Join(tempDir, "mount"),
 		dataDir:    filepath.Join(tempDir, "data"),
-		masterAddr: "127.0.0.1:19333",
-		volumeAddr: "127.0.0.1:18080",
-		filerAddr:  "127.0.0.1:18888",
+		masterPort: masterPort,
+		volumePort: volumePort,
+		filerPort:  filerPort,
+		masterAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(masterPort)),
+		volumeAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(volumePort)),
+		filerAddr:  net.JoinHostPort("127.0.0.1", strconv.Itoa(filerPort)),
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
 		config:     config,
@@ -158,7 +169,8 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		}
 	}
 
-	// Create directories for full cluster setup
+	// Create directories for full cluster setup; weed volume refuses a -dir
+	// that does not already exist.
 	dirs := []string{f.mountPoint, f.dataDir, filepath.Join(f.dataDir, "volume")}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -172,7 +184,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for master to be ready
-	if err := f.waitForService(f.masterAddr, 30*time.Second); err != nil {
+	if err := f.waitForService(f.masterProcess, f.masterAddr, 30*time.Second); err != nil {
 		return fmt.Errorf("master not ready: %v", err)
 	}
 
@@ -182,7 +194,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for volume server to be ready
-	if err := f.waitForService(f.volumeAddr, 30*time.Second); err != nil {
+	if err := f.waitForService(f.volumeProcess, f.volumeAddr, 30*time.Second); err != nil {
 		return fmt.Errorf("volume server not ready: %v", err)
 	}
 
@@ -192,7 +204,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for filer to be ready
-	if err := f.waitForService(f.filerAddr, 30*time.Second); err != nil {
+	if err := f.waitForService(f.filerProcess, f.filerAddr, 30*time.Second); err != nil {
 		return fmt.Errorf("filer not ready: %v", err)
 	}
 
@@ -233,11 +245,10 @@ func (f *FuseTestFramework) Cleanup() {
 	}
 
 	// Stop processes in reverse order
-	processes := []*os.Process{f.mountProcess, f.filerProcess, f.volumeProcess, f.masterProcess}
+	processes := []*managedProcess{f.mountProcess, f.filerProcess, f.volumeProcess, f.masterProcess}
 	for _, proc := range processes {
 		if proc != nil {
-			proc.Signal(syscall.SIGTERM)
-			proc.Wait()
+			proc.stop()
 		}
 	}
 
@@ -267,17 +278,16 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 	args = append(args,
 		"master",
 		"-ip=127.0.0.1",
-		"-port=19333",
+		"-port="+strconv.Itoa(f.masterPort),
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("master", args)
+	if err != nil {
 		return err
 	}
-	f.masterProcess = cmd.Process
+	f.masterProcess = proc
 	return nil
 }
 
@@ -291,17 +301,16 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 		"volume",
 		"-mserver=" + f.masterAddr,
 		"-ip=127.0.0.1",
-		"-port=18080",
+		"-port="+strconv.Itoa(f.volumePort),
 		"-dir=" + filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("volume", args)
+	if err != nil {
 		return err
 	}
-	f.volumeProcess = cmd.Process
+	f.volumeProcess = proc
 	return nil
 }
 
@@ -315,15 +324,14 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 		"filer",
 		"-master=" + f.masterAddr,
 		"-ip=127.0.0.1",
-		"-port=18888",
+		"-port="+strconv.Itoa(f.filerPort),
 	)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("filer", args)
+	if err != nil {
 		return err
 	}
-	f.filerProcess = cmd.Process
+	f.filerProcess = proc
 	return nil
 }
 
@@ -356,20 +364,18 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 
 	args = append(args, config.MountOptions...)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("mount", args)
+	if err != nil {
 		return err
 	}
-	f.mountProcess = cmd.Process
+	f.mountProcess = proc
 	return nil
 }
 
 // unmountFuse unmounts the FUSE filesystem
 func (f *FuseTestFramework) unmountFuse() error {
 	if f.mountProcess != nil {
-		f.mountProcess.Signal(syscall.SIGTERM)
-		f.mountProcess.Wait()
+		f.mountProcess.stop()
 		f.mountProcess = nil
 	}
 
@@ -379,13 +385,16 @@ func (f *FuseTestFramework) unmountFuse() error {
 }
 
 // waitForService waits for a service to be available
-func (f *FuseTestFramework) waitForService(addr string, timeout time.Duration) error {
+func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
 			conn.Close()
 			return nil
+		}
+		if exitErr := proc.exited(); exitErr != nil {
+			return fmt.Errorf("process exited (%v) before %s accepted connections: %s", exitErr, addr, logTail(proc.logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -411,6 +420,118 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout")
+}
+
+// managedProcess tracks a started weed sub-command so a wait can bail out
+// the moment it exits instead of polling a port it will never bind.
+type managedProcess struct {
+	cmd     *exec.Cmd
+	done    chan struct{}
+	err     error // exit error, read only after done is closed
+	logPath string
+}
+
+// exited returns the exit error once the process is gone, nil while it runs.
+func (p *managedProcess) exited() error {
+	select {
+	case <-p.done:
+		if p.err != nil {
+			return p.err
+		}
+		return fmt.Errorf("exit status 0")
+	default:
+		return nil
+	}
+}
+
+// stop asks the process to terminate and waits for it to go away.
+func (p *managedProcess) stop() {
+	_ = p.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-p.done:
+	case <-time.After(10 * time.Second):
+		p.cmd.Process.Kill()
+		<-p.done
+	}
+}
+
+// startProcess is a helper that starts a weed sub-command with output
+// captured to a log file under the framework's temp dir.
+func (f *FuseTestFramework) startProcess(name string, args []string) (*managedProcess, error) {
+	logPath := filepath.Join(f.tempDir, name+".log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("create %s log file: %v", name, err)
+	}
+	cmd := exec.Command(f.weedBinary, args...)
+	cmd.Dir = f.tempDir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return nil, err
+	}
+	// Close the file handle — the child process inherited it.
+	logFile.Close()
+
+	p := &managedProcess{cmd: cmd, done: make(chan struct{}), logPath: logPath}
+	go func() {
+		p.err = cmd.Wait()
+		close(p.done)
+	}()
+	return p, nil
+}
+
+// logTail returns the last bytes of a captured process log so a startup
+// failure message carries the fatal line instead of a bare timeout.
+func logTail(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	const maxTail = 2 * 1024
+	if len(data) > maxTail {
+		data = data[len(data)-maxTail:]
+	}
+	return string(data)
+}
+
+// grpcPortOffset mirrors weed's HTTP->gRPC port convention (gRPC = HTTP +
+// offset); a service port is only usable when both are free.
+const grpcPortOffset = 10000
+
+// The fuse_test package shares this `go test` invocation on its own port
+// band; this band is picked to keep a service's gRPC sibling below the Linux
+// ephemeral floor as well.
+const (
+	minServicePort = 22001
+	maxServicePort = 22767
+)
+
+// portIsFree reports whether a TCP port can currently be bound on 127.0.0.1.
+func portIsFree(port int) bool {
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	l.Close()
+	return true
+}
+
+// freeServicePort returns a free service HTTP port whose gRPC sibling
+// (port+grpcPortOffset) is free too.
+func freeServicePort(t *testing.T) int {
+	t.Helper()
+	portCount := maxServicePort - minServicePort + 1
+	start := minServicePort + int(time.Now().UnixNano()%int64(portCount))
+	for attempt := 0; attempt < portCount; attempt++ {
+		port := minServicePort + (start-minServicePort+attempt)%portCount
+		if portIsFree(port) && portIsFree(port+grpcPortOffset) {
+			return port
+		}
+	}
+	t.Fatalf("failed to allocate a free HTTP/gRPC port pair in [%d,%d]", minServicePort, maxServicePort)
+	return 0
 }
 
 // fuseAvailable reports whether the host has a FUSE device node to mount
