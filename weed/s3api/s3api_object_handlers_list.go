@@ -73,7 +73,7 @@ func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 		Name:           in.Name,
 		Prefix:         in.Prefix,
 		Marker:         encodeMarkerEcho(in.Marker, in.EncodingType == s3.EncodingTypeUrl),
-		NextMarker:     encodeListContinuationToken(in.NextMarker),
+		NextMarker:     encodeMarkerEcho(in.NextMarker, in.EncodingType == s3.EncodingTypeUrl),
 		MaxKeys:        in.MaxKeys,
 		Delimiter:      in.Delimiter,
 		IsTruncated:    in.IsTruncated,
