@@ -197,6 +197,12 @@ jobs:
           platforms: linux/amd64, linux/arm64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Key the checkout layer on the pushed sha so cached layers can't
+          # serve stale code; the Dockerfile fetch fallback picks it up.
+          build-args: |
+            BRANCH=${{ github.sha }}
 
       - name: Sign
         if: github.event_name != 'pull_request'
