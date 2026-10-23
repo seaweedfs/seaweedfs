@@ -62,7 +62,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           go.sum
           test/fuse_integration/go.sum
@@ -568,7 +568,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
     
     - name: Install macFUSE
       run: |
@@ -621,6 +621,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
+        cache: ${{ runner.environment == 'github-hosted' }}
     
     - name: Install security analysis tools
       run: |
@@ -677,6 +678,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
+        cache: ${{ runner.environment == 'github-hosted' }}
     
     - name: Install dependencies
       run: |
@@ -729,6 +731,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
+        cache: ${{ runner.environment == 'github-hosted' }}
     
     - name: Install dependencies
       run: |
