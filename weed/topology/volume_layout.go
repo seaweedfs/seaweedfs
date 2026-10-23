@@ -129,7 +129,11 @@ func (vl *VolumeLayout) initSizeTracking(vid needle.VolumeId, size uint64, compa
 
 // RegisterVolume records a volume location. It refuses a layout dropped with
 // its collection — the caller must re-resolve, or the bits it sets would leak.
-func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) bool {
+// Each replica's read-only flag is rebuilt from what its node last reported;
+// isQuarantined folds the master's force-read-only marks into that rebuild,
+// since reported flags deliberately exclude them. nil restores reported state
+// verbatim.
+func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode, isQuarantined func(*DataNode) bool) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -137,27 +141,27 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) bool
 		return false
 	}
 
-	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
+	location := vl.getOrCreateLocationList(v.Id)
+	moveLookupOwnership(v.Id, location.Set(dn), dn)
 	if !v.ReadOnly {
 		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
 	}
+	if isQuarantined != nil && isQuarantined(dn) {
+		location.SetReadOnly(dn, true)
+		vl.removeFromWritable(v.Id)
+	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
-	location := vl.vid2location[v.Id]
-	for _, dn := range location.list {
-		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
-			if vInfo.ReadOnly {
-				glog.V(1).Infof("vid %d removed from writable", v.Id)
-				vl.removeFromWritable(v.Id)
-				location.SetReadOnly(dn, true)
-				return true
-			}
-			location.SetReadOnly(dn, false)
-		} else {
-			glog.V(1).Infof("vid %d removed from writable", v.Id)
-			vl.removeFromWritable(v.Id)
-			location.SetReadOnly(dn, false)
-			return true
+	for _, n := range location.list {
+		marked := isQuarantined != nil && isQuarantined(n)
+		vInfo, err := n.GetVolumesById(v.Id)
+		if err == nil && !vInfo.ReadOnly && !marked {
+			location.SetReadOnly(n, false)
+			continue
 		}
+		glog.V(1).Infof("vid %d removed from writable", v.Id)
+		vl.removeFromWritable(v.Id)
+		location.SetReadOnly(n, marked || (err == nil && vInfo.ReadOnly))
+		return true
 	}
 	return true
 }

@@ -142,6 +142,47 @@ func TestQuarantineSurvivesResync(t *testing.T) {
 	}
 }
 
+func TestQuarantineSurvivesReplicaRejoin(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+	dn3 := NewDataNode("server3")
+	dn3.Ip = "10.0.0.3"
+	dn3.Port = 8080
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn3.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v1, dn2)
+	topo.RegisterVolumeLayout(v2, dn3)
+	topo.flagDuplicateVolumeId(v2, dn3)
+
+	// a replica dropped from the lookup index re-registers through the
+	// self-heal path; rebuilding location flags from reported state must
+	// not lift the quarantine on any copy
+	vl := topo.FindVolumeLayout(v1.Collection, v1.ReplicaPlacement, v1.Ttl, types.ToDiskType(v1.DiskType))
+	vl.SetVolumeUnavailable(dn1, v1.Id)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 7, Collection: "a", ReplicaPlacement: uint32(rp.Byte()), Version: 3,
+	}}, dn1)
+
+	if isWritable(t, topo, v1) {
+		t.Fatal("a re-registering replica must not clear the quarantine on the surviving copies")
+	}
+	if isWritable(t, topo, v2) {
+		t.Fatal("the conflicting copy must stay quarantined too")
+	}
+}
+
 func TestReplicationChangeIsNotDuplicate(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rpOld, _ := super_block.NewReplicaPlacementFromString("000")

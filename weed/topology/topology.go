@@ -693,12 +693,9 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	diskType := types.ToDiskType(v.DiskType)
 	for {
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		if vl.RegisterVolume(&v, dn) {
-			t.quarantineLock.Lock()
-			if t.isQuarantined(dn, v.Id) {
-				vl.SetVolumeQuarantined(dn, v.Id)
-			}
-			t.quarantineLock.Unlock()
+		if vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+			return t.isQuarantined(n, v.Id)
+		}) {
 			vl.EnsureCorrectWritables(&v)
 			go t.flagDuplicateVolumeId(v, dn)
 			return
@@ -1044,7 +1041,9 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			for !vl.RegisterVolume(&v, dn) {
+			for !vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+				return t.isQuarantined(n, v.Id)
+			}) {
 				// Dropped with its collection; the next lookup creates a fresh
 				// one, which the calls below must use too.
 				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
@@ -1150,7 +1149,9 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		// volume only that index had lost is an arrival as far as clients are
 		// concerned: they were told it went when the node dropped out.
 		becameServable := !vl.HasDataNode(vi.Id, dn)
-		for becameServable && !vl.RegisterVolume(&vi, dn) {
+		for becameServable && !vl.RegisterVolume(&vi, dn, func(n *DataNode) bool {
+			return t.isQuarantined(n, vi.Id)
+		}) {
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
