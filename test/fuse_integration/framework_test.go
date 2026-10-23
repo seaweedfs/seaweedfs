@@ -168,6 +168,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
+	// Gate on a real write: a fresh mini still cannot assign a file id until
+	// its volume registers and a grow round finishes.
+	if err := f.waitForWritable(90 * time.Second); err != nil {
+		f.dumpLog("mount")
+		return fmt.Errorf("FUSE mount not writable: %v", err)
+	}
+
 	f.isSetup = true
 	return nil
 }
@@ -419,6 +426,33 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout")
+}
+
+// waitForWritable probes the mount with a real write+read+remove until one
+// succeeds, covering the window where a fresh cluster cannot yet assign a
+// file id (volume not registered, grow pending, leader settle).
+func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
+	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
+	payload := []byte("probe")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if exitErr := f.mountProcess.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v)", exitErr)
+		}
+		if err := os.WriteFile(probe, payload, 0644); err != nil {
+			lastErr = err
+		} else if data, err := os.ReadFile(probe); err != nil {
+			lastErr = err
+		} else if len(data) != len(payload) {
+			lastErr = fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
+		} else {
+			os.Remove(probe)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("write probe failed within timeout: %v", lastErr)
 }
 
 // deviceID returns the device ID of the filesystem containing path.
