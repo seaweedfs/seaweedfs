@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -1133,6 +1134,7 @@ func TestRequestObjectTagKeysCondition(t *testing.T) {
 		{"key case is preserved", "", "", nil, "Department=engineering", PolicyResultIndeterminate},
 		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
 		{"secret key is denied", "", "", nil, "secret=1", PolicyResultDeny},
+		{"secret key behind a padded header is denied", "", "", nil, "secret=1" + strings.Repeat("&", 10001), PolicyResultDeny},
 		{"secret key among listed keys is denied", "", "", nil, "department=engineering&secret-level=2", PolicyResultDeny},
 		{"url-encoded secret key is denied", "", "", nil, "secr%65t=1", PolicyResultDeny},
 		{"secret key on a copy that replaces tags is denied", "", "", replaceHeaders, "secret=1", PolicyResultDeny},

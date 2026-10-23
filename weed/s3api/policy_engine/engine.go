@@ -519,16 +519,24 @@ func requestObjectTags(r *http.Request) map[string]string {
 	if !storesRequestObjectTags(r) {
 		return nil
 	}
-	// A malformed header is rejected by the handler with InvalidTag.
-	parsed, err := url.ParseQuery(tagging)
-	if err != nil {
-		return nil
-	}
-	// putToFiler rejects a repeated key, but CopyObject stores its last
-	// value, so that is the one the policy has to see.
-	tags := make(map[string]string, len(parsed))
-	for key, vals := range parsed {
-		tags[key] = vals[len(vals)-1]
+	// Parse the same non-empty segments the tag handlers store: url.ParseQuery
+	// caps at 10,000 parameters, so a header padded with "&" segments would
+	// hide stored tag keys from every s3:RequestObjectTag* condition. A
+	// malformed pair is rejected by the handler with InvalidTag.
+	tags := make(map[string]string)
+	for _, segment := range strings.Split(tagging, "&") {
+		if segment == "" {
+			continue
+		}
+		rawKey, rawValue, _ := strings.Cut(segment, "=")
+		key, errKey := url.QueryUnescape(rawKey)
+		value, errValue := url.QueryUnescape(rawValue)
+		if errKey != nil || errValue != nil {
+			return nil
+		}
+		// putToFiler rejects a repeated key, but CopyObject stores its last
+		// value, so that is the one the policy has to see.
+		tags[key] = value
 	}
 	return tags
 }
