@@ -45,6 +45,7 @@ jobs:
       - name: Set up Go 1.x
         uses: actions/setup-go@v7
         with:
+          cache: ${{ runner.environment == 'github-hosted' }}
           go-version: ^1.26
         id: go
 

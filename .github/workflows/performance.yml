@@ -67,6 +67,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build weed
         run: go build -o weed_bin ./weed
@@ -175,6 +176,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'
@@ -327,6 +329,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'

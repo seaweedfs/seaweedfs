@@ -49,6 +49,7 @@ jobs:
     - uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     # cgofuse loads winfsp-x64.dll at run time, so WinFsp is needed here but
     # not to build.
