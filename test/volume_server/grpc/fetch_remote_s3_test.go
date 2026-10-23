@@ -48,19 +48,17 @@ func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	miniCmd := exec.CommandContext(ctx, weedBin, "mini",
+	miniArgs := append([]string{"mini",
 		fmt.Sprintf("-dir=%s", miniDir),
 		fmt.Sprintf("-master.port=%d", miniMasterPort),
 		fmt.Sprintf("-volume.port=%d", miniVolumePort),
 		fmt.Sprintf("-filer.port=%d", miniFilerPort),
 		fmt.Sprintf("-s3.port=%d", miniS3Port),
-		fmt.Sprintf("-admin.port=%d", miniAdminPort),
-		fmt.Sprintf("-admin.port.grpc=%d", miniAdminPort+testutil.GrpcPortOffset),
-		"-admin.port.legacy=0",
 		"-webdav.port=0",
 		"-s3.port.lance=0",
 		"-s3.port.iceberg=0",
-	)
+	}, testutil.MiniAdminArgs(miniAdminPort)...)
+	miniCmd := exec.CommandContext(ctx, weedBin, miniArgs...)
 	miniCmd.Env = append(os.Environ(), "AWS_ACCESS_KEY_ID=admin", "AWS_SECRET_ACCESS_KEY=admin")
 	miniCmd.Dir = miniDir
 	logFile, _ := os.CreateTemp("", "weed-mini-*.log")
