@@ -182,7 +182,7 @@ func decodeListContinuationToken(token string) string {
 		return token
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(key)
-	if err != nil {
+	if err != nil || len(decoded) == 0 {
 		// Not a token this server wrote; resume at the token as the raw key.
 		return token
 	}

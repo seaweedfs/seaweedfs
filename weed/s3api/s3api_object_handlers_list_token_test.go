@@ -128,3 +128,10 @@ func TestListObjectsV2ContinuationTokenRoundTrip(t *testing.T) {
 	// Tokens written before the encoding existed are still bare keys.
 	assert.Equal(t, "dir/file", decodeListContinuationToken("dir/file"))
 }
+
+func TestDecodeListContinuationTokenKeepsForeignTokensRaw(t *testing.T) {
+	// A prefix-looking token that does not decode is a key, not a token.
+	assert.Equal(t, "base64:%%%", decodeListContinuationToken("base64:%%%"))
+	// An empty payload is never something encodeListContinuationToken wrote.
+	assert.Equal(t, "base64:", decodeListContinuationToken("base64:"))
+}
