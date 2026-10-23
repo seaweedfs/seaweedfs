@@ -836,7 +836,7 @@ impl NeedleReadPlan {
     pub(crate) fn read_meta(&mut self, n: &mut Needle) -> Result<(), VolumeError> {
         let (source, size, version) = (&self.source, self.size, self.version);
         let read_at = |buf: &mut [u8], at: u64| Ok(source.read_exact_at(buf, at)?);
-        with_offset_retry(&mut self.offset, |off| {
+        let result = with_offset_retry(&mut self.offset, |off| {
             if version == VERSION_1 {
                 // A V1 body is all data, so its "meta" is the whole record.
                 let mut buf = vec![0u8; get_actual_size(size, version) as usize];
@@ -847,11 +847,24 @@ impl NeedleReadPlan {
             } else {
                 Volume::read_needle_meta_blob_and_parse(read_at, n, off, size, version)
             }
-        })?;
+        });
+        // Report failures only: a successful meta read precedes the payload
+        // read, so clearing the streak here would reset the count before
+        // every failing download and the volume could never reach quarantine.
+        if let Err(VolumeError::Io(e)) = &result {
+            self.io_errors.check_read_write_error(Some(e));
+        }
+        result?;
         if needle_expired(n) {
             return Err(VolumeError::NotFound);
         }
         Ok(())
+    }
+
+    /// A successful meta read ended the request (e.g. HEAD), so it may reset
+    /// the streak — unlike a meta read that precedes a payload read.
+    pub(crate) fn note_meta_only_success(&self) {
+        self.io_errors.check_read_write_error(None);
     }
 
     /// For a reply served from the data file, after `read_meta` filled `n`.
@@ -868,6 +881,7 @@ impl NeedleReadPlan {
             data_size: n.data_size,
             data_file_access_control: self.data_file_access_control,
             io_unavailable: self.io_unavailable,
+            io_errors: self.io_errors,
             needle_id: self.needle_id,
             checksum: n.checksum.0,
         }
@@ -1144,6 +1158,9 @@ pub struct NeedleStreamInfo {
     pub data_file_access_control: Arc<DataFileAccessControl>,
     /// Checked before each chunk: the volume can become unavailable mid-stream.
     pub(crate) io_unavailable: Arc<IoUnavailable>,
+    /// Streamed chunks report read failures here and clear the streak when
+    /// the whole body has been emitted, mirroring readNeedleDataInto.
+    pub(crate) io_errors: Arc<IoErrorTracker>,
     pub needle_id: NeedleId,
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
@@ -2918,18 +2935,52 @@ impl Volume {
         }
 
         // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
-        if let Some(nm) = &io.nm
-            && let Some(nv) = nm.get(n.id)?
+        let indexed = match io.nm.as_ref() {
+            Some(nm) => nm.get(n.id)?,
+            None => None,
+        };
+        if let Some(nv) = indexed
+            && !nv.offset.is_zero()
         {
             let mut existing = Needle::default();
             // Read only the header to check cookie
             self.read_needle_header_unlocked(io, &mut existing, nv.offset.to_actual_offset())?;
 
-            if n.cookie.0 == 0 && !check_cookie {
-                n.cookie = existing.cookie;
+            if existing.id != n.id && existing.size != nv.size {
+                // a 4-byte index entry can index past the 32 GiB wrap: the
+                // low offset may hold another needle while the real record
+                // sits at the wrapped offset, where reads already retry
+                #[cfg(not(feature = "5bytes"))]
+                if nv.offset.to_actual_offset() < MAX_POSSIBLE_VOLUME_SIZE as i64 {
+                    let mut wrapped = Needle::default();
+                    match self.read_needle_header_unlocked(
+                        io,
+                        &mut wrapped,
+                        nv.offset.to_actual_offset() + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                    ) {
+                        Ok(()) => existing = wrapped,
+                        Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             }
-            if existing.cookie != n.cookie {
-                return Err(VolumeError::CookieMismatch(n.cookie.0));
+
+            if existing.id != n.id && existing.size != nv.size {
+                // the entry resolves to a record that is neither the indexed
+                // key nor the indexed size, so it is stale rather than a
+                // duplicate — skip the cookie check and let publish_write
+                // overwrite it once the append commits
+                warn!(
+                    "volume {} index entry for needle {} resolves to needle {}; overwriting stale index entry",
+                    self.id.0, n.id.0, existing.id.0
+                );
+            } else {
+                if n.cookie.0 == 0 && !check_cookie {
+                    n.cookie = existing.cookie;
+                }
+                if existing.cookie != n.cookie {
+                    return Err(VolumeError::CookieMismatch(n.cookie.0));
+                }
             }
         }
         Ok(false)
@@ -6067,7 +6118,7 @@ fn preallocate_file(file: &File, size: u64) {
 /// An OS error the platform reports for failing storage media, which is
 /// what counts toward the I/O error streak.
 #[cfg(test)]
-fn media_error_for_test() -> io::Error {
+pub(crate) fn media_error_for_test() -> io::Error {
     #[cfg(unix)]
     {
         io::Error::from_raw_os_error(libc::EIO)
@@ -9042,6 +9093,107 @@ mod tests {
         };
         let err = v.write_needle(&mut n2, true, false).unwrap_err();
         assert!(matches!(err, VolumeError::CookieMismatch(_)));
+    }
+
+    /// A damaged index entry resolving to a different needle must miss on
+    /// reads and be dropped by the next write for the key, not rejected as a
+    /// cookie conflict.
+    #[test]
+    fn test_stale_index_entry_heals_on_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut first = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x2222),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut first, true, false).unwrap();
+
+        // point key 9 at needle 2's record with a size that does not match
+        // the record, as a corrupt index entry would look
+        {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, Size(nv.size.0 + 1)).unwrap();
+        }
+
+        let mut probe = Needle {
+            id: NeedleId(9),
+            ..Needle::default()
+        };
+        assert!(v.read_needle(&mut probe).is_err());
+
+        let mut n = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xabcd),
+            data: b"ninth".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+
+        let mut back = Needle {
+            id: NeedleId(9),
+            ..Needle::default()
+        };
+        v.read_needle(&mut back).unwrap();
+        assert_eq!(back.data, b"ninth");
+        assert_eq!(back.cookie, Cookie(0xabcd));
+    }
+
+    /// A stale index entry is only replaced once the new record commits: a
+    /// durable write rolled back by a failed fsync leaves the index exactly
+    /// as it found it.
+    #[test]
+    fn test_stale_index_entry_survives_failed_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut existing = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x2222),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut existing, true, false).unwrap();
+
+        let stale_nv = {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, Size(nv.size.0 + 1)).unwrap();
+            nm.get(NeedleId(9)).unwrap().unwrap()
+        };
+
+        v.fail_next_fsync_for_test(true);
+        let mut replacement = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xabcd),
+            data: b"ninth".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        assert!(v.write_needle(&mut replacement, true, true).is_err());
+        v.fail_next_fsync_for_test(false);
+
+        let now = {
+            let io = v.io.read().unwrap();
+            io.nm
+                .as_ref()
+                .unwrap()
+                .get(NeedleId(9))
+                .unwrap()
+                .expect("a failed write must not drop the index entry it meant to replace")
+        };
+        assert_eq!(now.offset, stale_nv.offset);
+        assert_eq!(now.size, stale_nv.size);
     }
 
     // A size disagreeing with the blob's own header indexes the needle at the wrong

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -322,22 +323,45 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 
 	// check whether existing needle cookie matches
 	nv, ok := v.nm.Get(n.Id)
-	if ok {
+	if ok && !nv.Offset.IsZero() {
 		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
 		if existingNeedleReadErr != nil {
 			err = fmt.Errorf("reading existing needle: %w", existingNeedleReadErr)
 			return
 		}
-		if n.Cookie == 0 && !checkCookie {
-			// this is from batch deletion, and read back again when tailing a remote volume
-			// which only happens when checkCookie == false and fsync == false
-			n.Cookie = existingNeedle.Cookie
+		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size &&
+			OffsetSize == 4 && nv.Offset.ToActualOffset() < int64(MaxPossibleVolumeSize) {
+			// a 4-byte index entry can index past the 32 GiB wrap: the low
+			// offset may hold another needle while the real record sits at
+			// the wrapped offset, where reads already retry on a mismatch
+			wrapped, _, _, wrappedErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(),
+				nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize))
+			if wrappedErr == nil {
+				existingNeedle = wrapped
+			} else if wrappedErr != io.EOF {
+				err = fmt.Errorf("reading existing needle at wrapped offset: %w", wrappedErr)
+				return
+			}
 		}
-		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
-				needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
-			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
-			return
+		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size {
+			// the entry resolves to a record that is neither the indexed key
+			// nor the indexed size, so it is stale rather than a duplicate —
+			// skip the cookie check and let the publish step overwrite it
+			// once the append commits
+			glog.V(0).Infof("volume %d index entry for %s resolves to %s; overwriting stale index entry",
+				v.Id, needle.NewFileIdFromNeedle(v.Id, n), needle.NewFileIdFromNeedle(v.Id, existingNeedle))
+		} else {
+			if n.Cookie == 0 && !checkCookie {
+				// this is from batch deletion, and read back again when tailing a remote volume
+				// which only happens when checkCookie == false and fsync == false
+				n.Cookie = existingNeedle.Cookie
+			}
+			if existingNeedle.Cookie != n.Cookie {
+				glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
+					needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
+				err = fmt.Errorf("mismatching cookie %x", n.Cookie)
+				return
+			}
 		}
 	}
 
