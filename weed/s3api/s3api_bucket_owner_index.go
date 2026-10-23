@@ -27,7 +27,7 @@ import (
 // indexes pre-existing buckets. The .complete marker is written once the
 // backfill has finished; until it exists readers keep scanning /buckets.
 const (
-	s3SystemFolder              = ".system"
+	s3SystemFolder              = s3_constants.SystemFolder
 	bucketOwnerIndexFolder      = "owners"
 	bucketOwnerIndexReadyMarker = ".complete"
 )
