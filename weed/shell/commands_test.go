@@ -10,7 +10,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type fakeDiscoveryServer struct {
@@ -111,6 +113,24 @@ func TestFilerDiscoveryReturnsEmptyAtDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < time.Second {
 		t.Fatalf("discovery returned after %v, expected it to poll until the deadline", elapsed)
+	}
+}
+
+func TestFilerDiscoveryStopsOnNonTransientError(t *testing.T) {
+	srv := &fakeDiscoveryServer{}
+	addr := startFakeDiscoveryMaster(t, srv)
+	srv.leader = addr
+	srv.listErr.Store(status.Error(codes.PermissionDenied, "denied"))
+
+	ce, cancel := discoveryEnv(addr, 30*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if got := ce.FilerAddress(); got != "" {
+		t.Fatalf("expected no filer, got %q", got)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("discovery kept polling a non-transient error for %v", elapsed)
 	}
 }
 

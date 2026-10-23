@@ -191,6 +191,9 @@ func (ce *CommandEnv) discoverFiler() {
 			return nil
 		})
 		if len(filers) == 0 {
+			if listErr != nil && !util.IsTransientError(listErr) {
+				break
+			}
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Second):
