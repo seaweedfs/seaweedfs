@@ -187,6 +187,20 @@ func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 	return marker
 }
 
+// decodeMarkerEcho reverses the wire encoding on a marker the client echoes
+// back: under encoding-type=url the emitted echo was urlPathEscape'd. A value
+// that fails to unescape could not have come from the encoder, so it is taken
+// as the raw marker.
+func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	if !encodingTypeUrl {
+		return marker
+	}
+	if unescaped, err := url.PathUnescape(marker); err == nil {
+		return unescaped
+	}
+	return marker
+}
+
 func decodeListContinuationToken(token string) string {
 	key, ok := strings.CutPrefix(token, continuationTokenEncodingPrefix)
 	if !ok {
@@ -268,7 +282,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
-	requestMarker := decodeListContinuationToken(listMarker)
+	requestMarker := decodeListContinuationToken(decodeMarkerEcho(listMarker, encodingTypeUrl))
 	marker := adjustMarkerForDelimiter(requestMarker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
