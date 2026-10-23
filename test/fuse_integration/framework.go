@@ -431,11 +431,13 @@ func fuseAvailable() bool {
 func (f *FuseTestFramework) startWeed(name string, args ...string) (*exec.Cmd, error) {
 	cmd := exec.Command(f.weedBinary, args...)
 	cmd.Dir = f.tempDir
-	if logf, err := os.Create(filepath.Join(f.tempDir, name+".log")); err == nil {
-		defer logf.Close()
-		cmd.Stdout = logf
-		cmd.Stderr = logf
+	logf, err := os.Create(filepath.Join(f.tempDir, name+".log"))
+	if err != nil {
+		return nil, fmt.Errorf("create %s log: %w", name, err)
 	}
+	defer logf.Close()
+	cmd.Stdout = logf
+	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
