@@ -940,9 +940,14 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 		key := jti
 		if key == "" {
 			// Providers that issue no jti cannot be tracked by claim, so the
-			// token's own fingerprint keys the entry: a repeated presentation
-			// of the same token is still a replay.
-			sum := sha256.Sum256([]byte(token))
+			// signed input keys the entry: a repeated presentation of the same
+			// claims is a replay even when the signature bytes differ (e.g.
+			// ECDSA s/N-s malleability).
+			signingInput := token
+			if i := strings.LastIndexByte(token, '.'); i > 0 {
+				signingInput = token[:i]
+			}
+			sum := sha256.Sum256([]byte(signingInput))
 			key = tokenFingerprintPrefix + hex.EncodeToString(sum[:])
 		}
 

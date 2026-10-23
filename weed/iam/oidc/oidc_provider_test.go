@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -754,6 +755,81 @@ func TestOIDCProviderJTIReplayProtection(t *testing.T) {
 	claims5, err := provider.ValidateTokenSingleUse(context.Background(), tokenNoExp)
 	assert.Nil(t, claims5)
 	assert.True(t, errors.Is(err, providers.ErrProviderMissingClaims))
+}
+
+func TestOIDCProviderJTIFallbackResistsSignatureMalleability(t *testing.T) {
+	privateKey, publicKey := generateTestECKeys(t)
+	x, y := encodeECPublicKey(t, publicKey)
+
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "EC",
+				"kid": "test-ec-key-id",
+				"use": "sig",
+				"alg": "ES256",
+				"crv": "P-256",
+				"x":   x,
+				"y":   y,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid_configuration" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":   "http://" + r.Host,
+				"jwks_uri": "http://" + r.Host + "/jwks",
+			})
+		} else if r.URL.Path == "/jwks" {
+			json.NewEncoder(w).Encode(jwks)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewOIDCProvider("test-oidc-ecdsa-malleable")
+	err := provider.Initialize(&OIDCConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+		JWKSUri:  server.URL + "/jwks",
+	})
+	require.NoError(t, err)
+
+	token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
+		"iss": server.URL,
+		"aud": "test-client",
+		"sub": "user-malleable",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	_, err = provider.ValidateTokenSingleUse(context.Background(), token)
+	require.NoError(t, err)
+
+	// The same signed claims under a malleated ECDSA signature (s -> N-s)
+	// must still be a replay, not a fresh exchange.
+	malleated := malleateECDSAJWTSignature(t, token)
+	require.NotEqual(t, token, malleated)
+
+	_, err = provider.ValidateTokenSingleUse(context.Background(), malleated)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed),
+		"a signature-malleated jti-less token must not bypass replay detection")
+}
+
+func malleateECDSAJWTSignature(tb testing.TB, tokenString string) string {
+	parts := strings.Split(tokenString, ".")
+	require.Len(tb, parts, 3)
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(tb, err)
+	half := len(sig) / 2
+	r := new(big.Int).SetBytes(sig[:half])
+	s := new(big.Int).SetBytes(sig[half:])
+	s.Sub(elliptic.P256().Params().N, s)
+	malleated := make([]byte, len(sig))
+	r.FillBytes(malleated[:half])
+	s.FillBytes(malleated[half:])
+	parts[2] = base64.RawURLEncoding.EncodeToString(malleated)
+	return strings.Join(parts, ".")
 }
 
 func TestOIDCProviderJTIReplayProtectionDisabled(t *testing.T) {
