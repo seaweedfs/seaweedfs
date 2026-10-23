@@ -577,19 +577,32 @@ func (v VolumeServerOptions) isSeparatedPublicPort() bool {
 // bound ip and the localhost listeners as if it were a single server.
 type multiHttpdownServer []httpdown.Server
 
+// Wait returns the first member's non-nil error as soon as it happens, so a
+// failing localhost listener is reported even while the bound-ip listener
+// keeps serving, and nil once every member has finished cleanly.
 func (m multiHttpdownServer) Wait() error {
+	errs := make(chan error, len(m))
 	for _, s := range m {
-		if err := s.Wait(); err != nil {
+		go func(s httpdown.Server) { errs <- s.Wait() }(s)
+	}
+	for range m {
+		if err := <-errs; err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// Stop stops all members concurrently so the localhost listener closes as
+// soon as shutdown begins instead of after the bound-ip listener drains.
 func (m multiHttpdownServer) Stop() error {
-	var firstErr error
+	errs := make(chan error, len(m))
 	for _, s := range m {
-		if err := s.Stop(); err != nil && firstErr == nil {
+		go func(s httpdown.Server) { errs <- s.Stop() }(s)
+	}
+	var firstErr error
+	for range m {
+		if err := <-errs; err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
