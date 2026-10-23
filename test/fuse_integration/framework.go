@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -241,6 +243,14 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
+	// A mounted filesystem still cannot write until a volume registers and a
+	// grow round finishes, so gate on a real write instead of letting the
+	// first test hits ride out the startup window as EIO on close.
+	if err := f.waitForWritable(90 * time.Second); err != nil {
+		f.dumpLog("mount")
+		return fmt.Errorf("FUSE mount not writable: %v", err)
+	}
+
 	f.isSetup = true
 	return nil
 }
@@ -298,9 +308,10 @@ func (f *FuseTestFramework) GetFilerAddr() string {
 // managedProcess is a started weed sub-command whose exit is watched, so a wait
 // for it to come up ends the moment it dies instead of burning its full timeout.
 type managedProcess struct {
-	cmd  *exec.Cmd
-	done chan struct{}
-	err  error // exit error, read only after done is closed
+	cmd     *exec.Cmd
+	done    chan struct{}
+	err     error // exit error, read only after done is closed
+	logPath string
 }
 
 // exited returns the exit error once the process is gone, nil while it runs.
@@ -332,7 +343,8 @@ func (p *managedProcess) stop() {
 // startProcess is a helper that starts a weed sub-command with output captured
 // to a log file in f.logDir.
 func (f *FuseTestFramework) startProcess(name string, args []string) (*managedProcess, error) {
-	logFile, err := os.Create(filepath.Join(f.logDir, name+".log"))
+	logPath := filepath.Join(f.logDir, name+".log")
+	logFile, err := os.Create(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("create log file: %v", err)
 	}
@@ -347,12 +359,26 @@ func (f *FuseTestFramework) startProcess(name string, args []string) (*managedPr
 	// Close the file handle — the child process inherited it.
 	logFile.Close()
 
-	p := &managedProcess{cmd: cmd, done: make(chan struct{})}
+	p := &managedProcess{cmd: cmd, done: make(chan struct{}), logPath: logPath}
 	go func() {
 		p.err = cmd.Wait()
 		close(p.done)
 	}()
 	return p, nil
+}
+
+// logTail returns the last bytes of a captured process log so a startup
+// failure message carries the fatal line instead of a bare timeout.
+func logTail(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	const maxTail = 2 * 1024
+	if len(data) > maxTail {
+		data = data[len(data)-maxTail:]
+	}
+	return string(data)
 }
 
 // dumpLog prints the last lines of a process log file to the test output
@@ -371,11 +397,16 @@ func (f *FuseTestFramework) dumpLog(name string) {
 	f.t.Logf("[%s log tail (%d bytes)]\n%s", name, len(data), string(data))
 }
 
-// copyLogsForCI copies SeaweedFS process logs to /tmp/seaweedfs-fuse-logs/
-// so the CI workflow can upload them as artifacts.
+// copyLogsForCI copies SeaweedFS process logs under a per-test directory in
+// /tmp/seaweedfs-fuse-logs/ so the CI workflow can upload them as artifacts.
+// Each framework instance gets its own directory: every test in the suite
+// builds one, and fixed filenames would let a later passing test overwrite
+// the logs of an earlier failing one.
 func (f *FuseTestFramework) copyLogsForCI() {
-	ciLogDir := "/tmp/seaweedfs-fuse-logs"
-	os.MkdirAll(ciLogDir, 0755)
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-logs", strings.NewReplacer("/", "_", " ", "_").Replace(f.t.Name()))
+	if err := os.MkdirAll(ciLogDir, 0755); err != nil {
+		return
+	}
 	for _, name := range []string{"mini", "mount"} {
 		src := filepath.Join(f.logDir, name+".log")
 		data, err := os.ReadFile(src)
@@ -464,21 +495,25 @@ func (f *FuseTestFramework) unmountFuse() error {
 	return nil
 }
 
-// waitForService waits for a service to be available
+// waitForService waits until the weed process answers its own /healthz, so a
+// foreign listener on the port cannot pass for readiness.
 func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		resp, err := client.Get("http://" + addr + "/healthz")
 		if err == nil {
-			conn.Close()
-			return nil
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && proc.exited() == nil {
+				return nil
+			}
 		}
 		if exitErr := proc.exited(); exitErr != nil {
-			return fmt.Errorf("process exited (%v) before %s accepted connections", exitErr, addr)
+			return fmt.Errorf("process exited (%v) before %s accepted connections: %s", exitErr, addr, logTail(proc.logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("service at %s not ready within timeout", addr)
+	return fmt.Errorf("service at %s not ready within timeout: %s", addr, logTail(proc.logPath))
 }
 
 // waitForMount waits for the FUSE mount to be ready. A stat/ReadDir probe
@@ -501,11 +536,73 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		// A mount that cannot mount at all (no /dev/fuse, fusermount not setuid)
 		// dies within a second; reporting that beats waiting out the timeout.
 		if exitErr := f.mountProcess.exited(); exitErr != nil {
-			return fmt.Errorf("mount process exited (%v)", exitErr)
+			return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("mount point not ready within timeout")
+	return fmt.Errorf("mount point not ready within timeout: %s", logTail(f.mountProcess.logPath))
+}
+
+// waitForWritable probes the mount with a real write+read+remove until one
+// succeeds, covering the window where a fresh cluster cannot yet assign a
+// file id (volume not registered, grow pending, leader settle). Each attempt
+// runs off the loop because a wedged mount can hold a file op open, and one
+// attempt stays in flight until it finishes or the overall deadline passes.
+func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
+	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
+	payload := []byte("probe")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if exitErr := f.mountProcess.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
+		}
+		result := make(chan error, 1)
+		go func() {
+			if err := os.WriteFile(probe, payload, 0644); err != nil {
+				result <- err
+				return
+			}
+			data, err := os.ReadFile(probe)
+			if err != nil {
+				result <- err
+				return
+			}
+			if len(data) != len(payload) {
+				result <- fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
+				return
+			}
+			result <- os.Remove(probe)
+		}()
+		tick := time.NewTicker(500 * time.Millisecond)
+		attemptOpen := true
+		for attemptOpen {
+			select {
+			case err := <-result:
+				attemptOpen = false
+				if err == nil {
+					tick.Stop()
+					return nil
+				}
+				lastErr = err
+			case <-tick.C:
+				if exitErr := f.mountProcess.exited(); exitErr != nil {
+					tick.Stop()
+					return fmt.Errorf("mount process exited (%v): %s", exitErr, logTail(f.mountProcess.logPath))
+				}
+				if !time.Now().Before(deadline) {
+					tick.Stop()
+					if lastErr == nil {
+						return fmt.Errorf("write probe did not complete within timeout")
+					}
+					return fmt.Errorf("write probe failed within timeout: %v", lastErr)
+				}
+			}
+		}
+		tick.Stop()
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("write probe failed within timeout: %v", lastErr)
 }
 
 // fuseAvailable reports whether the host has a FUSE device node to mount
