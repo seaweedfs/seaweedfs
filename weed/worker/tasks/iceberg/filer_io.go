@@ -204,9 +204,13 @@ func lookupResolvedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient
 // resolve. An extra spelling only keeps a file; a missing one can drop a
 // referenced file.
 func addFilerPathSpellings(set map[string]struct{}, filerPath string) {
-	set[filerPath] = struct{}{}
-	if decoded, err := url.PathUnescape(filerPath); err == nil && decoded != filerPath {
-		set[decoded] = struct{}{}
+	for spelling := filerPath; ; {
+		set[spelling] = struct{}{}
+		decoded, err := url.PathUnescape(spelling)
+		if err != nil || decoded == spelling {
+			return
+		}
+		spelling = decoded
 	}
 }
 
