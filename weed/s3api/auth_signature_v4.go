@@ -580,6 +580,7 @@ func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fing
 	if owner == "" || accessKey == "" {
 		return s3err.ErrInvalidAccessKeyID
 	}
+	fingerprintKey := iam.stsSigningKey()
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	identity, ok := iam.nameToIdentity[owner]
@@ -593,7 +594,7 @@ func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fing
 		if credential.Status == iamAccessKeyStatusInactive || credential.isCredentialExpired() {
 			return s3err.ErrInvalidAccessKeyID
 		}
-		if fingerprint != "" && s3_constants.StoredCredentialFingerprint(accessKey, credential.SecretKey) != fingerprint {
+		if fingerprint != "" && s3_constants.StoredCredentialFingerprint(fingerprintKey, accessKey, credential.SecretKey) != fingerprint {
 			return s3err.ErrInvalidAccessKeyID
 		}
 		return s3err.ErrNone

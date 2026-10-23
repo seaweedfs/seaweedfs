@@ -18,6 +18,7 @@ package s3_constants
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -376,19 +377,23 @@ type identityHolder struct {
 }
 
 // storedCredential is the stored-identity credential a request authenticated
-// with: the access key id and a fingerprint of its secret, so a credential
-// vendor can bind what it mints to this exact credential. The fingerprint
-// distinguishes a recreated key that shares the id from the original.
+// with: the access key id and its secret, so a credential vendor can bind
+// what it mints to this exact credential instance.
 type storedCredential struct {
 	accessKeyId string
-	fingerprint string
+	secretKey   string
 }
 
 // StoredCredentialFingerprint identifies one credential instance. The key id
 // alone cannot: an operator can delete a key and re-create it under the same
-// id with a different secret.
-func StoredCredentialFingerprint(accessKeyId, secretKey string) string {
-	h := sha256.New()
+// id with a different secret. The fingerprint travels inside the vended
+// session token, so it is keyed with a server-held key — an unkeyed hash of
+// the secret would hand the token holder an offline guessing oracle.
+func StoredCredentialFingerprint(fingerprintKey []byte, accessKeyId, secretKey string) string {
+	if len(fingerprintKey) == 0 {
+		return ""
+	}
+	h := hmac.New(sha256.New, fingerprintKey)
 	h.Write([]byte("seaweedfs-stored-credential"))
 	h.Write([]byte{0})
 	h.Write([]byte(accessKeyId))
@@ -589,7 +594,7 @@ func SetStoredAccessKeyIdInContext(ctx context.Context, accessKeyId, secretKey s
 	if accessKeyId == "" {
 		return ctx
 	}
-	sc := storedCredential{accessKeyId, StoredCredentialFingerprint(accessKeyId, secretKey)}
+	sc := storedCredential{accessKeyId, secretKey}
 	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
 		h.storedCredential.Store(&sc)
 	}
@@ -604,7 +609,7 @@ func RecordStoredAccessKeyId(ctx context.Context, accessKeyId, secretKey string)
 	if ctx == nil || accessKeyId == "" {
 		return
 	}
-	sc := storedCredential{accessKeyId, StoredCredentialFingerprint(accessKeyId, secretKey)}
+	sc := storedCredential{accessKeyId, secretKey}
 	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
 		h.storedCredential.Store(&sc)
 	}
@@ -619,14 +624,14 @@ func StoredAccessKeyIdFromContext(ctx context.Context) string {
 }
 
 // StoredCredentialFromContext retrieves the stored-identity access key id and
-// its secret fingerprint the request authenticated with, or "", "" when it
-// authenticated another way (STS session, OIDC bearer, anonymous).
+// secret the request authenticated with, or "", "" when it authenticated
+// another way (STS session, OIDC bearer, anonymous).
 func StoredCredentialFromContext(ctx context.Context) (string, string) {
 	sc, ok := storedCredentialFromContext(ctx)
 	if !ok {
 		return "", ""
 	}
-	return sc.accessKeyId, sc.fingerprint
+	return sc.accessKeyId, sc.secretKey
 }
 
 func storedCredentialFromContext(ctx context.Context) (storedCredential, bool) {

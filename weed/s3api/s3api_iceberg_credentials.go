@@ -84,9 +84,9 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 	// instead of living unbound until it expires. The binding travels under
 	// its own claim — SourceAccessKeyId is audit-only for compatibility with
 	// tokens minted before the binding existed.
-	if storedKey, fingerprint := s3_constants.StoredCredentialFromContext(ctx); storedKey != "" {
+	if storedKey, storedSecret := s3_constants.StoredCredentialFromContext(ctx); storedKey != "" {
 		request.BoundAccessKeyId = storedKey
-		request.BoundAccessKeyFingerprint = fingerprint
+		request.BoundAccessKeyFingerprint = s3_constants.StoredCredentialFingerprint(s3a.iam.stsSigningKey(), storedKey, storedSecret)
 	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration
@@ -110,10 +110,17 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 }
 
 func (s3a *S3ApiServer) stsService() *sts.STSService {
-	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+	if s3a.iam == nil {
 		return nil
 	}
-	provider, ok := s3a.iam.iamIntegration.(IAMManagerProvider)
+	return s3a.iam.stsService()
+}
+
+func (iam *IdentityAccessManagement) stsService() *sts.STSService {
+	if iam.iamIntegration == nil {
+		return nil
+	}
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
 	if !ok {
 		return nil
 	}
@@ -122,6 +129,13 @@ func (s3a *S3ApiServer) stsService() *sts.STSService {
 		return nil
 	}
 	return manager.GetSTSService()
+}
+
+func (iam *IdentityAccessManagement) stsSigningKey() []byte {
+	if s := iam.stsService(); s != nil && s.Config != nil {
+		return s.Config.SigningKey
+	}
+	return nil
 }
 
 // tablePrefixSessionPolicy narrows a session to one table's files plus the
