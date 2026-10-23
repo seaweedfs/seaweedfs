@@ -186,13 +186,15 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 	marker := ""
 	for page := 0; ; page++ {
 		require.Less(t, page, len(keys), "listing did not terminate")
-		query := url.Values{"max-keys": {"2"}}
+		query := url.Values{"max-keys": {"2"}, "encoding-type": {"url"}}
 		if marker != "" {
 			query.Set("marker", marker)
 		}
 		result := listV1Page(t, s3a, query)
 		for _, content := range result.Contents {
-			got = append(got, content.Key)
+			key, err := url.QueryUnescape(content.Key)
+			require.NoError(t, err)
+			got = append(got, key)
 		}
 		if !result.IsTruncated {
 			break
@@ -200,7 +202,7 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 		require.NotEmpty(t, result.NextMarker)
 		marker = result.NextMarker
 	}
-	require.Len(t, got, len(keys))
+	require.Equal(t, keys, got)
 }
 
 // The echoed request marker carries the client's token, not the decoded key:
