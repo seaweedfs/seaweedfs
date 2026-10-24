@@ -271,8 +271,11 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-          # Flat single-platform manifest so imagetools create assembles cleanly.
-          provenance: false
+          # mode=max keeps resolvedDependencies complete and records the
+          # builder identity; attestations ride inside each pushed index and
+          # survive the imagetools merge into the multi-arch manifest.
+          provenance: mode=max
+          sbom: true
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
           # max only for rocksdb: its RocksDB compile is sha-independent and worth
@@ -308,6 +311,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -415,6 +420,45 @@ jobs:
             ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
             chrislusf/seaweedfs@${{ steps.manifest.outputs.digest }}
 
+      # Attest the merged multi-arch digest itself, so digest-pinning consumers
+      # can verify provenance against the exact index they pull. Both steps
+      # reuse the GHCR login above and push as OCI referrers.
+      - name: Attest build provenance for ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      # SBOMs are generated and attested per platform manifest: an index-wide
+      # scan only describes syft's default platform, while the manifests it
+      # merges differ (some ship the real binary, others placeholders), so the
+      # SBOM has to be bound to the platform digest a consumer actually pulls.
+      - name: Install syft
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Attest per-platform SBOMs for ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          for f in *; do
+            # Each saved digest is an OCI index (image + attestation manifests);
+            # scan and attest the image manifest a same-platform pull resolves.
+            ref="${{ env.IMAGE }}@sha256:${f}"
+            image=$(crane manifest "$ref" | jq -r '
+              [.manifests[]? | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
+                and (.platform.os // "unknown") != "unknown") | .digest][0] // empty')
+            ref="${{ env.IMAGE }}@${image:-sha256:${f}}"
+            syft "registry:${ref}" -o "spdx-json=/tmp/sbom-${f}.spdx.json"
+            cosign attest --yes \
+              --predicate "/tmp/sbom-${f}.spdx.json" \
+              --type spdxjson \
+              "$ref"
+          done
+
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
   # `latest`) ship regardless — vulnerabilities are tracked, not gated, since
@@ -453,7 +497,9 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          # Keep unfixed findings in the report so digest-pinning consumers see
+          # the complete picture, not just what a patch could resolve.
+          ignore-unfixed: false
           limit-severities-for-sarif: true
           format: sarif
           output: trivy-results.sarif
