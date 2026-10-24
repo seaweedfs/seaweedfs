@@ -59,9 +59,23 @@ type OIDCProvider struct {
 	discoveryFailed bool
 
 	// jti wraps the consumed-token cache behind the replay protection. It is
-	// allocated once in NewOIDCProvider and survives re-initialization, so a
-	// config refresh cannot reopen already-consumed tokens for replay.
-	jti *jtiReplayCache
+	// allocated by NewOIDCProvider or lazily by replayCache, and survives
+	// re-initialization, so a config refresh cannot reopen already-consumed
+	// tokens for replay. jtiOnce makes a zero-value OIDCProvider safe.
+	jti     *jtiReplayCache
+	jtiOnce sync.Once
+}
+
+// replayCache returns the consumed-token cache, allocating it for providers
+// built without NewOIDCProvider so the delegated operations never panic on a
+// nil cache.
+func (p *OIDCProvider) replayCache() *jtiReplayCache {
+	p.jtiOnce.Do(func() {
+		if p.jti == nil {
+			p.jti = newJTIReplayCache(p.name)
+		}
+	})
+	return p.jti
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -464,7 +478,7 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	if oidcConfig.JTIReplayProtectionEnabled != nil {
 		jtiEnabled = *oidcConfig.JTIReplayProtectionEnabled
 	}
-	p.jti.configure(jtiEnabled, int64(oidcConfig.JTICacheMaxSize))
+	p.replayCache().configure(jtiEnabled, int64(oidcConfig.JTICacheMaxSize))
 
 	// For testing, we'll skip the actual OIDC client initialization
 	return nil
@@ -851,7 +865,7 @@ func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUs
 	// request, so validating it must not consume it.
 	if singleUse {
 		jti, _ := claims["jti"].(string)
-		if err := p.jti.consume(token, jti, subject, tokenClaims.ExpiresAt); err != nil {
+		if err := p.replayCache().consume(token, jti, subject, tokenClaims.ExpiresAt); err != nil {
 			return nil, err
 		}
 	}
@@ -1288,7 +1302,7 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 // Shutdown gracefully stops the JTI cleanup goroutine.
 // Should be called when the provider is being shut down to prevent goroutine leaks.
 func (p *OIDCProvider) Shutdown(ctx context.Context) error {
-	return p.jti.stop(ctx)
+	return p.replayCache().stop(ctx)
 }
 
 // AdoptReplayStateFrom takes over the consumed-token store of the provider it
@@ -1297,10 +1311,10 @@ func (p *OIDCProvider) Shutdown(ctx context.Context) error {
 // sweep the shared store at a time. Call before the new provider serves
 // validators.
 func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
-	if old == nil || old == p {
+	if old == nil || old == p || old.jti == nil {
 		return
 	}
-	p.jti.adoptFrom(old.jti)
+	p.replayCache().adoptFrom(old.jti)
 }
 
 // MergeReplayStateFrom hands this provider's store to another provider and
@@ -1315,5 +1329,5 @@ func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
 	if other == nil || other == p {
 		return
 	}
-	p.jti.mergeFrom(other.jti)
+	p.replayCache().mergeFrom(other.replayCache())
 }
