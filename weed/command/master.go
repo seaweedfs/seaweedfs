@@ -491,5 +491,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,
+		SingleMaster:            isSingleMasterMode(*m.peers),
 	}
 }
