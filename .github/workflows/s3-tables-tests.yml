@@ -53,8 +53,8 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          # A stale FUSE mount can hang or fail df; keep diagnostics best effort.
+          timeout 15 df -h || true
           echo "=== Starting S3 Tables Tests ==="
           
           # Run S3 Tables integration tests
@@ -116,8 +116,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting Iceberg Catalog Tests ==="
           
           # Run Iceberg catalog integration tests using Makefile (handles build)
@@ -188,8 +187,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting Trino Iceberg Catalog Tests ==="
           
           # Run Trino + Iceberg catalog integration tests
@@ -261,8 +259,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Dremio Iceberg Catalog Tests ==="
 
@@ -336,8 +333,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Doris Iceberg Catalog Tests ==="
 
@@ -423,8 +419,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting ClickHouse Iceberg Catalog Tests ==="
 
@@ -513,8 +508,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting OLake Iceberg Catalog Tests ==="
 
@@ -609,8 +603,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting Polaris Tests ==="
 
           go test -v -timeout 20m ./test/s3tables/polaris 2>&1 | tee test/s3tables/polaris/test-output.log || {
@@ -680,8 +673,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting Spark Iceberg Catalog Tests ==="
           
           # Run Spark + Iceberg catalog integration tests
@@ -753,8 +745,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting RisingWave Catalog Tests ==="
           
           # Run RisingWave catalog integration tests
@@ -850,8 +841,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting STS Integration Tests ==="
           
           # Run STS integration tests
@@ -912,8 +902,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           echo "=== Starting Lakekeeper Integration Tests ==="
           
           # Run Lakekeeper integration tests
@@ -985,8 +974,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Unity Catalog Tests ==="
 
@@ -1059,8 +1047,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting LanceDB Namespace Tests ==="
 
@@ -1205,8 +1192,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting DuckDB Lance Tests ==="
 
@@ -1281,8 +1267,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          # Stale FUSE mounts on self-hosted runners can make df fail.
-          df -h || true
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Spark Lance Namespace Tests ==="
 
