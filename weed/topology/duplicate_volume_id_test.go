@@ -208,6 +208,29 @@ func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
 	}
 }
 
+func TestStaleDuplicateReportDoesNotQuarantineSurvivor(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	topo.RegisterVolumeLayout(v1, dn1)
+
+	// dn2's copy is gone before its delayed duplicate check runs; the report
+	// still names dn2 but its layout no longer holds it.
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	if topo.isQuarantined(dn1, v1.Id) || topo.isQuarantined(dn2, v2.Id) {
+		t.Fatal("a report for a copy that is already gone must not quarantine anything")
+	}
+	if !isWritable(t, topo, v1) {
+		t.Fatal("the surviving copy must stay writable")
+	}
+}
+
 func TestQuarantineSurvivesResync(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
@@ -324,4 +347,57 @@ func TestDuplicateVolumeIdAcrossTtls(t *testing.T) {
 	if !topo.isQuarantined(dn2, v2.Id) || !topo.isQuarantined(dn1, v1.Id) {
 		t.Fatal("same collection with a different ttl is still a reused volume id")
 	}
+}
+
+func TestFailedWritablePushRetriedOnNextReport(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	var failWritable atomic.Bool
+	var writablePushes atomic.Int32
+	topo.QuarantineVolumeFn = func(dn *DataNode, vid needle.VolumeId, readOnly bool) error {
+		if !readOnly {
+			writablePushes.Add(1)
+			if failWritable.Load() {
+				return errors.New("volume server unreachable")
+			}
+		}
+		return nil
+	}
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	// Register on the layouts directly: RegisterVolumeLayout would spawn an
+	// async flagDuplicateVolumeId per call, and a delayed one can re-quarantine
+	// the survivor at any later point in this test.
+	topo.GetVolumeLayout(v1.Collection, v1.ReplicaPlacement, v1.Ttl, types.ToDiskType(v1.DiskType)).RegisterVolume(&v1, dn1, nil)
+	topo.GetVolumeLayout(v2.Collection, v2.ReplicaPlacement, v2.Ttl, types.ToDiskType(v2.DiskType)).RegisterVolume(&v2, dn2, nil)
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// the conflict resolves while the survivor's writable push cannot land
+	failWritable.Store(true)
+	topo.UnRegisterVolumeLayout(v2, dn2)
+	require.Eventually(t, func() bool {
+		// The record reappears only after the failed writable push, and the
+		// restore arms it for retry in the same store - so this pair means the
+		// next report will take the retry branch rather than observing the
+		// release mid-flight.
+		return writablePushes.Load() >= 1 && topo.isQuarantined(dn1, v1.Id)
+	}, 5*time.Second, time.Millisecond, "a failed writable push must re-arm the record")
+
+	reported := v1
+	reported.ReadOnly = true
+	failWritable.Store(false)
+	topo.enforceQuarantine(dn1, reported)
+
+	require.Eventually(t, func() bool {
+		// The release clears the record and the layout mark before the remote
+		// push lands, so the count has to be part of the condition or the poll
+		// can pass before the retried push runs.
+		return !topo.isQuarantined(dn1, v1.Id) && isWritable(t, topo, v1) && writablePushes.Load() >= 2
+	}, 5*time.Second, time.Millisecond, "the next volume report must retry the release and its writable push")
 }

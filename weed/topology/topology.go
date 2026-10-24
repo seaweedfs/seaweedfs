@@ -872,6 +872,14 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 	if len(hits) == 0 {
 		return
 	}
+	// This runs on a goroutine after registration, so the reporter's copy may
+	// already be unregistered (a finished move drops the losing copy). The
+	// surviving copies are then legitimate, and flagging them quarantines a
+	// healthy volume.
+	own := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType))
+	if own == nil || !own.HasDataNode(v.Id, dn) {
+		return
+	}
 	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
 	var otherKeys []string
 	for _, h := range hits {
@@ -913,7 +921,7 @@ func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
 			t.releaseQuarantineWritable(n, v.Id)
 		}
 	}
-	quarantine(dn, t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)))
+	quarantine(dn, own)
 	for _, h := range hits {
 		for _, n := range h.nodes {
 			quarantine(n, h.vl)
