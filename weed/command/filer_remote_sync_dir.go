@@ -141,6 +141,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return nil
 		}
 		mustSend := false
+		var renameSrc util.FullPath
 		if message.OldEntry != nil && message.NewEntry != nil {
 			reshaped, inMount := reshapeCrossMountRename(mountedDir, resp)
 			if !inMount {
@@ -150,10 +151,13 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			// RemoteEntry earned at the old path: it stamps the old key, so
 			// it cannot vouch for this destination
 			mustSend = filer_pb.IsCreate(reshaped)
+			if mustSend {
+				renameSrc = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+			}
 			resp, message = reshaped, reshaped.EventNotification
 		}
 		if filer_pb.IsCreate(resp) {
-			return processCreateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp, mustSend)
+			return processCreateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp, mustSend, renameSrc)
 		}
 		if filer_pb.IsDelete(resp) {
 			return processDeleteEvent(filerSource, client, mountedDir, remoteStorageMountLocation, resp)
@@ -217,7 +221,8 @@ func isUnderMount(mountedDir string, dir string, name string) bool {
 // processCreateEvent uploads a created entry to the remote key its path maps
 // to. mustSend skips the sync-stamp check: a create reshaped out of a rename
 // into the mount inherits a RemoteEntry stamped at the old path's key, which
-// says nothing about whether this destination holds the content.
+// says nothing about whether this destination holds the content. renameSrc is
+// the path that rename came from, and is empty for a genuine create.
 func processCreateEvent(
 	filerClient filer_pb.FilerClient,
 	filerSource filer_pb.FilerClient,
@@ -227,6 +232,7 @@ func processCreateEvent(
 	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
 	resp *filer_pb.SubscribeMetadataResponse,
 	mustSend bool,
+	renameSrc util.FullPath,
 ) error {
 	message := resp.EventNotification
 	if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
@@ -276,6 +282,9 @@ func processCreateEvent(
 	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, storageClass), dest)
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		if mustSend {
+			return recoverSupersededCreate(filerClient, filerSource, client, mountedDir, remoteStorageMountLocation, message.NewParentPath, message.NewEntry.Name, renameSrc, dest, storageClass)
+		}
 		return nil
 	}
 	if writeErr != nil {
@@ -731,6 +740,176 @@ func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.F
 		return writeErr
 	}
 	return updateLocalEntry(filerClient, dir, current, remoteEntry)
+}
+
+// recoverSupersededCreate finishes a create reshaped from a rename into the
+// mount when the filer has moved past the entry the event described. A plain
+// superseded create skips because the superseding event follows in the log; a
+// reshaped one has no later event for this destination. remote.uncache accepts
+// the rename's inherited stamp and drops the chunks, and the update it logs
+// skips the upload through isDroppedLocalCopy, so the content would exist
+// nowhere. What the filer holds now decides: local content uploads here only
+// when the superseding event will not (the stamp-edge case uploadCurrentEntry
+// covers), and remote-only content copies from the object its stamp
+// describes, the way completeRemoteOnlyRename finishes a rename.
+func recoverSupersededCreate(
+	filerClient filer_pb.FilerClient,
+	filerSource filer_pb.FilerClient,
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	dir, name string,
+	renameSrc util.FullPath,
+	dest *remote_pb.RemoteStorageLocation,
+	storageClass string,
+) error {
+	current, err := currentEntry(filerSource, dir, name)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.IsDirectory {
+		return nil
+	}
+	if isRemoteOnly(current) {
+		return copyRenameInSource(filerClient, client, mountedDir, remoteStorageMountLocation, dir, current, renameSrc, dest, storageClass)
+	}
+	if shouldSendToRemote(current) {
+		glog.V(0).Infof("leaving %s to the event that superseded the rename", remote_storage.FormatLocation(dest))
+		return nil
+	}
+	glog.V(0).Infof("uploading the current %s in place of the superseded rename", remote_storage.FormatLocation(dest))
+	remoteEntry, writeErr := retriedWriteFile(client, filerSource, dir, remoteWriteEntry(current, storageClass), dest)
+	if errors.Is(writeErr, errSuperseded) {
+		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		return nil
+	}
+	if writeErr != nil {
+		return writeErr
+	}
+	return updateLocalEntry(filerClient, dir, current, remoteEntry)
+}
+
+// copyRenameInSource gives the destination key the content of a remote-only
+// entry a rename carried into the mount. The object sits at the key the
+// renamed-from path maps to on its own mount's remote, or where a
+// pending-rename marker under this mount points. The source object is left
+// alone: the source side removes it through its own delete event. When the
+// destination already holds what the stamp describes (an earlier run copied
+// it), only the stamp is refreshed. With no object on either side the event
+// fails and holds the offset.
+func copyRenameInSource(
+	filerClient filer_pb.FilerClient,
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	dir string,
+	current *filer_pb.Entry,
+	renameSrc util.FullPath,
+	dest *remote_pb.RemoteStorageLocation,
+	storageClass string,
+) error {
+	srcClient, srcLoc, err := renameInSource(filerClient, client, mountedDir, remoteStorageMountLocation, current, renameSrc)
+	if err != nil {
+		return err
+	}
+	if existing, err := client.StatFile(dest); err == nil {
+		if remote_storage.Describes(current.RemoteEntry, existing) {
+			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
+			return updateLocalEntry(filerClient, dir, current, existing)
+		}
+		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it from %s", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize, remote_storage.FormatLocation(srcLoc))
+	} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return err
+	}
+	stat, err := srcClient.StatFile(srcLoc)
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return fmt.Errorf("%s: content is on neither %s nor %s", util.NewFullPath(dir, current.Name), remote_storage.FormatLocation(srcLoc), remote_storage.FormatLocation(dest))
+	}
+	if err != nil {
+		return err
+	}
+	reader, err := openRemoteObject(srcClient, srcLoc, stat.RemoteSize)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	glog.V(0).Infof("copy %s -> %s", remote_storage.FormatLocation(srcLoc), remote_storage.FormatLocation(dest))
+	remoteEntry, err := client.WriteFile(dest, remoteWriteEntry(current, storageClass), reader)
+	if err != nil {
+		return err
+	}
+	return updateLocalEntry(filerClient, dir, current, remoteEntry)
+}
+
+// renameInSource locates the object holding a remote-only rename-in entry's
+// content and the client that serves it. A pending-rename marker under this
+// mount names a key on this remote; otherwise the renamed-from path is
+// resolved through the filer's mount mappings to its own mount's remote
+// location, served by this client when the source shares this storage.
+func renameInSource(
+	filerClient filer_pb.FilerClient,
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	current *filer_pb.Entry,
+	renameSrc util.FullPath,
+) (remote_storage.RemoteStorageClient, *remote_pb.RemoteStorageLocation, error) {
+	if src := util.FullPath(current.Extended[filer.ExtRemoteRenameSourceKey]); strings.HasPrefix(string(src), strings.TrimSuffix(mountedDir, "/")+"/") {
+		return client, toRemoteStorageLocation(util.FullPath(mountedDir), src, remoteStorageMountLocation), nil
+	}
+	mappings, err := readMountMappings(filerClient)
+	if err != nil {
+		return nil, nil, err
+	}
+	srcMount, srcRemoteLoc, err := filer.FindMountedRemoteMapping(mappings, string(renameSrc))
+	if err != nil {
+		return nil, nil, fmt.Errorf("rename source %s: %w", renameSrc, err)
+	}
+	srcLoc := filer.MapFullPathToRemoteStorageLocation(util.FullPath(srcMount), srcRemoteLoc, renameSrc)
+	if srcRemoteLoc.Name == remoteStorageMountLocation.Name {
+		return client, srcLoc, nil
+	}
+	conf, err := readRemoteStorageConf(filerClient, srcRemoteLoc.Name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rename source %s: %w", renameSrc, err)
+	}
+	srcClient, err := remote_storage.GetRemoteStorage(conf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rename source %s: %w", renameSrc, err)
+	}
+	return srcClient, srcLoc, nil
+}
+
+// readMountMappings reads the filer's remote mount table, the file
+// DetectMountInfo reads at startup, through the event's filer client.
+func readMountMappings(filerClient filer_pb.FilerClient) (mappings *remote_pb.RemoteStorageMapping, err error) {
+	var content []byte
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		var readErr error
+		content, readErr = filer.ReadInsideFiler(context.Background(), client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
+		return readErr
+	})
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+	return filer.UnmarshalRemoteStorageMappings(content)
+}
+
+// readRemoteStorageConf reads a remote storage's configuration entry.
+func readRemoteStorageConf(filerClient filer_pb.FilerClient, storageName string) (*remote_pb.RemoteConf, error) {
+	var content []byte
+	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		var readErr error
+		content, readErr = filer.ReadInsideFiler(context.Background(), client, filer.DirectoryEtcRemote, storageName+filer.REMOTE_STORAGE_CONF_SUFFIX)
+		return readErr
+	}); err != nil {
+		return nil, err
+	}
+	conf := &remote_pb.RemoteConf{}
+	if err := proto.Unmarshal(content, conf); err != nil {
+		return nil, fmt.Errorf("unmarshal %s/%s: %w", filer.DirectoryEtcRemote, storageName+filer.REMOTE_STORAGE_CONF_SUFFIX, err)
+	}
+	return conf, nil
 }
 
 // isSuperseded reports whether the filer has moved past the entry an event
