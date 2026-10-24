@@ -202,7 +202,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 	case err != nil:
 		glog.Errorf("routedDeleteSpecificVersion: %s/%s %s on %s: %v", bucket, object, versionId, owner, err)
 		return s3err.ErrInternalError
-	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED || resp.ErrorCode == filer_pb.FilerError_ENTRY_LOCKED:
 		// Legal hold or retention in force on the version.
 		return s3err.ErrAccessDenied
 	case resp.Error != "":
@@ -234,7 +234,7 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 	case err != nil:
 		glog.Warningf("routedDeleteNullVersion: %s/%s on %s, falling back to lock: %v", bucket, object, owner, err)
 		return s3err.ErrNone, false
-	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED || resp.ErrorCode == filer_pb.FilerError_ENTRY_LOCKED:
 		return s3err.ErrAccessDenied, true
 	case resp.Error != "":
 		glog.Warningf("routedDeleteNullVersion: %s/%s returned %q, falling back to lock", bucket, object, resp.Error)

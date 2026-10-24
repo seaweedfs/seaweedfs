@@ -434,6 +434,9 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
 			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			if errors.Is(err, filer.ErrEntryLocked) {
+				resp.ErrorCode = filer_pb.FilerError_ENTRY_LOCKED
+			}
 			return resp, nil
 		}
 	}

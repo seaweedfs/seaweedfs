@@ -1095,3 +1095,32 @@ func TestObjectTransactionConditionIgnoresDirectory(t *testing.T) {
 		t.Fatalf("directory at key with live latest: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
 	}
 }
+
+// A mutation-level lock refusal reports ENTRY_LOCKED: the "mutation N:" prefix
+// on resp.Error strips the leading marker IsEntryLockedError reads, so the
+// structured code is what a routed delete maps to AccessDenied.
+func TestObjectTransactionDeleteLockedEntry(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
+		"/buckets/b/obj": {
+			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("on")},
+		},
+	})
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/b/obj",
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b", Name: "obj"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.ErrorCode != filer_pb.FilerError_ENTRY_LOCKED {
+		t.Fatalf("error code = %v, want ENTRY_LOCKED (error %q)", resp.ErrorCode, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj"]; !ok {
+		t.Errorf("locked entry should survive the refused delete")
+	}
+}
