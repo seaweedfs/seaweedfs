@@ -14,30 +14,35 @@ func TestCheckPreconditionsETagLists(t *testing.T) {
 	const etag = `"b194"`
 
 	tests := []struct {
-		header, value string
-		want          int
+		header string
+		values []string
+		want   int
 	}{
-		{"If-None-Match", etag, http.StatusNotModified},
-		{"If-None-Match", `*`, http.StatusNotModified},
-		{"If-None-Match", `W/` + etag, http.StatusNotModified},
-		{"If-None-Match", `"x", ` + etag, http.StatusNotModified},
-		{"If-None-Match", `"x"`, http.StatusOK},
-		{"If-Match", etag, http.StatusOK},
-		{"If-Match", `*`, http.StatusOK},
-		{"If-Match", `"x", ` + etag, http.StatusOK},
-		{"If-Match", `W/` + etag, http.StatusPreconditionFailed},
-		{"If-Match", `"x"`, http.StatusPreconditionFailed},
+		{"If-None-Match", []string{etag}, http.StatusNotModified},
+		{"If-None-Match", []string{`*`}, http.StatusNotModified},
+		{"If-None-Match", []string{`W/` + etag}, http.StatusNotModified},
+		{"If-None-Match", []string{`"x", ` + etag}, http.StatusNotModified},
+		{"If-None-Match", []string{`"x"`}, http.StatusOK},
+		{"If-None-Match", []string{`"b194,old"`}, http.StatusOK},
+		{"If-Match", []string{etag}, http.StatusOK},
+		{"If-Match", []string{`*`}, http.StatusOK},
+		{"If-Match", []string{`"x", ` + etag}, http.StatusOK},
+		{"If-Match", []string{`W/` + etag}, http.StatusPreconditionFailed},
+		{"If-Match", []string{`"x"`}, http.StatusPreconditionFailed},
+		{"If-Match", []string{`"b194,old"`}, http.StatusPreconditionFailed},
 	}
 	for _, tt := range tests {
 		r := httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
-		r.Header.Set(tt.header, tt.value)
+		for _, v := range tt.values {
+			r.Header.Add(tt.header, v)
+		}
 		w := httptest.NewRecorder()
 		got := http.StatusOK
 		if checkPreconditions(w, r, entry) {
 			got = w.Code
 		}
 		if got != tt.want {
-			t.Errorf("%s: %s -> %d, want %d", tt.header, tt.value, got, tt.want)
+			t.Errorf("%s: %q -> %d, want %d", tt.header, tt.values, got, tt.want)
 		}
 	}
 }

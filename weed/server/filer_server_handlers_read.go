@@ -94,7 +94,7 @@ func etagListMatches(header, etag string, weak bool) bool {
 	if strings.TrimSpace(header) == "*" {
 		return true
 	}
-	for _, tag := range strings.Split(header, ",") {
+	for _, tag := range splitETagList(header) {
 		tag = strings.TrimSpace(tag)
 		if strings.HasPrefix(tag, "W/") {
 			if !weak {
@@ -107,6 +107,25 @@ func etagListMatches(header, etag string, weak bool) bool {
 		}
 	}
 	return false
+}
+
+// splitETagList splits an entity-tag list on the commas between tags; a comma
+// inside a quoted opaque tag does not split.
+func splitETagList(header string) []string {
+	var tags []string
+	start, quoted := 0, false
+	for i := 0; i < len(header); i++ {
+		switch header[i] {
+		case '"':
+			quoted = !quoted
+		case ',':
+			if !quoted {
+				tags = append(tags, header[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(tags, header[start:])
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
