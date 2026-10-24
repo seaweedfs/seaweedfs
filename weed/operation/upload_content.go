@@ -720,3 +720,8 @@ func (b *watchdogBody) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+func (b *watchdogBody) Close() error {
+	b.sentAt.Store(time.Now().UnixNano())
+	return b.ReadCloser.Close()
+}
