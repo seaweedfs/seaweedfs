@@ -23,9 +23,11 @@ func TestCopyObjectToItselfChangingStorageClass(t *testing.T) {
 		storageClass      string
 		defaultEncryption bool
 		wantCode          int
+		wantErr           string
 	}{
-		{name: "no change", wantCode: http.StatusBadRequest},
-		{name: "no change under default encryption", defaultEncryption: true, wantCode: http.StatusBadRequest},
+		{name: "no change", wantCode: http.StatusBadRequest, wantErr: "InvalidRequest"},
+		{name: "no change under default encryption", defaultEncryption: true, wantCode: http.StatusBadRequest, wantErr: "InvalidRequest"},
+		{name: "invalid storage class", storageClass: "NOT_A_CLASS", wantCode: http.StatusBadRequest, wantErr: "InvalidStorageClass"},
 		{name: "new storage class", storageClass: "STANDARD_IA", wantCode: http.StatusOK},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,8 +62,8 @@ func TestCopyObjectToItselfChangingStorageClass(t *testing.T) {
 			defer filer.mu.Unlock()
 			stored := filer.entries[objectPath]
 			if tt.wantCode != http.StatusOK {
-				if !strings.Contains(rr.Body.String(), "<Code>InvalidRequest</Code>") {
-					t.Fatalf("body = %s, want InvalidRequest", rr.Body.String())
+				if !strings.Contains(rr.Body.String(), "<Code>"+tt.wantErr+"</Code>") {
+					t.Fatalf("body = %s, want %s", rr.Body.String(), tt.wantErr)
 				}
 				if _, ok := stored.Extended[s3_constants.AmzStorageClass]; ok {
 					t.Fatalf("rejected copy changed the object: %v", stored.Extended)
