@@ -50,7 +50,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	}
 	w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
 
-	ifMatchETagHeader := r.Header.Get("If-Match")
+	ifMatchETagHeader := strings.Join(r.Header.Values("If-Match"), ",")
 	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
 	if ifMatchETagHeader != "" {
 		if !etagListMatches(ifMatchETagHeader, etag, false) {
@@ -66,7 +66,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	}
 
-	ifNoneMatchETagHeader := r.Header.Get("If-None-Match")
+	ifNoneMatchETagHeader := strings.Join(r.Header.Values("If-None-Match"), ",")
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
 	if ifNoneMatchETagHeader != "" {
 		if etagListMatches(ifNoneMatchETagHeader, etag, true) {
