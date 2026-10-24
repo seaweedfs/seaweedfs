@@ -162,12 +162,13 @@ func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
 	}
 
 	pushFails.Store(false)
-	reported := v1
-	reported.ReadOnly = true
-	topo.enforceQuarantine(dn1, reported)
+	// An idle replica drops out of the delta reports once its stored flag
+	// matches the server's, so the release pass retries off the leader pulse
+	// rather than waiting for the volume to be reported again.
+	topo.retryPendingQuarantineReleases()
 	require.Eventually(t, func() bool {
 		return !topo.isQuarantined(dn1, v1.Id) && isWritable(t, topo, v1)
-	}, 5*time.Second, time.Millisecond, "the next volume report must retry the release")
+	}, 5*time.Second, time.Millisecond, "the pending release must retry without another volume report")
 }
 
 func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
