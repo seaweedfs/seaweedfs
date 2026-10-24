@@ -1094,3 +1094,56 @@ func TestRackDeadbandStillHonorsLargeGap(t *testing.T) {
 		t.Fatalf("M=1 gap=100: thin rack0 got %d, want 3 (freeSlots still wins); per-rack %v", got["rack0"], got)
 	}
 }
+
+// Greptile chain at M=1 volume (10 shard slots): 120/300, 110/200, 100/100.
+// Pairwise vs the current winner walks 120→110→100 or 100→110→120 depending
+// on scan order. maxFree=120 keeps |Δ|≤10, so 110 wins — not 100 (out of
+// band) and not 120 (fatter live).
+func TestNodeDeadbandAnchorsOnMaxFree(t *testing.T) {
+	run := func(t *testing.T, frees, lives [3]int, want string) {
+		t.Helper()
+		topo := NewTopology()
+		ids := [3]string{"n0:8080", "n1:8081", "n2:8082"}
+		for i, id := range ids {
+			n := topo.AddNode(id, "dc1", "dc1:rack0", frees[i])
+			n.AddDisk(0, "", frees[i], lives[i])
+		}
+		if got := placeFirstShardNode(t, topo, 1); got != want {
+			t.Fatalf("got %s, want %s (110 in-band, not 100/120)", got, want)
+		}
+	}
+	t.Run("high-to-low", func(t *testing.T) {
+		run(t, [3]int{120, 110, 100}, [3]int{300, 200, 100}, "n1:8081")
+	})
+	t.Run("low-to-high", func(t *testing.T) {
+		run(t, [3]int{100, 110, 120}, [3]int{100, 200, 300}, "n1:8081")
+	})
+}
+
+func TestRackDeadbandAnchorsOnMaxFree(t *testing.T) {
+	run := func(t *testing.T, frees, lives [3]int, want string) {
+		t.Helper()
+		topo := NewTopology()
+		for i := 0; i < 3; i++ {
+			n := topo.AddNode(fmt.Sprintf("n%d:8080", i), "dc1", fmt.Sprintf("dc1:rack%d", i), frees[i])
+			n.AddDisk(0, "", frees[i], lives[i])
+		}
+		res, err := topo.Place(1, "c1", []int{0}, Constraints{FreeSlotsDeadband: 1}, PlaceStrict)
+		if err != nil {
+			t.Fatalf("Place: %v", err)
+		}
+		d, ok := res.Destinations[0]
+		if !ok {
+			t.Fatal("missing shard 0")
+		}
+		if d.Rack != want {
+			t.Fatalf("got rack %s, want %s (110 in-band, not 100/120)", d.Rack, want)
+		}
+	}
+	t.Run("high-to-low", func(t *testing.T) {
+		run(t, [3]int{120, 110, 100}, [3]int{300, 200, 100}, "rack1")
+	})
+	t.Run("low-to-high", func(t *testing.T) {
+		run(t, [3]int{100, 110, 120}, [3]int{100, 200, 300}, "rack1")
+	})
+}

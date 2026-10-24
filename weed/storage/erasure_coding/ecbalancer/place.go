@@ -29,10 +29,10 @@ type Constraints struct {
 	PreferredTags    []string
 	ReplicaPlacement *super_block.ReplicaPlacement
 	Ratio            func(collection string) (dataShards, parityShards int)
-	// FreeSlotsDeadband (M) is free volume slots. Place treats
-	// |ΔfreeSlots| ≤ M×dataShards as a tie when ranking nodes after
-	// even-this-volume; the remainder is lower liveShards. 0 is strict
-	// freeSlots (origin/master), with liveShards only on an exact tie.
+	// FreeSlotsDeadband (M) is free volume slots. After even-this-volume,
+	// Place ranks that evenness class by maxFree, keeps |free−maxFree| ≤
+	// M×dataShards, then lower liveShards. 0 is only maxFree then live
+	// (old strict freeSlots; liveShards only on an exact free tie).
 	FreeSlotsDeadband int
 }
 
@@ -489,16 +489,16 @@ func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerD
 }
 
 // pickRackEligible is pickTarget for Place racks. Even this-type / cap /
-// two-pass anti-affinity stay. Remainder is rack freeSlots (with the same
-// shard-slot deadband as pickNodeInRackEligible) then lower liveShards
-// (sum of nodeLiveShardCount). M=0 is strict freeSlots. pickTarget itself
-// is unchanged so balancer / DC paths stay without M.
+// two-pass anti-affinity stay. Among that evenness class the remainder is
+// max rack freeSlots, keep |free−maxFree| ≤ shard-slot deadband, then
+// lower liveShards (sum of nodeLiveShardCount). M=0 is only maxFree then
+// live (old strict freeSlots). pickTarget itself is unchanged so balancer
+// / DC paths stay without M.
 func pickRackEligible(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool, racks map[string]*rack, freeSlotsDeadband int) (string, bool) {
 	try := func(skipAnti bool) (string, bool) {
-		best := ""
+		var keys []string
+		var free, live []int
 		bestCount := maxPerTarget + 1
-		bestFree := -1
-		bestLive := 0
 		for _, c := range candidates {
 			if skipAnti && antiAffinity[c] {
 				continue
@@ -513,27 +513,24 @@ func pickRackEligible(candidates []string, shardsPerTarget map[string][]int, max
 				continue
 			}
 			cnt := len(shardsPerTarget[c])
-			free := 0
+			if len(keys) == 0 || cnt < bestCount {
+				keys, free, live = keys[:0], free[:0], live[:0]
+				bestCount = cnt
+			} else if cnt > bestCount {
+				continue
+			}
+			f := 0
 			if r := racks[c]; r != nil {
-				free = r.freeSlots
+				f = r.freeSlots
 			}
-			live := rackLiveShardCount(racks[c])
-			better := false
-			switch {
-			case best == "":
-				better = true
-			case cnt != bestCount:
-				better = cnt < bestCount
-			case absIntDiff(free, bestFree) > freeSlotsDeadband:
-				better = free > bestFree
-			default:
-				better = live < bestLive
-			}
-			if better {
-				best, bestCount, bestFree, bestLive = c, cnt, free, live
-			}
+			keys = append(keys, c)
+			free = append(free, f)
+			live = append(live, rackLiveShardCount(racks[c]))
 		}
-		return best, best != ""
+		if len(keys) == 0 {
+			return "", false
+		}
+		return keys[pickDeadbandRemainder(free, live, freeSlotsDeadband)], true
 	}
 	if len(antiAffinity) > 0 {
 		if t, ok := try(true); ok {
@@ -559,15 +556,15 @@ func rackLiveShardCount(r *rack) int {
 // FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
 // node with free volume slots but no eligible disk could be chosen.
 //
-// Even first (this volume, machine then node). Remainder is node freeSlots
-// (with shard-slot deadband) then lower liveShards. Machine freeSlots (mFree)
-// stays dropped as on origin/master. SameRackCount / 2+2 unchanged.
-// |ΔfreeSlots| ≤ freeSlotsDeadband is a tie so a small slot gap does not
-// override liveShards. Callers convert UI volume M via volumeDeadbandToShardSlots.
+// Even first (this volume, machine then node). Among that class: max node
+// freeSlots, keep |free−maxFree| ≤ shard-slot deadband, then lower
+// liveShards. Machine freeSlots (mFree) stays dropped as on origin/master.
+// SameRackCount / 2+2 unchanged. M=0 is only maxFree then live. Callers
+// convert UI volume M via volumeDeadbandToShardSlots.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk, freeSlotsDeadband int) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
-	var best *Node
-	var bestMCount, bestNCount, bestNFree, bestNScore int
+	var nodes []*Node
+	var bestMCount, bestNCount int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if nodeShardRoom(node, vk, eligible, maxPerDisk) <= 0 {
@@ -578,22 +575,44 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 			continue
 		}
 		mCount := machineShards[node.host]
-		nScore := nodeLiveShardCount(node)
-		better := false
-		switch {
-		case best == nil:
-			better = true
-		case mCount != bestMCount:
-			better = mCount < bestMCount
-		case count != bestNCount:
-			better = count < bestNCount
-		case absIntDiff(node.freeSlots, bestNFree) > freeSlotsDeadband:
-			better = node.freeSlots > bestNFree
-		default:
-			better = nScore < bestNScore
+		if len(nodes) == 0 || mCount < bestMCount || (mCount == bestMCount && count < bestNCount) {
+			nodes = nodes[:0]
+			bestMCount, bestNCount = mCount, count
+		} else if mCount != bestMCount || count != bestNCount {
+			continue
 		}
-		if better {
-			best, bestMCount, bestNCount, bestNFree, bestNScore = node, mCount, count, node.freeSlots, nScore
+		nodes = append(nodes, node)
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	free := make([]int, len(nodes))
+	live := make([]int, len(nodes))
+	for i, n := range nodes {
+		free[i] = n.freeSlots
+		live[i] = nodeLiveShardCount(n)
+	}
+	return nodes[pickDeadbandRemainder(free, live, freeSlotsDeadband)]
+}
+
+// pickDeadbandRemainder ranks same-evenness candidates: maxFree of the
+// class, keep |free−maxFree|≤m, then min live. Ties keep the earlier
+// index (scan order). M=0 keeps only maxFree then live. Shared by node
+// and rack so the band cannot drift.
+func pickDeadbandRemainder(free, live []int, m int) int {
+	maxFree := free[0]
+	for _, f := range free[1:] {
+		if f > maxFree {
+			maxFree = f
+		}
+	}
+	best := -1
+	for i, f := range free {
+		if absIntDiff(f, maxFree) > m {
+			continue
+		}
+		if best < 0 || live[i] < live[best] {
+			best = i
 		}
 	}
 	return best
