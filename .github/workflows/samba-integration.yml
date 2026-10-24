@@ -43,12 +43,19 @@ jobs:
         cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Start local Docker registry
-      run: docker run -d --restart=always -p 5000:5000 --name registry registry:2
+      run: |
+        if ! docker start registry 2>/dev/null; then
+          docker rm -f registry >/dev/null 2>&1 || true
+          docker run -d --restart=always -p 5000:5000 --name registry registry:2
+        fi
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
       with:
         driver-opts: network=host
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v2
 
     - name: Build weed race binary
       run: |

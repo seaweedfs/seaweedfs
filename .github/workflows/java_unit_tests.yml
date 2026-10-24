@@ -34,7 +34,7 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
-          cache: 'maven'
+          cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
       
       - name: Build and Install SeaweedFS Client
         working-directory: other/java/client

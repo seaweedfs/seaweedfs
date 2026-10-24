@@ -507,8 +507,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	} else {
 		s3ApiServer.client = &http.Client{
 			Transport: &http.Transport{
-				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", option.LocalFilerSocket)
+				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+					conn, err := (&net.Dialer{}).DialContext(ctx, "unix", option.LocalFilerSocket)
+					if err != nil {
+						return util.OutboundDialContext(ctx, "tcp", addr)
+					}
+					return conn, nil
 				},
 			},
 		}

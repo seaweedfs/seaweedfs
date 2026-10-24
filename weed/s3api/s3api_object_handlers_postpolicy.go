@@ -144,6 +144,14 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
 	}
+	// An acl or x-amz-grant-* form field rides onto the upload as ACL headers,
+	// which the PUT path only applies under s3:PutObjectAcl.
+	if postRequestsAcl(r) {
+		if errCode := s3a.iam.AuthorizeObjectAclWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+			return
+		}
+	}
 
 	versioningState, err := s3a.getVersioningState(bucket)
 	if err != nil {
@@ -273,6 +281,17 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 			r.Header.Set(k, formValues.Get(k))
 		}
 	}
+}
+
+// postRequestsAcl reports whether the request carries ACL headers, whether
+// promoted from the POST form fields or supplied on the request itself.
+func postRequestsAcl(r *http.Request) bool {
+	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(header) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Extract form fields and file data from a HTTP POST Policy

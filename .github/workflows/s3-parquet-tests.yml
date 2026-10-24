@@ -46,13 +46,13 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: ^1.26
-          cache: true
+          cache: ${{ runner.environment == 'github-hosted' }}
       
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: ${{ runner.environment == 'github-hosted' && 'pip' || '' }}
           cache-dependency-path: 'test/s3/parquet/requirements.txt'
       
       - name: Install system dependencies
@@ -154,7 +154,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: ^1.26
-          cache: true
+          cache: ${{ runner.environment == 'github-hosted' }}
       
       - name: Run Go unit tests
         run: |

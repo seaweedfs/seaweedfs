@@ -871,6 +871,11 @@ func requireClickHouseRuntime(t *testing.T) {
 	if !hasDocker() {
 		t.Skip("Docker not available, skipping ClickHouse integration test")
 	}
+	// ClickHouse builds for x86-64-v3 (AVX2) since 26.5; on a CPU without it
+	// the binary dies on SIGILL inside the entrypoint before the server can
+	// come up.
+	testutil.RequireImageRunnable(t,
+		"--entrypoint", "clickhouse", clickhouseImage(), "local", "--query", "SELECT 1")
 }
 
 // hasDocker reports whether `docker version` can run, which we treat as a
