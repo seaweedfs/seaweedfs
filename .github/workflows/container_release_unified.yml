@@ -181,6 +181,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Clean up stale FUSE mounts
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Download pre-built Rust binaries
