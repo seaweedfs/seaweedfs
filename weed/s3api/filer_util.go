@@ -164,11 +164,12 @@ func deleteObjectEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 
 func doDeleteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
 	request := &filer_pb.DeleteEntryRequest{
-		Directory:            parentDirectoryPath,
-		Name:                 entryName,
-		IsDeleteData:         isDeleteData,
-		IsRecursive:          isRecursive,
-		IgnoreRecursiveError: true,
+		Directory:                 parentDirectoryPath,
+		Name:                      entryName,
+		IsDeleteData:              isDeleteData,
+		IsRecursive:               isRecursive,
+		IgnoreRecursiveError:      true,
+		BypassGovernanceRetention: filer.BypassesGovernanceRetention(ctx),
 	}
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)

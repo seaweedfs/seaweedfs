@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -93,20 +94,28 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 				break
 			}
 		}
-		if rmErr := s3a.rm(r.Context(), markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
+		ctx := r.Context()
+		if governanceBypassAllowed {
+			ctx = filer.WithBypassGovernanceRetention(ctx)
+		}
+		if rmErr := s3a.rm(ctx, markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
 			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
-			return s3err.ErrInternalError
+			return deleteEntryErrCode(rmErr)
 		}
 	case !errors.Is(historyErr, filer_pb.ErrNotFound):
 		glog.Errorf("deleteDirectoryMarker: cannot read stale history of %s/%s: %v", bucket, object, historyErr)
 		return s3err.ErrInternalError
 	}
 
+	ctx := r.Context()
+	if governanceBypassAllowed {
+		ctx = filer.WithBypassGovernanceRetention(ctx)
+	}
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
+		return s3a.deleteUnversionedObjectWithClient(ctx, client, bucket, object, false)
 	}); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
-		return s3err.ErrInternalError
+		return deleteEntryErrCode(err)
 	}
 	return s3err.ErrNone
 }

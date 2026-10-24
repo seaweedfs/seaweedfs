@@ -194,7 +194,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 		Condition:    cond,
 		Mutations: []*filer_pb.ObjectMutation{
 			s3a.latestPointerRecompute(bucket, object, isNewFormatVersionId(versionId), versionFileName, false),
-			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true, RemoveEmptyParent: true},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true, RemoveEmptyParent: true, BypassGovernanceRetention: bypass},
 		},
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
@@ -227,7 +227,7 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 		RouteKey:  s3a.objectRouteKey(bucket, object),
 		Condition: wormDeleteCondition(worm, bypass),
 		Mutations: []*filer_pb.ObjectMutation{
-			{Type: filer_pb.ObjectMutation_DELETE, Directory: dir, Name: name, IsDeleteData: true},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: dir, Name: name, IsDeleteData: true, BypassGovernanceRetention: bypass},
 		},
 	})
 	switch {

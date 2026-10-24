@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -23,6 +24,16 @@ const (
 type deleteMutationResult struct {
 	versionId    string
 	deleteMarker bool
+}
+
+// The filer re-checks object lock during a delete; a refusal means a lock
+// landed between the gateway's own check and the filer's, so it maps to the
+// same AccessDenied the check would have returned.
+func deleteEntryErrCode(err error) s3err.ErrorCode {
+	if filer.IsEntryLockedError(err) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrInternalError
 }
 
 func deleteErrorFromCode(code s3err.ErrorCode, key, versionId string) DeleteError {
@@ -143,9 +154,13 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s version %s: %v", bucket, object, versionId, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, versionId, false); err != nil {
+		ctx := r.Context()
+		if governanceBypassAllowed {
+			ctx = filer.WithBypassGovernanceRetention(ctx)
+		}
+		if err := s3a.deleteSpecificObjectVersion(ctx, bucket, object, versionId, false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete specific version %s for %s/%s: %v", versionId, bucket, object, err)
-			return result, s3err.ErrInternalError
+			return result, deleteEntryErrCode(err)
 		}
 		result.versionId = versionId
 		return result, s3err.ErrNone
@@ -166,9 +181,13 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s null version: %v", bucket, object, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, "null", false); err != nil {
+		ctx := r.Context()
+		if governanceBypassAllowed {
+			ctx = filer.WithBypassGovernanceRetention(ctx)
+		}
+		if err := s3a.deleteSpecificObjectVersion(ctx, bucket, object, "null", false); err != nil {
 			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
-			return result, s3err.ErrInternalError
+			return result, deleteEntryErrCode(err)
 		}
 		// Suspended versioning overwrites the null version with a single null delete
 		// marker (S3 spec), so the marker replaces any prior one instead of piling up.
@@ -343,11 +362,15 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 				return s3err.ErrAccessDenied
 			}
 
+			ctx := r.Context()
+			if governanceBypassAllowed {
+				ctx = filer.WithBypassGovernanceRetention(ctx)
+			}
 			if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
+				return s3a.deleteUnversionedObjectWithClient(ctx, client, bucket, object, false)
 			}); err != nil {
 				glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
-				return s3err.ErrInternalError
+				return deleteEntryErrCode(err)
 			}
 
 			return s3err.ErrNone
@@ -534,9 +557,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					return s3a.deleteDirectoryMarker(r, bucket, key)
 				}
 
-				if err := s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, key, false); err != nil {
+				ctx := r.Context()
+				if governanceBypassAllowed {
+					ctx = filer.WithBypassGovernanceRetention(ctx)
+				}
+				if err := s3a.deleteUnversionedObjectWithClient(ctx, client, bucket, key, false); err != nil {
 					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, key, err)
-					return s3err.ErrInternalError
+					return deleteEntryErrCode(err)
 				}
 
 				return s3err.ErrNone

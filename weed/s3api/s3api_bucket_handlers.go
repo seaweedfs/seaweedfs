@@ -502,6 +502,12 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	// it keeps a shared one rather than risk another bucket's volumes.
 	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)
 	if err != nil {
+		// A lock that landed after the check above reads the same to the
+		// client as one it found: the bucket cannot be removed yet.
+		if filer.IsEntryLockedError(err) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketNotEmpty)
+			return
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
