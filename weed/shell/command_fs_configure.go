@@ -67,7 +67,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl (e.g., 1m, 1h, 1d, 1w, 1y)")
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
-	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
+	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes; unset inherits from the parent path")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
 	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly; unset inherits from the parent path")
 	wormGracePeriod := fsConfigureCommand.Uint64("wormGracePeriod", 0, "grace period before worm is enforced, in seconds")
@@ -101,7 +101,6 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			Collection:               *collection,
 			Replication:              *replication,
 			Ttl:                      *ttl,
-			Fsync:                    *fsync,
 			MaxFileNameLength:        uint32(*maxFileNameLength),
 			DiskType:                 *diskType,
 			VolumeGrowthCount:        uint32(*volumeGrowthCount),
@@ -113,10 +112,13 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			WormRetentionTimeSeconds: *wormRetentionTime,
 		}
 
-		// worm is only carried when the flag is passed, so a rule that says nothing
-		// about it keeps inheriting from the enclosing path
+		// fsync and worm are only carried when the flag is passed, so a rule that
+		// says nothing about them keeps inheriting from the enclosing path
 		fsConfigureCommand.Visit(func(f *flag.Flag) {
-			if f.Name == "worm" {
+			switch f.Name {
+			case "fsync":
+				locConf.Fsync = proto.Bool(*fsync)
+			case "worm":
 				locConf.Worm = proto.Bool(*worm)
 			}
 		})
@@ -152,17 +154,15 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			fc.DeleteLocationConf(*locationPrefix)
 		} else {
 			fc.AddLocationConf(locConf)
-			// AddLocationConf merges these boolean fields with OR, which can never
-			// turn a flag off; let an explicitly passed false win, e.g. -readOnly=false
-			// to reopen a bucket that quota enforcement locked. worm does not belong
-			// here: it merges on presence, so the value set above already wins.
+			// AddLocationConf merges this boolean field with OR, which can never
+			// turn it off; let an explicitly passed false win, e.g. -readOnly=false
+			// to reopen a bucket that quota enforcement locked. fsync and worm do
+			// not belong here: they merge on presence, so the values set above
+			// already win.
 			if mergedConf, found := fc.GetLocationConf(*locationPrefix); found {
 				fsConfigureCommand.Visit(func(f *flag.Flag) {
-					switch f.Name {
-					case "readOnly":
+					if f.Name == "readOnly" {
 						mergedConf.ReadOnly = *isReadOnly
-					case "fsync":
-						mergedConf.Fsync = *fsync
 					}
 				})
 			}
