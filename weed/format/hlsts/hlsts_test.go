@@ -133,6 +133,20 @@ movie.ts?format.view=hls-ts&seq=2
 	}
 }
 
+func TestViewPlaylistCarriesJwt(t *testing.T) {
+	plan, err := Adapter{}.View(format.ViewRequest{Query: url.Values{"jwt": {"a.b+c/d="}}}, viewObject(t))
+	if err != nil {
+		t.Fatalf("View() error = %v", err)
+	}
+	for _, line := range strings.Split(string(plan.Body), "\n") {
+		if strings.HasSuffix(line, ".ts") || strings.Contains(line, "seq=") {
+			if !strings.Contains(line, "jwt=a.b%2Bc%2Fd%3D") {
+				t.Fatalf("segment URL dropped jwt: %q", line)
+			}
+		}
+	}
+}
+
 func TestViewSegment(t *testing.T) {
 	obj := viewObject(t)
 	plan, err := Adapter{}.View(format.ViewRequest{Query: url.Values{"seq": {"1"}}}, obj)
