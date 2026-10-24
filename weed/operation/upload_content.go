@@ -559,6 +559,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	bodySentAt := &atomic.Int64{}
 	curBodySentAt.Store(bodySentAt)
 	req.Body = &watchdogBody{ReadCloser: req.Body, sentAt: bodySentAt}
+	last, hostWasFast := uploader.fastUploadHosts.Load(req.URL.Host)
+	hostWasFast = hostWasFast && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory
 	stallFired := func() {
 		if !uploadDone.CompareAndSwap(false, true) {
 			return
@@ -566,12 +568,13 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		// The host was moving chunks at full rate a moment ago, so an
 		// upload still trickling past its floor rides a wedged pooled
 		// conn; cancel drops the conn so the retry dials a fresh one.
-		uploader.fastUploadHosts.Delete(req.URL.Host)
+		// CompareAndDelete leaves a newer mark a concurrent success stored.
+		uploader.fastUploadHosts.CompareAndDelete(req.URL.Host, last)
 		glog.WarningfCtx(ctx, "upload %d bytes to %s stalled on a pooled connection, retrying on a fresh one", originalDataSize, option.UploadUrl)
 		cancelUpload()
 	}
 	var stallTimer *time.Timer
-	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
+	if hostWasFast {
 		defer func() {
 			if stallTimer != nil {
 				stallTimer.Stop()
