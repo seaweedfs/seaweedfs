@@ -255,7 +255,7 @@ func (Adapter) View(req format.ViewRequest, obj format.Object) (*format.ViewPlan
 	}
 	sequenceText := req.Query.Get("seq")
 	if sequenceText == "" {
-		return &format.ViewPlan{ContentType: PlaylistContentType, Body: renderPlaylist(obj.Name, info)}, nil
+		return &format.ViewPlan{ContentType: PlaylistContentType, Body: renderPlaylist(obj.Name, info, req.Query.Get("jwt"))}, nil
 	}
 	sequence, err := strconv.ParseInt(sequenceText, 10, 64)
 	if err != nil || sequence < info.MediaSequence {
@@ -268,16 +268,20 @@ func (Adapter) View(req format.ViewRequest, obj format.Object) (*format.ViewPlan
 	return &format.ViewPlan{ContentType: MediaContentType, Extent: int(index)}, nil
 }
 
-func renderPlaylist(name string, info *playlistInfo) []byte {
+func renderPlaylist(name string, info *playlistInfo, jwt string) []byte {
 	var out strings.Builder
 	out.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n")
 	fmt.Fprintf(&out, "#EXT-X-TARGETDURATION:%d\n", info.TargetDuration)
 	fmt.Fprintf(&out, "#EXT-X-MEDIA-SEQUENCE:%d\n", info.MediaSequence)
 	out.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 	escapedName := url.PathEscape(name)
+	credential := ""
+	if jwt != "" {
+		credential = "&jwt=" + url.QueryEscape(jwt)
+	}
 	for i, durationMs := range info.DurationsMs {
 		fmt.Fprintf(&out, "#EXTINF:%.3f,\n", float64(durationMs)/1000)
-		fmt.Fprintf(&out, "%s?%s=%s&seq=%d\n", escapedName, format.ViewParam, FormatName, int64(i)+info.MediaSequence)
+		fmt.Fprintf(&out, "%s?%s=%s&seq=%d%s\n", escapedName, format.ViewParam, FormatName, int64(i)+info.MediaSequence, credential)
 	}
 	out.WriteString("#EXT-X-ENDLIST\n")
 	return []byte(out.String())
