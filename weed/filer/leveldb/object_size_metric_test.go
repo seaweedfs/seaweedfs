@@ -34,7 +34,7 @@ func TestCreateEntryRecordsObjectSize(t *testing.T) {
 	}
 	testFiler.SetStore(store)
 	defer testFiler.Shutdown()
-	ctx := context.Background()
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
 
 	file := func(path string, size uint64) *filer.Entry {
 		return &filer.Entry{

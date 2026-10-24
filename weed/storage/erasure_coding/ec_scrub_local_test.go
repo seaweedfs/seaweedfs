@@ -40,7 +40,9 @@ func setupScrubLocalVolume(t *testing.T, shard0 []byte) *erasure_coding.EcVolume
 	if err != nil {
 		t.Fatalf("NewEcVolumeShard: %v", err)
 	}
-	ecv.AddEcVolumeShard(shard)
+	if _, err := ecv.AddEcVolumeShard(shard); err != nil {
+		t.Fatalf("AddEcVolumeShard: %v", err)
+	}
 	return ecv
 }
 

@@ -61,7 +61,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 
 	// retry to get the lease
 	for {
-		if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		if err := l.masterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 			attemptCtx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 			defer cancel()
 			resp, err := client.LeaseAdminToken(attemptCtx, &master_pb.LeaseAdminTokenRequest{
@@ -118,7 +118,7 @@ func (l *ExclusiveLocker) renewLease(ctx context.Context) error {
 	if !l.isLocked.Load() {
 		return nil
 	}
-	return l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	return l.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		attemptCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
 		defer cancel()
 		resp, err := client.LeaseAdminToken(attemptCtx, &master_pb.LeaseAdminTokenRequest{
@@ -152,7 +152,7 @@ func (l *ExclusiveLocker) ReleaseLock() {
 
 	// single unbounded attempt: a release cut short by a deadline leaves the
 	// lock held until it expires, turning a slow unlock into a ghost lock
-	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	l.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    prevToken,
 			PreviousLockTime: prevLockTsNs,

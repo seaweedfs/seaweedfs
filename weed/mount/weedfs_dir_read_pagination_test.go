@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -110,7 +111,7 @@ func TestReadDirResumePastShrunkDirectory(t *testing.T) {
 	defer wfs.ReleaseDirectoryHandle(dhid)
 
 	sink := &pagingSink{limit: 4096}
-	status := wfs.doReadDirectory(&fuse.ReadIn{
+	status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 		InHeader: fuse.InHeader{NodeId: dirInode},
 		Fh:       uint64(dhid),
 		Offset:   152, // past the end of a directory that now holds 100
@@ -157,7 +158,7 @@ func TestReadDirWithExpiredEntries(t *testing.T) {
 	var offset uint64
 	for round := 0; round < 20; round++ {
 		sink.round = 0
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,
@@ -208,7 +209,7 @@ func TestReadDirTrimsConsumedEntries(t *testing.T) {
 	for round := 0; round < 500; round++ {
 		sink.round = 0
 		before := len(sink.names)
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,
@@ -242,5 +243,117 @@ func TestReadDirTrimsConsumedEntries(t *testing.T) {
 	// Without trimming the handle ends up holding every entry.
 	if peak >= total {
 		t.Errorf("handle held %d entries at peak, want well under the %d in the directory", peak, total)
+	}
+}
+
+// listingFilerServer serves a fixed, sorted child list the way the filer
+// paginates one.
+type listingFilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	names []string
+}
+
+func (s *listingFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	var sent uint32
+	for _, name := range s.names {
+		if name < req.StartFromFileName || (name == req.StartFromFileName && !req.InclusiveStartFrom) {
+			continue
+		}
+		if req.Limit > 0 && sent >= req.Limit {
+			break
+		}
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 1},
+		}}); err != nil {
+			return err
+		}
+		sent++
+	}
+	return nil
+}
+
+// TestReadDirDirectTrimsConsumedEntries is the same check for a directory read
+// through to the filer. That path is taken precisely for directories too big to
+// cache, so holding the whole walk in the handle is where a listing turns into
+// gigabytes of resident memory.
+func TestReadDirDirectTrimsConsumedEntries(t *testing.T) {
+	dir := util.FullPath("/d")
+	const total = 5000
+	var names []string
+	for i := 0; i < total; i++ {
+		names = append(names, fmt.Sprintf("f%05d", i))
+	}
+	wfs := newPagingWFS(t, dir, nil, 0)
+	startFakeFiler(t, wfs, &listingFilerServer{names: names})
+	dirInode, _ := wfs.inodeToPath.GetInode(dir)
+	if !wfs.inodeToPath.MarkDirectoryReadThrough(dir, time.Now()) {
+		t.Fatal("directory did not enter read-through mode")
+	}
+
+	dhid, dh := wfs.AcquireDirectoryHandle()
+	defer wfs.ReleaseDirectoryHandle(dhid)
+
+	sink := &pagingSink{limit: 64}
+	var offset uint64
+	var seen []string
+	peak := 0
+	for round := 0; round < 500; round++ {
+		sink.round = 0
+		before := len(sink.names)
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
+			InHeader: fuse.InHeader{NodeId: dirInode},
+			Fh:       uint64(dhid),
+			Offset:   offset,
+			Size:     1 << 20,
+		}, sink, false)
+		if status != fuse.OK {
+			t.Fatalf("readdir: %v", status)
+		}
+		if n := len(dh.entryStream); n > peak {
+			peak = n
+		}
+		if len(sink.names) == before || sink.lastOff <= offset {
+			break
+		}
+		offset = sink.lastOff
+	}
+	for _, n := range sink.names {
+		if n != "." && n != ".." {
+			seen = append(seen, n)
+		}
+	}
+
+	if len(seen) != total {
+		t.Fatalf("listed %d entries, want %d", len(seen), total)
+	}
+	for i, name := range seen {
+		if want := fmt.Sprintf("f%05d", i); name != want {
+			t.Fatalf("entry %d is %q, want %q -- trimming misaligned the offsets", i, name, want)
+		}
+	}
+	if peak >= total {
+		t.Errorf("handle held %d entries at peak, want well under the %d in the directory", peak, total)
+	}
+}
+
+// The table has to key on the sanitized name, not the stored bytes.
+func TestReadDirPlusSanitizedName(t *testing.T) {
+	dir := util.FullPath("/images")
+	const rawName = "bad\xffname.jpg"
+	wfs := newPagingWFS(t, dir, []string{"good.jpg", rawName}, 0)
+	dirInode, _ := wfs.inodeToPath.GetInode(dir)
+
+	sink := &benchSink{plus: true, takesRef: true, sinkLimit: 16}
+	if got := walkOnce(t, wfs, dirInode, sink, false); got != 4 {
+		t.Fatalf("listed %d entries, want 4 (. .. and two children)", got)
+	}
+
+	sanitized := dir.Child(util.SanitizeUTF8Name(rawName))
+	if !wfs.inodeToPath.HasPath(sanitized) {
+		t.Errorf("%s not in the inode table", sanitized)
+	}
+	if wfs.inodeToPath.HasPath(dir.Child(rawName)) {
+		t.Errorf("%s keyed on the unsanitized name", dir.Child(rawName))
 	}
 }

@@ -2,14 +2,18 @@ package policy_engine
 
 import (
 	"fmt"
-	"net"
+	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -30,8 +34,9 @@ type PolicyEvaluationContext struct {
 
 // PolicyEngine is the main policy evaluation engine
 type PolicyEngine struct {
-	contexts map[string]*PolicyEvaluationContext
-	mutex    sync.RWMutex
+	contexts       map[string]*PolicyEvaluationContext
+	mutex          sync.RWMutex
+	trustedProxies atomic.Pointer[TrustedProxies]
 }
 
 // NewPolicyEngine creates a new policy evaluation engine
@@ -39,6 +44,12 @@ func NewPolicyEngine() *PolicyEngine {
 	return &PolicyEngine{
 		contexts: make(map[string]*PolicyEvaluationContext),
 	}
+}
+
+// SetTrustedProxies configures the allowlist used to decide whether
+// forwarded headers are honored when extracting aws:SourceIp.
+func (engine *PolicyEngine) SetTrustedProxies(tp *TrustedProxies) {
+	engine.trustedProxies.Store(tp)
 }
 
 // SetBucketPolicy sets the policy for a bucket
@@ -239,6 +250,10 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
 		}
 		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		// Preserve positive string denies on the original complete list; allows, negative conditions, and variables remain canonical.
+		if !match && stmt.Statement.Effect == PolicyEffectDeny && len(args.OriginalGrantConditions) != 0 {
+			match = evaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims, args.OriginalGrantConditions)
+		}
 		if !match {
 			return false
 		}
@@ -405,11 +420,11 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 }
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
-func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
+func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	values["aws:SourceIp"] = []string{extractSourceIP(r)}
+	values["aws:SourceIp"] = []string{engine.extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -427,6 +442,13 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 
 	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
 	// passed to EvaluatePolicy, not extracted from the request.
+
+	if tags := requestObjectTags(r); len(tags) > 0 {
+		for key, value := range tags {
+			values[RequestObjectTagPrefix+key] = []string{value}
+		}
+		values[RequestObjectTagKeys] = slices.Sorted(maps.Keys(tags))
+	}
 
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
@@ -485,6 +507,94 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	return values
 }
 
+// requestObjectTags returns the tags that X-Amz-Tagging will store on the
+// object, or nil when the handler ignores the header — otherwise a tag
+// attached to a read or to a write that never stores it would satisfy a
+// tag-conditioned policy the object cannot meet.
+func requestObjectTags(r *http.Request) map[string]string {
+	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
+	if tagging == "" {
+		return nil
+	}
+	if !storesRequestObjectTags(r) {
+		return nil
+	}
+	// Parse the same non-empty segments the tag handlers store: url.ParseQuery
+	// caps at 10,000 parameters, so a header padded with "&" segments would
+	// hide stored tag keys from every s3:RequestObjectTag* condition. A
+	// malformed pair is rejected by the handler with InvalidTag.
+	tags := make(map[string]string)
+	for _, segment := range strings.Split(tagging, "&") {
+		if segment == "" {
+			continue
+		}
+		rawKey, rawValue, _ := strings.Cut(segment, "=")
+		key, errKey := url.QueryUnescape(rawKey)
+		value, errValue := url.QueryUnescape(rawValue)
+		if errKey != nil || errValue != nil {
+			return nil
+		}
+		// putToFiler rejects a repeated key, but CopyObject stores its last
+		// value, so that is the one the policy has to see.
+		tags[key] = value
+	}
+	return tags
+}
+
+// storesRequestObjectTags reports whether the request's handler saves the
+// X-Amz-Tagging header on the object: PutObject, a copy under
+// X-Amz-Tagging-Directive: REPLACE, and CreateMultipartUpload do; every
+// other operation — reads, deletes, part uploads, completion, tagging
+// subresources — does not.
+func storesRequestObjectTags(r *http.Request) bool {
+	query := r.URL.Query()
+	if r.Method == http.MethodPost {
+		return query.Has("uploads") && !query.Has("uploadId")
+	}
+	if r.Method != http.MethodPut {
+		return false
+	}
+	// A numeric partNumber together with uploadId routes to the part
+	// handlers — with or without a copy source — which never read
+	// X-Amz-Tagging.
+	if query.Has("partNumber") && query.Has("uploadId") && isDigits(query.Get("partNumber")) {
+		return false
+	}
+	// The PUT subresources route before CopyObject and never read
+	// X-Amz-Tagging; any other query key — presign parameters included —
+	// still reaches the object PUT handlers.
+	for _, subresource := range []string{"tagging", "renameObject", "acl", "retention", "legal-hold"} {
+		if query.Has(subresource) {
+			return false
+		}
+	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
+	}
+	if query.Has("partNumber") || query.Has("uploadId") {
+		return false
+	}
+	// An explicit directory-marker PUT stores no tags.
+	if strings.HasSuffix(r.URL.Path, "/") && r.ContentLength <= 1024 {
+		return false
+	}
+	return true
+}
+
+// isDigits reports whether s is non-empty and all ASCII digits, matching the
+// partNumber route constraint.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // IsMultipartContinuationAction returns true for actions that do not carry
 // their own SSE header because SSE is inherited from CreateMultipartUpload.
 func IsMultipartContinuationAction(action string) bool {
@@ -519,99 +629,11 @@ func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) 
 	return modified
 }
 
-// extractSourceIP returns the best-effort client IP address for condition evaluation.
-// Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
-// IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
-// When the service is exposed directly, clients can spoof aws:SourceIp unless a
-// reverse proxy overwrites these headers.
-
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or RFC1918 private ranges.
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or private ranges.
-func isPrivateIP(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate()
-}
-
-func extractSourceIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-
-	remoteAddr := strings.TrimSpace(r.RemoteAddr)
-	if remoteAddr == "" {
-		return ""
-	}
-
-	// Fall back to unix socket markers or other non-IP placeholders.
-	if remoteAddr == "@" {
-		return remoteAddr
-	}
-
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-
-	remoteIP := net.ParseIP(host)
-	if remoteIP == nil {
-		// Do not return DNS names or unparseable values.
-		return ""
-	}
-
-	// Only trust forwarding headers when the connection appears to come from
-	// a trusted proxy (e.g., private/loopback address).
-	if isPrivateIP(remoteIP) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Iterate right-to-left to find the first non-trusted (public) IP
-			entries := strings.Split(xff, ",")
-			for i := len(entries) - 1; i >= 0; i-- {
-				candidate := strings.TrimSpace(entries[i])
-				if candidate == "" {
-					continue
-				}
-
-				ip := net.ParseIP(candidate)
-				if ip == nil {
-					continue
-				}
-
-				// If the IP is trusted/private, we treat it as another proxy in the chain and continue
-				if isPrivateIP(ip) {
-					continue
-				}
-
-				// Found a public/non-trusted IP, return it as the client IP
-				return ip.String()
-			}
-
-			// If we exhausted the list (all were private/trusted) or found no valid IPs,
-			// fallback related logic could go here.
-			// For now, if all are private, we continue to check X-Real-Ip or return RemoteIP?
-			// The prompt implies we should prefer the extracted IP.
-			// If all in XFF are private, likely the original client IS private (internal network).
-			// The best guess for "original client" in a fully trusted chain is the left-most valid IP.
-			for _, candidate := range entries {
-				candidate = strings.TrimSpace(candidate)
-				if ip := net.ParseIP(candidate); ip != nil {
-					return ip.String()
-				}
-			}
-		}
-
-		if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
-			if ip := net.ParseIP(xRealIP); ip != nil {
-				return ip.String()
-			}
-		}
-	}
-
-	// Default to the actual peer IP when no trusted proxy is detected or the
-	// forwarding headers are absent/invalid.
-	return remoteIP.String()
+// extractSourceIP returns the client IP for aws:SourceIp condition
+// evaluation, honoring forwarded headers only when the direct TCP peer is in
+// the configured trusted-proxy allowlist (see SetTrustedProxies).
+func (engine *PolicyEngine) extractSourceIP(r *http.Request) string {
+	return engine.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
@@ -730,7 +752,7 @@ func (engine *PolicyEngine) GetAllBucketsWithPolicies() []string {
 func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, action, principal string, r *http.Request) PolicyEvaluationResult {
 	resource := BuildResourceArn(bucketName, objectName)
 	actionName := BuildActionName(action)
-	conditions := ExtractConditionValuesFromRequest(r)
+	conditions := engine.ExtractConditionValuesFromRequest(r)
 
 	// Extract principal information for variables
 	principalVars := ExtractPrincipalVariables(principal)

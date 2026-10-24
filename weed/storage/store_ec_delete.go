@@ -52,7 +52,7 @@ func (s *Store) doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume *erasure_cod
 		return erasure_coding.NotFoundError
 	}
 
-	primaryShardId, _ := intervals[0].ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
+	primaryShardId, _ := ecVolume.IntervalToShardIdAndOffset(intervals[0])
 
 	// Normal path: delete on exactly one node holding the primary data shard.
 	err = s.doDeleteNeedleFromRemoteEcShardServers(primaryShardId, ecVolume, needleId)

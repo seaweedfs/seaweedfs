@@ -92,7 +92,11 @@ func TestMain(m *testing.M) {
 }
 
 func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
-	ports, err := testutil.AllocatePorts(10)
+	ports, err := testutil.AllocatePorts(9)
+	if err != nil {
+		return nil, err
+	}
+	adminPorts, err := testutil.AllocateMiniPorts(1)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +104,8 @@ func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
 	volumePort, volumeGrpc := ports[2], ports[3]
 	filerPort, filerGrpc := ports[4], ports[5]
 	s3Port, s3Grpc := ports[6], ports[7]
-	adminPort, adminGrpc := ports[8], ports[9]
+	adminPort := adminPorts[0]
+	icebergPort := ports[8]
 
 	_ = os.Remove(filepath.Join(testDir, "mini.options"))
 
@@ -146,15 +151,16 @@ func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpc),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3Grpc),
-			"-admin.port=" + strconv.Itoa(adminPort),
-			"-admin.port.grpc=" + strconv.Itoa(adminGrpc),
-			"-webdav.port=0",
+			"-webdav=false",    // Disable WebDAV
+			"-s3.port.lance=0", // Disable Lance
+			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-admin.ui=false",
 			"-master.volumeSizeLimitMB=32",
 			"-ip=127.0.0.1",
 			"-master.peers=none",
 			"-s3.iam.readOnly=false",
 		}
+		args = append(args, testutil.MiniAdminArgs(adminPort)...)
 		args = append(args, extraArgs...)
 		os.Args = append([]string{"weed"}, args...)
 		glog.MaxSize = 1024 * 1024
@@ -600,9 +606,9 @@ func testExpireSnapshots(t *testing.T) {
 
 	handler := icebergHandler.NewHandler(nil)
 	config := icebergHandler.Config{
-		SnapshotRetentionHours: 0, // instant expiry — everything eligible
-		MaxSnapshotsToKeep:     1, // keep only the current snapshot
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: 0, // instant expiry — everything eligible
+		MaxSnapshotsToKeep:  1, // keep only the current snapshot
+		MaxCommitRetries:    3,
 	}
 
 	result, _, err := handler.ExpireSnapshots(context.Background(), client, bucket, path.Join(ns, tbl), config)
@@ -796,7 +802,7 @@ func testCompactDataFiles(t *testing.T) {
 	}
 
 	require.Len(t, addedPaths, 1, "compaction should add exactly one merged parquet file")
-	assert.Contains(t, addedPaths, path.Join("data", compacted.Name))
+	assert.Contains(t, addedPaths, fmt.Sprintf("s3://%s/%s/data/%s", bucket, tablePath, compacted.Name))
 	require.Len(t, deletedPaths, len(files), "compaction should delete every original small input file")
 	for _, file := range files {
 		assert.Contains(t, deletedPaths, path.Join("data", file.name))
@@ -932,9 +938,9 @@ func testFullMaintenanceCycle(t *testing.T) {
 
 	// Step 1: Expire snapshots
 	expireConfig := icebergHandler.Config{
-		SnapshotRetentionHours: 0, // instant expiry
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: 0, // instant expiry
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 	result, _, err := handler.ExpireSnapshots(ctx, client, bucket, tablePath, expireConfig)
 	require.NoError(t, err)

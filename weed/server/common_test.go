@@ -2,12 +2,20 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 func TestParseURL(t *testing.T) {
@@ -65,6 +73,105 @@ func TestWriteJsonNoJSONP(t *testing.T) {
 	}
 }
 
+// A POST to a path with a doubled slash must reach the handler at the cleaned,
+// still-decoded path. Without CleanPathHandler, http.ServeMux answers with a
+// redirect whose Location percent-encodes the already-escaped path a second
+// time (golang/go#79897), and a client following it creates directories
+// literally named "%E8%B4%9F..." (seaweedfs#11125).
+//
+// RequestURI must follow the cleaned path as well: PostHandler derives storage
+// rules, bucket and read-only checks from it, so it has to agree with URL.Path.
+// wantRequestURI defaults to wantEscaped.
+func TestCleanPathHandlerServesCleanedPathWithoutRedirect(t *testing.T) {
+	tests := []struct {
+		name           string
+		target         string
+		wantPath       string
+		wantEscaped    string
+		wantRequestURI string
+	}{
+		{
+			name:        "double slash before non-ascii segments",
+			target:      "/Image/2026-09-04//负极全景/OK渲染图/test123_残片正光_拼图_105525641.jpg",
+			wantPath:    "/Image/2026-09-04/负极全景/OK渲染图/test123_残片正光_拼图_105525641.jpg",
+			wantEscaped: "/Image/2026-09-04/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/OK%E6%B8%B2%E6%9F%93%E5%9B%BE/test123_%E6%AE%8B%E7%89%87%E6%AD%A3%E5%85%89_%E6%8B%BC%E5%9B%BE_105525641.jpg",
+		},
+		{
+			name:        "already percent-encoded by the client",
+			target:      "/Image//%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+			wantPath:    "/Image/负极全景/a.jpg",
+			wantEscaped: "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+		},
+		{
+			name:        "trailing slash marks a directory and is kept",
+			target:      "/Image//负极全景/",
+			wantPath:    "/Image/负极全景/",
+			wantEscaped: "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/",
+		},
+		{
+			name:        "dot segments are resolved",
+			target:      "/Image/./tmp/../负极全景/a.jpg",
+			wantPath:    "/Image/负极全景/a.jpg",
+			wantEscaped: "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+		},
+		{
+			name:           "dot segments crossing a bucket move RequestURI to the written bucket, query kept",
+			target:         "/buckets/a/../b/f.jpg?collection=c&ttl=1d",
+			wantPath:       "/buckets/b/f.jpg",
+			wantEscaped:    "/buckets/b/f.jpg",
+			wantRequestURI: "/buckets/b/f.jpg?collection=c&ttl=1d",
+		},
+		{
+			name:           "canonical path is passed through untouched",
+			target:         "/Image/负极全景/a.jpg",
+			wantPath:       "/Image/负极全景/a.jpg",
+			wantEscaped:    "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+			wantRequestURI: "/Image/负极全景/a.jpg",
+		},
+		{
+			name:        "encoded slash is not a separator and is preserved",
+			target:      "/Image//a%2F%2Fb/c.jpg",
+			wantPath:    "/Image/a//b/c.jpg",
+			wantEscaped: "/Image/a%2F%2Fb/c.jpg",
+		},
+		{
+			name:        "root",
+			target:      "//",
+			wantPath:    "/",
+			wantEscaped: "/",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotEscaped, gotRequestURI string
+			mux := http.NewServeMux()
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				gotPath, gotEscaped, gotRequestURI = r.URL.Path, r.URL.EscapedPath(), r.RequestURI
+			})
+
+			w := httptest.NewRecorder()
+			CleanPathHandler(mux).ServeHTTP(w, httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader("data")))
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status: got %d (Location %q), want 200 with no redirect", w.Code, w.Header().Get("Location"))
+			}
+			if gotPath != tc.wantPath {
+				t.Errorf("r.URL.Path: got %q want %q", gotPath, tc.wantPath)
+			}
+			if gotEscaped != tc.wantEscaped {
+				t.Errorf("r.URL.EscapedPath(): got %q want %q", gotEscaped, tc.wantEscaped)
+			}
+			wantRequestURI := tc.wantRequestURI
+			if wantRequestURI == "" {
+				wantRequestURI = tc.wantEscaped
+			}
+			if gotRequestURI != wantRequestURI {
+				t.Errorf("r.RequestURI: got %q want %q", gotRequestURI, wantRequestURI)
+			}
+		})
+	}
+}
+
 func TestWriteJsonPrettyDoesNotReadMultipartBody(t *testing.T) {
 	var form bytes.Buffer
 	mw := multipart.NewWriter(&form)
@@ -111,4 +218,200 @@ func (c *countingReadCloser) Read(p []byte) (int, error) {
 
 func (c *countingReadCloser) Close() error {
 	return nil
+}
+
+// A write error after the body has flushed must not complete as 200 with the
+// full Content-Length: the unflushed tail is discarded and the connection
+// aborted mid-body.
+func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 200*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = ProcessRangeRequest(r, w, int64(len(payload)), "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+			return func(writer io.Writer) error {
+				// Page-sized writes, as readNeedleDataInto does. The tail sits
+				// in the 128KiB buffer; flushing it would finish the 200.
+				for off := 0; off < len(payload); off += 4096 {
+					end := off + 4096
+					if end > len(payload) {
+						end = len(payload)
+					}
+					if _, werr := writer.Write(payload[off:end]); werr != nil {
+						return werr
+					}
+				}
+				return errors.New("ReadNeedleData checksum mismatch")
+			}, nil
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want the committed 200", resp.StatusCode)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr == nil {
+		t.Fatalf("body completed with %d bytes; the erroring tail must abort it", len(body))
+	}
+}
+
+func TestProcessRangeRequestWriteErrorBeforeBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/test.bin", nil)
+	w := httptest.NewRecorder()
+	err := ProcessRangeRequest(r, w, 100, "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			return errors.New("ReadNeedleData checksum mismatch")
+		}, nil
+	})
+	if err == nil {
+		t.Fatal("expected write error")
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500, body %q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "checksum") {
+		t.Fatalf("body %q, want the checksum error", w.Body.String())
+	}
+}
+
+func TestProcessRangeRequestLargeBody(t *testing.T) {
+	payload := bytes.Repeat([]byte("y"), 200*1024)
+	r := httptest.NewRequest(http.MethodGet, "/test.bin", nil)
+	w := httptest.NewRecorder()
+	err := ProcessRangeRequest(r, w, int64(len(payload)), "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			_, werr := writer.Write(payload)
+			return werr
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), payload) {
+		t.Fatalf("body len %d, want %d", w.Body.Len(), len(payload))
+	}
+}
+
+func TestProcessRangeRequestRanges(t *testing.T) {
+	data := []byte("0123456789")
+	serve := func(rangeHeader string) (*httptest.ResponseRecorder, error) {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test.txt", nil)
+		r.Header.Set("Range", rangeHeader)
+		w := httptest.NewRecorder()
+		err := ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+			return func(writer io.Writer) error {
+				_, err := writer.Write(data[offset : offset+size])
+				return err
+			}, nil
+		})
+		return w, err
+	}
+
+	tests := []struct {
+		rangeHeader string
+		wantCode    int
+		wantRange   string
+		wantBody    string
+	}{
+		{"bytes=0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
+		{"bytes=5-100", http.StatusPartialContent, "bytes 5-9/10", "56789"},
+		{"bytes=10-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"bytes=100-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"bytes=10-,0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
+	}
+	for _, tt := range tests {
+		w, err := serve(tt.rangeHeader)
+		if wantErr := tt.wantCode == http.StatusRequestedRangeNotSatisfiable; (err != nil) != wantErr {
+			t.Errorf("%s: error = %v, want an error only for 416", tt.rangeHeader, err)
+		}
+		if w.Code != tt.wantCode {
+			t.Errorf("%s: status %d, want %d", tt.rangeHeader, w.Code, tt.wantCode)
+		}
+		if got := w.Header().Get("Content-Range"); got != tt.wantRange {
+			t.Errorf("%s: Content-Range %q, want %q", tt.rangeHeader, got, tt.wantRange)
+		}
+		if tt.wantBody != "" && w.Body.String() != tt.wantBody {
+			t.Errorf("%s: body %q, want %q", tt.rangeHeader, w.Body.String(), tt.wantBody)
+		}
+	}
+}
+
+// /submit must reject at the limit its master was given, not at a hardcoded
+// 256MB: weed server hands -volume.fileSizeLimitMB down to the master, and an
+// upload the volume server would store must not be turned away here (#6748).
+func TestSubmitForClientHandlerFileSizeLimit(t *testing.T) {
+	const fileSizeLimitBytes = int64(1 << 20)
+
+	submit := func(t *testing.T, dataSize int) *httptest.ResponseRecorder {
+		t.Helper()
+		var form bytes.Buffer
+		mw := multipart.NewWriter(&form)
+		part, err := mw.CreateFormFile("file", "test.bin")
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(make([]byte, dataSize)); err != nil {
+			t.Fatalf("write form file: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close multipart writer: %v", err)
+		}
+
+		// Assigning a file id is not under test, and there is no master to ask.
+		// A cancelled context fails that step at once for an accepted upload.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/submit", bytes.NewReader(form.Bytes()))
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		w := httptest.NewRecorder()
+		masterFn := func(ctx context.Context) pb.ServerAddress { return pb.ServerAddress("localhost:9333") }
+		submitForClientHandler(w, r, masterFn, grpc.WithTransportCredentials(insecure.NewCredentials()), fileSizeLimitBytes)
+		return w
+	}
+
+	t.Run("over the limit", func(t *testing.T) {
+		w := submit(t, int(fileSizeLimitBytes)+1)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status: got %d want %d, body %q", w.Code, http.StatusBadRequest, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "over the limited") {
+			t.Errorf("body: got %q, want the file size limit error", w.Body.String())
+		}
+	})
+
+	t.Run("under the limit", func(t *testing.T) {
+		w := submit(t, int(fileSizeLimitBytes)-1)
+		if strings.Contains(w.Body.String(), "over the limited") {
+			t.Errorf("body: got %q, want no file size limit error", w.Body.String())
+		}
+		// Asserting on the message alone would still pass if the limit rejected
+		// this payload with different wording. Parser failures answer 400, and the
+		// cancelled assignment this request runs into answers 500, so a 400 here
+		// means the upload never got past parsing.
+		if w.Code == http.StatusBadRequest {
+			t.Errorf("status: got 400, want the request to reach assignment, body %q", w.Body.String())
+		}
+	})
+}
+
+func TestRedactedURLDropsTheJwt(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/1,abc?jwt=secret-token&size=5", nil)
+	if got := redactedURL(r); strings.Contains(got, "secret-token") || !strings.Contains(got, "size=5") {
+		t.Errorf("got %q, want jwt redacted and other params kept", got)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/1,abc?jwt=&jwt=secret-token&size=5", nil)
+	if got := redactedURL(r); strings.Contains(got, "secret-token") {
+		t.Errorf("got %q, want every jwt value redacted", got)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/1,abc?size=5", nil)
+	if got := redactedURL(r); got != "/1,abc?size=5" {
+		t.Errorf("got %q, want the URL unchanged without a jwt", got)
+	}
 }

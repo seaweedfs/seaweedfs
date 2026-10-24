@@ -206,7 +206,7 @@ func testTelemetryClient() error {
 		Version:           "3.45",
 		Os:                "linux/amd64",
 		VolumeServerCount: 3,
-		TotalDiskBytes:    1073741824, // 1GB
+		TotalDiskBytes:    proto.MinDiskBytes + (1 << 30), // just above the reporting floor
 		TotalVolumeCount:  50,
 		FilerCount:        2,
 		BrokerCount:       1,

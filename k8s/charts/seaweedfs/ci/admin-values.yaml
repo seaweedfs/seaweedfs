@@ -1,0 +1,7 @@
+# Admin install: exercises the admin StatefulSet, which passes -ip (default
+# 0.0.0.0) and therefore requires authentication to bind a non-loopback address.
+admin:
+  enabled: true
+  secret:
+    adminUser: "admin"
+    adminPassword: "ci-admin-password"

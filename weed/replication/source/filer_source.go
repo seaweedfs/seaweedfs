@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +19,12 @@ import (
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
+// ErrVolumeNotFound reports that the source cluster has no location for a
+// chunk's volume: vacuumed away, deleted, or every replica offline. Callers
+// need it apart from a lookup that simply failed, which a later attempt can
+// still get past.
+var ErrVolumeNotFound = errors.New("volume not found")
+
 type FilerSource struct {
 	grpcAddress    string
 	grpcDialOption grpc.DialOption
@@ -27,6 +34,7 @@ type FilerSource struct {
 	dataCenter     string
 	signature      int32
 	httpClient     *util_http_client.HTTPClient
+	jwtForFiler    security.FilerJwtProvider
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
@@ -60,6 +68,23 @@ func (fs *FilerSource) SetHttpClient(client *util_http_client.HTTPClient) {
 	fs.httpClient = client
 }
 
+func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
+	fs.jwtForFiler = provider
+}
+
+// FilerJwt returns the side-specific filer API credential, or nil when the
+// process-wide jwt.filer_signing configuration applies.
+// ProxyByFiler reports whether chunk reads are proxied through the source
+// filer. A proxied 404 can also mean the filer found no volume locations, so it
+// does not isolate a missing needle the way a direct volume read's 404 does.
+func (fs *FilerSource) ProxyByFiler() bool {
+	return fs.proxyByFiler
+}
+
+func (fs *FilerSource) FilerJwt() security.FilerJwtProvider {
+	return fs.jwtForFiler
+}
+
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
@@ -88,8 +113,8 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, err)
-		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
+		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, ErrVolumeNotFound)
+		return nil, fmt.Errorf("LookupFileId locate volume id %s: %w", vid, ErrVolumeNotFound)
 	}
 
 	if !fs.proxyByFiler {
@@ -103,7 +128,7 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 			}
 		}
 	} else {
-		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
+		fileUrls = append(fileUrls, util_http.ProxyChunkUrl(fs.address, part))
 	}
 
 	return
@@ -118,12 +143,20 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 	}
 
 	if fs.proxyByFiler {
-		filename, header, resp, err = downloadFn("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
+		fileUrl := util_http.ProxyChunkUrl(fs.address, fileId)
+		jwt := util_http.JwtForFilerServer(false)
+		if fs.jwtForFiler != nil {
+			jwt = string(fs.jwtForFiler(false))
+		}
+		filename, header, resp, err = downloadFn(fileUrl, jwt, offset)
+		if err == nil {
+			err = readPartStatusError(fileUrl, resp)
+		}
 		if err != nil {
 			glog.V(0).Infof("read part %s via filer proxy %s offset %d: %v", fileId, fs.address, offset, err)
-		} else {
-			glog.V(4).Infof("read part %s via filer proxy %s offset %d content-length:%s", fileId, fs.address, offset, header.Get("Content-Length"))
+			return "", nil, nil, err
 		}
+		glog.V(4).Infof("read part %s via filer proxy %s offset %d content-length:%s", fileId, fs.address, offset, header.Get("Content-Length"))
 		return
 	}
 
@@ -134,15 +167,34 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = downloadFn(fileUrl, "", offset)
-		if err != nil {
-			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
-		} else {
-			glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
-			break
+		if err == nil {
+			err = readPartStatusError(fileUrl, resp)
 		}
+		if err != nil {
+			resp = nil
+			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
+			continue
+		}
+		glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
+		break
 	}
 
 	return filename, header, resp, err
+}
+
+// readPartStatusError turns a failure status into an error and closes the
+// response. Otherwise the caller copies the error page as chunk content and
+// reports it as a short read; a needle vacuum has removed answers 404, which
+// is the source having lost the data rather than corruption.
+func readPartStatusError(fileUrl string, resp *http.Response) error {
+	if resp == nil || resp.StatusCode < http.StatusBadRequest {
+		return nil
+	}
+	defer util_http.CloseResponse(resp)
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%s: %s: %w", fileUrl, resp.Status, util_http.ErrNotFound)
+	}
+	return fmt.Errorf("%s: %s", fileUrl, resp.Status)
 }
 
 var _ = filer_pb.FilerClient(&FilerSource{})

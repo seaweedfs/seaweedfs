@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -19,7 +20,7 @@ func (wfs *WFS) streamCreateEntry(ctx context.Context, req *filer_pb.CreateEntry
 		glog.V(1).Infof("streamCreateEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Entry.Name, err)
 	}
 	var resp *filer_pb.CreateEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = filer_pb.CreateEntryWithResponse(ctx, client, req)
 		return err
@@ -38,7 +39,7 @@ func (wfs *WFS) streamUpdateEntry(ctx context.Context, req *filer_pb.UpdateEntry
 		glog.V(1).Infof("streamUpdateEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Entry.Name, err)
 	}
 	var resp *filer_pb.UpdateEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = client.UpdateEntry(ctx, req)
 		return err
@@ -57,10 +58,20 @@ func (wfs *WFS) streamDeleteEntry(ctx context.Context, req *filer_pb.DeleteEntry
 		glog.V(1).Infof("streamDeleteEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Name, err)
 	}
 	var resp *filer_pb.DeleteEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = client.DeleteEntry(ctx, req)
-		return err
+		if err != nil {
+			return err
+		}
+		// A refused delete arrives in the response, as the stream branch above.
+		if resp.Error != "" {
+			return &streamMutateError{msg: resp.Error, errno: syscall.EIO}
+		}
+		return nil
 	})
-	return resp, err
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

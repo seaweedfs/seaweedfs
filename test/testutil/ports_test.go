@@ -4,7 +4,7 @@ import "testing"
 
 // AllocateMiniPorts must never hand out a port that weed mini will reserve
 // for one of its default services (or that default's gRPC offset). A real
-// failure: Filer was given 33646 (Admin default 23646 + GrpcPortOffset),
+// failure: Filer was given 22535 (Admin default 12535 + GrpcPortOffset),
 // which mini then refused as "reserved for gRPC calculation".
 func TestAllocateMiniPortsAvoidsMiniDefaults(t *testing.T) {
 	reserved := reservedMiniPorts()

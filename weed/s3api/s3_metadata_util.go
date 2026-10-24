@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -30,7 +29,7 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 	}
 
 	// Content-Encoding (standard HTTP header used by S3)
-	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+	if ce := storedContentEncoding(r.Header.Values("Content-Encoding")); ce != "" {
 		metadata["Content-Encoding"] = []byte(ce)
 	}
 
@@ -52,25 +51,16 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 
 	// Object tagging
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
-		// Use url.ParseQuery for robust parsing and automatic URL decoding
-		parsedTags, err := url.ParseQuery(tags)
+		tagSet, err := parseTagsHeader(tags)
 		if err != nil {
-			// Return proper S3 error instead of silently dropping tags
-			glog.Warningf("Invalid S3 tag format in header '%s': %v", tags, err)
+			glog.Warningf("Invalid S3 tagging header: %v", err)
 			return nil, s3err.ErrInvalidTag
 		}
-
-		// Validate: S3 spec does not allow duplicate tag keys
-		for key, values := range parsedTags {
-			if len(values) > 1 {
-				glog.Warningf("Duplicate tag key '%s' in header '%s'", key, tags)
-				return nil, s3err.ErrInvalidTag
-			}
-			// Tag value can be an empty string but not nil
-			value := ""
-			if len(values) > 0 {
-				value = values[0]
-			}
+		if err := ValidateTags(tagSet); err != nil {
+			glog.Warningf("Invalid tags (%d): %v", len(tagSet), err)
+			return nil, s3err.ErrInvalidTag
+		}
+		for key, value := range tagSet {
 			metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
 	}
@@ -94,17 +84,30 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(keyMD5)
 	}
 
-	// ACL owner
-	acpOwner := r.Header.Get(s3_constants.ExtAmzOwnerKey)
-	if len(acpOwner) > 0 {
-		metadata[s3_constants.ExtAmzOwnerKey] = []byte(acpOwner)
-	}
-
-	// ACL grants
-	acpGrants := r.Header.Get(s3_constants.ExtAmzAclKey)
-	if len(acpGrants) > 0 {
-		metadata[s3_constants.ExtAmzAclKey] = []byte(acpGrants)
-	}
-
 	return metadata, s3err.ErrNone
+}
+
+// storedContentEncoding returns the Content-Encoding to keep with an object,
+// from the values of the request's Content-Encoding fields, which it combines
+// as one list. aws-chunked names the SigV4 streaming framing of the request
+// body, which is decoded on upload, so S3 does not store it: "gzip,
+// aws-chunked" is kept as "gzip", and "aws-chunked" alone as no
+// Content-Encoding at all.
+func storedContentEncoding(values []string) string {
+	value := strings.Join(values, ", ")
+	var kept []string
+	chunked := false
+	for _, encoding := range strings.Split(value, ",") {
+		encoding = strings.TrimSpace(encoding)
+		switch {
+		case strings.EqualFold(encoding, "aws-chunked"):
+			chunked = true
+		case encoding != "":
+			kept = append(kept, encoding)
+		}
+	}
+	if !chunked {
+		return value
+	}
+	return strings.Join(kept, ", ")
 }

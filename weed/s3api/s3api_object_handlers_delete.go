@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -78,7 +79,7 @@ func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId,
 		}
 		return normalizeConditionalTargetEntry(entry), nil
 	default:
-		entry, err := s3a.resolveObjectEntry(bucket, normalizedObject)
+		entry, err := s3a.resolveObjectEntry(bucket, normalizedObject, "")
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +127,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 	// in for without hiding the children underneath it. It is not a versioned object,
 	// so it is deleted the way an unversioned bucket deletes it.
 	if versionId == "" && strings.HasSuffix(object, "/") {
-		return result, s3a.deleteDirectoryMarker(bucket, object)
+		return result, s3a.deleteDirectoryMarker(r, bucket, object)
 	}
 
 	switch {
@@ -189,20 +190,27 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 // relies on the volume's natural TTL to reclaim chunks; pass true only
 // when the entry's Attributes.TtlSec > 0 so the volume is guaranteed to
 // drop the chunks on its own.
-func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
+func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
 	if !s3_constants.IsValidBucketName(bucket) || !s3_constants.IsValidObjectKey(object) {
 		return errors.New("invalid bucket or object path")
 	}
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
-	return deleteObjectEntry(client, dir, name, !metadataOnly, false)
+	// The caller holds one client for a whole batch, so a dropped reply is
+	// replayed on that client rather than by re-entering WithFilerClient.
+	return retryFilerOp(ctx, "delete "+string(target), func() error {
+		return deleteObjectEntry(ctx, client, dir, name, !metadataOnly, false)
+	})
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.Infof("DeleteObjectHandler %s %s", bucket, object)
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+	// The filer ops below each retry, and a failover walk runs the whole set
+	// once per filer, so the backoff comes out of one allowance held here.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
+	if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
@@ -223,6 +231,16 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	versioningConfigured := (versioningState != "")
+
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, string(s3_constants.ACTION_WRITE), "DeleteObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	var auditLog *s3err.AccessLog
 	if s3err.Logger != nil {
@@ -245,7 +263,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		deleteCode, deleteHandled = s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
 			return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
 		}, func() s3err.ErrorCode {
-			return s3a.deleteDirectoryMarker(bucket, object)
+			return s3a.deleteDirectoryMarker(r, bucket, object)
 		}), true
 	}
 
@@ -299,11 +317,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					}
 				}
 				if versionId == "null" {
-					deleteCode = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass)
+					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass)
 				} else {
-					deleteCode = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass)
+					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass), true
 				}
-				deleteHandled = true
 			}
 		}
 	}
@@ -327,7 +344,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			}
 
 			if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
+				return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 			}); err != nil {
 				glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
 				return s3err.ErrInternalError
@@ -414,7 +431,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	}
 
 	if len(deleteObjects.Objects) > deleteMultipleObjectsLimit {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 
@@ -448,6 +465,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		identity, _ = id.(*Identity)
 	}
 
+	// The keys below each drive their own bounded filer retries, and the client
+	// picks how many keys there are, so the whole batch shares one allowance.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
+
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
@@ -458,21 +479,44 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(validationCode, object.Key, object.VersionId))
 				continue
 			}
-			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
+			key := s3_constants.NormalizeObjectKey(object.Key)
+			if key == "" {
+				// A key of only slashes can never name a stored entry; like a
+				// missing key the delete is an idempotent no-op, and a
+				// conditional delete has no target to match.
+				if object.ETag != "" {
+					deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrNoSuchKey, object.Key, object.VersionId))
+					continue
+				}
+				deletedCount++
+				if !deleteObjects.Quiet {
+					deletedObjects = append(deletedObjects, ObjectIdentifier{Key: object.Key, VersionId: object.VersionId})
+				}
+				continue
+			}
+			if _, err := s3a.validateTableBucketObjectPathOrVerify(bucket, key); err != nil {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
 				continue
 			}
-			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
-				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
+			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, key, object.VersionId); authErr != s3err.ErrNone {
+				// Defer to the recheck, mirroring the copy-source fallback: a
+				// tag-conditioned Allow may still grant what phase one denied.
+				if authErr != s3err.ErrAccessDenied || s3a.recheckPolicyForKeyWithLookup(r, http.MethodDelete, bucket, key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler") != s3err.ErrNone {
+					deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
+					continue
+				}
+			}
+			if errCode := s3a.recheckTagConditionedPolicyWithLookup(objectKeyPolicyRequest(r, http.MethodDelete, bucket, key, object.VersionId), bucket, key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler"); errCode != s3err.ErrNone {
+				deleteErrors = append(deleteErrors, deleteErrorFromCode(errCode, object.Key, object.VersionId))
 				continue
 			}
 
 			var deleteResult deleteMutationResult
-			deleteCode := s3a.withObjectWriteLock(bucket, object.Key, func() s3err.ErrorCode {
-				return s3a.checkDeleteIfMatch(bucket, object.Key, object.VersionId, versioningState, object.ETag, s3err.ErrNoSuchKey)
+			deleteCode := s3a.withObjectWriteLock(bucket, key, func() s3err.ErrorCode {
+				return s3a.checkDeleteIfMatch(bucket, key, object.VersionId, versioningState, object.ETag, s3err.ErrNoSuchKey)
 			}, func() s3err.ErrorCode {
 				if versioningConfigured {
-					result, errCode := s3a.deleteVersionedObject(r, bucket, object.Key, object.VersionId, versioningState)
+					result, errCode := s3a.deleteVersionedObject(r, bucket, key, object.VersionId, versioningState)
 					if errCode != s3err.ErrNone {
 						return errCode
 					}
@@ -480,18 +524,18 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					return s3err.ErrNone
 				}
 
-				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, "", governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, object.Key, err)
+				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, key)
+				if err := s3a.enforceObjectLockProtections(r, bucket, key, "", governanceBypassAllowed); err != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, key, err)
 					return s3err.ErrAccessDenied
 				}
 
-				if strings.HasSuffix(object.Key, "/") {
-					return s3a.deleteDirectoryMarker(bucket, object.Key)
+				if strings.HasSuffix(key, "/") {
+					return s3a.deleteDirectoryMarker(r, bucket, key)
 				}
 
-				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key, false); err != nil {
-					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, object.Key, err)
+				if err := s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, key, false); err != nil {
+					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, key, err)
 					return s3err.ErrInternalError
 				}
 

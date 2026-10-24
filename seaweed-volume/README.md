@@ -4,7 +4,10 @@ A drop-in replacement for the [SeaweedFS](https://github.com/seaweedfs/seaweedfs
 
 ## Building
 
-Requires Rust 1.75+ (2021 edition).
+Requires Rust 1.91.1+ (2024 edition), matching `rust-version` in `Cargo.toml`.
+The patch release matters: 1.91.0 does not build. The edition itself only needs
+1.85; the higher floor comes from the dependency tree — chiefly the AWS SDK — so
+it moves with those crates. CI builds on the latest stable.
 
 ```bash
 cd seaweed-volume
@@ -61,10 +64,14 @@ seaweed-volume --port 8080 --master localhost:9333 --dir /data/vol1 --max 7 \
 | `--whiteList` | | Comma-separated IPs with write permission |
 | `--preStopSeconds` | `10` | Graceful drain period before shutdown |
 | `--compactionMBps` | `0` (unlimited) | Compaction I/O rate limit |
+| `--compactionMaxParallelCommits` | `0` (unlimited) | Max concurrent vacuum commits |
 | `--pprof` | `false` | Enable pprof HTTP handlers |
 
 Set `RUST_LOG=debug` (or `trace`, `info`, `warn`) for log level control.
-Set `SEAWEED_WRITE_QUEUE=1` to enable batched async write processing.
+
+Durable (`fsync=true`) uploads always go through per-volume batching workers
+that share one `.dat`/`.idx` sync per batch, matching the Go volume server;
+non-fsync writes take the synchronous path.
 
 ## Features
 

@@ -38,9 +38,7 @@ func TestIamConfigWithoutIdentitiesIsNotStatic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if !hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to load after filer change with -iam.config-only setup")
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 }
 
 // A -config identity file protects its identities but must not block live
@@ -70,9 +68,7 @@ func TestConfigWithIdentitiesStillLiveReloadsDynamic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if !hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to live-reload despite the static identity file")
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 	if !hasIdentity(s3a.iam, "static-admin") {
 		t.Fatalf("static-admin must survive the dynamic reload")
 	}
@@ -84,9 +80,7 @@ func TestConfigWithIdentitiesStillLiveReloadsDynamic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", &filer_pb.Entry{Name: "alice.json"}, nil); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to be removed after deletion on the filer")
-	}
+	waitForIdentityGone(t, s3a.iam, "alice")
 	if !hasIdentity(s3a.iam, "static-admin") {
 		t.Fatalf("static-admin must survive the deletion reload")
 	}
@@ -285,7 +279,8 @@ func (f *flakyStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfig
 	return f.CredentialStore.LoadConfiguration(ctx)
 }
 
-// A failed event-driven reload must keep retrying until the store recovers.
+// A failed reload queued from an IAM config change must keep retrying until
+// the store recovers.
 func TestFailedReloadRetriesUntilSuccess(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
 
@@ -293,26 +288,17 @@ func TestFailedReloadRetriesUntilSuccess(t *testing.T) {
 	iamReloadRetryInterval = 10 * time.Millisecond
 	t.Cleanup(func() { iamReloadRetryInterval = prev })
 
-	s3a.iam.reloadCh = make(chan struct{}, 1)
-	go s3a.iam.reloadRetryLoop()
-	t.Cleanup(s3a.iam.Shutdown)
-
 	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice"}); err != nil {
 		t.Fatalf("failed to create alice: %v", err)
 	}
 	s3a.iam.credentialManager.Store = &flakyStore{CredentialStore: s3a.iam.credentialManager.Store, failures: 2}
 
-	// the event-driven reload fails and hands off to the retry loop
-	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err == nil {
-		t.Fatalf("expected the event-driven reload to fail")
+	// onIamConfigChange only queues a coalesced reload; the retry loop does the
+	// work and retries through the transient store failures.
+	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
+		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !hasIdentity(s3a.iam, "alice") {
-		if time.Now().After(deadline) {
-			t.Fatalf("expected alice to load once the store recovered")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 }
 
 func hasPolicy(iam *IdentityAccessManagement, name string) bool {
@@ -342,4 +328,260 @@ func writeTempIamConfig(t *testing.T, content string) string {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
 	return path
+}
+
+// A static config file may hold ${VAR} in place of a key, so a deployment can
+// keep the keys in its own secret store and pass them in as environment
+// variables rather than baking them into the file.
+func TestStaticConfigExpandsEnvCredentialRefs(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "secretfromenv")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIAFROMENV")
+	if !found {
+		t.Fatalf("expected the access key from the environment to be loaded")
+	}
+	if cred.SecretKey != "secretfromenv" {
+		t.Fatalf("expected the secret key from the environment, got %q", cred.SecretKey)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}"); found {
+		t.Fatalf("the unexpanded reference must not remain usable as an access key")
+	}
+}
+
+// An unset variable must not leave the reference behind as a literal key.
+func TestStaticConfigDropsUnresolvedEnvCredentialRefs(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_MISSING_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_MISSING_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	if _, _, found := s3a.iam.lookupByAccessKey("${SEAWEEDFS_S3_MISSING_ACCESS_KEY_ID}"); found {
+		t.Fatalf("a credential referencing an unset variable must be dropped")
+	}
+	if !hasIdentity(s3a.iam, "anvAdmin") {
+		t.Fatalf("expected the identity itself to still load")
+	}
+}
+
+// Keys that merely contain a dollar sign are literal, and identities coming
+// from the filer are never expanded.
+func TestEnvCredentialRefsOnlyApplyToStaticConfig(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY", "secretfromenv")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte(`{"identities":[{"name":"dynamic","credentials":[{"accessKey":"AKIALITERAL","secretKey":"${SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)); err != nil {
+		t.Fatalf("failed to load dynamic config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIALITERAL")
+	if !found {
+		t.Fatalf("expected the dynamic identity to load")
+	}
+	if cred.SecretKey != "${SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY}" {
+		t.Fatalf("a dynamic identity must keep its secret key verbatim, got %q", cred.SecretKey)
+	}
+}
+
+// A key holding a dollar sign that is not a reference stays untouched.
+func TestStaticConfigKeepsLiteralDollarSigns(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"AKIALITERAL","secretKey":"pa$$word"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIALITERAL")
+	if !found {
+		t.Fatalf("expected the identity to load")
+	}
+	if cred.SecretKey != "pa$$word" {
+		t.Fatalf("expected the literal secret key, got %q", cred.SecretKey)
+	}
+}
+
+// A secret store handing over a blank value must not leave an access key that
+// any signature matches.
+func TestStaticConfigDropsEmptyEnvCredentialRefs(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	if _, _, found := s3a.iam.lookupByAccessKey("AKIAFROMENV"); found {
+		t.Fatalf("a credential whose secret key resolves to empty must be dropped")
+	}
+}
+
+// A reference the substitution cannot match, such as a typo in the variable
+// name, must not survive as a literal key.
+func TestStaticConfigDropsMalformedEnvCredentialRefs(t *testing.T) {
+	for _, malformed := range []string{"${MY-VAR}", "${1VAR}", "${}", "${UNTERMINATED", "${A}${B"} {
+		t.Run(malformed, func(t *testing.T) {
+			t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "secretfromenv")
+			t.Setenv("A", "a")
+
+			s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+			path := writeTempIamConfig(t, fmt.Sprintf(`{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":%q,"secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`, malformed))
+			if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+				t.Fatalf("failed to load identity config: %v", err)
+			}
+
+			if _, _, found := s3a.iam.lookupByAccessKey(malformed); found {
+				t.Fatalf("%s must not become a usable access key", malformed)
+			}
+		})
+	}
+}
+
+// A resolved value that happens to contain ${ is still the key the operator set.
+func TestStaticConfigKeepsBracesComingFromTheEnvironment(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "pa${ss}word")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIAFROMENV")
+	if !found {
+		t.Fatalf("expected the identity to load")
+	}
+	if cred.SecretKey != "pa${ss}word" {
+		t.Fatalf("expected the secret key from the environment verbatim, got %q", cred.SecretKey)
+	}
+}
+
+// Editing an identity out of the static config file and reloading must revoke it:
+// the identity, its access keys and those of its service accounts stop working on
+// the running gateway, and its name stops being protected as static. What the file
+// still declares, a dynamic filer-managed identity and the AWS environment
+// identity are all untouched.
+func TestReloadStaticConfigRevokesRemovedIdentity(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAENV1")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "c2VjcmV0")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]},{"name":"revoked","credentials":[{"accessKey":"AKREVOKE","secretKey":"c2VjcmV0"}],"actions":["Read","List"]},{"name":"kept","credentials":[{"accessKey":"AKKEPT00","secretKey":"c2VjcmV0"}],"actions":["Read"]}],"serviceAccounts":[{"id":"sa-1","parentUser":"revoked","credential":{"accessKey":"AKSA0001","secretKey":"c2VjcmV0"}}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKREVOKE"); !found {
+		t.Fatalf("expected the identity to authenticate before the reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKSA0001"); !found {
+		t.Fatalf("expected the service account key to be loaded before the reload")
+	}
+
+	// A dynamic identity arrives from the filer and must survive the reload.
+	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "dynamic", Credentials: []*iam_pb.Credential{{AccessKey: "AKDYN000", SecretKey: "c2VjcmV0"}}}); err != nil {
+		t.Fatalf("failed to create dynamic identity: %v", err)
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKDYN000"); !found {
+		t.Fatalf("expected the dynamic identity's key to authenticate before the reload")
+	}
+
+	// Drop "revoked" and its service account from the file and reload.
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]},{"name":"kept","credentials":[{"accessKey":"AKKEPT00","secretKey":"c2VjcmV0"}],"actions":["Read"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if hasIdentity(s3a.iam, "revoked") {
+		t.Fatalf("an identity removed from the config file must be dropped by the reload")
+	}
+	for _, key := range []string{"AKREVOKE", "AKSA0001"} {
+		if _, _, found := s3a.iam.lookupByAccessKey(key); found {
+			t.Fatalf("access key %s of the removed identity must stop authenticating", key)
+		}
+	}
+	if isStaticName(s3a.iam, "revoked") {
+		t.Fatalf("a name that left the config file must stop being static")
+	}
+
+	// What the file still declares is untouched.
+	if !hasIdentity(s3a.iam, "kept") || !isStaticName(s3a.iam, "kept") {
+		t.Fatalf("identities still in the file must survive the reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKKEPT00"); !found {
+		t.Fatalf("a kept identity's access key must keep working")
+	}
+
+	// The file cannot revoke what it never declared.
+	if !hasIdentity(s3a.iam, "dynamic") {
+		t.Fatalf("a dynamic identity must survive a static-file reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKDYN000"); !found {
+		t.Fatalf("a dynamic identity's access key must keep working after a static-file reload")
+	}
+	if !hasIdentity(s3a.iam, "admin-AKIAENV1") {
+		t.Fatalf("the AWS environment identity must survive a static-file reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKIAENV1"); !found {
+		t.Fatalf("the AWS environment identity's access key must keep working")
+	}
+}
+
+// A file reload always merges, so emptying the file must not flip the next reload
+// into replacing the store and dropping the filer-managed identities.
+func TestReloadStaticConfigWithoutIdentitiesKeepsDynamic(t *testing.T) {
+	// The AWS environment identity stays static across a file reload, so with credentials
+	// in the environment it would keep `hasStaticConfig` true and the regression would pass
+	// unnoticed. Clear them whatever the runner has set.
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+
+	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice", Credentials: []*iam_pb.Credential{{AccessKey: "AKALICE0", SecretKey: "c2VjcmV0"}}}); err != nil {
+		t.Fatalf("failed to create alice: %v", err)
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+
+	empty := writeTempIamConfig(t, `{"identities":[]}`)
+	for i := 1; i <= 2; i++ {
+		if err := s3a.iam.loadS3ApiConfigurationFromFile(empty); err != nil {
+			t.Fatalf("reload %d failed: %v", i, err)
+		}
+		if hasIdentity(s3a.iam, "static-admin") {
+			t.Fatalf("reload %d: an identity removed from the file must stay removed", i)
+		}
+		if !hasIdentity(s3a.iam, "alice") {
+			t.Fatalf("reload %d: a filer-managed identity must survive a reload of an emptied file", i)
+		}
+		if _, _, found := s3a.iam.lookupByAccessKey("AKALICE0"); !found {
+			t.Fatalf("reload %d: the filer-managed identity's access key must keep working", i)
+		}
+	}
 }

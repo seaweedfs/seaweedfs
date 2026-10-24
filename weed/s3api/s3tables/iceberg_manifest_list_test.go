@@ -69,19 +69,22 @@ func stripFormatVersion(t *testing.T, data []byte) []byte {
 	return append(stripped, data[terminator:]...)
 }
 
-// DuckDB writes manifest lists with no Avro header metadata, so iceberg-go
-// falls back to v1 and every v2 manifest below it fails to parse.
+// DuckDB writes manifest lists with no Avro header metadata. iceberg-go now
+// infers the format version from the embedded writer schema on its own, so a
+// stripped v2 list is read as v2 even without the header entry. ReadManifestList
+// still patches the header for older iceberg-go releases and for writers whose
+// schema carries none of the version-distinguishing fields.
 func TestReadManifestListWithoutFormatVersion(t *testing.T) {
 	stripped := stripFormatVersion(t, writeManifestList(t, 2))
 
-	// Baseline: iceberg-go alone reads the list as v1, which both mislabels
-	// the delete manifest and makes ReadManifest reject the v2 manifests.
+	// Baseline: iceberg-go reads the list as v2 by inferring the version from
+	// the record schema's fields (content / sequence_number were added in v2).
 	unpatched, err := iceberg.ReadManifestList(bytes.NewReader(stripped))
 	if err != nil {
 		t.Fatalf("iceberg.ReadManifestList: %v", err)
 	}
-	if got := unpatched[0].Version(); got != 1 {
-		t.Fatalf("expected iceberg-go to default to v1, got v%d", got)
+	if got := unpatched[0].Version(); got != 2 {
+		t.Fatalf("expected iceberg-go to infer v2, got v%d", got)
 	}
 
 	manifests, err := ReadManifestList(stripped)

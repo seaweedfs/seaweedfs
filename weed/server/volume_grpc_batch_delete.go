@@ -2,11 +2,13 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -58,7 +60,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 		if !req.SkipCookieCheck {
 			cookie := n.Cookie
 			if !isEcVolume {
-				if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil); err != nil {
+				if _, err := vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil); err != nil {
 					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 						FileId: fid,
 						Status: http.StatusNotFound,
@@ -116,7 +118,15 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 				)
 			}
 		} else {
-			if size, err := vs.store.DeleteEcShardNeedle(ecVolume, n, n.Cookie); err != nil {
+			size, err := vs.store.DeleteEcShardNeedle(ecVolume, n, n.Cookie)
+			if errors.Is(err, storage.ErrorDeleted) {
+				// Already gone, which is what the caller asked for. The
+				// non-EC branch above reports that as StatusNotModified.
+				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+					FileId: fid,
+					Status: http.StatusNotModified},
+				)
+			} else if err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
 					Status: http.StatusInternalServerError,

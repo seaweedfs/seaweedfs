@@ -1,10 +1,13 @@
 package http
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAppendQueryParameter(t *testing.T) {
@@ -91,6 +94,76 @@ func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	}
 }
 
+func TestReadErrorsCarryTheServerMessage(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"invalid CRC for needle 2a (got 0a1b2c3d, want 4e5f6071), data on disk corrupted: needle data corrupted"}`))
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error: invalid CRC for needle 2a (got 0a1b2c3d, want 4e5f6071), data on disk corrupted: needle data corrupted"
+
+	if _, err := ReadUrl(context.Background(), server.URL, nil, false, true, 0, 0, make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("ReadUrl: got %v, want %q", err, want)
+	}
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
+	}
+	if _, _, err := ReadUrlAsReaderCloser(server.URL, "", ""); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsReaderCloser: got %v, want %q", err, want)
+	}
+	if _, _, err := readUrlDirectToBuffer(context.Background(), server.URL, "", make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("readUrlDirectToBuffer: got %v, want %q", err, want)
+	}
+	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {
+		t.Errorf("GetAuthenticated: got %v, want %q", err, want)
+	}
+}
+
+func TestReadErrorsDecodeGzipBody(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write([]byte(`{"error":"invalid CRC for needle 2a"}`))
+		_ = gz.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error: invalid CRC for needle 2a"
+	if _, err := ReadUrl(context.Background(), server.URL, nil, false, true, 0, 0, make([]byte, 16)); err == nil || err.Error() != want {
+		t.Errorf("ReadUrl: got %v, want %q", err, want)
+	}
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
+	}
+	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {
+		t.Errorf("GetAuthenticated: got %v, want %q", err, want)
+	}
+}
+
+func TestReadErrorWithoutBodyIsTheStatus(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	want := server.URL + ": 500 Internal Server Error"
+	if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+		t.Errorf("got %v, want %q", err, want)
+	}
+}
+
 func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -130,5 +203,129 @@ func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 
 	if _, _, err := DeleteProxied("http://[::1", "jwt"); err == nil {
 		t.Fatal("expected invalid request error")
+	}
+}
+
+// TestRetriedFetchChunkDataRetriesFreshUrlsImmediately covers the case the
+// refresh hook exists for: every location the caller knew about is gone, and
+// the data is live somewhere the caller has not heard of yet. The read must
+// land on the fresh location without first sitting through the backoff ladder.
+func TestRetriedFetchChunkDataRetriesFreshUrlsImmediately(t *testing.T) {
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+
+	// A port nothing listens on: the address is well formed, the dial fails.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	refreshed := 0
+	buffer := make([]byte, len(payload))
+	start := time.Now()
+	n, err := RetriedFetchChunkData(context.Background(), buffer, []string{deadURL + "/3,abc"}, nil, false, true, 0, "3,abc",
+		func() []string {
+			refreshed++
+			return []string{live.URL + "/3,abc"}
+		})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("fetch with a refreshed location: %v", err)
+	}
+	if n != len(payload) || string(buffer[:n]) != string(payload) {
+		t.Fatalf("got %q, want %q", buffer[:n], payload)
+	}
+	if refreshed != 1 {
+		t.Fatalf("refresh called %d times, want exactly 1", refreshed)
+	}
+	// The first backoff is a full second; landing well under it is the point.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("took %v, expected the retry to skip the backoff", elapsed)
+	}
+}
+
+// TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged makes sure a
+// refresh that returns the same list is treated as "the locations were never
+// the problem" rather than as a reason to spin.
+func TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	urls := []string{deadURL + "/3,abc"}
+	refreshed := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	buffer := make([]byte, 4)
+	_, err := RetriedFetchChunkData(ctx, buffer, urls, nil, false, true, 0, "3,abc", func() []string {
+		refreshed++
+		return urls
+	})
+	if err == nil {
+		t.Fatal("expected the fetch to fail against a dead location")
+	}
+	if refreshed != 1 {
+		t.Fatalf("refresh called %d times, want exactly 1", refreshed)
+	}
+}
+
+// TestRetriedFetchChunkDataRefreshesLocationsAfterPartialFailure covers a read
+// that fails on a cached dead replica and succeeds on the next one: the read
+// itself is fine, but the list it came from is stale and must be refreshed so
+// later reads do not start with the dead replica again. Both the direct and
+// the streaming read paths take this branch.
+func TestRetriedFetchChunkDataRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	forgetUnreachable(t)
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	for _, isFullChunk := range []bool{true, false} {
+		forgetUnreachable(t)
+		refreshed := 0
+		refresh := func() []string {
+			refreshed++
+			return []string{live.URL + "/3,abc"}
+		}
+		buffer := make([]byte, len(payload))
+		n, err := RetriedFetchChunkData(context.Background(), buffer, []string{deadURL + "/3,abc", live.URL + "/3,abc"}, nil, false, isFullChunk, 0, "3,abc", refresh)
+		if err != nil || string(buffer[:n]) != string(payload) {
+			t.Fatalf("fullChunk=%v: got %q, %v; want %q", isFullChunk, buffer[:n], err, payload)
+		}
+		if refreshed != 1 {
+			t.Fatalf("fullChunk=%v: refresh called %d times after a partial failure, want exactly 1", isFullChunk, refreshed)
+		}
+
+		// a read answered by the first location leaves the list alone
+		refreshed = 0
+		n, err = RetriedFetchChunkData(context.Background(), buffer, []string{live.URL + "/3,abc", deadURL + "/3,abc"}, nil, false, isFullChunk, 0, "3,abc", refresh)
+		if err != nil || string(buffer[:n]) != string(payload) {
+			t.Fatalf("fullChunk=%v: got %q, %v; want %q", isFullChunk, buffer[:n], err, payload)
+		}
+		if refreshed != 0 {
+			t.Fatalf("fullChunk=%v: refresh called %d times without a failure, want none", isFullChunk, refreshed)
+		}
+	}
+}
+
+func TestSameUrlsIgnoresOrder(t *testing.T) {
+	a := []string{"http://a:8080/3,x", "http://b:8080/3,x"}
+	if !SameUrls(a, []string{a[1], a[0]}) {
+		t.Fatal("a reshuffle of the same locations should not count as fresh")
+	}
+	if SameUrls(a, []string{a[0], "http://c:8080/3,x"}) {
+		t.Fatal("a different location should count as fresh")
+	}
+	if SameUrls(a, a[:1]) {
+		t.Fatal("a shorter list should count as fresh")
 	}
 }

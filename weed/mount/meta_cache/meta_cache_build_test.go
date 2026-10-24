@@ -110,7 +110,7 @@ func TestEnsureVisitedReplaysBufferedEventsAfterSnapshot(t *testing.T) {
 		},
 	}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if applyErr != nil {
@@ -208,7 +208,7 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 	}
 
 	// Complete the build — buffered events should be replayed
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 150); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 150, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -274,7 +274,7 @@ func TestEmptyDirectoryBuildReplaysAllBufferedEvents(t *testing.T) {
 	}
 
 	// Complete with snapshotTsNs=0 — simulates empty directory listing
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/empty"), 0); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/empty"), 0, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -350,7 +350,7 @@ func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
 	// ctx.Done() first, but the operation itself still completes in the
 	// apply loop. Poll for the observable side effect instead of using
 	// a fixed sleep.
-	_ = mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100)
+	_ = mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100, nil)
 
 	// Poll until the build completes or a deadline elapses.
 	deadline := time.After(2 * time.Second)
@@ -445,7 +445,7 @@ func TestBufferedRenameUpdatesOtherDirectoryBeforeBuildCompletes(t *testing.T) {
 		t.Fatalf("new path should stay hidden until build completes: %+v", newEntry)
 	}
 
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dst"), 100); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dst"), 100, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -504,7 +504,7 @@ func TestEnsureVisitedPreservesLocalOnlyEntry(t *testing.T) {
 		}},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
@@ -550,7 +550,7 @@ func TestEnsureVisitedDropsUnpinnedStaleEntry(t *testing.T) {
 		}},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/stale.txt")); err != filer_pb.ErrNotFound || entry != nil {
@@ -597,7 +597,7 @@ func TestEnsureVisitedConfirmsTransientEmptyListing(t *testing.T) {
 		},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
@@ -619,7 +619,7 @@ func TestEnsureVisitedCachesGenuinelyEmptyDirectory(t *testing.T) {
 	}
 	accessor := &buildFilerAccessor{client: client}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/empty"), 0); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/empty"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/empty")) {

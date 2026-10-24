@@ -36,16 +36,20 @@ pub fn collect_mem_status() -> volume_server_pb::MemStatus {
 
 #[cfg(target_os = "linux")]
 fn get_system_memory_linux() -> Option<(u64, u64)> {
-    unsafe {
-        let mut info: libc::sysinfo = std::mem::zeroed();
-        if libc::sysinfo(&mut info) == 0 {
-            let unit = info.mem_unit as u64;
-            let total = info.totalram as u64 * unit;
-            let free = info.freeram as u64 * unit;
-            return Some((total, free));
-        }
+    // SAFETY: `libc::sysinfo` is plain data — integers and trailing padding,
+    // no pointers and no restricted niches — so the all-zero value is a valid
+    // one for the kernel to overwrite.
+    let mut info: libc::sysinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: `&mut info` is a live, aligned, exclusive pointer to a
+    // `sysinfo` that the kernel only writes through, and its fields are read
+    // below only after the call reports success.
+    if unsafe { libc::sysinfo(&mut info) } != 0 {
+        return None;
     }
-    None
+    let unit = info.mem_unit as u64;
+    let total = info.totalram as u64 * unit;
+    let free = info.freeram as u64 * unit;
+    Some((total, free))
 }
 
 #[cfg(target_os = "linux")]

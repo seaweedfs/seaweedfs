@@ -1,8 +1,36 @@
 package filer_pb
 
 import (
+	"errors"
+	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+func TestAssignVolumeResponseError(t *testing.T) {
+	if err := AssignVolumeResponseError(&AssignVolumeResponse{FileId: "3,01"}); err != nil {
+		t.Fatalf("success response: err = %v, want nil", err)
+	}
+
+	// A filer that predates error_code: the text survives, no sentinel is implied.
+	err := AssignVolumeResponseError(&AssignVolumeResponse{Error: "assign volume: no free volumes"})
+	if err == nil || err.Error() != "assign volume: no free volumes" {
+		t.Fatalf("uncoded response: err = %v, want the filer's text", err)
+	}
+	if errors.Is(err, ErrReadOnly) {
+		t.Fatal("uncoded response must not match ErrReadOnly")
+	}
+
+	msg := "assign volume: read only: /buckets/b (e.g. bucket over quota)"
+	err = AssignVolumeResponseError(&AssignVolumeResponse{Error: msg, ErrorCode: FilerError_READ_ONLY})
+	if !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("READ_ONLY response: err = %v, want ErrReadOnly", err)
+	}
+	if err.Error() != msg {
+		t.Fatalf("READ_ONLY response: message = %q, want %q", err.Error(), msg)
+	}
+}
 
 func TestIsDirectoryKeyObject(t *testing.T) {
 	chunk := []*FileChunk{{FileId: "1,01", Size: 75}}
@@ -20,6 +48,7 @@ func TestIsDirectoryKeyObject(t *testing.T) {
 		{"directory with chunks and nil attributes", &Entry{IsDirectory: true, Chunks: chunk}, true},
 		{"regular file with chunks", &Entry{IsDirectory: false, Attributes: &FuseAttributes{}, Chunks: chunk}, false},
 		{"remote mount directory has no remote size", &Entry{IsDirectory: true, Attributes: &FuseAttributes{}, RemoteEntry: &RemoteEntry{StorageName: "s3"}}, false},
+		{"empty prefix object has only the mark", &Entry{IsDirectory: true, Attributes: &FuseAttributes{}, Extended: map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")}}, true},
 	}
 
 	for _, c := range cases {
@@ -28,5 +57,30 @@ func TestIsDirectoryKeyObject(t *testing.T) {
 				t.Errorf("IsDirectoryKeyObject() = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestMarkPrefixObject(t *testing.T) {
+	entry := &Entry{Name: "foo", Attributes: &FuseAttributes{FileMode: 0644}}
+
+	if entry.IsPrefixObject() {
+		t.Fatal("a file is not a prefix object")
+	}
+
+	entry.MarkPrefixObject()
+
+	if !entry.IsDirectory || !entry.IsPrefixObject() {
+		t.Errorf("MarkPrefixObject() left %+v", entry)
+	}
+	// The filer derives the entry type from the mode, so the directory bit has to be
+	// on it for the store to keep this as a directory.
+	if mode := os.FileMode(entry.Attributes.FileMode); mode&os.ModeDir == 0 || mode.Perm()&0111 != 0111 {
+		t.Errorf("FileMode = %v, want a traversable directory", mode)
+	}
+
+	// A directory the mark was stripped from is a plain directory again.
+	delete(entry.Extended, s3_constants.SeaweedFSPrefixObject)
+	if entry.IsPrefixObject() || entry.IsDirectoryKeyObject() {
+		t.Error("a demoted directory names no key")
 	}
 }

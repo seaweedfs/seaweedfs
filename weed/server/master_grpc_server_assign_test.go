@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -175,9 +176,24 @@ func TestAssignAbortsOnCancel(t *testing.T) {
 // Out of space, Assign fails fast with the real error rather than masking it as
 // a retryable "growth in progress".
 func TestAssignFailsFastWhenOutOfSpace(t *testing.T) {
-	ms := newLeaderMaster() // no data nodes -> no free space
+	ms := newLeaderMaster()
+	// One slot, already taken by another collection's volume: capacity is
+	// registered but genuinely exhausted.
+	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 1})
+	rp, err := super_block.NewReplicaPlacementFromString("000")
+	require.NoError(t, err)
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Collection:       "other",
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	ms.Topo.RegisterVolumeLayout(v, dn)
 
-	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh"}
 
 	start := time.Now()
 	resp, err := ms.Assign(context.Background(), req)
@@ -187,7 +203,137 @@ func TestAssignFailsFastWhenOutOfSpace(t *testing.T) {
 	require.Nil(t, resp)
 	if st, ok := status.FromError(err); ok {
 		assert.NotEqual(t, codes.Unavailable, st.Code())
+		assert.NotEqual(t, codes.ResourceExhausted, st.Code())
 	}
 	assert.Contains(t, err.Error(), "no free volumes left")
 	assert.Less(t, elapsed, 2*time.Second)
+}
+
+// A topology with no registered capacity is a cluster whose volume servers have
+// not heartbeated yet, not one that is full: the first write to a fresh bucket
+// races the volume server registration at startup, so Assign must shed with a
+// retryable code instead of failing the write outright.
+func TestAssignShedsRetryablyBeforeCapacityRegisters(t *testing.T) {
+	ms := newLeaderMaster() // no data nodes: nothing has heartbeated yet
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
+// A cluster serving only other media is not one still starting up: capacity for
+// the requested disk type will never register, so the startup shed would loop
+// until the client's deadline. Assign must fail fast with the real error and
+// name the unserved medium — for the growth initiator, for a follower whose
+// growth is already in flight, and when growth is disabled outright.
+func TestAssignFailsFastWhenDiskTypeUnserved(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest)
+	}{
+		{"initiator", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {}},
+		{"follower joins growth in flight", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			markGrowthInFlight(t, ms.Topo, req)
+		}},
+		{"growth disabled", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			ms.option.VolumeGrowthDisabled = true
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := newLeaderMaster()
+			// ssd capacity registered, but the request asks for the default (hdd).
+			ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+				GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"ssd": 1})
+
+			req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh"}
+			tc.setup(t, ms, req)
+
+			start := time.Now()
+			resp, err := ms.Assign(context.Background(), req)
+			elapsed := time.Since(start)
+
+			require.Error(t, err)
+			require.Nil(t, resp)
+			if st, ok := status.FromError(err); ok {
+				assert.NotEqual(t, codes.Unavailable, st.Code())
+				assert.NotEqual(t, codes.ResourceExhausted, st.Code())
+			}
+			assert.Contains(t, err.Error(), topology.NoWritableVolumes)
+			assert.Contains(t, err.Error(), `no volume server carries the default (unlabeled) disk layout`)
+			assert.Less(t, elapsed, 2*time.Second)
+		})
+	}
+}
+
+// An explicit disk=hdd request is not the unlabeled default: the error must
+// name "hdd" so an operator reading it connects it to their hdd configuration.
+// ToDiskType folds both "" and "hdd" into HardDriveType, so the formatter must
+// look at the original request string, not the canonicalized option.DiskType.
+func TestAssignFailsFastNamesExplicitHdd(t *testing.T) {
+	ms := newLeaderMaster()
+	// ssd capacity registered, but the request explicitly asks for hdd.
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"ssd": 1})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh", DiskType: "hdd"}
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	assert.Contains(t, err.Error(), topology.NoWritableVolumes)
+	assert.Contains(t, err.Error(), `no volume server carries the "hdd" disk layout`)
+	assert.NotContains(t, err.Error(), "default (unlabeled)")
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
+func TestUnservedLayoutWarningBoundedAndExpiring(t *testing.T) {
+	w := &unservedLayoutWarning{
+		now:  func() time.Time { return time.Unix(0, 0) },
+		last: make(map[string]time.Time),
+	}
+
+	// Dedupes within the interval.
+	w.Do("opt", fmt.Errorf("e1"))
+	w.Do("opt", fmt.Errorf("e2"))
+	if len(w.last) != 1 {
+		t.Fatalf("same option logged twice: %v", w.last)
+	}
+
+	// Re-warns after the interval expires.
+	base := time.Unix(0, 0)
+	w.now = func() time.Time { return base.Add(unservedLayoutWarnInterval) }
+	w.Do("opt", fmt.Errorf("e3"))
+	if len(w.last) != 1 || !w.last["opt"].Equal(base.Add(unservedLayoutWarnInterval)) {
+		t.Fatalf("expected refreshed timestamp after interval, got %v", w.last)
+	}
+
+	// Hard cap: a client-driven key flood cannot grow the map without bound.
+	w.now = func() time.Time { return base.Add(2 * unservedLayoutWarnInterval) }
+	flood := &unservedLayoutWarning{
+		now:  w.now,
+		last: make(map[string]time.Time),
+	}
+	for i := 0; i < unservedLayoutWarnMaxKeys; i++ {
+		flood.Do(fmt.Sprintf("opt-%d", i), fmt.Errorf("e"))
+	}
+	if len(flood.last) != unservedLayoutWarnMaxKeys {
+		t.Fatalf("expected exactly cap entries, got %d", len(flood.last))
+	}
+	flood.Do("opt-flood", fmt.Errorf("e"))
+	if len(flood.last) != 1 {
+		t.Fatalf("expected full reset at cap, got %d entries", len(flood.last))
+	}
 }

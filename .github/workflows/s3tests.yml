@@ -25,8 +25,8 @@ on:
       - '.github/workflows/s3tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -44,6 +44,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -57,9 +58,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -128,6 +129,9 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests/functional/test_s3.py
+          # The suite expects RGW's 400 InvalidPart for a partNumber past the last
+          # part; AWS answers 416 InvalidPartNumber, which is what we return.
+          sed -i "/# request PartNumber out of range/,+4{s/assert status == 400/assert status == 416/; s/assert error_code == 'InvalidPart'/assert error_code == 'InvalidPartNumber'/}" s3tests/functional/test_s3.py
           
           # Debug: Show the config file contents
           echo "=== S3 Config File Contents ==="
@@ -286,6 +290,11 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_s3 \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_s3_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_bad_enc_kms \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \
@@ -308,6 +317,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \
@@ -387,6 +397,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -400,9 +411,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -557,6 +568,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -570,9 +582,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
@@ -682,6 +694,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Run SeaweedFS Custom S3 Copy tests
@@ -784,6 +797,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -797,9 +811,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
@@ -968,6 +982,9 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests/functional/test_s3.py
+          # The suite expects RGW's 400 InvalidPart for a partNumber past the last
+          # part; AWS answers 416 InvalidPartNumber, which is what we return.
+          sed -i "/# request PartNumber out of range/,+4{s/assert status == 400/assert status == 416/; s/assert error_code == 'InvalidPart'/assert error_code == 'InvalidPartNumber'/}" s3tests/functional/test_s3.py
           # Create and update s3tests.conf to use port 8004
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-sql.conf
           sed -i 's/port = 8000/port = 8004/g' ../docker/compose/s3tests-sql.conf
@@ -1143,6 +1160,11 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_s3 \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_s3_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_bad_enc_kms \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \
@@ -1165,6 +1187,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \

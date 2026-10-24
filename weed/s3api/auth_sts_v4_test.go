@@ -98,7 +98,7 @@ func TestAuthorizeWithIAMSessionTokenExtraction(t *testing.T) {
 // preserved when converting to credentials for authorization.
 func TestSTSSessionTokenIntoCredentials(t *testing.T) {
 	// Create a credential generator and session claims
-	credGen := sts.NewCredentialGenerator()
+	credGen := sts.NewCredentialGenerator([]byte("test-signing-key"))
 	sessionId := "test-session-123"
 	expiresAt := time.Now().Add(time.Hour)
 

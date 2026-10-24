@@ -36,6 +36,7 @@ type localDirBackend struct {
 
 	mu      sync.Mutex
 	deletes []string // history of DeleteFile keys, for assertions
+	failDel bool     // when set, DeleteFile reports an error without deleting
 }
 
 func newLocalDirBackend(t *testing.T) *localDirBackend {
@@ -52,7 +53,7 @@ func (b *localDirBackend) NewStorageFile(key string, tierInfo *volume_server_pb.
 	return &localDirBackendFile{backend: b, key: key, tierInfo: tierInfo}
 }
 
-func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	key = fmt.Sprintf("obj-%d-%d", time.Now().UnixNano(), os.Getpid())
 	dst := filepath.Join(b.root, key)
 	out, err := os.Create(dst)
@@ -73,7 +74,7 @@ func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percent
 	return key, written, nil
 }
 
-func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
 	src := filepath.Join(b.root, key)
 	in, err := os.Open(src)
 	if err != nil {
@@ -97,9 +98,18 @@ func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(prog
 
 func (b *localDirBackend) DeleteFile(key string) error {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.deletes = append(b.deletes, key)
-	b.mu.Unlock()
+	if b.failDel {
+		return fmt.Errorf("injected remote delete failure for %s", key)
+	}
 	return os.Remove(filepath.Join(b.root, key))
+}
+
+func (b *localDirBackend) failDeletes(fail bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failDel = fail
 }
 
 func (b *localDirBackend) deleteHistory() []string {
@@ -186,14 +196,14 @@ func tierUpVolumeLive(t *testing.T, dir string, vid needle.VolumeId, b *localDir
 	require.NoError(t, err)
 
 	for i := 1; i <= 5; i++ {
-		_, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false)
+		_, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false)
 		require.NoError(t, err)
 	}
 
 	diskFile, ok := v.DataBackend.(*backend.DiskFile)
 	require.True(t, ok, "expected on-disk backend before tier-up")
 
-	uploadKey, size, err := b.CopyFile(diskFile.File, nil)
+	uploadKey, size, err := b.CopyFile(diskFile.File, nil, 0)
 	require.NoError(t, err)
 
 	bType, bId := backend.BackendNameToTypeId(testBackendName)
@@ -289,7 +299,7 @@ func TestRemoteTier_LiveTierUpload_StillReportsToMaster(t *testing.T) {
 	require.True(t, v.HasRemoteFile(), "a tier-uploaded volume is in remote mode even before any reload")
 	require.False(t, util.FileExists(v.FileName(".dat")), "tier-up should have removed the local .dat")
 
-	_, msg := v.ToVolumeInformationMessage()
+	_, msg := v.ToVolumeInformationMessage(nil)
 	require.NotNil(t, msg, "tier-uploaded volume must still report to master")
 	require.NotEmpty(t, msg.RemoteStorageName, "reported volume must carry its remote backend name")
 }
@@ -343,7 +353,7 @@ func TestRemoteTier_Move_KeepsRemoteObject(t *testing.T) {
 	v := reloadVolume(t, dir, vid)
 	require.True(t, v.HasRemoteFile())
 
-	require.NoError(t, v.Destroy(false, true))
+	require.NoError(t, v.Destroy(false, false, true))
 
 	require.True(t, b.objectExists(key), "Destroy(keepRemoteData=true) must not delete remote object")
 	require.Empty(t, b.deleteHistory(), "no DeleteFile call expected on a move-style destroy")
@@ -363,10 +373,38 @@ func TestRemoteTier_RealDelete_RemovesRemoteObject(t *testing.T) {
 	v := reloadVolume(t, dir, vid)
 	require.True(t, v.HasRemoteFile())
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	require.False(t, b.objectExists(key), "Destroy(keepRemoteData=false) must delete remote object")
 	require.Equal(t, []string{key}, b.deleteHistory())
+}
+
+// TestRemoteTier_FailedRemoteDelete_KeepsLocalVolume locks in the failure
+// ordering: a backend delete error must abort Destroy before local files are
+// removed, leaving the registered replica fully intact and retryable.
+func TestRemoteTier_FailedRemoteDelete_KeepsLocalVolume(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(34)
+	_, key := tierUpVolume(t, dir, vid, b)
+	require.True(t, b.objectExists(key))
+
+	v := reloadVolume(t, dir, vid)
+	require.True(t, v.HasRemoteFile())
+
+	b.failDeletes(true)
+	err := v.Destroy(false, false, false)
+	require.Error(t, err, "Destroy must surface the remote delete failure")
+
+	require.True(t, util.FileExists(filepath.Join(dir, "34.idx")), "local .idx must survive a failed remote delete")
+	require.True(t, util.FileExists(filepath.Join(dir, "34.vif")), "local .vif must survive a failed remote delete")
+	require.True(t, b.objectExists(key), "remote object must survive a failed remote delete")
+
+	b.failDeletes(false)
+	require.NoError(t, v.Destroy(false, false, false), "retry must succeed once the backend recovers")
+	require.False(t, b.objectExists(key))
 }
 
 // TestRemoteTier_Vacuum_DoesNotDeleteRemote runs the compact paths against a
@@ -422,7 +460,7 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 
 	baseFileName := filepath.Join(dir, fmt.Sprintf("%d", uint32(vid)))
 	datPath := baseFileName + ".dat"
-	_, err := b.DownloadFile(datPath, key, nil)
+	_, err := b.DownloadFile(datPath, key, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"))

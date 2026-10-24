@@ -3,10 +3,8 @@ package iceberg
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/apache/iceberg-go/view"
 	"github.com/google/uuid"
@@ -48,6 +46,10 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			}
 			glog.V(1).Infof("Iceberg: UpdateView GetView error: %v", err)
 			writeManagerError(w, err)
+			return
+		}
+		if reqErr := s.authorizeViewCommit(r.Context(), bucketARN, namespace, viewName, identityName); reqErr != nil {
+			writeError(w, reqErr.status, reqErr.errType, reqErr.message)
 			return
 		}
 		if getResp.Metadata == nil || len(getResp.Metadata.FullMetadata) == 0 {
@@ -104,7 +106,12 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid view location: "+err.Error())
 			return
 		}
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
+		}
+		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
 			return
 		}
@@ -130,10 +137,11 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateView", updateReq, nil, identityName)
 		})
 		if err == nil {
+			config, _ := s.buildFileIOConfig(r, location, func() bool { return true })
 			writeLoadResult(w, http.StatusOK, ViewResponse{
 				MetadataLocation: newMetadataLocation,
 				Metadata:         newMetadata,
-				Config:           s.buildFileIOConfig(r),
+				Config:           config,
 			})
 			return
 		}
@@ -144,8 +152,7 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			}
 			if attempt < maxCommitAttempts {
 				glog.V(1).Infof("Iceberg: UpdateView conflict for %s (attempt %d/%d), retrying", viewName, attempt, maxCommitAttempts)
-				jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
-				time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+				sleepBeforeCommitRetry(attempt)
 				continue
 			}
 			writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")

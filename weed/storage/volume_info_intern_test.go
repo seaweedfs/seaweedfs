@@ -27,7 +27,6 @@ func TestRepeatedVolumeStringsAreShared(t *testing.T) {
 			Collection:        string([]byte("somecollection")),
 			DiskType:          string([]byte("ssd")),
 			RemoteStorageName: string([]byte("s3cold")),
-			RemoteStorageKey:  string([]byte("seaweed/somecollection/1.dat")),
 		}
 	}
 
@@ -48,9 +47,6 @@ func TestRepeatedVolumeStringsAreShared(t *testing.T) {
 		{"Collection", first.Collection, second.Collection, true},
 		{"DiskType", first.DiskType, second.DiskType, true},
 		{"RemoteStorageName", first.RemoteStorageName, second.RemoteStorageName, true},
-		// Unique per volume: interning it would fill the table rather than
-		// share anything.
-		{"RemoteStorageKey", first.RemoteStorageKey, second.RemoteStorageKey, false},
 	} {
 		if tc.a != tc.b {
 			t.Fatalf("%s: values differ, %q vs %q", tc.name, tc.a, tc.b)

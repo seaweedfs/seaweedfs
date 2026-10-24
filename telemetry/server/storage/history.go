@@ -8,7 +8,11 @@ import (
 
 // confirmDays is how many distinct UTC days a cluster must have reported
 // on before it counts as confirmed in the aggregated stats.
-const confirmDays = 2
+const confirmDays = 7
+
+// confirmThresholds are the confirmation windows the dashboard lets the
+// viewer pick between; confirmDays is the one everything else is built on.
+var confirmThresholds = []int{1, 3, 7, 14, 30}
 
 // activeDays is how recently a cluster must have reported to count as active.
 const activeDays = 7
@@ -43,9 +47,9 @@ func (s *PrometheusStorage) appendHistory(data *proto.TelemetryData, receivedAt 
 }
 
 // seriesHistories picks the clusters the fleet-wide series are built from: the
-// confirmed ones. A cluster that only ever reported on one day is usually a CI
-// or test cluster that lived for a minute, and those arrive faster than they
-// age out, so counting them makes every fleet total climb forever. Falls back to
+// confirmed ones. A cluster that reported for less than a week is usually a CI
+// or test cluster, and those arrive faster than they age out, so counting them
+// makes every fleet total climb forever. Falls back to
 // all clusters while none is confirmed yet, so a fresh server still draws its
 // charts. Callers must hold s.mu.
 func (s *PrometheusStorage) seriesHistories() map[string][]HistorySample {

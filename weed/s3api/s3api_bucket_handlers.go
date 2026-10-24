@@ -8,7 +8,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -34,6 +33,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
+
+// A bucket creation lists collections. The RPC carried no deadline, so a
+// transient failure anywhere down the chain -- gateway to filer, filer to
+// master, master to volume server -- held the S3 request open until the client
+// gave up on it. The budget is taken outside the filer failover walk, so it
+// covers the whole walk rather than granting each filer a fresh one.
+const collectionListTimeout = 15 * time.Second
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -218,6 +224,15 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
+	// Only bucket-level PUTs with a registered sub-resource route land in a
+	// dedicated handler; anything else that reaches here is an operation we do
+	// not implement, not a bare CreateBucket.
+	if subresource, found := unroutedSubresource(r, nil); found {
+		glog.V(1).Infof("unimplemented bucket PUT subresource ?%s", subresource)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
+
 	// validate the bucket name
 	err := s3bucket.VerifyS3BucketName(bucket)
 	if err != nil {
@@ -259,12 +274,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
 		return
 	}
-	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
+	listCtx, cancelList := context.WithTimeout(r.Context(), collectionListTimeout)
+	if err := s3a.withFilerClient(listCtx, false, func(client filer_pb.SeaweedFilerClient) error {
+		if resp, err := client.CollectionList(listCtx, &filer_pb.CollectionListRequest{
 			IncludeEcVolumes:     true,
 			IncludeNormalVolumes: true,
 		}); err != nil {
-			glog.Errorf("list collection: %v", err)
 			return fmt.Errorf("list collections: %w", err)
 		} else {
 			for _, c := range resp.Collections {
@@ -276,9 +291,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return nil
 	}); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+		// Advisory: the answer decides nothing below except whether to log that a
+		// leftover collection is being reused. s3a.exists is what decides whether
+		// the bucket already exists, so a listing that failed is no reason to
+		// refuse the creation.
+		glog.Warningf("PutBucketHandler: list collections for %s: %v", bucket, err)
 	}
+	cancelList()
 
 	// Bucket already exists: report whether the caller already owns it or the
 	// name is taken / the request conflicts.
@@ -311,7 +330,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// This ensures Object Lock configuration is set in the same CreateEntry call,
 	// preventing race conditions where the bucket exists without Object Lock enabled
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 
 		// Set bucket owner
@@ -354,6 +373,16 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		// return the appropriate already-exists error instead of InternalError.
 		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
 			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			// From the entry itself, not the bucket registry: the pre-check
+			// above has just cached this name as not found, so in the race this
+			// branch exists for the registry would still say "no table bucket".
+			if concurrentEntryIsForeign(s3a.getEntry(s3a.option.BucketsPath, bucket)) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+				return
+			}
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+			}
 			errCode := s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL)
 			if errCode == s3err.ErrBucketAlreadyOwnedByYou {
 				s3a.healBucketOwnerIndex(bucket, currentIdentityId)
@@ -370,7 +399,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// This ensures we don't leave a bucket without the requested Object Lock configuration
 	if objectLockSetupError != nil {
 		glog.Errorf("PutBucketHandler: rolling back bucket %s creation due to Object Lock setup failure: %v", bucket, objectLockSetupError)
-		if deleteErr := s3a.rm(s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
+		if deleteErr := s3a.rm(context.Background(), s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
 			glog.Errorf("PutBucketHandler: failed to rollback bucket %s after Object Lock setup failure: %v", bucket, deleteErr)
 		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -415,6 +444,17 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
+	// Same as PutBucketHandler: a query key no DELETE route claimed is an
+	// unimplemented subresource, not a bare DeleteBucket.
+	if subresource, found := unroutedSubresource(r, nil); found {
+		glog.V(1).Infof("unimplemented bucket DELETE subresource ?%s", subresource)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
+	// The teardown below retries, and a failover walk repeats it once per
+	// filer, so the backoff comes out of one allowance held here.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
+
 	if s3a.isTableBucket(bucket) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
@@ -458,12 +498,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Delete bucket directory first, then collection. This order ensures that if
-	// collection deletion fails, the bucket directory is already gone, preventing
-	// the "collection exists but bucket directory missing" inconsistency that blocks
-	// bucket recreation. An orphaned collection is harmless and will be cleaned up
-	// or reused when the bucket is recreated.
-	err := s3a.rm(s3a.option.BucketsPath, bucket, false, true)
+	// The filer resolves and drops the bucket's collection inside the delete;
+	// it keeps a shared one rather than risk another bucket's volumes.
+	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -473,25 +510,6 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		if err := s3a.removeBucketFromOwnerIndex(owner, bucket); err != nil {
 			glog.Warningf("DeleteBucketHandler: owner index remove %s/%s: %v", owner, bucket, err)
 		}
-	}
-
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
-			Collection: s3a.getCollectionName(bucket),
-		}
-
-		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
-		if _, err := client.DeleteCollection(context.Background(), deleteCollectionRequest); err != nil {
-			return fmt.Errorf("delete collection %s: %v", bucket, err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		// Log but don't fail — the bucket directory is already removed, so the bucket
-		// is effectively deleted. The orphaned collection will be cleaned up or reused.
-		glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
 	}
 
 	// Clean up bucket-related caches, locks, and metrics after successful deletion
@@ -512,31 +530,58 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
-// bucketHasUserObjects checks whether a bucket contains any non-special entries.
-// Special entries (.uploads, *.versions) are internal to S3 and don't count as user objects.
+// bucketHasUserObjects checks whether a bucket contains any user objects.
+// Empty directories left behind by deleted objects and the .uploads staging
+// folder do not count as user objects; stored versions inside a <key>.versions
+// directory do.
 func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
-	bucketPath := s3a.option.BucketsPath + "/" + bucket
-	startFrom := ""
-	// Start with a small batch — most non-empty buckets have a real object early.
-	// If we only find special entries, switch to larger batches to page through quickly.
-	limit := uint32(10)
-	for {
-		entries, isLast, err := s3a.list(bucketPath, "", startFrom, false, limit)
-		if err != nil {
-			return false, err
-		}
-		for _, entry := range entries {
-			if entry.Name != s3_constants.MultipartUploadsFolder &&
-				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-				return true, nil
+	return s3a.dirHasUserObjects(s3a.option.BucketsPath + "/" + bucket)
+}
+
+func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
+	dirs := []string{root}
+	for len(dirs) > 0 {
+		dir := dirs[len(dirs)-1]
+		dirs = dirs[:len(dirs)-1]
+		startFrom := ""
+		// Start with a small batch — most non-empty buckets have a real object
+		// early; switch to larger batches to page through quickly.
+		limit := uint32(10)
+		for {
+			entries, isLast, err := s3a.list(dir, "", startFrom, false, limit)
+			if err != nil {
+				if isFilerNotFound(err) {
+					break // the directory was deleted between listing and walking it
+				}
+				return false, err
 			}
-			startFrom = entry.Name
+			for _, entry := range entries {
+				startFrom = entry.Name
+				if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
+					continue
+				}
+				if !entry.IsDirectory {
+					return true, nil
+				}
+				// An explicit directory object counts even under a reserved name.
+				if entry.IsDirectoryKeyObject() {
+					return true, nil
+				}
+				// Multipart staging folders are invisible to object listing at
+				// every level, so they never count. A <key>.versions directory
+				// is descended into since it may still hold stored versions.
+				if entry.Name == s3_constants.MultipartUploadsFolder {
+					continue
+				}
+				dirs = append(dirs, dir+"/"+entry.Name)
+			}
+			if isLast || len(entries) == 0 {
+				break
+			}
+			limit = 1000
 		}
-		if isLast {
-			return false, nil
-		}
-		limit = 1000
 	}
+	return false, nil
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
@@ -561,8 +606,13 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if entry, err := s3a.getBucketEntry(bucket); entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+	if _, err := s3a.getBucketEntry(bucket); err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		glog.Errorf("HeadBucketHandler: failed to get bucket entry for %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -588,6 +638,9 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 
 // ErrAutoCreatePermissionDenied is returned when a user lacks permission to auto-create buckets
 var ErrAutoCreatePermissionDenied = errors.New("permission denied - requires Admin permission")
+
+// ErrAutoCreateDisabled is returned when bucket auto-creation is disabled by configuration
+var ErrAutoCreateDisabled = errors.New("bucket auto-creation is disabled")
 
 // ErrInvalidBucketName is returned when a bucket name doesn't meet S3 naming requirements
 var ErrInvalidBucketName = errors.New("invalid bucket name")
@@ -690,6 +743,10 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, errors.Join(ErrInvalidBucketName, err))
 	}
 
+	if !s3a.option.AutoCreateBucket {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
+	}
+
 	// Check if user has admin permissions
 	if !s3a.isUserAdmin(r) {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
@@ -697,7 +754,7 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 
 	identityId := s3_constants.GetIdentityNameFromContext(r)
 	var bucketCrtime int64
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
 		setBucketOwner(r)(entry)
 	}); err != nil {
@@ -707,26 +764,35 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
 			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
 		} else if exist {
+			entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket)
+			if getErr != nil {
+				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+				return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, getErr))
+			}
+			if concurrentEntryIsForeign(entry, nil) {
+				// A table bucket carries no S3 owner and must not gain one —
+				// or a write intended for a missing plain bucket.
+				if s3a.bucketConfigCache != nil {
+					s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+				}
+				return fmt.Errorf("auto-create bucket %s: name taken by a table bucket: %w", bucket, err)
+			}
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
 			// we'll set it here to ensure consistency.
-			if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil {
-				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
-					// No owner set, assign current admin as owner
-					setBucketOwner(r)(entry)
-					if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
-						glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
-					} else {
-						glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
-						if owner := bucketEntryOwner(entry); owner != "" {
-							if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
-								glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
-							}
+			if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
+				// No owner set, assign current admin as owner
+				setBucketOwner(r)(entry)
+				if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
+					glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
+				} else {
+					glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
+					if owner := bucketEntryOwner(entry); owner != "" {
+						if indexErr := s3a.addBucketToOwnerIndex(owner, bucket, entry.Attributes.Crtime); indexErr != nil {
+							glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", owner, bucket, indexErr)
 						}
 					}
 				}
-			} else {
-				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
 			}
 			// Remove bucket from negative cache — it exists now
 			if s3a.bucketConfigCache != nil {
@@ -758,7 +824,9 @@ func (s3a *S3ApiServer) handleAutoCreateBucket(w http.ResponseWriter, r *http.Re
 	if err := s3a.autoCreateBucket(r, bucket); err != nil {
 		glog.Warningf("%s: %v", handlerName, err)
 		// Check for specific errors to return appropriate S3 error codes
-		if errors.Is(err, ErrInvalidBucketName) {
+		if errors.Is(err, ErrAutoCreateDisabled) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else if errors.Is(err, ErrInvalidBucketName) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
 		} else if errors.Is(err, ErrAutoCreatePermissionDenied) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
@@ -846,6 +914,11 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 // buildResourceARN builds a resource ARN from bucket and object
 // Used by the policy engine wrapper
 func buildResourceARN(bucket, object string) string {
+	// An already-ARN resource (IAM management actions authorize against
+	// arn:aws:iam::...) passes through; no bucket name can contain ':'.
+	if strings.HasPrefix(bucket, "arn:") {
+		return bucket
+	}
 	if object == "" || object == "/" {
 		return fmt.Sprintf("arn:aws:s3:::%s", bucket)
 	}
@@ -854,27 +927,38 @@ func buildResourceARN(bucket, object string) string {
 	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
 }
 
-// AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
+// AuthWithPublicRead allows anonymous reads granted by bucket policies or ACLs,
+// deferring object ACL decisions until the GET/HEAD handler selects its entry.
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, object := s3_constants.GetBucketAndObject(r)
+		if objectRequest, deferred := s3a.deferAnonymousObjectRead(r, action, bucket, object); deferred {
+			handler(w, objectRequest)
+			return
+		}
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
 		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
+		// For anonymous requests, check if bucket allows public read via bucket policies or ACLs
 		if isAnonymous {
-			// First check ACL-based public access
+			// Loading the bucket config on a cache miss also refreshes the
+			// compiled policy, so a remotely deleted policy cannot leave a
+			// stale verdict in the engine.
 			isPublic := s3a.isBucketPublicRead(bucket)
 			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
-			if isPublic {
+
+			// Object requests are re-evaluated inside Get/HeadObjectHandler
+			// once the entry is fetched, where tag conditions like
+			// s3:ExistingObjectTag/<key> can resolve correctly. Only
+			// bucket-level requests (List, HeadBucket) rely on this check alone.
+			if isPublic && object != "" {
 				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
 				handler(w, r)
 				return
 			}
 
-			// Check bucket policy for anonymous access using the policy engine
 			principal := "*" // Anonymous principal
 			// Evaluate bucket policy (objectEntry nil - not yet fetched)
 			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil, nil)
@@ -898,7 +982,13 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 					return
 				}
 			}
-			// No matching policy statement - fall through to check ACLs and then IAM auth
+
+			// No matching policy statement - fall back to the ACL grant
+			if isPublic {
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
+				handler(w, r)
+				return
+			}
 			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
 		}
 
@@ -1083,12 +1173,10 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxBucketLifecycleConfigurationSize)
-	lifecycleXML, err := io.ReadAll(r.Body)
+	lifecycleXML, err := readRequestBody(r, maxBucketLifecycleConfigurationSize)
 	if err != nil {
 		glog.Warningf("PutBucketLifecycleConfigurationHandler read body: %s", err)
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if errors.Is(err, errRequestBodyTooLarge) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
 			return
 		}
@@ -1123,41 +1211,35 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// (volume server expires under the old rule) or contradict the new
 	// XML after a rule change. The add path is gone — this loop only
 	// shrinks the conf, never grows it.
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
-	if err != nil {
-		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.ClearBucketLifecycleDayTTLs(context.Background(), client, s3a.option.BucketsPath, bucket, s3a.getCollectionName(bucket))
+	}); err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler clear legacy day-TTLs: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
-	changed := false
-	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	for prefix, ttl := range collectionTtls {
-		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
-			continue
-		}
-		fc.DeleteLocationConf(prefix)
-		changed = true
-	}
 
-	if changed {
-		var buf bytes.Buffer
-		if err := fc.ToText(&buf); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		}
-		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
-		}); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
+	// The per-write TTL fast path stamps a volume TTL at write time that
+	// can't be taken back. If it's active on this bucket, warn when the new
+	// config removes or lengthens a rule: objects already written keep their
+	// baked-in TTL and won't be rescued by this change (unlike the default
+	// worker path, which re-evaluates the current rules each pass).
+	// Compute the reason before storing, but emit only after the store
+	// succeeds so a failed mutation never carries a warning for a change
+	// that was not applied.
+	var fastpathWarnReason string
+	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
+		fastpathWarnReason = fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, lifecycleXML)
 	}
 
 	if errCode := s3a.storeBucketLifecycleConfiguration(bucket, lifecycleXML, r.Header.Get(bucketLifecycleTransitionMinimumObjectSizeHeader)); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	if fastpathWarnReason != "" {
+		glog.Warningf("PutBucketLifecycleConfigurationHandler %s: %s", bucket, fastpathWarnReason)
+		w.Header().Set(fastpathWarningHeader, fastpathWarnReason)
 	}
 
 	writeSuccessResponseEmpty(w, r)
@@ -1175,41 +1257,34 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
-	if err != nil {
-		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
+	// Same legacy day-TTL migration as the PUT handler.
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.ClearBucketLifecycleDayTTLs(context.Background(), client, s3a.option.BucketsPath, bucket, s3a.getCollectionName(bucket))
+	}); err != nil {
+		glog.Errorf("DeleteBucketLifecycleHandler clear legacy day-TTLs: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
-	changed := false
-	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	for prefix, ttl := range collectionTtls {
-		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
-			continue
-		}
-		fc.DeleteLocationConf(prefix)
-		changed = true
-	}
 
-	if changed {
-		var buf bytes.Buffer
-		if err := fc.ToText(&buf); err != nil {
-			glog.Errorf("DeleteBucketLifecycleHandler save config to text: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		}
-		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
-		}); err != nil {
-			glog.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
+	// If the per-write TTL fast path is active, every previously-stamped
+	// object keeps its baked-in volume TTL after the config is removed —
+	// deleting the rules does not rescue them (unlike the default worker
+	// path). Compute the reason before clearing, but emit only after the
+	// clear succeeds so a failed mutation never carries a warning for a
+	// change that was not applied.
+	var fastpathWarnReason string
+	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
+		fastpathWarnReason = fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, nil)
 	}
 
 	if errCode := s3a.clearStoredBucketLifecycleConfiguration(bucket); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	if fastpathWarnReason != "" {
+		glog.Warningf("DeleteBucketLifecycleHandler %s: %s", bucket, fastpathWarnReason)
+		w.Header().Set(fastpathWarningHeader, fastpathWarnReason)
 	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
@@ -1219,6 +1294,11 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLocation.html
 func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
+
+	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
+		return
+	}
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)

@@ -61,7 +61,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 
 	t.Run("no endpoint configured yields empty config", func(t *testing.T) {
 		s := &Server{}
-		got := s.buildFileIOConfig(loadTable())
+		got, _ := s.buildFileIOConfig(loadTable(), "s3://warehouse/ns/t", nil)
 		if len(got) != 0 {
 			t.Fatalf("buildFileIOConfig() = %v, want empty", got)
 		}
@@ -69,7 +69,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 
 	t.Run("endpoint is advertised with path-style-access and region", func(t *testing.T) {
 		s := &Server{s3Endpoint: "http://seaweed.example:8333"}
-		got := s.buildFileIOConfig(loadTable())
+		got, _ := s.buildFileIOConfig(loadTable(), "s3://warehouse/ns/t", nil)
 		if got["s3.endpoint"] != "http://seaweed.example:8333" {
 			t.Fatalf("s3.endpoint = %q, want %q", got["s3.endpoint"], "http://seaweed.example:8333")
 		}
@@ -80,4 +80,26 @@ func TestBuildFileIOConfig(t *testing.T) {
 			t.Fatalf("s3.region was empty, want a non-empty default so clients like DuckDB do not require AWS_REGION")
 		}
 	})
+}
+
+func TestGetBucketFromPrefix_TableBucketEnvFallback(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/namespaces", nil)
+
+	t.Setenv("S3_TABLE_BUCKET", " ,analytics, other")
+	if got := getBucketFromPrefix(r); got != "analytics" {
+		t.Fatalf("first S3_TABLE_BUCKET entry: got %q, want analytics", got)
+	}
+
+	// The explicit default still wins over the table bucket list.
+	t.Setenv("S3TABLES_DEFAULT_BUCKET", "explicit")
+	if got := getBucketFromPrefix(r); got != "explicit" {
+		t.Fatalf("S3TABLES_DEFAULT_BUCKET override: got %q, want explicit", got)
+	}
+
+	// A prefixless value with neither env set falls through to the default.
+	t.Setenv("S3TABLES_DEFAULT_BUCKET", "")
+	t.Setenv("S3_TABLE_BUCKET", " , ")
+	if got := getBucketFromPrefix(r); got != "warehouse" {
+		t.Fatalf("empty specs: got %q, want warehouse", got)
+	}
 }

@@ -6,7 +6,7 @@ use crate::storage::needle::needle::get_actual_size;
 use crate::storage::types::*;
 use std::io::{self, Read, Seek, SeekFrom};
 
-const ROWS_TO_READ: usize = 1024;
+pub(crate) const ROWS_TO_READ: usize = 1024;
 
 /// Walk all entries in an .idx file, calling `f` for each.
 /// Mirrors Go's `WalkIndexFile()`.
@@ -21,18 +21,37 @@ where
     let mut buf = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * ROWS_TO_READ];
 
     loop {
-        let count = match reader.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(n) => n,
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
-            Err(e) => return Err(e),
-        };
+        // Fill the batch before decoding: `read` may return a count that is
+        // not a multiple of the entry size, and a split entry would misalign
+        // every later row. Go is immune: `ReadAt` fills or errors.
+        let mut count = 0;
+        let mut eof = false;
+        while count < buf.len() {
+            match reader.read(&mut buf[count..]) {
+                Ok(0) => {
+                    eof = true;
+                    break;
+                }
+                Ok(n) => count += n,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                    eof = true;
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
         let mut i = 0;
         while i + NEEDLE_MAP_ENTRY_SIZE <= count {
             let (key, offset, size) = idx_entry_from_bytes(&buf[i..i + NEEDLE_MAP_ENTRY_SIZE]);
             f(key, offset, size)?;
             i += NEEDLE_MAP_ENTRY_SIZE;
+        }
+
+        // A trailing partial entry at EOF is ignored, as Go does on `io.EOF`.
+        if eof {
+            return Ok(());
         }
     }
 }
@@ -57,7 +76,7 @@ pub fn check_index_file<R: Read + Seek>(
         errs.push(format!("walk index file: {}", e));
     }
 
-    entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
+    entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.0.cmp(&b.3.0)));
 
     // Offset-0 logical tombstones (remote-tier deletes) occupy no physical extent,
     // so they cannot overlap anything — exclude them from the overlap check. They
@@ -177,6 +196,111 @@ mod tests {
         data
     }
 
+    /// Reader that hands back at most `chunk` bytes per `read`. 7 is coprime
+    /// with the 17-byte entry size, so nearly every read ends mid-entry. With
+    /// `interrupts`, every other call fails with `ErrorKind::Interrupted`.
+    struct ShortReader {
+        inner: Cursor<Vec<u8>>,
+        chunk: usize,
+        interrupts: bool,
+        interrupt_next: bool,
+    }
+
+    impl ShortReader {
+        fn new(data: Vec<u8>, interrupts: bool) -> Self {
+            ShortReader {
+                inner: Cursor::new(data),
+                chunk: 7,
+                interrupts,
+                interrupt_next: false,
+            }
+        }
+    }
+
+    impl Read for ShortReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.interrupt_next {
+                self.interrupt_next = false;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            self.interrupt_next = self.interrupts;
+            let n = buf.len().min(self.chunk);
+            self.inner.read(&mut buf[..n])
+        }
+    }
+
+    impl Seek for ShortReader {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    fn walk_all<R: Read + Seek>(reader: &mut R, start_from: u64) -> Vec<(NeedleId, i64, Size)> {
+        let mut collected = Vec::new();
+        walk_index_file(reader, start_from, |key, offset, size| {
+            collected.push((key, offset.to_actual_offset(), size));
+            Ok(())
+        })
+        .unwrap();
+        collected
+    }
+
+    /// More than one ROWS_TO_READ batch, so the walk crosses a buffer refill.
+    fn many_entries() -> Vec<(NeedleId, Offset, Size)> {
+        (0..(ROWS_TO_READ as u64 * 2 + 37))
+            .map(|i| {
+                (
+                    NeedleId(i * 7 + 1),
+                    Offset::from_actual_offset(i as i64 * 128),
+                    Size(i as i32 + 1),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_walk_index_file_short_reads_keep_alignment() {
+        let data = idx_bytes(&many_entries());
+        let expected = walk_all(&mut Cursor::new(data.clone()), 0);
+        assert_eq!(expected.len(), ROWS_TO_READ * 2 + 37);
+
+        let mut short = ShortReader::new(data, false);
+        assert_eq!(walk_all(&mut short, 0), expected);
+    }
+
+    #[test]
+    fn test_walk_index_file_retries_interrupted_reads() {
+        let data = idx_bytes(&many_entries());
+        let expected = walk_all(&mut Cursor::new(data.clone()), 0);
+
+        let mut short = ShortReader::new(data, true);
+        assert_eq!(walk_all(&mut short, 0), expected);
+    }
+
+    #[test]
+    fn test_walk_index_file_short_reads_start_from() {
+        let data = idx_bytes(&many_entries());
+        let expected = walk_all(&mut Cursor::new(data.clone()), 0);
+
+        let start = ROWS_TO_READ as u64 + 5;
+        let mut short = ShortReader::new(data, false);
+        assert_eq!(walk_all(&mut short, start), expected[start as usize..]);
+    }
+
+    #[test]
+    fn test_walk_index_file_ignores_trailing_partial_entry() {
+        // A torn final entry is dropped without an error, as Go does on io.EOF.
+        let entries = many_entries();
+        let mut data = idx_bytes(&entries);
+        data.extend_from_slice(&[0xAB; NEEDLE_MAP_ENTRY_SIZE - 1]);
+
+        let expected = walk_all(&mut Cursor::new(idx_bytes(&entries)), 0);
+        assert_eq!(walk_all(&mut Cursor::new(data.clone()), 0), expected);
+
+        let mut short = ShortReader::new(data, false);
+        assert_eq!(walk_all(&mut short, 0), expected);
+    }
+
     #[test]
     fn test_check_index_file_clean() {
         let data = idx_bytes(&[
@@ -213,7 +337,11 @@ mod tests {
         let size = data.len() as i64;
         let (count, errs) = check_index_file(&mut Cursor::new(data), size, Version(3));
         assert_eq!(count, 2, "tombstone row is still counted: {:?}", errs);
-        assert!(errs.is_empty(), "offset-0 tombstone must not overlap: {:?}", errs);
+        assert!(
+            errs.is_empty(),
+            "offset-0 tombstone must not overlap: {:?}",
+            errs
+        );
     }
 
     #[test]

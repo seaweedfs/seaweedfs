@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -99,9 +100,9 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 			// Test each operation
 			for _, op := range tt.testOperations {
 				t.Run(string(op.Action), func(t *testing.T) {
-					// Test JWT authentication
-					identity, errCode := testJWTAuthentication(t, iamServer, jwtToken)
-					require.Equal(t, s3err.ErrNone, errCode, "JWT authentication should succeed")
+					// Test session authentication via SigV4 proof of possession
+					identity, errCode := testSessionAuthentication(t, iamServer, response.Credentials)
+					require.Equal(t, s3err.ErrNone, errCode, "Session authentication should succeed")
 					require.NotNil(t, identity)
 
 					// Test authorization with appropriate role based on test case
@@ -171,11 +172,10 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100")
 				req.Header.Set("User-Agent", "aws-sdk-go/1.0")
-				// Set RemoteAddr to private IP to simulate trusted proxy
 				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
-			expectedIP: "192.168.1.100",
+			expectedIP: "127.0.0.1",
 			expectedUA: "aws-sdk-go/1.0",
 		},
 		{
@@ -184,11 +184,10 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Real-IP", "10.0.0.1")
 				req.Header.Set("User-Agent", "boto3/1.0")
-				// Set RemoteAddr to private IP to simulate trusted proxy
 				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
-			expectedIP: "10.0.0.1",
+			expectedIP: "127.0.0.1",
 			expectedUA: "boto3/1.0",
 		},
 	}
@@ -197,8 +196,8 @@ func TestRequestContextExtraction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
 
-			// Extract request context
-			context := extractRequestContext(req)
+			s3iam := &S3IAMIntegration{}
+			context := s3iam.extractRequestContext(req)
 
 			if tt.expectedIP != "" {
 				assert.Equal(t, tt.expectedIP, context["aws:SourceIp"])
@@ -209,6 +208,20 @@ func TestRequestContextExtraction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequestContextExtraction_TrustedProxy verifies that when a trusted
+// proxy allowlist is configured, X-Forwarded-For is honored.
+func TestRequestContextExtraction_TrustedProxy(t *testing.T) {
+	s3iam := &S3IAMIntegration{}
+	s3iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{"10.0.0.0/24"}))
+
+	req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+	req.RemoteAddr = "10.0.0.1:12345"
+
+	context := s3iam.extractRequestContext(req)
+	assert.Equal(t, "203.0.113.99", context["aws:SourceIp"])
 }
 
 // TestIPBasedPolicyEnforcement tests IP-based conditional policies
@@ -258,9 +271,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 			// Create request with specific IP
 			req := httptest.NewRequest("GET", "/restricted-bucket/file.txt", http.NoBody)
 			req.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
-			req.Header.Set("X-Forwarded-For", tt.sourceIP)
-			// Set RemoteAddr to private IP to simulate trusted proxy
-			req.RemoteAddr = "127.0.0.1:12345"
+			req.RemoteAddr = tt.sourceIP + ":12345"
 
 			// Create IAM identity for testing
 			identity := &IAMIdentity{
@@ -524,6 +535,16 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 		},
 		AttachedPolicies: []string{"S3IPRestrictedPolicy"},
 	})
+}
+
+// testSessionAuthentication authenticates STS temporary credentials the way a
+// real client does: a SigV4-signed request carrying the session token.
+func testSessionAuthentication(t *testing.T, iam *IdentityAccessManagement, creds *sts.Credentials) (*Identity, s3err.ErrorCode) {
+	req, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
+	require.NoError(t, signRequestV4(req, creds.AccessKeyId, creds.SecretAccessKey))
+	return iam.reqSignatureV4Verify(req)
 }
 
 func testJWTAuthentication(t *testing.T, iam *IdentityAccessManagement, token string) (*Identity, s3err.ErrorCode) {

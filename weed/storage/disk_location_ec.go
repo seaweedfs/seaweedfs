@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"slices"
 
@@ -23,6 +24,17 @@ var (
 	re = regexp.MustCompile(`\.ec\d{2,3}`)
 )
 
+// markEcDestroying records a pending destroy for vid and returns the channel
+// closed when it finishes. Callers must hold ecVolumesLock for writing.
+func (l *DiskLocation) markEcDestroying(vid needle.VolumeId) chan struct{} {
+	if l.ecVolumesDestroying == nil {
+		l.ecVolumesDestroying = make(map[needle.VolumeId]chan struct{})
+	}
+	done := make(chan struct{})
+	l.ecVolumesDestroying[vid] = done
+	return done
+}
+
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
@@ -36,13 +48,27 @@ func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolu
 
 func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 	l.ecVolumesLock.Lock()
-	defer l.ecVolumesLock.Unlock()
-
 	ecVolume, found := l.ecVolumes[vid]
+	var done chan struct{}
 	if found {
-		ecVolume.Destroy()
+		done = l.markEcDestroying(vid)
 		delete(l.ecVolumes, vid)
 	}
+	l.ecVolumesLock.Unlock()
+
+	if !found {
+		return
+	}
+	// Destroy outside the write lock: EcVolume.Destroy's Close waits on the
+	// deletion-journal lock, which a running ec.decode can hold — under the
+	// map lock that wait would stall every EC lookup and invert the
+	// map->journal lock order.
+	ecVolume.Destroy()
+
+	// The tombstone stays after close() as this vid's destroy generation: a
+	// remount compares it before and after opening files to spot a destroy
+	// that ran inside the window. The next successful mount clears it.
+	close(done)
 }
 
 // UnloadEcVolume drops the in-memory EcVolume for vid from this one disk without
@@ -140,17 +166,57 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 // (issue #9212).
 func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, idxDir string) (*erasure_coding.EcVolume, error) {
 
-	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
-	if err != nil {
-		if err == os.ErrNotExist {
-			return nil, os.ErrNotExist
+	// A destroy-in-progress or already-finished one leaves a tombstone; it
+	// stays in the map until a mount clears it, so comparing the channel
+	// before and after opening the shard detects any destroy that could have
+	// unlinked the files in between — including one that ran to completion
+	// inside the window.
+	var ecVolumeShard *erasure_coding.EcVolumeShard
+	for {
+		l.ecVolumesLock.Lock()
+		gen := l.ecVolumesDestroying[vid]
+		l.ecVolumesLock.Unlock()
+		if gen != nil {
+			select {
+			case <-gen:
+				// Destroy already finished; the closed tombstone is the
+				// generation token the post-open recheck compares against.
+			default:
+				// Destroy in flight: its unlinks could detach anything this
+				// mount opens, so wait it out and take a fresh generation.
+				<-gen
+				continue
+			}
 		}
-		return nil, fmt.Errorf("failed to create ec shard %d.%d: %w", vid, shardId, err)
+
+		var err error
+		ecVolumeShard, err = erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
+		if err != nil {
+			if err == os.ErrNotExist {
+				return nil, os.ErrNotExist
+			}
+			return nil, fmt.Errorf("failed to create ec shard %d.%d: %w", vid, shardId, err)
+		}
+
+		l.ecVolumesLock.Lock()
+		if cur := l.ecVolumesDestroying[vid]; cur != gen {
+			// A destroy intervened while the shard was being opened; its
+			// unlink may have detached the file. Drop the handle, wait for
+			// the destroy, and retry on a clean slate.
+			l.ecVolumesLock.Unlock()
+			ecVolumeShard.Unmount() // release the gauge the constructor's Mount took
+			ecVolumeShard.Close()
+			if cur != nil {
+				<-cur
+			}
+			continue
+		}
+		break
 	}
-	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
+		var err error
 		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
 		if err != nil {
 			// Wrap with %w so MountEcShards / startup reconcile can use
@@ -159,8 +225,32 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 			return nil, fmt.Errorf("failed to create ec volume %d: %w", vid, err)
 		}
 		l.ecVolumes[vid] = ecVolume
+		// Fresh generation for this vid: the next destroy sets a new
+		// tombstone rather than matching the cleared one.
+		delete(l.ecVolumesDestroying, vid)
 	}
-	ecVolume.AddEcVolumeShard(ecVolumeShard)
+	added, err := ecVolume.AddEcVolumeShard(ecVolumeShard)
+	if err != nil {
+		// The shard could not be registered (e.g. a 0-byte file beside an
+		// index with entries). Leave nothing behind: close the opened shard,
+		// and remove the EcVolume if this call just created it and it holds
+		// no shards — a zero-shard registration would advertise a mount that
+		// serves no data while pinning its descriptors.
+		ecVolumeShard.Unmount() // release the gauge the constructor's Mount took
+		ecVolumeShard.Close()
+		if !found && len(ecVolume.Shards) == 0 {
+			delete(l.ecVolumes, vid)
+			ecVolume.Close()
+		}
+		return nil, err
+	}
+	if !added {
+		// Already registered on this disk (a mount retry): the existing
+		// shard keeps serving; release the duplicate's fd and gauge so
+		// repeated LoadEcShard calls don't leak either.
+		ecVolumeShard.Unmount()
+		ecVolumeShard.Close()
+	}
 
 	return ecVolume, nil
 }
@@ -210,21 +300,48 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 	return nil
 }
 
+// staleZeroShardAge guards the zero-sized-shard cleanup in loadAllEcShards: a
+// just-created file of an in-flight VolumeEcShardsCopy is legitimately empty
+// for a moment, while failed-operation residue is old by the next scan.
+const staleZeroShardAge = time.Hour
+
 func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
-	dirEntries, err := os.ReadDir(l.Directory)
-	if err != nil {
+	// Keep only the shard and index files this scan acts on: a disk of regular
+	// volumes has millions of .dat/.idx/.vif entries that would otherwise each
+	// cost a slot in the sorted slice below and a stat() for its size.
+	type ecDirEntry struct {
+		name string
+		size int64
+	}
+	var dirEntries []ecDirEntry
+	collect := func(dir string) error {
+		return eachDirEntry(dir, func(entry os.DirEntry) bool {
+			if entry.IsDir() {
+				return true
+			}
+			ext := path.Ext(entry.Name())
+			if !re.MatchString(ext) && ext != ".ecx" {
+				return true
+			}
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return true
+			}
+			dirEntries = append(dirEntries, ecDirEntry{name: entry.Name(), size: info.Size()})
+			return true
+		})
+	}
+	if err := collect(l.Directory); err != nil {
 		return fmt.Errorf("load all ec shards in dir %s: %v", l.Directory, err)
 	}
 	if l.IdxDirectory != l.Directory {
-		indexDirEntries, err := os.ReadDir(l.IdxDirectory)
-		if err != nil {
+		if err := collect(l.IdxDirectory); err != nil {
 			return fmt.Errorf("load all ec shards in dir %s: %v", l.IdxDirectory, err)
 		}
-		dirEntries = append(dirEntries, indexDirEntries...)
 	}
-	slices.SortFunc(dirEntries, func(a, b os.DirEntry) int {
-		return strings.Compare(a.Name(), b.Name())
+	slices.SortFunc(dirEntries, func(a, b ecDirEntry) int {
+		return strings.Compare(a.name, b.name)
 	})
 
 	var sameVolumeShards []string
@@ -239,11 +356,8 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 	}
 
 	for _, fileInfo := range dirEntries {
-		if fileInfo.IsDir() {
-			continue
-		}
-		ext := path.Ext(fileInfo.Name())
-		name := fileInfo.Name()
+		name := fileInfo.name
+		ext := path.Ext(name)
 		baseName := name[:len(name)-len(ext)]
 
 		collection, volumeId, err := parseCollectionVolumeId(baseName)
@@ -251,22 +365,44 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 			continue
 		}
 
-		info, err := fileInfo.Info()
-
-		if err != nil {
+		// A zero-sized shard file is residue of a failed operation (never
+		// loaded, but its presence poisons later rebuilds, which select
+		// inputs from the directory). Delete it once it is old enough that
+		// it cannot be an in-flight copy's just-created file — this scan
+		// also runs from LoadNewVolumes while the server is serving. The
+		// scan merges the Directory and IdxDirectory listings, so the entry
+		// and a candidate path can be different files with one name: each
+		// candidate's own age decides, and a same-named fresh file (possibly
+		// an in-flight copy's just-created one) always survives.
+		if re.MatchString(ext) && fileInfo.size == 0 {
+			for _, dir := range []string{l.Directory, l.IdxDirectory} {
+				p := path.Join(dir, name)
+				fi, statErr := os.Stat(p)
+				if statErr != nil || fi.IsDir() || fi.Size() != 0 {
+					continue
+				}
+				if time.Since(fi.ModTime()) <= staleZeroShardAge {
+					continue
+				}
+				if rmErr := os.Remove(p); rmErr != nil {
+					glog.Warningf("remove zero-sized ec shard %s: %v", p, rmErr)
+				} else {
+					glog.Warningf("removed zero-sized ec shard %s (residue of a failed operation)", p)
+				}
+			}
 			continue
 		}
 
 		// 0 byte files should be only appearing erroneously for ec data files
 		// so we ignore them
-		if re.MatchString(ext) && info.Size() > 0 {
+		if re.MatchString(ext) && fileInfo.size > 0 {
 			// Group shards by both collection and volumeId to avoid mixing collections
 			if prevVolumeId == 0 || (volumeId == prevVolumeId && collection == prevCollection) {
-				sameVolumeShards = append(sameVolumeShards, fileInfo.Name())
+				sameVolumeShards = append(sameVolumeShards, name)
 			} else {
 				// Before starting a new group, check if previous group had orphaned shards
 				l.checkOrphanedShards(sameVolumeShards, prevCollection, prevVolumeId)
-				sameVolumeShards = []string{fileInfo.Name()}
+				sameVolumeShards = []string{name}
 			}
 			prevVolumeId = volumeId
 			prevCollection = collection
@@ -321,16 +457,21 @@ func (l *DiskLocation) loadEcShardsWithIdxDir(shards []string, collection string
 }
 
 func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
-	// Add write lock since we're modifying the ecVolumes map
 	l.ecVolumesLock.Lock()
-	defer l.ecVolumesLock.Unlock()
-
 	ecVolume, ok := l.ecVolumes[vid]
+	var done chan struct{}
+	if ok {
+		done = l.markEcDestroying(vid)
+		delete(l.ecVolumes, vid)
+	}
+	l.ecVolumesLock.Unlock()
+
 	if !ok {
 		return
 	}
+	// Destroy outside the map lock — see DestroyEcVolume.
 	ecVolume.Destroy()
-	delete(l.ecVolumes, vid)
+	close(done)
 	return
 }
 
@@ -342,8 +483,11 @@ func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[ne
 		}
 	}
 
-	for k, _ := range deltaVols {
+	for k := range deltaVols {
 		delete(l.ecVolumes, k)
+		// Caller destroys these outside the lock; tombstone until then so a
+		// remount can't open files the destroy is about to unlink.
+		l.markEcDestroying(k)
 	}
 	return deltaVols
 }
@@ -437,26 +581,17 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 // erasure_coding.DataShardsCount so that tests writing a custom layout
 // to .vif compute the matching shard size, and so custom-ratio builds
 // (e.g. enterprise) can swap the default without touching this helper.
+// The padded shard length is the same number under both layouts —
+// TestUniformBlockSizeMatchesLegacyShardSize asserts the equivalence for every
+// input — so defer to the encoder's own helper instead of keeping a second copy
+// of the padding rule that a future change would have to be made in twice. An
+// empty .dat keeps its historic answer: the legacy encoder emits no block for
+// it, where UniformBlockSize floors at one.
 func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
-	if dataShardCount <= 0 {
+	if dataShardCount <= 0 || datFileSize <= 0 {
 		return 0
 	}
-	var shardSize int64
-
-	// Process large blocks (1GB * dataShardCount per batch)
-	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(dataShardCount)
-	numLargeBatches := datFileSize / largeBatchSize
-	shardSize = numLargeBatches * int64(erasure_coding.ErasureCodingLargeBlockSize)
-	remainingSize := datFileSize - (numLargeBatches * largeBatchSize)
-
-	// Process remaining data in small blocks (1MB * dataShardCount per batch)
-	if remainingSize > 0 {
-		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(dataShardCount)
-		numSmallBatches := (remainingSize + smallBatchSize - 1) / smallBatchSize // Ceiling division
-		shardSize += numSmallBatches * int64(erasure_coding.ErasureCodingSmallBlockSize)
-	}
-
-	return shardSize
+	return erasure_coding.UniformBlockSize(datFileSize, dataShardCount)
 }
 
 // validateEcVolume reports whether the EC files for (collection, vid) on this
@@ -580,15 +715,25 @@ func (l *DiskLocation) removeEcVolumeFiles(collection string, vid needle.VolumeI
 	// EC loading for incomplete/missing shards on next startup
 	removeFile(indexBaseFileName+".ecx", "EC index file")
 	removeFile(indexBaseFileName+".ecj", "EC journal file")
+	removeFile(indexBaseFileName+erasure_coding.EcjCompactTmpExt, "EC journal compaction tmp")
 	// Also try the data directory in case .ecx/.ecj were created before -dir.idx was configured
 	if l.IdxDirectory != l.Directory {
 		removeFile(baseFileName+".ecx", "EC index file (fallback)")
 		removeFile(baseFileName+".ecj", "EC journal file (fallback)")
+		removeFile(baseFileName+erasure_coding.EcjCompactTmpExt, "EC journal compaction tmp (fallback)")
 	}
 
 	// Remove all EC shard files (.ec00 ~ .ec31) from data directory
 	// Use MaxShardCount (32) to support custom EC ratios
 	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		removeFile(baseFileName+erasure_coding.ToExt(i), "EC shard file")
+	}
+
+	// Staged 2PC generations (<base>.ecNN.v<N>, versioned .ecx/.ecj/.vif)
+	// belong to this volume's EC state too; leaving them orphans the files.
+	for _, dir := range []string{indexBaseFileName, baseFileName} {
+		if err := erasure_coding.RemoveEcGenerationFiles(dir, 0); err != nil {
+			glog.Warningf("Failed to remove EC generation files for %s: %v", dir, err)
+		}
 	}
 }

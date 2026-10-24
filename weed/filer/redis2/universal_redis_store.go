@@ -118,11 +118,10 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(fullpath)))).Result()
-	if err != nil {
-		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
-	}
-
+	// The child listing is dropped by DeleteFolderChildren, together with the
+	// children it describes. Dropping it here would also discard an entry that
+	// arrived after the caller judged this directory empty, and nothing else
+	// records that the entry is there.
 	_, err = store.Client.Del(ctx, store.getKey(string(fullpath))).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -148,7 +147,8 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRangeByLex(ctx, store.getKey(genDirectoryListKey(string(fullpath))), &redis.ZRangeBy{
+	dirListKey := store.getKey(genDirectoryListKey(string(fullpath)))
+	members, err := store.Client.ZRangeByLex(ctx, dirListKey, &redis.ZRangeBy{
 		Min: "-",
 		Max: "+",
 	}).Result()
@@ -164,6 +164,10 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		}
 		// not efficient, but need to remove if it is a directory
 		store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(path))))
+	}
+
+	if _, err = store.Client.Del(ctx, dirListKey).Result(); err != nil {
+		return fmt.Errorf("DeleteFolderChildren %s list: %v", fullpath, err)
 	}
 
 	return nil
@@ -205,17 +209,15 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
+				store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 				err = nil
 				continue
 			}
 			break
 		} else {
-			if entry.TtlSec > 0 {
-				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(ctx, store.getKey(string(path))).Result()
-					store.Client.ZRem(ctx, dirListKey, fileName).Result()
-					continue
-				}
+			if isLogicallyExpired(entry) {
+				store.deleteExpiredEntry(ctx, dirPath, path, fileName)
+				continue
 			}
 
 			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
@@ -231,6 +233,99 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 	}
 
 	return lastFileName, err
+}
+
+func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {
+	// a directory converted to super large after accumulating members still has a legacy index
+	if store.isSuperLargeDirectory(string(dirPath)) {
+		return
+	}
+
+	// survive the listing request being canceled mid-repair
+	ctx = context.WithoutCancel(ctx)
+
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
+	path := util.NewFullPath(string(dirPath), fileName)
+
+	if err := store.Client.ZRem(ctx, dirListKey, fileName).Err(); err != nil {
+		return
+	}
+
+	// InsertEntry writes the value before adding the member, so a value present
+	// again here may belong to an insert that found the member still in place
+	// and whose ZAddNX was therefore a no-op.
+	exists, err := store.existsOnMaster(ctx, store.getKey(string(path)))
+	if err == nil && exists == 0 {
+		// an evicted directory may still have a live child index; empty zsets self-delete,
+		// so a present index holds children a recursive delete still needs to reach
+		children, childrenErr := store.existsOnMaster(ctx, store.getKey(genDirectoryListKey(string(path))))
+		if childrenErr == nil && children == 0 {
+			return
+		}
+	}
+
+	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
+		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
+	}
+}
+
+var existsScript = redis.NewScript(`return redis.call('EXISTS', KEYS[1])`)
+
+// replica-routed clients (useReadOnly, routeByLatency) would run a plain EXISTS on a lagging
+// replica and misread a live value as absent, turning the repair destructive; a script always
+// runs on the key's master
+func (store *UniversalRedis2Store) existsOnMaster(ctx context.Context, key string) (int64, error) {
+	return existsScript.Run(ctx, store.Client, []string{key}).Int64()
+}
+
+func isLogicallyExpired(entry *filer.Entry) bool {
+	return entry.TtlSec > 0 && entry.Attr.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now())
+}
+
+// deletes the value only when it still holds exactly the bytes the expiry decision was made on;
+// single-key, so it runs on all transports where a multi-key script would be CROSSSLOT.
+// -1: already gone, 0: changed under us, 1: deleted
+var deleteIfUnchangedScript = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if v == false then
+	return -1
+end
+if v == ARGV[1] then
+	return redis.call('DEL', KEYS[1])
+end
+return 0`)
+
+func (store *UniversalRedis2Store) deleteExpiredEntry(ctx context.Context, dirPath util.FullPath, path util.FullPath, fileName string) {
+	// survive the listing request being canceled mid-delete
+	ctx = context.WithoutCancel(ctx)
+	valueKey := store.getKey(string(path))
+
+	// re-read so the delete can be conditioned on exactly the bytes checked
+	data, err := store.Client.Get(ctx, valueKey).Bytes()
+	if err == redis.Nil {
+		store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
+		return
+	}
+	if err != nil {
+		return
+	}
+
+	entry := &filer.Entry{FullPath: path}
+	if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
+		return
+	}
+	if !isLogicallyExpired(entry) {
+		// a concurrent insert recreated it
+		return
+	}
+
+	// 0 means a concurrent recreate changed the value: keep it. -1 means the redis
+	// TTL won after the re-read: the member still needs the not-found repair.
+	deleted, err := deleteIfUnchangedScript.Run(ctx, store.Client, []string{valueKey}, data).Int()
+	if err != nil || deleted == 0 {
+		return
+	}
+	store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 }
 
 func genDirectoryListKey(dir string) (dirList string) {

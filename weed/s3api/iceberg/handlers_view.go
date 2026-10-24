@@ -204,7 +204,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the metadata file only after the catalog registers the view, so a
 	// missing namespace or name collision fails before any bytes hit storage.
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		// Roll back the registered view so it doesn't linger pointing at metadata
 		// that was never written.
 		if dropErr := s.dropView(r, namespace, req.Name); dropErr != nil {
@@ -218,10 +218,13 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if finalLocation == "" {
 		finalLocation = metadataLocation
 	}
+	config, _ := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateView(r, bucketName, namespace, req.Name)
+	})
 	writeLoadResult(w, http.StatusOK, ViewResponse{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		Config:           config,
 	})
 }
 
@@ -348,10 +351,13 @@ func (s *Server) buildViewResponse(r *http.Request, getResp s3tables.GetViewResp
 	if err != nil {
 		return ViewResponse{}, fmt.Errorf("failed to parse view metadata: %w", err)
 	}
+	config, _ := s.buildFileIOConfig(r, tableLocationFromMetadataLocation(getResp.MetadataLocation), func() bool {
+		return s.mayUpdateView(r, bucketName, namespace, viewName)
+	})
 	return ViewResponse{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		Config:           config,
 	}, nil
 }
 
@@ -386,4 +392,62 @@ func isViewAlreadyExists(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "already exists")
+}
+
+// handleRenameView moves a view's catalog pointer to a new namespace/name,
+// the view counterpart of POST /v1/{prefix}/tables/rename.
+func (s *Server) handleRenameView(w http.ResponseWriter, r *http.Request) {
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	source := parseNamespace(encodeNamespace(req.Source.Namespace))
+	dest := parseNamespace(encodeNamespace(req.Destination.Namespace))
+	if len(source) == 0 || req.Source.Name == "" || len(dest) == 0 || req.Destination.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "source and destination namespace and name are required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	renameReq := &s3tables.RenameTableRequest{
+		TableBucketARN:  buildTableBucketARN(bucketName),
+		SourceNamespace: source,
+		SourceName:      req.Source.Name,
+		DestNamespace:   dest,
+		DestName:        req.Destination.Name,
+	}
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RenameView", renameReq, nil, identityName)
+	})
+
+	if err != nil {
+		var viewErr *s3tables.S3TablesError
+		if errors.As(err, &viewErr) {
+			switch viewErr.Type {
+			case s3tables.ErrCodeNoSuchView:
+				writeError(w, http.StatusNotFound, "NoSuchViewException", fmt.Sprintf("View does not exist: %s", req.Source.Name))
+				return
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", dest))
+				return
+			case s3tables.ErrCodeViewAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("View already exists: %s", req.Destination.Name))
+				return
+			case s3tables.ErrCodeInvalidRequest:
+				writeError(w, http.StatusBadRequest, "BadRequestException", viewErr.Message)
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RenameView error: %v", err)
+		writeManagerError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

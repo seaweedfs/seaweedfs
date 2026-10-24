@@ -10,7 +10,7 @@ func TestMaintenanceManager_ErrorHandling(t *testing.T) {
 	config := DefaultMaintenanceConfig()
 	config.ScanIntervalSeconds = 1 // Short interval for testing (1 second)
 
-	manager := NewMaintenanceManager(nil, config)
+	manager := NewMaintenanceManager(nil, config, nil)
 
 	// Test initial state
 	if manager.errorCount != 0 {
@@ -96,7 +96,7 @@ func TestIsConnectionError(t *testing.T) {
 
 func TestMaintenanceManager_GetErrorState(t *testing.T) {
 	config := DefaultMaintenanceConfig()
-	manager := NewMaintenanceManager(nil, config)
+	manager := NewMaintenanceManager(nil, config, nil)
 
 	// Test initial state
 	errorCount, lastError, backoffDelay := manager.GetErrorState()
@@ -118,7 +118,7 @@ func TestMaintenanceManager_GetErrorState(t *testing.T) {
 
 func TestMaintenanceManager_LogThrottling(t *testing.T) {
 	config := DefaultMaintenanceConfig()
-	manager := NewMaintenanceManager(nil, config)
+	manager := NewMaintenanceManager(nil, config, nil)
 
 	// This is a basic test to ensure the error handling doesn't panic
 	// In practice, you'd want to capture log output to verify throttling

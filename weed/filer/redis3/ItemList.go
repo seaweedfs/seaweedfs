@@ -342,6 +342,10 @@ func (nl *ItemList) ListNames(startFrom string, visitNamesFn func(name string) b
 	return nil
 }
 
+func (nl *ItemList) IsEmpty() bool {
+	return nl.skipList.StartLevels[0] == nil
+}
+
 func (nl *ItemList) RemoteAllListElement() error {
 
 	t := nl.skipList

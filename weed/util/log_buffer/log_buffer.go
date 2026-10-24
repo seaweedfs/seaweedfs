@@ -48,6 +48,8 @@ const flushQueueBudget = flushQueueDepth * BufferSize
 var (
 	// ErrBufferCorrupted indicates the log buffer contains corrupted data
 	ErrBufferCorrupted = fmt.Errorf("log buffer is corrupted")
+	// ErrBufferStopped indicates that shutdown has closed write admission.
+	ErrBufferStopped = fmt.Errorf("log buffer is stopping")
 )
 
 type dataToFlush struct {
@@ -189,16 +191,21 @@ type LogBuffer struct {
 	notifyFn       func()
 	// Per-subscriber notification channels for instant wake-up
 	subscribersMu sync.RWMutex
-	subscribers   map[string]chan struct{} // subscriberID -> notification channel
+	subscribers   map[string]*subscription // subscriberID -> shared notification channel
 	// Notified only when a flush lands, for readers that cannot act on an append
-	flushSubscribers map[string]chan struct{}
+	flushSubscribers map[string]*subscription
 	isStopping       *atomic.Bool
-	shutdownCh       chan struct{}  // closed by ShutdownLogBuffer to wake blocked subscribers
-	loopsDone        sync.WaitGroup // loopFlush and loopInterval signal exit
-	isAllFlushed     bool
-	flushChan        chan *dataToFlush
-	flushBudget      *flushBudget
-	flushSeq         uint64 // seal counter, assigned under the write lock
+	shutdownCh       chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
+	// flushDroppedBytes counts bytes the flushFn gave up on during shutdown.
+	// loopFlush reads it after each window so an abandoned flush does not
+	// advance the flushed watermark or wake subscribers as if it had landed.
+	flushDroppedBytes atomic.Int64
+	loopsDone         sync.WaitGroup // loopFlush and loopInterval signal exit
+	isAllFlushed      bool
+	flushChan         chan *dataToFlush
+	flushBudget       *flushBudget
+	flushSeq          uint64     // seal counter, assigned under the write lock
+	writeMu           sync.Mutex // serializes sealing and enqueueing, including shutdown
 	// Offset range tracking for Kafka integration
 	hasOffsets bool
 	// Disk chunk cache for historical data reads
@@ -223,8 +230,8 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		flushFn:          flushFn,
 		ReadFromDiskFn:   readFromDiskFn,
 		notifyFn:         notifyFn,
-		subscribers:      make(map[string]chan struct{}),
-		flushSubscribers: make(map[string]chan struct{}),
+		subscribers:      make(map[string]*subscription),
+		flushSubscribers: make(map[string]*subscription),
 		flushChan:        make(chan *dataToFlush, flushQueueDepth),
 		isStopping:       new(atomic.Bool),
 		shutdownCh:       make(chan struct{}),
@@ -242,32 +249,59 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 	return lb
 }
 
+// subscription is one notification channel and the number of readers holding
+// it. Registrations that share a subscriberID share the channel - two streams
+// of the same client, or an old one that has not noticed its replacement yet -
+// so it may only be closed once the last of them unregisters. Closing it under
+// a reader parked in awaitNotificationOrTimeoutFor makes every receive there
+// succeed instantly, spinning that reader on a full core for the rest of its
+// life.
+type subscription struct {
+	notifyChan chan struct{}
+	refCount   int
+}
+
+func registerSubscription(subscriptions map[string]*subscription, subscriberID string) chan struct{} {
+	if existing, exists := subscriptions[subscriberID]; exists {
+		existing.refCount++
+		return existing.notifyChan
+	}
+
+	// Create buffered channel (size 1) so notifications never block
+	sub := &subscription{notifyChan: make(chan struct{}, 1), refCount: 1}
+	subscriptions[subscriberID] = sub
+	return sub.notifyChan
+}
+
+func unregisterSubscription(subscriptions map[string]*subscription, subscriberID string) {
+	sub, exists := subscriptions[subscriberID]
+	if !exists {
+		return
+	}
+	sub.refCount--
+	if sub.refCount > 0 {
+		return
+	}
+	close(sub.notifyChan)
+	delete(subscriptions, subscriberID)
+}
+
 // RegisterSubscriber registers a subscriber for instant notifications when data is written
 // Returns a channel that will receive notifications (<1ms latency)
 func (logBuffer *LogBuffer) RegisterSubscriber(subscriberID string) chan struct{} {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	// Check if already registered
-	if existingChan, exists := logBuffer.subscribers[subscriberID]; exists {
-		return existingChan
-	}
-
-	// Create buffered channel (size 1) so notifications never block
-	notifyChan := make(chan struct{}, 1)
-	logBuffer.subscribers[subscriberID] = notifyChan
-	return notifyChan
+	return registerSubscription(logBuffer.subscribers, subscriberID)
 }
 
 // UnregisterSubscriber removes a subscriber and closes its notification channel
+// once no other registration of the same subscriberID is left holding it.
 func (logBuffer *LogBuffer) UnregisterSubscriber(subscriberID string) {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if ch, exists := logBuffer.subscribers[subscriberID]; exists {
-		close(ch)
-		delete(logBuffer.subscribers, subscriberID)
-	}
+	unregisterSubscription(logBuffer.subscribers, subscriberID)
 }
 
 // RegisterFlushSubscriber registers a subscriber woken only when a flush lands.
@@ -279,23 +313,16 @@ func (logBuffer *LogBuffer) RegisterFlushSubscriber(subscriberID string) chan st
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if existingChan, exists := logBuffer.flushSubscribers[subscriberID]; exists {
-		return existingChan
-	}
-	notifyChan := make(chan struct{}, 1)
-	logBuffer.flushSubscribers[subscriberID] = notifyChan
-	return notifyChan
+	return registerSubscription(logBuffer.flushSubscribers, subscriberID)
 }
 
 // UnregisterFlushSubscriber removes a flush subscriber and closes its channel
+// once no other registration of the same subscriberID is left holding it.
 func (logBuffer *LogBuffer) UnregisterFlushSubscriber(subscriberID string) {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if ch, exists := logBuffer.flushSubscribers[subscriberID]; exists {
-		close(ch)
-		delete(logBuffer.flushSubscribers, subscriberID)
-	}
+	unregisterSubscription(logBuffer.flushSubscribers, subscriberID)
 }
 
 // IsOffsetInMemory checks if the given offset is available in the in-memory buffer
@@ -357,9 +384,9 @@ func (logBuffer *LogBuffer) notifySubscribers() {
 		return // No subscribers, skip notification
 	}
 
-	for _, notifyChan := range logBuffer.subscribers {
+	for _, sub := range logBuffer.subscribers {
 		select {
-		case notifyChan <- struct{}{}:
+		case sub.notifyChan <- struct{}{}:
 			// Notification sent successfully
 		default:
 			// Channel full - subscriber hasn't consumed previous notification yet
@@ -373,9 +400,9 @@ func (logBuffer *LogBuffer) notifyFlushSubscribers() {
 	logBuffer.subscribersMu.RLock()
 	defer logBuffer.subscribersMu.RUnlock()
 
-	for _, notifyChan := range logBuffer.flushSubscribers {
+	for _, sub := range logBuffer.flushSubscribers {
 		select {
-		case notifyChan <- struct{}{}:
+		case sub.notifyChan <- struct{}{}:
 		default:
 		}
 	}
@@ -423,6 +450,9 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 		logBuffer.flushBudget.waitForRoom(len(logEntry.Data))
 	}
 
+	if !logBuffer.beginWrite() {
+		return ErrBufferStopped
+	}
 	var toFlush *dataToFlush
 	var marshalErr error
 	logBuffer.Lock()
@@ -431,6 +461,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 		if toFlush != nil {
 			logBuffer.queueFlush(toFlush)
 		}
+		logBuffer.writeMu.Unlock()
 		// Only notify if there was no error
 		if marshalErr == nil {
 			if logBuffer.notifyFn != nil {
@@ -550,6 +581,9 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		Key:              partitionKey,
 	}
 
+	if !logBuffer.beginWrite() {
+		return ErrBufferStopped
+	}
 	var toFlush *dataToFlush
 	var marshalErr error
 	logBuffer.Lock()
@@ -558,6 +592,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		if toFlush != nil {
 			logBuffer.queueFlush(toFlush)
 		}
+		logBuffer.writeMu.Unlock()
 		// Only notify if there was no error
 		if marshalErr == nil {
 			if logBuffer.notifyFn != nil {
@@ -656,25 +691,22 @@ func (logBuffer *LogBuffer) IsStopping() bool {
 	return logBuffer.isStopping.Load()
 }
 
-// ForceFlush immediately flushes the current buffer content and WAITS for completion
+// ForceFlush queues the current buffer content, then waits up to 5 seconds for completion
 // This is useful for critical topics that need immediate persistence
-// CRITICAL: This function is now SYNCHRONOUS - it blocks until the flush completes
+// Queueing itself has no timeout.
 func (logBuffer *LogBuffer) ForceFlush() {
-	if logBuffer.isStopping.Load() {
-		return // Don't flush if we're shutting down
+	if !logBuffer.beginWrite() {
+		return
 	}
-
 	logBuffer.Lock()
 	toFlush := logBuffer.copyToFlushWithCallback()
 	logBuffer.Unlock()
+	if toFlush != nil {
+		logBuffer.queueFlush(toFlush)
+	}
+	logBuffer.writeMu.Unlock()
 
 	if toFlush != nil {
-		// The live buffer was already sealed and reset by copyToFlushWithCallback,
-		// so dropping toFlush on a timeout would lose it. Block until queued,
-		// bailing out only on shutdown.
-		if !logBuffer.queueFlush(toFlush) {
-			return
-		}
 		select {
 		case <-toFlush.done:
 			// Flush completed
@@ -682,6 +714,17 @@ func (logBuffer *LogBuffer) ForceFlush() {
 			// Queued but not yet flushed; loopFlush will still persist it
 		}
 	}
+}
+
+// beginWrite serializes admission and batch handoff with shutdown.
+// Callers hold writeMu until any sealed batch has been queued.
+func (logBuffer *LogBuffer) beginWrite() bool {
+	logBuffer.writeMu.Lock()
+	if logBuffer.isStopping.Load() {
+		logBuffer.writeMu.Unlock()
+		return false
+	}
+	return true
 }
 
 // ShutdownLogBuffer flushes the buffer and stops the log buffer
@@ -694,20 +737,34 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	// notice IsStopping() and exit promptly, even on an idle buffer where no
 	// flush notification would otherwise fire.
 	close(logBuffer.shutdownCh)
-	// Let go of the flush budget before sealing the last window, so a producer
-	// parked on it wakes up and the hand-off below cannot wait on a reservation.
+	// Wake oversized writers waiting for room; they will observe shutdown
+	// before appending. Already admitted writes must finish their handoff.
 	logBuffer.flushBudget.close()
+	logBuffer.writeMu.Lock()
+	defer logBuffer.writeMu.Unlock()
 	logBuffer.Lock()
 	toFlush := logBuffer.copyToFlush()
 	logBuffer.Unlock()
 	if toFlush != nil {
-		toFlush.budget = logBuffer.flushBudget.reserve(toFlush.seq, cap(toFlush.data))
-		logBuffer.flushChan <- toFlush
+		logBuffer.queueFlush(toFlush)
 	}
-	// nil is the shutdown sentinel: loopFlush drains everything queued before
-	// it and exits. The channel is never closed, so a sender racing shutdown
-	// can never panic on a closed channel.
+	// Every accepted batch is now queued, and no producer can append after
+	// this sentinel. loopFlush drains the queue before exiting.
 	logBuffer.flushChan <- nil
+}
+
+// WaitForShutdown waits for pending flushes and background loops to finish.
+// Call ShutdownLogBuffer first, after stopping producers.
+func (logBuffer *LogBuffer) WaitForShutdown() {
+	logBuffer.loopsDone.Wait()
+}
+
+// NoteFlushDropped records that the flush function abandoned n bytes instead
+// of writing them (a shutdown-bounded retry giving up). loopFlush then skips
+// the watermark advance and subscriber notifications for that window, so no
+// reader is told the bytes were flushed when they were not.
+func (logBuffer *LogBuffer) NoteFlushDropped(n int) {
+	logBuffer.flushDroppedBytes.Add(int64(n))
 }
 
 // IsAllFlushed returns true if all data in the buffer has been flushed, after calling ShutdownLogBuffer().
@@ -715,30 +772,12 @@ func (logBuffer *LogBuffer) IsAllFlushed() bool {
 	return logBuffer.isAllFlushed
 }
 
-// queueFlush hands a sealed window to loopFlush, reserving its bytes first so
-// a producer waits for the queue to drain rather than adding another copy to
-// it. Reports false when the buffer shut down before the hand-off.
-func (logBuffer *LogBuffer) queueFlush(d *dataToFlush) bool {
-	// Charge the slab, not the window: mem.Allocate rounds up to a size class,
-	// so the bytes actually held are cap(data), and charging len would let the
-	// queue hold up to twice the ceiling.
+// queueFlush hands a sealed window to loopFlush. The caller holds writeMu
+// from before sealing until this handoff completes, so shutdown cannot pass it.
+func (logBuffer *LogBuffer) queueFlush(d *dataToFlush) {
+	// Charge the pooled slab, whose capacity may exceed the window length.
 	d.budget = logBuffer.flushBudget.reserve(d.seq, cap(d.data))
-	// The window is already sealed, so dropping it here loses records the
-	// caller was told were accepted. Take any room in the queue first, and only
-	// fall back to the shutdown escape when there is none.
-	select {
-	case logBuffer.flushChan <- d:
-		return true
-	default:
-	}
-	select {
-	case logBuffer.flushChan <- d:
-		return true
-	case <-logBuffer.shutdownCh:
-		// shutting down; loopFlush may be gone, do not park forever
-		logBuffer.flushBudget.release(d.budget)
-		return false
-	}
+	logBuffer.flushChan <- d
 }
 
 func (logBuffer *LogBuffer) loopFlush() {
@@ -748,8 +787,16 @@ func (logBuffer *LogBuffer) loopFlush() {
 			break // shutdown sentinel
 		}
 		logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data, d.minOffset, d.maxOffset)
+		dropped := logBuffer.flushDroppedBytes.Swap(0)
 		d.releaseMemory()
 		logBuffer.flushBudget.release(d.budget)
+		if dropped > 0 {
+			glog.Warningf("log buffer %s: shutdown flush dropped %d bytes", logBuffer.name, dropped)
+			if d.done != nil {
+				close(d.done)
+			}
+			continue
+		}
 		// local logbuffer is different from aggregate logbuffer here
 		if d.maxOffset >= 0 {
 			logBuffer.lastFlushedOffset.Store(d.maxOffset)
@@ -793,12 +840,16 @@ func (logBuffer *LogBuffer) loopInterval() {
 		case <-ticker.C:
 		}
 
+		if !logBuffer.beginWrite() {
+			return
+		}
 		logBuffer.Lock()
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()
 		if toFlush != nil {
 			logBuffer.queueFlush(toFlush)
 		}
+		logBuffer.writeMu.Unlock()
 	}
 }
 
@@ -941,6 +992,20 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
+// FlushedThroughTsNs reports the timestamp through which this buffer's data
+// is durably on disk: "now" when nothing is pending a flush (a later append
+// is bumped past the head), otherwise the last flushed window's stop time.
+// Covers only entries that reached the buffer - callers stamping timestamps
+// before the append must also bound by their in-flight floor (see
+// Filer.LocalFlushedThroughTsNs).
+func (logBuffer *LogBuffer) FlushedThroughTsNs(nowNs int64) int64 {
+	flushed := logBuffer.lastFlushTsNs.Load()
+	if logBuffer.LastTsNs.Load() <= flushed {
+		return nowNs
+	}
+	return flushed
+}
+
 // GetLastFlushTsNs returns the latest flushed timestamp in Unix nanoseconds.
 // Returns 0 if nothing has been flushed yet.
 func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
@@ -959,6 +1024,18 @@ func (logBuffer *LogBuffer) GetLastEvictedOriginalTsNs() int64 {
 // the only emptiness proof available to a buffer that never flushes.
 func (logBuffer *LogBuffer) GetLastEvictedTsNs() int64 {
 	return logBuffer.lastEvictedTsNs.Load()
+}
+
+// MarkEvictedThrough treats entries at or below tsNs as evicted even though
+// nothing was rotated out yet: a merge-fed buffer is born empty while its
+// sources hold history it must not skip. Call before the first append.
+func (logBuffer *LogBuffer) MarkEvictedThrough(tsNs int64) {
+	if tsNs > logBuffer.lastEvictedTsNs.Load() {
+		logBuffer.lastEvictedTsNs.Store(tsNs)
+	}
+	if tsNs > logBuffer.lastEvictedOriginalTsNs.Load() {
+		logBuffer.lastEvictedOriginalTsNs.Store(tsNs)
+	}
 }
 
 func (logBuffer *LogBuffer) SetLastFlushTsNs(ts int64) {

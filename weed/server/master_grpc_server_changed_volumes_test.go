@@ -118,7 +118,7 @@ func TestRepairedLookupEntryIsAnnounced(t *testing.T) {
 			return topo.ApplyVolumeChanges([]*master_pb.VolumeInformationMessage{v}, dn)
 		}},
 		{"ViaFullList", func(topo *topology.Topology, dn *topology.DataNode, v *master_pb.VolumeInformationMessage) []storage.VolumeInfo {
-			announced, _ := topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+			announced, _, _ := topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
 			return announced
 		}},
 	} {
@@ -201,5 +201,35 @@ func TestStaleFullListDoesNotEraseAFreshGrow(t *testing.T) {
 	topo.SyncDataNodeRegistration(full, dn)
 	if _, err := dn.GetVolumesById(needle.VolumeId(2)); err == nil {
 		t.Fatal("a confirmed volume survived a list that dropped it")
+	}
+}
+
+// A registration can resolve a collection's layout just before the collection
+// is deleted. Bits it sets afterwards would never be released, and the node's
+// held and servable digests would disagree forever.
+func TestRegistrationRacingCollectionDeleteDoesNotLeak(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)}, dn)
+
+	vi, err := storage.NewVolumeInfo(changedTestVolume(1, 1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := topo.GetVolumeLayout("c", vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
+
+	topo.DeleteCollection("c")
+
+	// the interleaved registration must refuse the dropped layout
+	if stale.RegisterVolume(&vi, dn, nil) {
+		t.Fatal("registered into a layout dropped with its collection")
+	}
+
+	// the node prunes its copy when the departure is named
+	topo.IncrementalSyncDataNodeRegistration(nil, []*master_pb.VolumeShortInformationMessage{
+		{Id: 1, Collection: "c", Version: 3},
+	}, dn)
+
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("the racing registration leaked lookup ownership")
 	}
 }

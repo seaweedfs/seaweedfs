@@ -1,7 +1,10 @@
 [package]
 name = "weed-volume"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# The edition needs 1.85; the dependency tree needs more. Verified with
+# `cargo +1.91.1 check --all-targets` (1.90 fails on the AWS SDK).
+rust-version = "1.91.1"
 description = "SeaweedFS Volume Server — Rust implementation"
 
 [lib]
@@ -16,33 +19,48 @@ path = "src/main.rs"
 # Disable with --no-default-features for 4-byte offsets (32GB max volume size).
 default = ["5bytes"]
 5bytes = []
+# Unstable redb cursor bulk-load for full_rebuild. Off in production.
+# Pulls redb's experimental_cursor (and therefore experimental-api-5).
+redb-experimental-cursor = ["redb/experimental_cursor"]
+
+[lints.clippy]
+# Protobuf message literals keep `..Default::default()` on purpose: it is
+# what lets a proto gain a field without touching every constructor.
+needless_update = "allow"
+# Every `unsafe` block states its precondition, right above the block.
+undocumented_unsafe_blocks = "warn"
 
 [dependencies]
+# Helpers the Rust plugin workers (seaweed-worker) need as well. A path
+# dependency because the two trees are separate cargo workspaces with no
+# common root manifest.
+seaweed-common = { path = "../seaweed-common" }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tokio-io-timeout = "1"
 
 # gRPC + protobuf
-tonic = { version = "0.12", features = ["tls"] }
-tonic-reflection = "0.12"
-prost = "0.13"
-prost-types = "0.13"
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
+prost = "0.14"
+prost-types = "0.14"
 
 # HTTP server
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart"] }
 http-body = "1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
 
 # Metrics
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
-lazy_static = "1"
 
 # JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
@@ -57,7 +75,7 @@ rustls-pemfile = "2"
 rusty-leveldb = "3"
 
 # Disk-backed needle map (alternative to in-memory HashMap)
-redb = "3"
+redb = "4"
 
 # Reed-Solomon erasure coding
 reed-solomon-erasure = "6"
@@ -132,11 +150,25 @@ aws-types = "1"
 [target.'cfg(unix)'.dependencies]
 pprof = { version = "0.15", features = ["prost-codec"] }
 
+# GetDiskFreeSpaceExW for per-path disk capacity on Windows (0.61.2 already
+# in the tree via tempfile/mio, so this unifies rather than adding a version).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3"
+# Paused-time tests drive the write-queue batch window deterministically.
+tokio = { version = "1", features = ["full", "test-util"] }
+# Already a transitive dependency of aws-sdk-s3 at a single locked version;
+# needed directly only for the canned HttpClient in remote_storage::s3 tests.
+aws-smithy-runtime-api = "1"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
+# Ships protoc with the build so neither CI nor a developer needs a system
+# install, and so the version is pinned rather than whatever the platform's
+# package manager happens to carry.
+protoc-bin-vendored = "3"
 
 [patch.crates-io]
 reed-solomon-erasure = { path = "vendor/reed-solomon-erasure" }

@@ -25,7 +25,7 @@ on:
       rocksdb_version:
         description: 'RocksDB git tag to use when variant=rocksdb'
         required: false
-        default: 'v10.10.1'
+        default: 'v11.1.2'
 
 permissions:
   contents: read
@@ -42,9 +42,10 @@ concurrency:
 
 jobs:
 
-  # ── Pre-build Rust volume server binaries natively ──────────────────
-  # Cross-compiles for amd64 and arm64 without QEMU, turning a 5-hour
-  # emulated cargo build into ~15 minutes of native compilation.
+  # ── Pre-build the Rust binaries natively ────────────────────────────
+  # The volume server and the Rust maintenance worker, cross-compiled for
+  # amd64 and arm64 without QEMU, turning a 5-hour emulated cargo build into
+  # ~15 minutes of native compilation.
   build-rust-binaries:
     runs-on: ubuntu-22.04
     strategy:
@@ -58,9 +59,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -80,15 +78,32 @@ jobs:
           echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-docker-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+            seaweed-worker/target/${{ matrix.target }}/release
+          key: rust-docker-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-worker/Cargo.lock') }}
           restore-keys: |
             rust-docker-${{ matrix.target }}-
+
+      # lance's build scripts compile their own protos and look for a protoc.
+      # Point them at the one protoc-bin-vendored ships, which seaweed-worker's
+      # own build already uses, so no job depends on a system package and every
+      # build sees the same version.
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-worker
+          cargo fetch
+          # The version from the lock, not whatever else a restored cache holds.
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
 
       - name: Build large-disk variant
         env:
@@ -106,13 +121,20 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --no-default-features
           cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-normal-${{ matrix.arch }}
 
+      - name: Build the Rust maintenance worker
+        run: |
+          cd seaweed-worker
+          cargo build --release -p weed-lance-worker --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weed-worker ../weed-worker-${{ matrix.arch }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: rust-volume-${{ matrix.arch }}
+          name: rust-bins-${{ matrix.arch }}
           path: |
             weed-volume-large-disk-${{ matrix.arch }}
             weed-volume-normal-${{ matrix.arch }}
+            weed-worker-${{ matrix.arch }}
 
   # One job per (variant, platform) on a native runner, pushed by digest;
   # the merge job stitches the digests into one multi-arch tag.
@@ -128,12 +150,16 @@ jobs:
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/arm64,  arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/arm/v7, arch: armv7, runner: ubuntu-latest,    qemu: true }
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/386,    arch: i386,  runner: ubuntu-latest,    qemu: false }
+          - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/ppc64le, arch: ppc64le, runner: ubuntu-latest,  qemu: true }
+          - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/s390x,   arch: s390x, runner: ubuntu-latest,    qemu: true }
 
           # Large disk - multi-arch
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/amd64,  arch: amd64, runner: ubuntu-latest,    qemu: false }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/arm64,  arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/arm/v7, arch: armv7, runner: ubuntu-latest,    qemu: true }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/386,    arch: i386,  runner: ubuntu-latest,    qemu: false }
+          - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/ppc64le, arch: ppc64le, runner: ubuntu-latest,  qemu: true }
+          - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/s390x,   arch: s390x, runner: ubuntu-latest,    qemu: true }
 
           # Full tags - multi-arch
           - { variant: full, tag_suffix: _full, dockerfile: ./docker/Dockerfile.go_build, build_args: "TAGS=elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb", rust_variant: normal, platform: linux/amd64, arch: amd64, runner: ubuntu-latest,    qemu: false }
@@ -154,11 +180,15 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Download pre-built Rust binaries
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/download-artifact@v8
         with:
-          pattern: rust-volume-*
+          pattern: rust-bins-*
           merge-multiple: true
           path: ./rust-bins
 
@@ -173,7 +203,16 @@ jobs:
               echo "Placed pre-built Rust binary for ${arch}"
             fi
           done
+          mkdir -p docker/weed-worker-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-worker-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-worker-prebuilt/weed-worker-${arch}"
+              echo "Placed pre-built Rust worker for ${arch}"
+            fi
+          done
           ls -la docker/weed-volume-prebuilt/
+          ls -la docker/weed-worker-prebuilt/
 
       - name: Free Disk Space
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -184,7 +223,7 @@ jobs:
           sudo docker system prune -af --volumes
           [ -d ~/.cache/go-build ] && rm -rf ~/.cache/go-build || true
           [ -d /go/pkg ] && rm -rf /go/pkg || true
-          df -h
+          timeout 15 df -h || true
 
       - name: Docker meta
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -201,7 +240,7 @@ jobs:
 
       - name: Set up QEMU
         if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && matrix.qemu
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Create BuildKit config
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -236,8 +275,11 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-          # Flat single-platform manifest so imagetools create assembles cleanly.
-          provenance: false
+          # mode=max keeps resolvedDependencies complete and records the
+          # builder identity; attestations ride inside each pushed index and
+          # survive the imagetools merge into the multi-arch manifest.
+          provenance: mode=max
+          sbom: true
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
           # max only for rocksdb: its RocksDB compile is sha-independent and worth
@@ -247,7 +289,7 @@ jobs:
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
-            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.10.1') || '' }}
+            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v11.1.2') || '' }}
 
       - name: Export digest
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -265,10 +307,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Assemble each variant's per-platform digests into one tag, then mirror to Docker Hub.
+  # Assemble each variant's per-platform digests into one tag, mirror it to
+  # Docker Hub, and sign the result on both registries.
   merge:
     needs: [build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -279,6 +327,13 @@ jobs:
           - { variant: large_disk_full, tag_suffix: _large_disk_full }
           - { variant: rocksdb,         tag_suffix: _large_disk_rocksdb }
     steps:
+      - name: Checkout the signing action
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - name: Download digests
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/download-artifact@v8
@@ -301,12 +356,17 @@ jobs:
 
       - name: Create multi-arch tag on GHCR
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        id: manifest
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
             -t ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            --metadata-file /tmp/manifest.json \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
           docker buildx imagetools inspect ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
+          # The copy and the signature below use the digest this run pushed, not whatever the tag points at by then.
+          digest=$(jq -er '."containerimage.descriptor".digest' /tmp/manifest.json)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -319,7 +379,9 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           cd $(mktemp -d)
-          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          curl -sLO https://github.com/google/go-containerregistry/releases/download/v0.22.0/go-containerregistry_Linux_x86_64.tar.gz
+          echo "edb74d53fad9a596860f59d1c5d04a43dfb5f441dc71f57060dd0bf39483c833  go-containerregistry_Linux_x86_64.tar.gz" | sha256sum -c -
+          tar xzf go-containerregistry_Linux_x86_64.tar.gz crane
           sudo mv crane /usr/local/bin/
           crane version
 
@@ -350,9 +412,56 @@ jobs:
 
           echo "Copying ${{ matrix.variant }} from GHCR to Docker Hub..."
           retry_with_backoff crane copy \
-            ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }} \
             chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           echo "Copied ${{ matrix.variant }} to Docker Hub"
+
+      - name: Sign ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: ./.github/actions/sign-image
+        with:
+          images: >-
+            ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
+            chrislusf/seaweedfs@${{ steps.manifest.outputs.digest }}
+
+      # Attest the merged multi-arch digest itself, so digest-pinning consumers
+      # can verify provenance against the exact index they pull. Both steps
+      # reuse the GHCR login above and push as OCI referrers.
+      - name: Attest build provenance for ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      # SBOMs are generated and attested per platform manifest: an index-wide
+      # scan only describes syft's default platform, while the manifests it
+      # merges differ (some ship the real binary, others placeholders), so the
+      # SBOM has to be bound to the platform digest a consumer actually pulls.
+      - name: Install syft
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Attest per-platform SBOMs for ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          for f in *; do
+            # Each saved digest is an OCI index (image + attestation manifests);
+            # scan and attest the image manifest a same-platform pull resolves.
+            ref="${{ env.IMAGE }}@sha256:${f}"
+            image=$(crane manifest "$ref" | jq -r '
+              [.manifests[]? | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
+                and (.platform.os // "unknown") != "unknown") | .digest][0] // empty')
+            ref="${{ env.IMAGE }}@${image:-sha256:${f}}"
+            syft "registry:${ref}" -o "spdx-json=/tmp/sbom-${f}.spdx.json"
+            cosign attest --yes \
+              --predicate "/tmp/sbom-${f}.spdx.json" \
+              --type spdxjson \
+              "$ref"
+          done
 
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
@@ -392,7 +501,9 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          # Keep unfixed findings in the report so digest-pinning consumers see
+          # the complete picture, not just what a patch could resolve.
+          ignore-unfixed: false
           limit-severities-for-sarif: true
           format: sarif
           output: trivy-results.sarif
@@ -400,7 +511,7 @@ jobs:
 
       - name: Upload Trivy scan results to GitHub Security
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.37.4
+        uses: github/codeql-action/upload-sarif@v4.39.0
         with:
           sarif_file: trivy-results.sarif
           category: trivy-${{ matrix.variant }}
@@ -409,7 +520,8 @@ jobs:
   # image. crane tag adds an extra tag to an existing manifest — no rebuild,
   # no QEMU, no separate workflow. Replaces the old container_latest.yml
   # rebuild that often failed or lagged behind the release. Independent of
-  # trivy-scan: vuln findings are reported but do not block `latest`.
+  # trivy-scan: vuln findings are reported but do not block `latest`. The
+  # cosign signature is attached to the digest, so `latest` carries it too.
   tag-latest:
     runs-on: ubuntu-latest
     needs: [merge]
@@ -438,7 +550,9 @@ jobs:
       - name: Install crane
         run: |
           cd $(mktemp -d)
-          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          curl -sLO https://github.com/google/go-containerregistry/releases/download/v0.22.0/go-containerregistry_Linux_x86_64.tar.gz
+          echo "edb74d53fad9a596860f59d1c5d04a43dfb5f441dc71f57060dd0bf39483c833  go-containerregistry_Linux_x86_64.tar.gz" | sha256sum -c -
+          tar xzf go-containerregistry_Linux_x86_64.tar.gz crane
           sudo mv crane /usr/local/bin/
           crane version
 

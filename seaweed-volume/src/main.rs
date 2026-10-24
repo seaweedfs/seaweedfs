@@ -6,21 +6,24 @@ use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 use seaweed_volume::security::tls::{
-    build_rustls_server_config, build_rustls_server_config_with_grpc_client_auth,
-    install_default_crypto_provider, GrpcClientAuthPolicy, TlsPolicy,
+    GrpcClientAuthPolicy, TlsPolicy, build_rustls_server_config,
+    build_rustls_server_config_with_grpc_client_auth, install_default_crypto_provider,
 };
 use seaweed_volume::security::{Guard, SigningKey};
 #[cfg(unix)]
 use seaweed_volume::server::debug::build_debug_router;
-use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
+use seaweed_volume::server::grpc_client::{
+    GRPC_INITIAL_WINDOW_SIZE, GRPC_KEEPALIVE_INTERVAL, GRPC_KEEPALIVE_TIMEOUT,
+    GRPC_MAX_MESSAGE_SIZE, load_outgoing_grpc_tls,
+};
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
 #[cfg(unix)]
 use seaweed_volume::server::profiling::CpuProfileSession;
 use seaweed_volume::server::request_id::GrpcRequestIdLayer;
 use seaweed_volume::server::volume_server::{
-    build_metrics_router, RuntimeMetricsConfig, VolumeServerState,
+    RuntimeMetricsConfig, VolumeServerState, build_metrics_router,
 };
-use seaweed_volume::server::write_queue::WriteQueue;
+use seaweed_volume::server::write_queue::{self, WriteQueue};
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
 
@@ -31,14 +34,19 @@ type CpuProfileParam = Option<CpuProfileSession>;
 #[cfg(not(unix))]
 type CpuProfileParam = Option<()>;
 
-const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
-const GRPC_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-const GRPC_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+// The two settings that only make sense for the inbound server. The rest of
+// this server's HTTP/2 tuning — keepalive, window sizes, message size — is
+// imported from `server::grpc_client` above, which is also what the outgoing
+// clients dial with, so the two directions cannot drift apart.
 const GRPC_MAX_HEADER_LIST_SIZE: u32 = 8 * 1024 * 1024;
 const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1000;
 
 fn main() {
+    // Before anything allocates: stop glibc from training its mmap threshold
+    // upward on our large EC buffers and turning them into heap it never
+    // returns. See seaweed_volume::malloc_tuning for the measurements.
+    let malloc_tuning = seaweed_volume::malloc_tuning::pin_mmap_threshold();
+
     install_default_crypto_provider();
 
     // Initialize tracing
@@ -65,6 +73,19 @@ fn main() {
         "SeaweedFS Volume Server (Rust) v{}",
         seaweed_volume::version::full_version()
     );
+    match malloc_tuning {
+        seaweed_volume::malloc_tuning::MallocTuning::Pinned(bytes) => {
+            info!("pinned glibc M_MMAP_THRESHOLD to {} bytes", bytes)
+        }
+        seaweed_volume::malloc_tuning::MallocTuning::DeferredToEnv => info!(
+            "an allocator mmap-threshold override ({}) is set; leaving glibc's mmap threshold to the environment",
+            seaweed_volume::malloc_tuning::MMAP_THRESHOLD_ENV
+        ),
+        seaweed_volume::malloc_tuning::MallocTuning::Failed => {
+            warn!("mallopt(M_MMAP_THRESHOLD) failed; large freed buffers may stay resident")
+        }
+        seaweed_volume::malloc_tuning::MallocTuning::NotApplicable => {}
+    }
 
     // Register Prometheus metrics
     metrics::register_metrics();
@@ -319,15 +340,20 @@ async fn run(
         rack: config.rack.clone(),
         file_size_limit_bytes: config.file_size_limit_bytes,
         maintenance_byte_per_second: config.maintenance_byte_per_second,
+        vacuum_commit_slots: if config.max_parallel_vacuum_commits > 0 {
+            Some(tokio::sync::Semaphore::new(
+                config.max_parallel_vacuum_commits,
+            ))
+        } else {
+            None
+        },
+        vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
         // Go sets isHeartbeating: true unconditionally at startup
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         has_master: !config.masters.is_empty(),
         pre_stop_seconds: config.pre_stop_seconds,
         volume_state_notify: tokio::sync::Notify::new(),
         write_queue: std::sync::OnceLock::new(),
-        s3_tier_registry: std::sync::RwLock::new(
-            seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
-        ),
         read_mode: config.read_mode,
         allow_untrusted_remote_endpoints: config.allow_untrusted_remote_endpoints,
         master_url,
@@ -353,6 +379,9 @@ async fn run(
                 .to_string_lossy()
                 .into_owned()
         },
+        ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail_notify: tokio::sync::Notify::new(),
     });
 
     // Load persisted state from disk if it exists (matches Go's State.Load on startup)
@@ -404,12 +433,21 @@ async fn run(
         }
     }
 
-    // Initialize the batched write queue if enabled
-    if config.enable_write_queue {
-        info!("Batched write queue enabled");
-        let wq = WriteQueue::new(state.clone(), 128);
-        let _ = state.write_queue.set(wq);
-    }
+    // The write queue is always on: durable (fsync) uploads go through it so
+    // a batch shares one .dat/.idx sync, the way Go's per-volume async writer
+    // group-commits. Non-fsync writes stay on the synchronous path.
+    let min_bytes = usize::try_from(config.fsync_min_batch_bytes)
+        .map_err(|_| "fsyncMinBatchBytes exceeds this platform's maximum usize value")?;
+    let wq = WriteQueue::new(
+        state.clone(),
+        128,
+        write_queue::SyncBatchOption {
+            min_bytes,
+            min_requests: config.fsync_min_batch_requests,
+            wait: config.fsync_batch_wait,
+        },
+    );
+    let _ = state.write_queue.set(wq);
 
     // Set initial metric gauges for concurrent limits and max volumes
     metrics::CONCURRENT_UPLOAD_LIMIT.set(state.concurrent_upload_limit);
@@ -653,8 +691,7 @@ async fn run(
                     })
                     .await
             } else {
-                let incoming =
-                    tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
+                let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
                 info!("gRPC server listening on {}", grpc_local_addr);
                 build_grpc_server_builder()
                     .layer(GrpcRequestIdLayer)
@@ -1040,15 +1077,17 @@ mod tests {
 
     #[test]
     fn test_grpc_server_tls_returns_none_when_files_are_missing() {
-        assert!(build_grpc_server_tls_acceptor(
-            "/missing/server.crt",
-            "/missing/server.key",
-            "/missing/ca.crt",
-            &TlsPolicy::default(),
-            "",
-            &[],
-        )
-        .is_none());
+        assert!(
+            build_grpc_server_tls_acceptor(
+                "/missing/server.crt",
+                "/missing/server.key",
+                "/missing/ca.crt",
+                &TlsPolicy::default(),
+                "",
+                &[],
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1070,19 +1109,21 @@ mod tests {
             "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
         );
 
-        assert!(build_grpc_server_tls_acceptor(
-            &cert,
-            &key,
-            &ca,
-            &TlsPolicy {
-                min_version: "TLS 1.0".to_string(),
-                max_version: "TLS 1.1".to_string(),
-                cipher_suites: String::new(),
-            },
-            "",
-            &[],
-        )
-        .is_none());
+        assert!(
+            build_grpc_server_tls_acceptor(
+                &cert,
+                &key,
+                &ca,
+                &TlsPolicy {
+                    min_version: "TLS 1.0".to_string(),
+                    max_version: "TLS 1.1".to_string(),
+                    cipher_suites: String::new(),
+                },
+                "",
+                &[],
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -488,6 +489,51 @@ func TestLoopProcessLogDataWithOffset_StopTime(t *testing.T) {
 	t.Logf("Loop correctly exited for past stopTsNs in %v (waitForDataFn called %d times)", elapsed, callCount)
 }
 
+// TestLoopProcessLogData_BoundedEmptyBufferTerminates: a bounded subscription
+// (stopTsNs != 0) against a buffer that has never received a write - so
+// ReadFromBuffer returns ResumeFromDiskError - with no ReadFromDiskFn must
+// terminate like the caught-up path does, not park on the notification loop
+// forever. This is the filer SubscribeMetadata configuration: both meta log
+// buffers are built with ReadFromDiskFn == nil, and a freshly restarted filer
+// that has serviced zero metadata writes wedges every UntilNs-bounded
+// subscriber while heartbeats keep the stream looking alive.
+func TestLoopProcessLogData_BoundedEmptyBufferTerminates(t *testing.T) {
+	logBuffer := NewLogBuffer("test", time.Minute, nil, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	// Client stays connected, like the filer's heartbeat-sending closure.
+	waitForDataFn := func() bool { return true }
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		t.Error("no entries should be delivered from an empty buffer")
+		return false, nil
+	}
+
+	startPosition := NewMessagePosition(time.Now().Add(-time.Hour).UnixNano(), EvictionGatedOffset)
+	stopTsNs := time.Now().UnixNano()
+
+	done := make(chan struct{})
+	var isDone bool
+	var err error
+	go func() {
+		_, isDone, err = logBuffer.LoopProcessLogData("bounded-empty", startPosition, stopTsNs, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if !isDone {
+			t.Errorf("expected isDone=true for a bounded read of an empty buffer, got false")
+		}
+		// A leaked ResumeFromDiskError would send the filer's outer loop into
+		// its gap machinery, which parks the bounded subscriber all over again.
+		if err != nil {
+			t.Errorf("expected err=nil for a bounded read of an empty buffer, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded LoopProcessLogData wedged on an empty buffer instead of terminating")
+	}
+}
+
 func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
 	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
@@ -526,6 +572,71 @@ func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("LoopProcessLogData blocked instead of returning ResumeFromDiskError")
+	}
+}
+
+// TestLoopProcessLogData_DuplicateReaderLeaving is a regression test for issue
+// #10810: an idle metadata subscriber pinning a full core inside
+// awaitNotificationOrTimeoutFor. Two readers registered under the same name
+// share one notification channel, which happens whenever a client reconnects
+// before its previous stream noticed the disconnect. When the departing one
+// closed that channel, the surviving reader's select won on it instantly on
+// every pass, so the loop ran flat out - allocating a timer per iteration -
+// until the client went away.
+func TestLoopProcessLogData_DuplicateReaderLeaving(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	const readerName = "localMeta:s3@"
+	startPosition := NewMessagePosition(time.Now().UnixNano(), -2)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
+
+	// startReader runs a reader and reports how many times it went round the
+	// loop; the loop calls waitForDataFn exactly once per pass.
+	startReader := func(iterations *atomic.Int64, stop *atomic.Bool) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			logBuffer.LoopProcessLogData(readerName, startPosition, 0, func() bool {
+				iterations.Add(1)
+				return !stop.Load()
+			}, eachLogEntryFn)
+		}()
+		for iterations.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		return done
+	}
+
+	var leavingIterations, survivorIterations atomic.Int64
+	var stopLeaving, stopSurvivor atomic.Bool
+	leavingDone := startReader(&leavingIterations, &stopLeaving)
+	survivorDone := startReader(&survivorIterations, &stopSurvivor)
+
+	stopLeaving.Store(true)
+	<-leavingDone
+
+	const observeFor = 500 * time.Millisecond
+	before := survivorIterations.Load()
+	time.Sleep(observeFor)
+	spun := survivorIterations.Load() - before
+
+	// A low iteration count only means "not spinning" if the reader was still
+	// there to spin. Had LoopProcessLogData returned when its duplicate left,
+	// spun would be 0 and the count below would pass while proving nothing.
+	select {
+	case <-survivorDone:
+		t.Fatal("surviving reader returned while its duplicate unregistered; it must keep reading")
+	default:
+	}
+
+	stopSurvivor.Store(true)
+	<-survivorDone
+
+	maxIterations := int64(observeFor/notificationHealthCheckInterval) + 1
+	if spun > maxIterations {
+		t.Errorf("surviving reader looped %d times in %v, expected at most %d (suggests busy-waiting)", spun, observeFor, maxIterations)
 	}
 }
 

@@ -17,10 +17,12 @@ func TestLoad_CorruptIdx_NoSegfault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create volume: %v", err)
 	}
-	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
-	v.PersistReadOnly(true) // reload goes through SortedFileNeedleMap
+	if err := v.PersistReadOnly(true, false); err != nil { // reload goes through SortedFileNeedleMap
+		t.Fatalf("persist read-only: %v", err)
+	}
 	v.Close()
 
 	// Truncate .idx to a non-aligned size so the walk rejects it.

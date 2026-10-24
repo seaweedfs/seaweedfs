@@ -26,13 +26,11 @@ func TestUploadReaderInChunksReturnsPartialResultsOnError(t *testing.T) {
 	testData := bytes.Repeat([]byte("test data for chunk upload failure testing"), 1000) // ~40KB
 	reader := bytes.NewReader(testData)
 
-	uploadAttempts := 0
+	var uploadAttempts int32
 
 	// Create a mock assign function that succeeds for first chunk, then fails
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
-		uploadAttempts++
-
-		if uploadAttempts == 1 {
+		if atomic.AddInt32(&uploadAttempts, 1) == 1 {
 			// First chunk succeeds
 			return nil, &AssignResult{
 				Fid:       "test-fid-1,1234",
@@ -280,7 +278,7 @@ func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
 	defer bad.Close()
 
 	hosts := []string{strings.TrimPrefix(good.URL, "http://"), strings.TrimPrefix(bad.URL, "http://")}
-	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", &ChunkedUploadOption{})
+	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", false, &ChunkedUploadOption{})
 
 	if err == nil {
 		t.Fatal("expected error from a partial fan-out")
@@ -637,5 +635,132 @@ func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
 	// committed anyone else's to find, and no chunk will ever name that fid.
 	if got := atomic.LoadInt32(&deletes); got != 3 {
 		t.Errorf("expected every abandoned fid to be rolled back, got %d deletes", got)
+	}
+}
+
+// TestUploadReaderInChunksAppendsFsyncWhenAssigned verifies that a chunk
+// assignment carrying the storage rule's fsync decision lands as ?fsync=true
+// on the volume server upload URL.
+func TestUploadReaderInChunksAppendsFsyncWhenAssigned(t *testing.T) {
+	testData := []byte("data needing fsync")
+	reader := bytes.NewReader(testData)
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{
+			Fid:       "test-fid,1234",
+			Url:       "http://test-volume:8080",
+			PublicUrl: "http://test-volume:8080",
+			Count:     1,
+			Fsync:     true,
+		}, nil
+	}
+
+	var gotUploadUrl string
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		gotUploadUrl = option.UploadUrl
+		return &UploadResult{
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+		}, nil
+	}
+
+	if _, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
+		ChunkSize:       8 * 1024,
+		SmallFileLimit:  256,
+		SaveSmallInline: false,
+		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
+	}); err != nil {
+		t.Fatalf("Expected successful upload, got error: %v", err)
+	}
+	if !strings.Contains(gotUploadUrl, "?fsync=true") {
+		t.Errorf("Expected the upload URL to carry ?fsync=true when the assignment says fsync, got %q", gotUploadUrl)
+	}
+}
+
+// A holder that stalls past the assignment JWT's expiry answers the rollback
+// delete with 401; the cleanup renews the token instead of leaking the copy.
+func TestDeleteChunkFromHoldersRenewsExpiredJwt(t *testing.T) {
+	var staleDeletes, freshDeletes int32
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		switch r.Header.Get("Authorization") {
+		case "Bearer fresh-jwt":
+			atomic.AddInt32(&freshDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			atomic.AddInt32(&staleDeletes, 1)
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"wrong jwt"}`)
+		}
+	}))
+	defer holder.Close()
+
+	lookups := 0
+	deleteChunkFromHolders(
+		[]string{strings.TrimPrefix(holder.URL, "http://")},
+		"1,0a0b0c0d",
+		"stale-jwt",
+		&ChunkedUploadOption{
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
+				lookups++
+				return "fresh-jwt"
+			},
+		},
+	)
+
+	if lookups != 1 {
+		t.Fatalf("expected one jwt renewal, got %d", lookups)
+	}
+	if atomic.LoadInt32(&freshDeletes) != 1 {
+		t.Fatalf("expected the delete retried with the fresh jwt, got %d fresh deletes", freshDeletes)
+	}
+}
+
+// A later holder that rejects the renewed token can trigger another renewal:
+// the one-retry limit is per holder, not per cleanup pass.
+func TestDeleteChunkFromHoldersRenewsPerHolder(t *testing.T) {
+	var acceptedDeletes int32
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer jwt-2" {
+			atomic.AddInt32(&acceptedDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"wrong jwt"}`)
+	}))
+	defer holder.Close()
+
+	tokens := []security.EncodedJwt{"jwt-1", "jwt-2"}
+	lookups := 0
+	deleteChunkFromHolders(
+		[]string{
+			strings.TrimPrefix(holder.URL, "http://"),
+			strings.TrimPrefix(holder.URL, "http://"),
+		},
+		"1,0a0b0c0d",
+		"stale-jwt",
+		&ChunkedUploadOption{
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
+				token := tokens[lookups]
+				lookups++
+				return token
+			},
+		},
+	)
+
+	if lookups != 2 {
+		t.Fatalf("expected a renewal per rejecting holder, got %d", lookups)
+	}
+	if atomic.LoadInt32(&acceptedDeletes) != 1 {
+		t.Fatalf("expected the second holder's retried delete to land, got %d", acceptedDeletes)
 	}
 }

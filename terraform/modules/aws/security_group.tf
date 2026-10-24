@@ -1,6 +1,6 @@
 # Cluster security group + the SeaweedFS port matrix.
 # Intra-cluster: all TCP allowed within the SG (master 9333/19333, volume
-# 8080/18080, filer 8888/18888, admin 33646, ...). Client-facing: only S3 (8333)
+# 8080/18080, filer 8888/18888, admin 22535, ...). Client-facing: only S3 (8333)
 # and filer (8888). Metrics ports (9327) are never opened to clients.
 
 resource "aws_security_group" "cluster" {

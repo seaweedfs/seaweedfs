@@ -158,7 +158,9 @@ func nameValidationError(err error) bool {
 // errors (400) and must carry the reason -- a variant field without
 // format-version 3 otherwise reads as a bare 500 with "variant is not supported
 // until v3" only in the log. Anything else is a server fault (500).
-func writeManagerError(w http.ResponseWriter, err error) {
+// classifyManagerError maps a storage-layer error to the HTTP status, the
+// Iceberg error type and the message the catalog answers with.
+func classifyManagerError(err error) (int, string, string) {
 	switch {
 	case nameValidationError(err),
 		errors.Is(err, iceberg.ErrInvalidSchema),
@@ -166,20 +168,61 @@ func writeManagerError(w http.ResponseWriter, err error) {
 		errors.Is(err, iceberg.ErrInvalidTypeString),
 		errors.Is(err, iceberg.ErrInvalidTransform),
 		errors.Is(err, iceberg.ErrInvalidArgument):
-		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
-		return
+		return http.StatusBadRequest, "BadRequestException", err.Error()
 	}
-	// A missing table bucket means the catalog the client selected does not
-	// exist, not a server fault. The storage-layer message names the resolved
-	// bucket, which for a client that sent no warehouse at all is the default
-	// one it never asked for, so say how to select a real table bucket.
+	// Storage-layer failures are mostly the client's, not the server's. Reporting
+	// a missing namespace or a name conflict as a 500 makes the catalog look
+	// broken and gives the client nothing to act on.
 	var tableErr *s3tables.S3TablesError
-	if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeNoSuchBucket {
-		writeError(w, http.StatusNotFound, "NoSuchNamespaceException",
-			fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message))
+	if errors.As(err, &tableErr) {
+		switch tableErr.Type {
+		case s3tables.ErrCodeNoSuchBucket:
+			// The storage-layer message names the resolved bucket, which for a
+			// client that sent no warehouse at all is the default one it never
+			// asked for, so say how to select a real table bucket.
+			return http.StatusNotFound, "NoSuchNamespaceException",
+				fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message)
+		case s3tables.ErrCodeNoSuchNamespace:
+			return http.StatusNotFound, "NoSuchNamespaceException", tableErr.Message
+		case s3tables.ErrCodeNoSuchTable:
+			return http.StatusNotFound, "NoSuchTableException", tableErr.Message
+		case s3tables.ErrCodeNoSuchView:
+			return http.StatusNotFound, "NoSuchViewException", tableErr.Message
+		case s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeBucketAlreadyExists,
+			s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeViewAlreadyExists:
+			return http.StatusConflict, "AlreadyExistsException", tableErr.Message
+		case s3tables.ErrCodeNamespaceNotEmpty, s3tables.ErrCodeBucketNotEmpty:
+			return http.StatusConflict, "AlreadyExistsException", tableErr.Message
+		case s3tables.ErrCodeConflict:
+			return http.StatusConflict, "CommitFailedException", tableErr.Message
+		case s3tables.ErrCodeAccessDenied:
+			return http.StatusForbidden, "ForbiddenException", tableErr.Message
+		case s3tables.ErrCodeInvalidRequest, s3tables.ErrCodeInvalidIcebergLayout:
+			return http.StatusBadRequest, "BadRequestException", tableErr.Message
+		}
+	}
+	return http.StatusInternalServerError, "InternalServerError", err.Error()
+}
+
+func writeManagerError(w http.ResponseWriter, err error) {
+	status, typ, msg := classifyManagerError(err)
+	writeError(w, status, typ, msg)
+}
+
+// A storage-layer error the catalog answers with a 4xx (access denied, not
+// found, already exists, not empty, a conflict) is the API refusing a request
+// as intended, not a server fault; it is logged at V(1). A 5xx stays at ERROR.
+var (
+	logManagerRefusal = func(format string, args ...interface{}) { glog.V(1).Infof(format, args...) }
+	logManagerFault   = glog.Errorf
+)
+
+func logManagerError(op string, err error) {
+	if status, _, _ := classifyManagerError(err); status >= 400 && status < 500 {
+		logManagerRefusal("Iceberg: %s refused (%d): %v", op, status, err)
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+	logManagerFault("Iceberg: %s error: %v", op, err)
 }
 
 // resolveWarehouseBucket maps a client-supplied warehouse value to a table
@@ -235,6 +278,14 @@ func getBucketFromPrefix(r *http.Request) string {
 	}
 	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
 		return bucket
+	}
+	// Some writers commit to the unprefixed path even though their reads
+	// honor the /v1/config prefix; the deployment's first table bucket is
+	// where those commits belong.
+	for _, name := range strings.Split(os.Getenv("S3_TABLE_BUCKET"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			return name
+		}
 	}
 	// Default bucket if no prefix - use "warehouse" for Iceberg
 	return "warehouse"

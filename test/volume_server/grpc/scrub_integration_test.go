@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -412,5 +413,89 @@ func TestScrubEcVolumeIndexCorruptEcx(t *testing.T) {
 	}
 	if len(resp.GetBrokenVolumeIds()) == 0 {
 		t.Fatalf("expected broken volume after ECX corruption")
+	}
+}
+
+// scrubEcUntilLocated runs an EC scrub, retrying while the server is still waiting on
+// the master for the shard locations a distributed scrub needs.
+func scrubEcUntilLocated(t *testing.T, ctx context.Context, grpcClient volume_server_pb.VolumeServerClient, volumeID uint32, mode volume_server_pb.VolumeScrubMode) *volume_server_pb.ScrubEcVolumeResponse {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		resp, err := grpcClient.ScrubEcVolume(ctx, &volume_server_pb.ScrubEcVolumeRequest{
+			VolumeIds: []uint32{volumeID},
+			Mode:      mode,
+		})
+		if err != nil {
+			t.Fatalf("ScrubEcVolume %s failed: %v", mode, err)
+		}
+		waiting := false
+		for _, d := range resp.GetDetails() {
+			if strings.Contains(d, "failed to locate shard via master grpc") {
+				waiting = true
+				break
+			}
+		}
+		if !waiting {
+			return resp
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("master never reported EC shard locations for volume %d: %v", volumeID, resp.GetDetails())
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// With a shard gone, FULL cannot read the intervals that lived on it, while READS
+// rebuilds them from parity. Either way the missing shard has to be reported: a
+// volume that scrubs clean is a volume nobody repairs.
+func TestScrubEcVolumeReadsRecoversMissingShard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(216)
+	const missingShard = uint32(0)
+	httpClient := framework.NewHTTPClient()
+	ecSetup(t, grpcClient, httpClient, clusterHarness.VolumeAdminURL(), volumeID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if _, err := grpcClient.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+		VolumeId: volumeID,
+		ShardIds: []uint32{missingShard},
+	}); err != nil {
+		t.Fatalf("VolumeEcShardsUnmount shard %d failed: %v", missingShard, err)
+	}
+	if _, err := grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId: volumeID,
+		ShardIds: []uint32{missingShard},
+	}); err != nil {
+		t.Fatalf("VolumeEcShardsDelete shard %d failed: %v", missingShard, err)
+	}
+
+	fullResp := scrubEcUntilLocated(t, ctx, grpcClient, volumeID, volume_server_pb.VolumeScrubMode_FULL)
+	assertOnlyBrokenShard(t, "FULL", fullResp, missingShard)
+	if len(fullResp.GetDetails()) == 0 {
+		t.Fatalf("FULL should report the needles it could not read")
+	}
+
+	readsResp := scrubEcUntilLocated(t, ctx, grpcClient, volumeID, volume_server_pb.VolumeScrubMode_READS)
+	assertOnlyBrokenShard(t, "READS", readsResp, missingShard)
+	if len(readsResp.GetDetails()) != 0 {
+		t.Fatalf("READS should rebuild every needle from parity, got: %v", readsResp.GetDetails())
+	}
+}
+
+func assertOnlyBrokenShard(t *testing.T, mode string, resp *volume_server_pb.ScrubEcVolumeResponse, shardID uint32) {
+	t.Helper()
+	infos := resp.GetBrokenShardInfos()
+	if len(infos) != 1 || infos[0].GetShardId() != shardID {
+		t.Fatalf("%s reported broken shards %v, want only shard %d (details: %v)", mode, infos, shardID, resp.GetDetails())
 	}
 }

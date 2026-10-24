@@ -179,8 +179,13 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3Api.Handle("/buckets/{bucket}", wrapWrite(h.adminServer.DeleteBucket)).Methods(http.MethodDelete)
 	s3Api.HandleFunc("/buckets/{bucket}", h.adminServer.ShowBucketDetails).Methods(http.MethodGet)
 	s3Api.HandleFunc("/buckets/{bucket}/lifecycle", h.adminServer.ShowBucketLifecycle).Methods(http.MethodGet)
+	s3Api.Handle("/buckets/{bucket}/lifecycle", wrapWrite(h.adminServer.UpdateBucketLifecycle)).Methods(http.MethodPut)
+	s3Api.Handle("/buckets/{bucket}/lifecycle", wrapWrite(h.adminServer.DeleteBucketLifecycle)).Methods(http.MethodDelete)
 	s3Api.Handle("/buckets/{bucket}/quota", wrapWrite(h.adminServer.UpdateBucketQuota)).Methods(http.MethodPut)
 	s3Api.Handle("/buckets/{bucket}/owner", wrapWrite(h.adminServer.UpdateBucketOwner)).Methods(http.MethodPut)
+	s3Api.HandleFunc("/buckets/{bucket}/policy", h.adminServer.ShowBucketPolicy).Methods(http.MethodGet)
+	s3Api.Handle("/buckets/{bucket}/policy", wrapWrite(h.adminServer.UpdateBucketPolicy)).Methods(http.MethodPut)
+	s3Api.Handle("/buckets/{bucket}/policy", wrapWrite(h.adminServer.RemoveBucketPolicy)).Methods(http.MethodDelete)
 
 	usersApi := api.PathPrefix("/users").Subrouter()
 	usersApi.HandleFunc("", h.userHandlers.GetUsers).Methods(http.MethodGet)
@@ -222,6 +227,10 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	policyApi.Handle("/{name}", wrapWrite(h.policyHandlers.DeletePolicy)).Methods(http.MethodDelete)
 	policyApi.HandleFunc("/validate", h.policyHandlers.ValidatePolicy).Methods(http.MethodPost)
 
+	// Registered at the API root, not under policyApi: policyApi's "/{name}"
+	// GET route would shadow any single-segment GET route registered after it.
+	api.HandleFunc("/principals", h.policyHandlers.GetPrincipalSuggestions).Methods(http.MethodGet)
+
 	s3TablesApi := api.PathPrefix("/s3tables").Subrouter()
 	s3TablesApi.HandleFunc("/buckets", h.adminServer.ListS3TablesBucketsAPI).Methods(http.MethodGet)
 	s3TablesApi.Handle("/buckets", wrapWrite(h.adminServer.CreateS3TablesBucket)).Methods(http.MethodPost)
@@ -251,10 +260,12 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
 	filesApi.HandleFunc("/metadata", h.fileBrowserHandlers.ExportMetadata).Methods(http.MethodGet)
+	filesApi.HandleFunc("/list-folders", h.fileBrowserHandlers.ListFolders).Methods(http.MethodGet)
 
 	volumeApi := api.PathPrefix("/volumes").Subrouter()
 	volumeApi.HandleFunc("/export", h.clusterHandlers.ExportClusterVolumes).Methods(http.MethodGet)
 	volumeApi.Handle("/{id}/{server}/vacuum", wrapWrite(h.clusterHandlers.VacuumVolume)).Methods(http.MethodPost)
+	volumeApi.Handle("/{id}/{server}/read-only", wrapWrite(h.clusterHandlers.SetVolumeReadOnly)).Methods(http.MethodPost)
 
 	pluginApi := api.PathPrefix("/plugin").Subrouter()
 	pluginApi.HandleFunc("/status", h.adminServer.GetPluginStatusAPI).Methods(http.MethodGet)
@@ -266,6 +277,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	pluginApi.HandleFunc("/jobs/{jobId}/detail", h.adminServer.GetPluginJobDetailAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/activities", h.adminServer.GetPluginActivitiesAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/scheduler-states", h.adminServer.GetPluginSchedulerStatesAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/observations", h.adminServer.GetPluginObservationsAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/scheduler-status", h.adminServer.GetPluginSchedulerStatusAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types/{jobType}/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types/{jobType}/schema", h.adminServer.RequestPluginJobTypeSchemaAPI).Methods(http.MethodPost)

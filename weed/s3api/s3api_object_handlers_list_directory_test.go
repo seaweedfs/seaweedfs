@@ -3,10 +3,11 @@ package s3api
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDirectoryListedAsCommonPrefix tests that regular directories (without MIME)
@@ -64,12 +65,11 @@ func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 	assert.Empty(t, seenFiles, "No files should be seen, only the directory")
 }
 
-// TestEmptyDirectorySurfacedAsMarker reproduces the hadoop-aws / Spark case where a
-// real but empty directory (created via mount, mkdir or the filer API, so it has no
-// MIME) must be visible to S3 clients that detect directories by listing under the
-// "<dir>/" prefix. Such a directory is surfaced as a directory marker, identical to
-// one created via PutObject with a trailing "/".
-func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
+// TestEmptyDirectoryNotListedUnderOwnPrefix covers the explicit "<dir>/" probe
+// on a real but empty directory (created via mount, mkdir or the filer API, so
+// it has no MIME): it is listed under its own prefix in neither delimited nor
+// recursive mode, matching S3 where an empty prefix has no key to return.
+func TestEmptyDirectoryNotListedUnderOwnPrefix(t *testing.T) {
 	s3a := &S3ApiServer{
 		option: &S3ApiServerOption{BucketsPath: "/buckets"},
 	}
@@ -86,19 +86,15 @@ func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
 		},
 	}
 
-	// Mirrors the getFileStatus probe: prefix "logs/" with delimiter "/".
-	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
-	var seen []*filer_pb.Entry
-	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "logs", delimiter: "/", bucket: "test"}, cursor,
-		func(dir string, entry *filer_pb.Entry) {
-			seen = append(seen, entry)
-		})
-
-	assert.NoError(t, err)
-	if assert.Len(t, seen, 1, "empty directory must be surfaced under the logs/ prefix") {
-		assert.True(t, seen[0].IsDirectoryKeyObject(),
-			"empty directory must be marked as a directory key object so it lists as logs/")
-		assert.Equal(t, s3_constants.FolderMimeType, seen[0].Attributes.Mime)
+	for _, delimiter := range []string{"/", ""} {
+		cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+		var seen []*filer_pb.Entry
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "logs", delimiter: delimiter, bucket: "test"}, cursor,
+			func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, entry)
+			})
+		assert.NoError(t, err)
+		assert.Empty(t, seen, "an empty directory reports nothing under its own prefix (delimiter %q)", delimiter)
 	}
 }
 
@@ -181,4 +177,30 @@ func TestEmptyDirectoryHiddenInFlatListing(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"foo"}, seen, "flat listing must hide the empty directory and return only real objects")
+}
+
+// A trailing-slash delimited listing of an empty directory enumerates its
+// children, so it returns nothing: the directory is neither a readable Contents
+// key nor a CommonPrefix of its own.
+func TestEmptyDirectoryHiddenInDelimitedSelfListing(t *testing.T) {
+	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets/test": {
+			{Name: "locks", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: ""}},
+		},
+		"/buckets/test/locks": {},
+	}}
+	s3a := newFailoverTestServer(t, startFakeFiler(t, filer))
+	s3a.option.BucketsPath = "/buckets"
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("test", &BucketConfig{Name: "test"})
+
+	response, err := s3a.listFilerEntries(context.Background(), listObjectsRequest{
+		bucket:    "test",
+		prefix:    "locks/",
+		delimiter: "/",
+		maxKeys:   1000,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, response.Contents, "an empty directory is not a readable key")
+	assert.Empty(t, response.CommonPrefixes, "an empty directory has no prefixes to fold into")
 }

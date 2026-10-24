@@ -315,10 +315,15 @@ func TestVacuumIntegration(t *testing.T) {
 		}
 		commandEnv := shell.NewCommandEnv(options)
 
-		shellCtx, shellCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		// The session context outlives the vacuum command: a deadline here
+		// closes the master connection mid-command on a slow runner, and the
+		// leaked lock renewal then spins until the test binary's timeout.
+		shellCtx, shellCancel := context.WithCancel(context.Background())
 		defer shellCancel()
 		go commandEnv.MasterClient.KeepConnectedToMaster(shellCtx)
-		commandEnv.MasterClient.WaitUntilConnected(shellCtx)
+		connectCtx, connectCancel := context.WithTimeout(shellCtx, 30*time.Second)
+		commandEnv.MasterClient.WaitUntilConnected(connectCtx)
+		connectCancel()
 		time.Sleep(2 * time.Second)
 
 		// Acquire lock (required by shell commands)

@@ -1,0 +1,58 @@
+[package]
+name = "weed-lance-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "SeaweedFS maintenance worker for Lance tables"
+
+[lib]
+name = "weed_lance_worker"
+
+# The binary is not named for lance: it is the Rust side of `weed worker`, and
+# the job families it registers will outgrow this crate. When a second one
+# arrives the bin target moves to a crate of its own under the same name.
+[[bin]]
+name = "weed-worker"
+path = "src/main.rs"
+
+[dependencies]
+# Helpers the Rust volume server needs as well. A path dependency because
+# the two trees are separate cargo workspaces with no common root manifest.
+# It also carries the rustls requirement this crate used to state itself.
+seaweed-common = { path = "../../../seaweed-common" }
+seaweed-worker-core = { path = "../core" }
+seaweed-worker-sort = { path = "../sort" }
+prometheus.workspace = true
+# Only the S3 backend: the other object stores lance enables by default are
+# build time this worker never spends.
+lance = { version = "10", default-features = false, features = ["aws"] }
+lance-index = "10"
+# For the manifest's own fragment type, which the sort marker summarises.
+lance-table = "10"
+# For the execution options the sort needs; the scanner's own stream helper
+# takes the default, which has spilling off.
+lance-datafusion = "10"
+arrow-schema = "58"
+arrow-cast = "58"
+chrono = "0.4"
+futures = "0.3"
+anyhow.workspace = true
+async-trait.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+tonic.workspace = true
+arrow-array = "58"
+arrow-schema = "58"
+arrow-cast = "58"
+lance-linalg = "10"
+
+[lints]
+workspace = true

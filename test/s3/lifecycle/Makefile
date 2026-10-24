@@ -12,7 +12,7 @@ FILER_PORT := 8888
 # Pin the filer gRPC port off the FILER_PORT+10000 convention so any
 # code path that assumes the offset breaks here, not in production.
 FILER_GRPC_PORT := 18890
-ADMIN_PORT := 23646
+ADMIN_PORT := 12535
 ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
 TEST_TIMEOUT := 10m
@@ -42,6 +42,8 @@ start-server: build-weed
 	@mkdir -p $(SERVER_DIR)
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
+		-ip=127.0.0.1 \
+		-ip.bind=127.0.0.1 \
 		-s3.port=$(S3_PORT) \
 		-filer.port.grpc=$(FILER_GRPC_PORT) \
 		> weed-test.log 2>&1 & \

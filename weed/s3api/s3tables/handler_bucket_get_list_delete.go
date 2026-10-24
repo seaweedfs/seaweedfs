@@ -58,7 +58,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket: %v", err))
@@ -70,11 +70,13 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
 	}
 
@@ -83,6 +85,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		Name:           metadata.Name,
 		OwnerAccountID: metadata.OwnerAccountID,
 		CreatedAt:      metadata.CreatedAt,
+		Format:         metadata.Format,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -191,9 +194,11 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-					TableBucketName: entry.Entry.Name,
-					IdentityActions: identityActions,
-					DefaultAllow:    h.defaultAllowFor(r),
+					TrustedIssuers:   h.trustedIssuers(r),
+					IsLocalAccountID: h.localAccountIDs,
+					TableBucketName:  entry.Entry.Name,
+					IdentityActions:  identityActions,
+					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
 					continue
 				}
@@ -202,6 +207,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					ARN:       bucketARN,
 					Name:      entry.Entry.Name,
 					CreatedAt: metadata.CreatedAt,
+					Format:    metadata.Format,
 				})
 
 				if len(buckets) >= maxBuckets {
@@ -294,9 +300,11 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TableBucketName: bucketName,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}
@@ -331,7 +339,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else if isAuthError(err) {
-			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, err.Error())
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to delete table bucket: %v", err))
 		}
@@ -345,22 +353,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Delete table object entry first, then directory
-		// This ensures we clean up the leaf entry even if directory deletion fails
-		tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName))
-		dirErr := h.deleteDirectory(r.Context(), client, bucketPath)
-
-		// Log any errors but don't fail if one succeeds
-		if tableObjErr != nil && dirErr != nil {
-			return fmt.Errorf("delete table object failed: %w, delete directory failed: %w", tableObjErr, dirErr)
-		}
-		if tableObjErr != nil {
+		// Drop the leaf entry first, so it does not outlive the directory.
+		if tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); tableObjErr != nil {
 			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
 		}
-		if dirErr != nil {
-			glog.V(1).Infof("failed to delete table bucket dir for %s: %v", bucketName, dirErr)
-		}
-		return nil
+		// The bucket is the directory, so a refused delete leaves it in place
+		// and the caller must hear about it.
+		return h.deleteDirectory(r.Context(), client, bucketPath)
 	})
 
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func entryWithETag(etag string, mtime time.Time) *filer.Entry {
@@ -190,6 +191,58 @@ func TestWriteConditionUnknownKindFailsClosed(t *testing.T) {
 	}}
 	if !writeConditionSatisfied(none, present) {
 		t.Error("a NONE clause must be satisfied (no-op)")
+	}
+}
+
+// IF_ENTRY_EQUAL compares the expected entry after the same normalization
+// FindEntry applied to the stored one: a raw event entry whose FileSize is
+// still zero must match a stored entry grown to its chunk extent.
+func TestIfEntryEqualNormalizesExpected(t *testing.T) {
+	raw := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 42},
+		Chunks: []*filer_pb.FileChunk{
+			{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 100},
+		},
+	}
+	stored := filer.FromPbEntry("/d", raw)
+	if stored.FileSize != 100 {
+		t.Fatalf("stored FileSize = %d, want chunk extent 100", stored.FileSize)
+	}
+	cond := one(&filer_pb.WriteCondition_Clause{
+		Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+		ExpectedEntry: raw,
+	})
+	if !writeConditionSatisfied(cond, stored) {
+		t.Error("raw expected entry must equal its normalized stored form")
+	}
+	raw.Attributes.Mtime = 43
+	if writeConditionSatisfied(cond, stored) {
+		t.Error("changed expected entry must not equal the stored entry")
+	}
+}
+
+// A stamp built from the metadata-log event carries chunks in serialized
+// form (file_id moved into fid), while the stored entry came through
+// FindEntry which restores file_id. The comparison must still match.
+func TestIfEntryEqualSerializedExpected(t *testing.T) {
+	serialized := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 42},
+		Chunks: []*filer_pb.FileChunk{
+			{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 100},
+		},
+	}
+	storedProto := proto.Clone(serialized).(*filer_pb.Entry)
+	filer_pb.AfterEntryDeserialization(storedProto.Chunks)
+	stored := filer.FromPbEntry("/d", storedProto)
+
+	cond := one(&filer_pb.WriteCondition_Clause{
+		Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+		ExpectedEntry: serialized,
+	})
+	if !writeConditionSatisfied(cond, stored) {
+		t.Error("serialized expected entry must equal the deserialized stored entry")
 	}
 }
 

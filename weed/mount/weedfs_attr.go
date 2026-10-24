@@ -1,11 +1,14 @@
 package mount
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -23,44 +26,37 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	inode := input.NodeId
-	path, fh, entry, status := wfs.maybeReadEntry(inode)
-	if status == fuse.OK {
-		out.AttrValid = wfs.attrValidSec
-		// When an open handle owns the entry, async upload workers append
-		// chunks under the LockedEntry lock; take it for reading so FileSize
-		// does not iterate the chunk slice mid-reallocation. Re-read under the
-		// lock in case SetEntry swapped the pointer since maybeReadEntry.
-		if fh != nil {
-			fh.entry.RLock()
-			entry = fh.entry.Entry
-		}
-		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
-		if fh != nil {
-			fh.entry.RUnlock()
-		}
-		wfs.applyInMemoryAtime(&out.Attr, inode)
-		if entry.IsDirectory {
-			wfs.applyInMemoryDirMtime(&out.Attr, inode)
-			if wfs.option.PosixDirNlink {
-				wfs.applyDirNlink(&out.Attr, path)
-			}
-		}
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, inode)
+	if status != fuse.OK {
 		return status
+	}
+	out.AttrValid = wfs.attrValidSec
+	// An open handle's entry has two sets of writers: async upload workers
+	// append chunks under the LockedEntry lock, while Write and the metadata
+	// flush rewrite size, times and the whole chunk slice under the handle
+	// lock. Hold both for reading, in that order, so FileSize never iterates a
+	// slice mid-reallocation. Re-read the entry under them in case SetEntry
+	// swapped the pointer since maybeReadEntry.
+	if fh != nil {
+		fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
+		fh.entry.RLock()
+		entry = fh.entry.Entry
+		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
+		fh.entry.RUnlock()
+		wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	} else {
-		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
-			out.AttrValid = wfs.attrValidSec
-			// Use shared lock to prevent race with Write operations
-			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
-			fh.entry.RLock()
-			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.Entry, true)
-			fh.entry.RUnlock()
-			wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-			wfs.applyInMemoryAtime(&out.Attr, inode)
-			out.Nlink = 0
-			return fuse.OK
+		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
+	}
+	wfs.applyInMemoryAtime(&out.Attr, inode)
+	applyUnlinkedNlink(&out.Attr, path)
+	if entry.GetIsDirectory() {
+		wfs.applyInMemoryDirMtime(&out.Attr, inode)
+		if wfs.option.PosixDirNlink {
+			wfs.applyDirNlink(&out.Attr, path)
 		}
 	}
-
 	return status
 }
 
@@ -71,9 +67,23 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, input.NodeId)
 	if status != fuse.OK || entry == nil {
 		return status
+	}
+	if size, ok := input.GetSize(); ok && fh != nil && fh.dirtyPages.HasWrites() && size < filer.FileSize(entry) {
+		// The truncation below trims chunks; dirty pages it cannot see. Left
+		// alone, pages beyond the new size come back with the next flush and
+		// grow the file again, so turn them into chunks first. Runs before
+		// the entry locks below: the flush takes its own.
+		ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
+		flushStatus := wfs.doFlush(ctx, fh, input.Uid, input.Gid, false)
+		cancelFunc()
+		if flushStatus != fuse.OK {
+			return flushStatus
+		}
 	}
 	if fh != nil {
 		fh.entryLock.Lock()
@@ -99,7 +109,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		// Invalidate the open-mtime cache so the next Open does not set
 		// FOPEN_KEEP_CACHE with stale kernel page cache data.
 		wfs.invalidateOpenMtimeCache(input.NodeId)
-		if size < filer.FileSize(entry) {
+		oldFileSize := filer.FileSize(entry)
+		if size < oldFileSize {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
@@ -130,6 +141,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry.Attributes.Mtime = truncNow.Unix()
 		entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
 		entry.Attributes.FileSize = size
+		if size > oldFileSize {
+			// The writes that fill the range will not grow the file, so they
+			// charge nothing; the growth is counted here or the quota never
+			// sees it. Matches Write and Fallocate.
+			wfs.AddUncommittedBytes(int64(size - oldFileSize))
+		}
 
 	}
 
@@ -189,9 +206,15 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, !includeSize)
 	wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
+	applyUnlinkedNlink(&out.Attr, path)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
 		return fuse.OK
 	}
 
@@ -317,7 +340,7 @@ func (wfs *WFS) touchDirMtimeCtimeBest(dirPath util.FullPath) {
 // touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
 // POSIX requires this when entries are created or removed in the directory.
 func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
-	dirEntry, _, code := wfs.maybeLoadEntry(dirPath)
+	dirEntry, _, code := wfs.maybeLoadEntry(context.Background(), dirPath)
 	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
 		return
 	}
@@ -387,10 +410,10 @@ func (wfs *WFS) setAtime(inode uint64, t time.Time) {
 }
 
 // applyInMemoryAtime overlays the in-memory atime onto a fuse.Attr if present.
-// forgetInMemoryTimes drops the overlays for an inode. Both maps are keyed by
-// inode and inodes are derived from the path, so a delete and recreate can
+// forgetInMemoryTimes drops the overlays for an inode. All these maps are keyed
+// by inode and inodes are derived from the path, so a delete and recreate can
 // hand the same number to a different file — which would then inherit the
-// previous one's access or modification time.
+// previous one's access or modification time, or a removed directory's entry.
 func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
 	wfs.atimeMu.Lock()
 	delete(wfs.atimeMap, inode)
@@ -399,6 +422,41 @@ func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
 	wfs.dirMtimeMu.Lock()
 	delete(wfs.dirMtimeMap, inode)
 	wfs.dirMtimeMu.Unlock()
+
+	wfs.removedDirMu.Lock()
+	delete(wfs.removedDirs, inode)
+	wfs.removedDirMu.Unlock()
+}
+
+// rememberRemovedDir keeps the last-known entry of a directory removed while
+// the kernel still references its inode. A directory has no file handle to
+// live on through, so this is what serves fstat/fchmod/f*xattr on a still-open
+// descriptor until the final forget. Mutations publish through here as well,
+// replacing the stored entry wholesale.
+//
+// The final forget's cleanup cannot miss an insert: Rmdir inserts inside
+// RemovePath's callback, under the same inode table lock the forget releases
+// under, and a publish runs inside a request whose open descriptor keeps the
+// kernel from issuing that forget at all.
+func (wfs *WFS) rememberRemovedDir(inode uint64, entry *filer_pb.Entry) {
+	wfs.removedDirMu.Lock()
+	if wfs.removedDirs == nil {
+		wfs.removedDirs = make(map[uint64]*filer_pb.Entry)
+	}
+	wfs.removedDirs[inode] = entry
+	wfs.removedDirMu.Unlock()
+}
+
+// removedDirEntry hands out a private copy: stored entries are never mutated
+// in place, so concurrent readers cannot see a half-applied change.
+func (wfs *WFS) removedDirEntry(inode uint64) *filer_pb.Entry {
+	wfs.removedDirMu.Lock()
+	entry := wfs.removedDirs[inode]
+	wfs.removedDirMu.Unlock()
+	if entry == nil {
+		return nil
+	}
+	return proto.Clone(entry).(*filer_pb.Entry)
 }
 
 func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
@@ -408,6 +466,15 @@ func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
 		out.Atimensec = uint32(t.Nanosecond())
 	}
 	wfs.atimeMu.Unlock()
+}
+
+// applyUnlinkedNlink zeroes nlink for an inode no name points at any more: the
+// file was unlinked while open and lives on only through its handle. Every
+// reply carrying attributes must say so, or the kernel caches a live nlink.
+func applyUnlinkedNlink(out *fuse.Attr, path util.FullPath) {
+	if path == "" {
+		out.Nlink = 0
+	}
 }
 
 // applyDirNlink sets nlink = 2 + number_of_subdirectories for a directory.

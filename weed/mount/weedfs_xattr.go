@@ -38,7 +38,9 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 		return 0, fuse.EINVAL
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -105,7 +107,9 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -141,6 +145,11 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		fh.dirtyMetadata = true
 		return fuse.OK
 	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
+		return fuse.OK
+	}
 
 	return wfs.saveEntry(path, entry)
 
@@ -155,7 +164,9 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 		return 0, fuse.Status(syscall.ENOTSUP)
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -192,7 +203,9 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if len(attr) == 0 {
 		return fuse.EINVAL
 	}
-	path, fh, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -217,6 +230,11 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(header.NodeId, entry)
 		return fuse.OK
 	}
 

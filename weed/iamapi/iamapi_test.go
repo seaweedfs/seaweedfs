@@ -17,9 +17,11 @@ import (
 	"github.com/jinzhu/copier"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -488,6 +490,29 @@ func TestDeleteUser(t *testing.T) {
 	out := DeleteUserResponse{}
 	response, err := executeRequest(req.HTTPRequest, out)
 	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusConflict, response.Code)
+
+	listReq, _ := iam.New(session.New()).ListAccessKeysRequest(&iam.ListAccessKeysInput{UserName: userName})
+	_ = listReq.Build()
+	listOut := ListAccessKeysResponse{}
+	listResp, err := executeRequest(listReq.HTTPRequest, listOut)
+	assert.Equal(t, nil, err)
+	var listResult ListAccessKeysResponse
+	assert.Equal(t, nil, xml.Unmarshal(listResp.Body.Bytes(), &listResult))
+	for _, key := range listResult.ListAccessKeysResult.AccessKeyMetadata {
+		delKeyReq, _ := iam.New(session.New()).DeleteAccessKeyRequest(&iam.DeleteAccessKeyInput{
+			UserName:    userName,
+			AccessKeyId: key.AccessKeyId,
+		})
+		_ = delKeyReq.Build()
+		_, err := executeRequest(delKeyReq.HTTPRequest, out)
+		assert.Equal(t, nil, err)
+	}
+
+	req, _ = iam.New(session.New()).DeleteUserRequest(params)
+	_ = req.Build()
+	response, err = executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
@@ -500,32 +525,13 @@ func executeRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorde
 }
 
 func TestHandleImplicitUsername(t *testing.T) {
-	// Create a mock IamApiServer with credential store
-	// The handleImplicitUsername function now looks up the username from the
-	// credential store based on AccessKeyId, not from the region field in the auth header.
-	// Note: Using obviously fake access keys to avoid CI secret scanner false positives
+	// The implicit name is the authenticated identity recorded in the request
+	// context by the auth middleware; request headers are never re-parsed.
+	iama := &IamApiServer{}
 
-	// Create IAM directly as struct literal (same pattern as other tests)
-	iam := &s3api.IdentityAccessManagement{}
-
-	// Load test credentials - map access key to identity name
-	testConfig := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{
-				Name: "testuser1",
-				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATESTFAKEKEY000001", SecretKey: "testsecretfake"},
-				},
-			},
-		},
-	}
-	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(t, testConfig))
-	if err != nil {
-		t.Fatalf("Failed to load test config: %v", err)
-	}
-
-	iama := &IamApiServer{
-		iam: iam,
+	withIdentity := func(name string) *http.Request {
+		r := &http.Request{Header: http.Header{}}
+		return r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), name))
 	}
 
 	var tests = []struct {
@@ -533,14 +539,14 @@ func TestHandleImplicitUsername(t *testing.T) {
 		values   url.Values
 		userName string
 	}{
-		// No authorization header - should not set username
+		// No authenticated identity - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
-		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =AKIATESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
-		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// Authenticated identity in context - sets its name
+		{withIdentity("testuser1"), url.Values{}, "testuser1"},
+		// A client-controlled Authorization header naming another user is ignored
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// An explicit UserName is left alone
+		{withIdentity("testuser1"), url.Values{"UserName": {"other"}}, "other"},
 	}
 
 	for i, test := range tests {
@@ -584,6 +590,7 @@ func iamApiServerWithCredentialManager() (*IamApiServer, *credential.CredentialM
 type countingConfigSaver struct {
 	cm        *credential.CredentialManager
 	putCalled int
+	policies  Policies
 }
 
 func (c *countingConfigSaver) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
@@ -593,6 +600,8 @@ func (c *countingConfigSaver) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigura
 	}
 	s3cfg.Identities = config.Identities
 	s3cfg.Policies = config.Policies
+	s3cfg.Groups = config.Groups
+	s3cfg.ServiceAccounts = config.ServiceAccounts
 	return nil
 }
 
@@ -602,10 +611,15 @@ func (c *countingConfigSaver) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigura
 }
 
 func (c *countingConfigSaver) GetPolicies(policies *Policies) error {
+	*policies = c.policies
+	if c.policies.Policies == nil && c.policies.InlinePolicies == nil {
+		return filer_pb.ErrNotFound
+	}
 	return nil
 }
 
 func (c *countingConfigSaver) PutPolicies(policies *Policies) error {
+	c.policies = *policies
 	return nil
 }
 

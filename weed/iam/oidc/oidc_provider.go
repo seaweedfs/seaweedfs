@@ -27,7 +27,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
-// OIDCProvider implements OpenID Connect authentication
+// OIDCProvider implements OpenID Connect authentication with JTI replay protection.
+//
+// Replay Protection:
+// The provider validates the 'jti' (JWT ID) claim to prevent token replay attacks.
+// Each JTI is stored in memory until the token expires. If a token with a duplicate
+// JTI is presented, it is rejected with ErrProviderTokenReplayed.
+//
+// The JTI cache is bounded by JTICacheMaxSize and uses automatic TTL-based expiration.
+// A token without a usable jti claim is tracked by the token's own fingerprint
+// instead, so a repeated presentation is still detected as a replay.
+//
+// Thread Safety:
+// All methods are safe for concurrent use. The JTI cache uses atomic LoadOrStore
+// operations to prevent TOCTOU race conditions.
 type OIDCProvider struct {
 	name        string
 	config      *OIDCConfig
@@ -44,6 +57,25 @@ type OIDCProvider struct {
 	jwksFetchedAt   time.Time
 	resolvedJWKSUri string
 	discoveryFailed bool
+
+	// jti wraps the consumed-token cache behind the replay protection. It is
+	// allocated by NewOIDCProvider or lazily by replayCache, and survives
+	// re-initialization, so a config refresh cannot reopen already-consumed
+	// tokens for replay. jtiOnce makes a zero-value OIDCProvider safe.
+	jti     *jtiReplayCache
+	jtiOnce sync.Once
+}
+
+// replayCache returns the consumed-token cache, allocating it for providers
+// built without NewOIDCProvider so the delegated operations never panic on a
+// nil cache.
+func (p *OIDCProvider) replayCache() *jtiReplayCache {
+	p.jtiOnce.Do(func() {
+		if p.jti == nil {
+			p.jti = newJTIReplayCache(p.name)
+		}
+	})
+	return p.jti
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -107,6 +139,13 @@ type OIDCConfig struct {
 	// TLSInsecureSkipVerify controls whether to skip TLS verification.
 	// WARNING: Should only be used in development/testing environments. Never use in production.
 	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
+
+	// JTIReplayProtectionEnabled enables token replay protection via JTI tracking (default: true)
+	// Use pointer to distinguish between "not set" (nil = default true) and "explicitly false"
+	JTIReplayProtectionEnabled *bool `json:"jtiReplayProtectionEnabled,omitempty"`
+
+	// JTICacheMaxSize sets maximum number of JTI entries to cache (default: 10000)
+	JTICacheMaxSize int `json:"jtiCacheMaxSize,omitempty"`
 }
 
 // PrincipalTagsClaim is the AWS-defined namespace claim that carries
@@ -318,8 +357,24 @@ type JWK struct {
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
 		name:       name,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseDowngradeRedirect},
+		jti:        newJTIReplayCache(name),
 	}
+}
+
+// refuseDowngradeRedirect is the redirect policy of the client that fetches
+// discovery documents and signing keys: a request that began over https may
+// not be redirected to plain http, where anyone on the network path could
+// substitute the keys and mint tokens STS accepts. It otherwise keeps
+// net/http's default limit of 10 redirects.
+func refuseDowngradeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from %s to non-https %s", via[0].URL.Redacted(), req.URL.Redacted())
+	}
+	return nil
 }
 
 // Name returns the provider name
@@ -409,9 +464,21 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		TLSClientConfig: tlsConfig,
 	}
 	p.httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
+		Timeout:       30 * time.Second,
+		Transport:     transport,
+		CheckRedirect: refuseDowngradeRedirect,
 	}
+
+	// Configure JTI replay protection last, so a config failure above cannot
+	// leave a running worker behind. A previous worker is always stopped,
+	// whether the new configuration enables protection or disables it.
+	// The consumed-token store survives re-initialization: resetting it would
+	// let already-seen tokens be replayed against the refreshed provider.
+	jtiEnabled := true
+	if oidcConfig.JTIReplayProtectionEnabled != nil {
+		jtiEnabled = *oidcConfig.JTIReplayProtectionEnabled
+	}
+	p.replayCache().configure(jtiEnabled, int64(oidcConfig.JTICacheMaxSize))
 
 	// For testing, we'll skip the actual OIDC client initialization
 	return nil
@@ -463,6 +530,18 @@ func (p *OIDCProvider) allowedAudiences() []string {
 
 // Authenticate authenticates a user with an OIDC token
 func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, false)
+}
+
+// AuthenticateSingleUse authenticates and consumes the token so a second
+// presentation is rejected as a replay. The web-identity exchange uses it,
+// where a token buys a session exactly once; callers that validate the same
+// token on every request use Authenticate.
+func (p *OIDCProvider) AuthenticateSingleUse(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, true)
+}
+
+func (p *OIDCProvider) authenticate(ctx context.Context, token string, singleUse bool) (*providers.ExternalIdentity, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -472,7 +551,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	}
 
 	// Validate token and get claims
-	claims, err := p.ValidateToken(ctx, token)
+	claims, err := p.validateToken(ctx, token, singleUse)
 	if err != nil {
 		return nil, err
 	}
@@ -639,6 +718,16 @@ func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessT
 
 // ValidateToken validates an OIDC JWT token
 func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, false)
+}
+
+// ValidateTokenSingleUse validates and consumes the token: a second
+// presentation of it is rejected as a replay. See AuthenticateSingleUse.
+func (p *OIDCProvider) ValidateTokenSingleUse(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, true)
+}
+
+func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUse bool) (*providers.TokenClaims, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -769,6 +858,16 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	// Copy all claims
 	for key, value := range claims {
 		tokenClaims.Claims[key] = value
+	}
+
+	// Consume the token for replay protection. The check runs only for
+	// single-use callers: a bearer token is meant to be presented on every
+	// request, so validating it must not consume it.
+	if singleUse {
+		jti, _ := claims["jti"].(string)
+		if err := p.replayCache().consume(token, jti, subject, tokenClaims.ExpiresAt); err != nil {
+			return nil, err
+		}
 	}
 
 	return tokenClaims, nil
@@ -969,6 +1068,13 @@ func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL s
 	// has one.
 	if strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
 		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
+	}
+
+	// An https issuer's keys must come over https too; otherwise the issuer's
+	// TLS protects nothing. Refused here, discovery falls back to the
+	// issuer's own /.well-known/jwks.json.
+	if strings.HasPrefix(p.config.Issuer, "https://") && !strings.HasPrefix(doc.JWKSUri, "https://") {
+		return "", fmt.Errorf("discovery jwks_uri %q is not https for https issuer %q", doc.JWKSUri, p.config.Issuer)
 	}
 
 	return doc.JWKSUri, nil
@@ -1191,4 +1297,37 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 	}
 
 	return identity
+}
+
+// Shutdown gracefully stops the JTI cleanup goroutine.
+// Should be called when the provider is being shut down to prevent goroutine leaks.
+func (p *OIDCProvider) Shutdown(ctx context.Context) error {
+	return p.replayCache().stop(ctx)
+}
+
+// AdoptReplayStateFrom takes over the consumed-token store of the provider it
+// replaces, so tokens it already saw stay rejected across the rebuild. The
+// caller must shut down the replaced provider; only one cleanup worker may
+// sweep the shared store at a time. Call before the new provider serves
+// validators.
+func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
+	if old == nil || old == p || old.jti == nil {
+		return
+	}
+	p.replayCache().adoptFrom(old.jti)
+}
+
+// MergeReplayStateFrom hands this provider's store to another provider and
+// then folds the other's consumed-token entries in, so rejections the other
+// recorded keep holding when its records move to a shared provider. Repointing
+// first means tokens the other still consumes — in-flight exchanges or ones
+// routed to it before the provider map updates — land in the shared store
+// instead of a store this merge already drained. Unlike AdoptReplayStateFrom
+// it swaps nothing of its own, so it is safe on a provider that is already
+// serving validators.
+func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
+	if other == nil || other == p {
+		return
+	}
+	p.replayCache().mergeFrom(other.replayCache())
 }

@@ -28,6 +28,21 @@ var (
 	_ = abstract_sql.SqlGenerator(&SqlGenPostgres{})
 )
 
+// ResolveCreateTableQuery normalizes the createTable config value. A boolean
+// true (read by viper as the string "true") selects the default template.
+// An empty or false value returns an empty string so the caller can skip
+// table creation. Any other value is treated as a custom SQL template.
+func ResolveCreateTableQuery(createTable string) string {
+	switch createTable {
+	case "true":
+		return DefaultCreateTableQuery
+	case "false", "":
+		return ""
+	default:
+		return createTable
+	}
+}
+
 func (gen *SqlGenPostgres) GetSqlInsert(tableName string) string {
 	if gen.UpsertQueryTemplate != "" {
 		return fmt.Sprintf(gen.UpsertQueryTemplate, tableName)
@@ -60,17 +75,28 @@ func (gen *SqlGenPostgres) nameExpr() string {
 	return "name"
 }
 
+// GetSqlScanPage uses a row-value comparison, one primary-key range seek on
+// PostgreSQL. The name keeps the column's own collation (COLLATE "C" would
+// sort every page); the scan promises no lexical order.
+func (gen *SqlGenPostgres) GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{}) {
+	return fmt.Sprintf(`SELECT dirhash, name, directory, meta FROM "%s" WHERE (dirhash, name) > ($1, $2) ORDER BY dirhash ASC, name ASC LIMIT $3`, tableName),
+		[]interface{}{dirhash, name, limit}
+}
+
 func (gen *SqlGenPostgres) GetSqlListExclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {
+	if gen.CreateTableSqlTemplate == "" {
+		return ""
+	}
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }
 

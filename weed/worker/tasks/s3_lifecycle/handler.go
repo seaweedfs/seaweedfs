@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -312,12 +313,12 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 			buckets = append(buckets, in.Bucket)
 		}
 	}
-	walkerListFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
 	// Share the limiter with processMatches so walker + replay can't
 	// combine to burst past the cluster cap.
 	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter}
-	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
-		return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, walkerListFn, walkerDispatch)
+	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
+		return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
+			dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
 	})
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -423,6 +424,7 @@ type lifecycleRPCAdapter struct {
 }
 
 func (a lifecycleRPCAdapter) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	ctx, _ = credential.WithS3InternalAdminAuth(ctx)
 	return a.c.LifecycleDelete(ctx, req)
 }
 

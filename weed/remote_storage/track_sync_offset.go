@@ -14,15 +14,19 @@ const (
 	SyncKeyPrefix = "remote.sync."
 )
 
+// SyncOffsetKey is the filer store key holding the write-back sync watermark
+// for a mounted directory.
+func SyncOffsetKey(dir string) []byte {
+	syncKey := make([]byte, len(SyncKeyPrefix)+4)
+	copy(syncKey, SyncKeyPrefix)
+	util.Uint32toBytes(syncKey[len(SyncKeyPrefix):], uint32(util.HashStringToLong(dir)))
+	return syncKey
+}
+
 func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
 
-	dirHash := uint32(util.HashStringToLong(dir))
-
 	readErr = pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		syncKey := []byte(SyncKeyPrefix + "____")
-		util.Uint32toBytes(syncKey[len(SyncKeyPrefix):len(SyncKeyPrefix)+4], dirHash)
-
-		resp, err := client.KvGet(context.Background(), &filer_pb.KvGetRequest{Key: syncKey})
+		resp, err := client.KvGet(context.Background(), &filer_pb.KvGetRequest{Key: SyncOffsetKey(dir)})
 		if err != nil {
 			return err
 		}
@@ -45,18 +49,13 @@ func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 
 func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64) error {
 
-	dirHash := uint32(util.HashStringToLong(dir))
-
 	return pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-
-		syncKey := []byte(SyncKeyPrefix + "____")
-		util.Uint32toBytes(syncKey[len(SyncKeyPrefix):len(SyncKeyPrefix)+4], dirHash)
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
 
 		resp, err := client.KvPut(context.Background(), &filer_pb.KvPutRequest{
-			Key:   syncKey,
+			Key:   SyncOffsetKey(dir),
 			Value: valueBuf,
 		})
 		if err != nil {

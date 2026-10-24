@@ -117,7 +117,7 @@ func statsTopology(t *testing.T) *Topology {
 func TestCollectionStatisticsMatchesAFullListing(t *testing.T) {
 	topo := statsTopology(t)
 
-	want := referenceCollectionStatistics(topo.ToTopologyInfo())
+	want := referenceCollectionStatistics(topo.ToTopologyInfo(VolumeFilter{}))
 	got := map[string]*CollectionStatistics{}
 	for _, s := range topo.CollectionStatistics() {
 		got[s.Collection] = s

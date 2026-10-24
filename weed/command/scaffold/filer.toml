@@ -16,6 +16,13 @@ recursive_delete = false
 # for S3: how long to wait before deleting an empty folder.
 # increase this if using tools like Spark that create temporary directories.
 #s3.empty_folder_cleanup_delay = "2m"
+# where the filer's internal system metadata log chunks are stored.
+# By default the log follows the filer's -collection flag; set this to keep
+# the internal log in its own collection, out of the default one.
+# Keep the target stable: log chunks written under an older value are not
+# moved, and old log entries keep referencing that collection's volumes.
+#metaLog.collection = "filer-meta"
+#metaLog.replication = ""
 
 ####################################################
 # The following are filer store options
@@ -26,12 +33,22 @@ recursive_delete = false
 # faster than previous leveldb, recommended.
 enabled = true
 dir = "./filerldb2"                    # directory to store level db files
+# optional tuning, applied to each of the 8 partitioned stores
+# block_cache_size_mb = 32             # sorted-table read cache
+# write_buffer_size_mb = 16            # memtable size before flushing to disk
+# block_size_kb = 4                    # uncompressed block ('page') size inside table files
+# compaction_table_size_mb = 2         # target size of generated table files
 
 [leveldb3]
 # similar to leveldb2.
 # each bucket has its own meta store.
 enabled = false
 dir = "./filerldb3"                    # directory to store level db files
+# optional tuning, applied to the default store and each bucket store
+# block_cache_size_mb = 32             # sorted-table read cache
+# write_buffer_size_mb = 16            # memtable size before flushing to disk
+# block_size_kb = 4                    # uncompressed block ('page') size inside table files
+# compaction_table_size_mb = 2         # target size of generated table files
 
 [rocksdb]
 # local on disk, similar to leveldb
@@ -68,7 +85,7 @@ port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 interpolateParams = false
@@ -97,7 +114,7 @@ port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 interpolateParams = false
@@ -106,13 +123,9 @@ enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
-# CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT,
-#   name        VARCHAR(65535),
-#   directory   VARCHAR(65535),
-#   meta        bytea,
-#   PRIMARY KEY (dirhash, name)
-# );
+# createTable = true          # auto-create filemeta with the default schema
+# createTable = false         # skip table creation (default; for restricted DB roles)
+# createTable = """CREATE TABLE IF NOT EXISTS "%s" (...)"""  # custom template
 enabled = false
 hostname = "localhost"
 port = 5432
@@ -127,7 +140,7 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
@@ -166,7 +179,7 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
@@ -285,7 +298,7 @@ ca_cert_path = ""
 client_cert_path = ""
 client_key_path = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = false
+useReadOnly = false
 # automatically use the closest Redis server for reads
 routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.

@@ -116,7 +116,8 @@ func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath util
 
 func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	members, err := store.Client.SMembers(ctx, genDirectoryListKey(string(fullpath))).Result()
+	dirListKey := genDirectoryListKey(string(fullpath))
+	members, err := store.Client.SMembers(ctx, dirListKey).Result()
 	if err != nil {
 		return fmt.Errorf("delete folder %s : %v", fullpath, err)
 	}
@@ -129,6 +130,10 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 		}
 		// not efficient, but need to remove if it is a directory
 		store.Client.Del(ctx, genDirectoryListKey(string(path)))
+	}
+
+	if _, err = store.Client.Del(ctx, dirListKey).Result(); err != nil {
+		return fmt.Errorf("delete folder %s list: %v", fullpath, err)
 	}
 
 	return nil
@@ -182,6 +187,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
+				store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 				err = nil
 				continue
 			}
@@ -207,6 +213,32 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 	}
 
 	return lastFileName, err
+}
+
+func (store *UniversalRedisStore) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {
+	// survive the listing request being canceled mid-repair
+	ctx = context.WithoutCancel(ctx)
+
+	dirListKey := genDirectoryListKey(string(dirPath))
+	path := util.NewFullPath(string(dirPath), fileName)
+
+	if _, err := store.Client.SRem(ctx, dirListKey, fileName).Result(); err != nil {
+		return
+	}
+
+	// a value present again here belongs to a concurrent recreate whose SAdd raced our SRem
+	exists, err := store.Client.Exists(ctx, string(path)).Result()
+	if err == nil && exists == 0 {
+		// empty sets self-delete, so a present child index holds children a recursive delete still needs to reach
+		children, childrenErr := store.Client.Exists(ctx, genDirectoryListKey(string(path))).Result()
+		if childrenErr == nil && children == 0 {
+			return
+		}
+	}
+
+	if err := store.Client.SAdd(ctx, dirListKey, fileName).Err(); err != nil {
+		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
+	}
 }
 
 func genDirectoryListKey(dir string) (dirList string) {

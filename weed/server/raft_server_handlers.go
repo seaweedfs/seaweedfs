@@ -24,15 +24,18 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 	}
 
-	if leader, e := s.topo.Leader(); e == nil {
+	// Report the leader raft knows right now. Waiting for one to be elected
+	// holds the response past every health probe's timeout, which is exactly
+	// when a master is most likely to still be joining.
+	if leader, e := s.topo.MaybeLeader(); e == nil {
 		ret.Leader = leader
 	}
 	writeJsonQuiet(w, r, http.StatusOK, ret)
 }
 
 func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	leader, err := s.topo.Leader()
-	if err != nil {
+	leader, err := s.topo.MaybeLeader()
+	if err != nil || leader == "" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

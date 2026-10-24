@@ -156,8 +156,9 @@ func TestRenameObjectSourceIfMatch(t *testing.T) {
 	assert.True(t, objectExists(t, client, bucketName, "target.txt"))
 }
 
-// TestRenameObjectOntoDirectory: a key that already holds other objects is a
-// directory, and an object must not be allowed to replace one.
+// TestRenameObjectOntoDirectory: S3 keys are flat, so a key that other keys are
+// nested under is still a key of its own. The rename writes it without disturbing
+// them - it does not replace the directory, it stores the object on it.
 func TestRenameObjectOntoDirectory(t *testing.T) {
 	client := getS3Client(t)
 	bucketName := getNewBucketName()
@@ -172,9 +173,10 @@ func TestRenameObjectOntoDirectory(t *testing.T) {
 		Key:          aws.String("target"),
 		RenameSource: aws.String(createRenameSource("source.txt")),
 	})
-	requireRenameStatus(t, err, 409)
-	assert.True(t, objectExists(t, client, bucketName, "source.txt"))
-	assert.True(t, objectExists(t, client, bucketName, "target/child.txt"))
+	require.NoError(t, err)
+	assert.False(t, objectExists(t, client, bucketName, "source.txt"))
+	assert.Equal(t, "content", getObjectBody(t, getObject(t, client, bucketName, "target")))
+	assert.Equal(t, "child", getObjectBody(t, getObject(t, client, bucketName, "target/child.txt")))
 }
 
 // TestRenameObjectDirectorySource: a directory can be named without a trailing

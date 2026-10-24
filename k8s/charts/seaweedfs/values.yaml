@@ -25,6 +25,9 @@ global:
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1
+    # Writable temporary storage used when containers run with a read-only root filesystem.
+    tmpDir:
+      sizeLimit: ""
     enableSecurity: false
     masterServer: null
     # filerWrite: true mounts security.toml on filer + admin without needing
@@ -55,7 +58,7 @@ global:
       gatewayHost: null
       gatewayPort: null
       additionalLabels: {}
-    # if enabled will use global.seaweedfs.replicationPlacement and override master & filer defaultReplicaPlacement config
+    # if enabled will use global.seaweedfs.replicationPlacement and override master.defaultReplication & filer.defaultReplicaPlacement config
     enableReplication: false
     #  replication type is XYZ:
     # X number of replica in other data centers
@@ -190,6 +193,8 @@ master:
   podLabels: {}
 
   # Annotations to be added to the master pods
+  # The chart sets checksum/master-config on master pods; other checksum/* keys
+  # can be used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the master resources
@@ -242,6 +247,10 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to specify a custom scheduler for master pods
+  # ref: https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/
+  schedulerName: ""
+
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
@@ -254,6 +263,8 @@ master:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -262,7 +273,16 @@ master:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   ingress:
@@ -272,6 +292,7 @@ master:
     host: "master.seaweedfs.local"
     path: "/sw-master/?(.*)"
     pathType: ImplementationSpecific
+    labels: {}
     annotations: {}
       # nginx.ingress.kubernetes.io/auth-type: "basic"
       # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -289,6 +310,24 @@ master:
       #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
       #   sub_filter_once off;
     tls: []
+
+  # Gateway API HTTPRoute, an alternative to the ingress above.
+  httpRoute:
+    enabled: false
+    labels: {}
+    annotations: {}
+    # Gateways this route attaches to, for example:
+    #   - group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: my-gateway
+    #     namespace: gateway-system
+    #     sectionName: https
+    parentRefs: []
+    hostnames: []
+    # Each rule may set matches, filters, timeouts and backendRefs.
+    # A rule without backendRefs routes to the master service.
+    # An empty list routes all traffic there.
+    rules: []
 
   extraEnvironmentVars:
     WEED_MASTER_VOLUME_GROWTH_COPY_1: "7"
@@ -398,6 +437,10 @@ volume:
   resizeHook:
     enabled: true
     image: alpine/k8s:1.28.4
+    # nodeSelector and tolerations fall back to the volume server's when unset
+    nodeSelector: ""
+    tolerations: ""
+    affinity: ""
 
   # idx (the volume index) may use a separate PERSISTENT volume:
   #
@@ -535,6 +578,10 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to specify a custom scheduler for volume pods
+  # ref: https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/
+  schedulerName: ""
+
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
@@ -549,6 +596,8 @@ volume:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -557,7 +606,16 @@ volume:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # used to configure livenessProbe on volume-server containers
@@ -592,6 +650,7 @@ volume:
     host: "volume.seaweedfs.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations:
       nginx.ingress.kubernetes.io/app-root: /ui/index.html
       # nginx.ingress.kubernetes.io/use-regex: "true"
@@ -609,6 +668,24 @@ volume:
       #   sub_filter '=/' '=./';
       #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
       #   sub_filter_once off;
+
+  # Gateway API HTTPRoute, an alternative to the ingress above.
+  httpRoute:
+    enabled: false
+    labels: {}
+    annotations: {}
+    # Gateways this route attaches to, for example:
+    #   - group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: my-gateway
+    #     namespace: gateway-system
+    #     sectionName: https
+    parentRefs: []
+    hostnames: []
+    # Each rule may set matches, filters, timeouts and backendRefs.
+    # A rule without backendRefs routes to the volume server service.
+    # An empty list routes all traffic there.
+    rules: []
 
 # Map of named volume groups for topology-aware deployments.
 # Each key inherits all fields from the `volume` section but can override
@@ -763,6 +840,8 @@ filer:
   podLabels: {}
 
   # Annotations to be added to the filer pods
+  # The chart sets checksum/s3config on filer pods; other checksum/* keys can be
+  # used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the filer resource
@@ -815,6 +894,10 @@ filer:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to specify a custom scheduler for filer pods
+  # ref: https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/
+  schedulerName: ""
+
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
@@ -827,6 +910,8 @@ filer:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -835,7 +920,16 @@ filer:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   ingresses:
@@ -846,6 +940,7 @@ filer:
       host: "seaweedfs.cluster.local"
       path: "/sw-filer/?(.*)"
       pathType: ImplementationSpecific
+      labels: {}
       annotations: {}
         # nginx.ingress.kubernetes.io/backend-protocol: GRPC
         # nginx.ingress.kubernetes.io/auth-type: "basic"
@@ -872,6 +967,7 @@ filer:
       # whole host, not the HTTP UI's regex path.
       path: "/"
       pathType: Prefix
+      labels: {}
       annotations:
         # Ingress terminates TLS and re-originates gRPC (HTTP/2) to the filer.
         nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
@@ -883,8 +979,27 @@ filer:
         # requires ingress-nginx to run with --enable-ssl-passthrough.
       tls: []
 
+  # Gateway API HTTPRoute, an alternative to the ingress above.
+  httpRoute:
+    enabled: false
+    labels: {}
+    annotations: {}
+    # Gateways this route attaches to, for example:
+    #   - group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: my-gateway
+    #     namespace: gateway-system
+    #     sectionName: https
+    parentRefs: []
+    hostnames: []
+    # Each rule may set matches, filters, timeouts and backendRefs.
+    # A rule without backendRefs routes to the filer service.
+    # An empty list routes all traffic there.
+    rules: []
+
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
+    # the WEED_MYSQL_* keys and the db credential secret only render while this is "true"
     WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
@@ -972,12 +1087,27 @@ filer:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # nodeSelector and tolerations fall back to filer's when unset
+      nodeSelector: ""
+      tolerations: ""
+      affinity: ""
 
 s3:
   enabled: false
   imageOverride: null
   restartPolicy: null
   replicas: 1
+  # Deployment update strategy, rendered as the Deployment's strategy
+  # ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+  # Example:
+  # updateStrategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxUnavailable: 0
+  #     maxSurge: 25%
+  updateStrategy: {}
+  # Time the s3 pod is given to shut down, including any preStop hook
+  terminationGracePeriodSeconds: 10
   bindAddress: 0.0.0.0
   port: 8333
   # add additional https port
@@ -993,6 +1123,9 @@ s3:
   # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
   # Set to a port number to enable, or 0/null to disable
   icebergPort: null
+  # Lance Namespace port; weed serves 9101 by default, 0 disables it
+  # (and, unless worker.namespaceUrl points elsewhere, the worker's Lance container)
+  lancePort: 9101
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -1002,13 +1135,24 @@ s3:
   # Optionally provide explicit credentials for the S3 gateway.
   # When set, these are used in the generated s3 secret instead of
   # auto-generating random credentials.
+  # An identity may instead name an existing Secret to read its keys from. The
+  # generated config then references the keys through environment variables, so
+  # nothing is looked up at render time and a dry run renders what an install
+  # applies. Note the COSI driver parses the config itself and does not resolve
+  # those references.
   # credentials:
   #   admin:
   #     accessKey: ""
   #     secretKey: ""
+  #     existingSecret: ""
+  #     accessKeyKey: admin_access_key_id
+  #     secretKeyKey: admin_secret_access_key
   #   read:
   #     accessKey: ""
   #     secretKey: ""
+  #     existingSecret: ""
+  #     accessKeyKey: read_access_key_id
+  #     secretKeyKey: read_secret_access_key
   auditLogConfig: {}
   # You may specify buckets to be created during the install or upgrade process.
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`
@@ -1047,6 +1191,8 @@ s3:
   podLabels: {}
 
   # Annotations to be added to the s3 pods
+  # The chart sets checksum/s3config on s3 pods; other checksum/* keys can be
+  # used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the s3 resources
@@ -1074,6 +1220,10 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a custom scheduler to server pods
+  # ref: https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/
+  schedulerName: ""
+
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
@@ -1086,6 +1236,8 @@ s3:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -1094,7 +1246,16 @@ s3:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # You can also use emptyDir storage:
@@ -1139,8 +1300,23 @@ s3:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  # Lifecycle hooks for the s3 container. A preStop sleep lets the pod leave
+  # the Service endpoints before it receives SIGTERM; keep it shorter than
+  # terminationGracePeriodSeconds.
+  # ref: https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+  # Example:
+  # lifecycle:
+  #   preStop:
+  #     exec:
+  #       command: ["sleep", "5"]
+  lifecycle: {}
+
   createBucketsHook:
     resources: {}
+    # nodeSelector and tolerations fall back to filer's when unset
+    nodeSelector: ""
+    tolerations: ""
+    affinity: ""
 
   ingress:
     enabled: false
@@ -1149,18 +1325,42 @@ s3:
     host: "seaweedfs.cluster.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
 
+  # Gateway API HTTPRoute, an alternative to the ingress above.
+  httpRoute:
+    enabled: false
+    labels: {}
+    annotations: {}
+    # Gateways this route attaches to, for example:
+    #   - group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: my-gateway
+    #     namespace: gateway-system
+    #     sectionName: https
+    parentRefs: []
+    hostnames: []
+    # Each rule may set matches, filters, timeouts and backendRefs.
+    # A rule without backendRefs routes to the s3 service.
+    # An empty list routes all traffic there.
+    rules: []
+
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
       https: null
       iceberg: null
+      lance: null
       metrics: null
 
   icebergIngress:
@@ -1169,6 +1369,17 @@ s3:
     host: "seaweedfs-iceberg.cluster.local"
     path: "/"
     pathType: Prefix
+    labels: {}
+    annotations: {}
+    tls: []
+
+  lanceIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-lance.cluster.local"
+    path: "/"
+    pathType: Prefix
+    labels: {}
     annotations: {}
     tls: []
 
@@ -1227,8 +1438,35 @@ sftp:
   tolerations: ""
   nodeSelector: ""
   priorityClassName: ""
+  schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   logs:
@@ -1259,6 +1497,10 @@ sftp:
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       sftp: null
@@ -1269,9 +1511,33 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  port: 23646  # Default admin port
-  grpcPort: 33646  # Default gRPC port for worker connections
+  port: 12535  # Default admin port
+  grpcPort: 22535  # Default gRPC port for worker connections
+  # Legacy compat port: admin also serves HTTP and worker gRPC (legacyPort +
+  # 10000) on this port so workers and clients from before the 23646 -> 12535
+  # default change keep connecting during migration. 0 disables. The flag is
+  # only passed to the binary when the value differs from its 23646 default,
+  # so the chart keeps installing on releases that predate -port.legacy.
+  legacyPort: 23646
+  # IP address the admin server listens on. Since `weed admin` 4.46 defaults to
+  # loopback (127.0.0.1), the chart must bind a non-loopback address for the
+  # kubelet's httpGet readiness/liveness probes (which dial the pod IP) to ever
+  # succeed. "0.0.0.0" restores the pre-4.46 behaviour of listening on all
+  # interfaces. A non-loopback address requires authentication: set
+  # admin.secret.adminPassword or admin.secret.existingSecret, supply
+  # WEED_ADMIN_PASSWORD via admin.extraEnvironmentVars /
+  # admin.secretExtraEnvironmentVars, or opt out with admin.allowInsecureBind;
+  # otherwise the admin container will exit with a clear error rather than
+  # silently staying unready. The whole
+  # 127.0.0.0/8 range and ::1 are treated as loopback (matching weed admin).
+  # Set to a loopback address only if you also replace the httpGet probes.
+  # Note: the -ip flag requires SeaweedFS 4.46 or newer; pinning
+  # admin.imageOverride to an older image is not supported with this chart.
+  ip: "0.0.0.0"
   loggingOverrideLevel: null
+
+  # INSECURE: allow binding a non-loopback ip without authentication.
+  allowInsecureBind: false
 
   # Admin authentication
   secret:
@@ -1351,8 +1617,35 @@ admin:
   tolerations: ""
   nodeSelector: ""
   priorityClassName: ""
+  schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
@@ -1394,12 +1687,35 @@ admin:
     host: "admin.seaweedfs.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations: {}
     tls: []
+
+  # Gateway API HTTPRoute, an alternative to the ingress above.
+  httpRoute:
+    enabled: false
+    labels: {}
+    annotations: {}
+    # Gateways this route attaches to, for example:
+    #   - group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: my-gateway
+    #     namespace: gateway-system
+    #     sectionName: https
+    parentRefs: []
+    hostnames: []
+    # Each rule may set matches, filters, timeouts and backendRefs.
+    # A rule without backendRefs routes to the admin service.
+    # An empty list routes all traffic there.
+    rules: []
 
   service:
     type: ClusterIP
     annotations: {}
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
@@ -1417,6 +1733,15 @@ worker:
   loggingOverrideLevel: null
   metricsPort: 9327
   metricsIp: ""  # If empty, defaults to 0.0.0.0
+
+  # The lance_* jobs run in their own container, /usr/bin/weed-worker.
+  # amd64/arm64 only; pin mixed clusters with worker.affinity/nodeSelector.
+
+  # Lance namespace URL override; empty derives it from s3.lancePort.
+  namespaceUrl: ""
+
+  # Metrics port for the Lance worker container; the Go worker keeps metricsPort
+  lanceMetricsPort: 9328
 
   # Admin server to connect to
   adminServer: ""
@@ -1493,8 +1818,35 @@ worker:
   tolerations: ""
   nodeSelector: ""
   priorityClassName: ""
+  schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
@@ -1593,6 +1945,10 @@ allInOne:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # nodeSelector and tolerations fall back to allInOne's when unset
+      nodeSelector: ""
+      tolerations: ""
+      affinity: ""
 
   # SFTP server configuration
   # Note: Most parameters below default to null, which means they inherit from
@@ -1623,6 +1979,10 @@ allInOne:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       master: null
@@ -1697,6 +2057,8 @@ allInOne:
   initContainers: ""  # Init containers
   sidecars: ""  # Sidecar containers
   annotations: {}  # Annotations for the deployment
+  # The chart sets checksum/master-config and checksum/s3config on all-in-one
+  # pods; other checksum/* keys can be used for custom rollouts.
   podAnnotations: {}  # Annotations for the pods
   podLabels: {}  # Labels for the pods
 
@@ -1732,6 +2094,10 @@ allInOne:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # Used to assign a custom scheduler to pods
+  # ref: https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/
+  schedulerName: ""
+
   # Used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
@@ -1744,6 +2110,8 @@ allInOne:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -1752,7 +2120,16 @@ allInOne:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # Resource management
@@ -1791,8 +2168,38 @@ cosi:
   # should have a secret key called seaweedfs_s3_config with an inline json configure
   existingConfigSecret: null
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
+
+  # used to assign a custom scheduler to cosi pods
+  # ref: https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/
+  schedulerName: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""
@@ -1823,6 +2230,9 @@ certificates:
 # Labels to be added to all the created pods
 podLabels: {}
 # Annotations to be added to all the created pods
+# The chart sets checksum/master-config and checksum/s3config on pods whose
+# rendered ConfigMaps or Secrets should trigger rollouts. Other checksum/* keys
+# can be used for custom rollout annotations.
 podAnnotations: {}
 
 networkPolicy:

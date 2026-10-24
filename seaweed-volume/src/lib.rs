@@ -1,5 +1,6 @@
 pub mod config;
 pub mod images;
+pub mod malloc_tuning;
 pub mod metrics;
 pub mod remote_storage;
 pub mod security;

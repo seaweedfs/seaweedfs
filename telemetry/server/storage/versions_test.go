@@ -10,31 +10,31 @@ func TestVersionSeries(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
 	// Upgraded mid-window: its band leaves the old version for the new one.
-	seedSamples(s, "upgraded", HistorySample{Version: "4.39"}, -4, -3)
+	seedSamples(s, "upgraded", HistorySample{Version: "4.39"}, -6, -5, -4, -3)
 	seedSamples(s, "upgraded", HistorySample{Version: "4.40"}, -2, -1, 0)
 	// Reported every day on the same version.
-	seedSamples(s, "steady", HistorySample{Version: "4.40"}, -4, -3, -2, -1, 0)
+	seedSamples(s, "steady", HistorySample{Version: "4.40"}, -6, -5, -4, -3, -2, -1, 0)
 	// One day of history only: unconfirmed, so it stays out of the stack.
 	seedSamples(s, "oneshot", HistorySample{Version: "4.40"}, -1)
 	// Confirmed, but its samples predate versions being recorded.
-	seedSamples(s, "versionless", HistorySample{}, -9, -8)
+	seedSamples(s, "versionless", HistorySample{}, -13, -12, -11, -10, -9, -8, -7)
 
 	series := s.GetVersionSeries(10, 0)
 
 	// The versionless days are dropped before the axis is built, so the chart
 	// spans the days a version is known for instead of climbing out of blanks.
-	if len(series.Dates) != 5 {
-		t.Fatalf("dates = %v, want the 5 days with versions", series.Dates)
+	if len(series.Dates) != 7 {
+		t.Fatalf("dates = %v, want the 7 days with versions", series.Dates)
 	}
 	if len(series.Versions) != 2 ||
 		series.Versions[0].Version != "4.39" || series.Versions[1].Version != "4.40" {
 		t.Fatalf("versions = %+v, want 4.39 then 4.40", series.Versions)
 	}
-	if got := series.Versions[0].Clusters; !equal(got, []uint64{1, 1, 0, 0, 0}) {
-		t.Errorf("4.39 = %v, want the upgraded cluster's first two days", got)
+	if got := series.Versions[0].Clusters; !equal(got, []uint64{1, 1, 1, 1, 0, 0, 0}) {
+		t.Errorf("4.39 = %v, want the upgraded cluster's first four days", got)
 	}
-	if got := series.Versions[1].Clusters; !equal(got, []uint64{1, 1, 2, 2, 2}) {
-		t.Errorf("4.40 = %v, want steady plus upgraded from day 3", got)
+	if got := series.Versions[1].Clusters; !equal(got, []uint64{1, 1, 1, 1, 2, 2, 2}) {
+		t.Errorf("4.40 = %v, want steady plus upgraded from day 5", got)
 	}
 	if series.TotalClusters != 2 {
 		t.Errorf("total_clusters = %d, want 2", series.TotalClusters)
@@ -48,12 +48,12 @@ func TestVersionSeriesHoldsForwardAndLimits(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
 	// Stopped reporting past the active window: its own days only.
-	seedSamples(s, "gone", HistorySample{Version: "3.97"}, -9, -8)
+	seedSamples(s, "gone", HistorySample{Version: "3.97"}, -14, -13, -12, -11, -10, -9, -8)
 	// Reported every day of the window.
 	seedSamples(s, "daily", HistorySample{Version: "4.40"}, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
-	// Reported three days ago and not since: still active, so it holds its
-	// version to the right edge instead of dropping out of the stack.
-	seedSamples(s, "lagging", HistorySample{Version: "4.30"}, -3, -2)
+	// Stopped reporting two days ago: still active, so it holds its version
+	// to the right edge instead of dropping out of the stack.
+	seedSamples(s, "lagging", HistorySample{Version: "4.30"}, -8, -7, -6, -5, -4, -3, -2)
 
 	series := s.GetVersionSeries(10, 0)
 	if len(series.Dates) != 10 {
@@ -66,7 +66,7 @@ func TestVersionSeriesHoldsForwardAndLimits(t *testing.T) {
 	if got := byVersion["3.97"]; !equal(got, []uint64{1, 1, 0, 0, 0, 0, 0, 0, 0, 0}) {
 		t.Errorf("3.97 = %v, want nothing after its last report", got)
 	}
-	if got := byVersion["4.30"]; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 1, 1, 1, 1}) {
+	if got := byVersion["4.30"]; !equal(got, []uint64{0, 1, 1, 1, 1, 1, 1, 1, 1, 1}) {
 		t.Errorf("4.30 = %v, want carried to the right edge", got)
 	}
 	if got := byVersion["4.40"]; !equal(got, []uint64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}) {
@@ -85,7 +85,7 @@ func TestVersionSeriesHoldsForwardAndLimits(t *testing.T) {
 	if series.Other == nil || series.Other.Count != 2 {
 		t.Fatalf("other = %+v, want 2 versions", series.Other)
 	}
-	if !equal(series.Other.Clusters, []uint64{1, 1, 0, 0, 0, 0, 1, 1, 1, 1}) {
+	if !equal(series.Other.Clusters, []uint64{1, 2, 1, 1, 1, 1, 1, 1, 1, 1}) {
 		t.Errorf("other = %v, want 3.97+4.30 summed per day", series.Other.Clusters)
 	}
 	if series.TotalClusters != 2 {

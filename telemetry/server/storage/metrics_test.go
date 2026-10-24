@@ -15,7 +15,8 @@ func TestGetMetricsSumsEachDay(t *testing.T) {
 	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
 		-9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
 	// Stopped reporting past the active window: counts on its own days only.
-	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9}, -9, -8)
+	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9},
+		-14, -13, -12, -11, -10, -9, -8)
 
 	metrics, err := s.GetMetrics(10)
 	if err != nil {
@@ -40,7 +41,8 @@ func TestGetMetricsSumsEachDay(t *testing.T) {
 func TestGetMetricsCarriesSkippedDaysForward(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
-	seedSamples(s, "gappy", HistorySample{TotalDiskBytes: 500, VolumeServerCount: 5}, -3, -1)
+	seedSamples(s, "gappy", HistorySample{TotalDiskBytes: 500, VolumeServerCount: 5},
+		-8, -7, -6, -5, -4, -3, -1)
 
 	metrics, err := s.GetMetrics(4)
 	if err != nil {
@@ -56,21 +58,23 @@ func TestGetMetricsCarriesSkippedDaysForward(t *testing.T) {
 // out of nothing on its first day of data.
 func TestGetMetricsWindowStartsAtOldestSample(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
-	seedSamples(s, "recent", HistorySample{TotalDiskBytes: 100, VolumeServerCount: 1}, -2, -1, 0)
+	seedSamples(s, "recent", HistorySample{TotalDiskBytes: 100, VolumeServerCount: 1},
+		-6, -5, -4, -3, -2, -1, 0)
 
 	metrics, err := s.GetMetrics(30)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := metrics["dates"].([]string); len(got) != 3 {
-		t.Errorf("dates = %v, want the 3 days with history, not 30", got)
+	if got := metrics["dates"].([]string); len(got) != 7 {
+		t.Errorf("dates = %v, want the 7 days with history, not 30", got)
 	}
-	if got := metrics["disk_usage"].([]uint64); !equal(got, []uint64{100, 100, 100}) {
+	if got := metrics["disk_usage"].([]uint64); !equal(got, []uint64{100, 100, 100, 100, 100, 100, 100}) {
 		t.Errorf("disk_usage = %v, want no leading zero days", got)
 	}
 
 	// History reaching past the requested window still clips to the window.
-	seedSamples(s, "old", HistorySample{TotalDiskBytes: 50, VolumeServerCount: 1}, -40, -39)
+	seedSamples(s, "old", HistorySample{TotalDiskBytes: 50, VolumeServerCount: 1},
+		-45, -44, -43, -42, -41, -40, -39)
 	metrics, err = s.GetMetrics(10)
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +90,10 @@ func TestGetMetricsAgreesWithClusterSizes(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
 		-9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
-	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2}, -3, -2)
-	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9}, -9, -8)
+	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2},
+		-8, -7, -6, -5, -4, -3, -2)
+	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9},
+		-14, -13, -12, -11, -10, -9, -8)
 
 	metrics, err := s.GetMetrics(10)
 	if err != nil {
@@ -111,7 +117,8 @@ func TestGetMetricsAgreesWithClusterSizes(t *testing.T) {
 func TestGetMetricsExcludesUnconfirmedClusters(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
-	seedSamples(s, "real", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3}, -3, -2, -1, 0)
+	seedSamples(s, "real", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
+		-6, -5, -4, -3, -2, -1, 0)
 	for _, id := range []string{"ci-1", "ci-2", "ci-3"} {
 		seedSamples(s, id, HistorySample{TotalDiskBytes: 5, VolumeServerCount: 14}, -1)
 	}
@@ -128,7 +135,7 @@ func TestGetMetricsExcludesUnconfirmedClusters(t *testing.T) {
 	}
 }
 
-// Until any cluster has two days of history the charts fall back to every
+// Until any cluster has a week of history the charts fall back to every
 // cluster, so a fresh server doesn't serve empty series.
 func TestGetMetricsFallsBackWhenNoneConfirmed(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())

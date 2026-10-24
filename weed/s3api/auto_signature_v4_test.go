@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -302,6 +303,14 @@ func newTestIAM() *IdentityAccessManagement {
 	return iam
 }
 
+// newTestIAMWithTrustedProxy returns a test IAM that trusts the proxy peer
+// (10.0.0.1) used by the forwarded-header tests.
+func newTestIAMWithTrustedProxy() *IdentityAccessManagement {
+	iam := newTestIAM()
+	iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{"10.0.0.1"}))
+	return iam
+}
+
 // Test X-Forwarded-Prefix support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	tests := []struct {
@@ -323,7 +332,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a request with X-Forwarded-Prefix header
 			r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
@@ -340,6 +349,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Sign the request with the expected normalized path
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
@@ -391,7 +401,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a request with the URL path that has a trailing slash
 			r, err := newTestRequest("GET", "https://example.com"+tt.urlPath, 0, nil)
@@ -405,6 +415,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Sign the request with the full path including the trailing slash
 			// This simulates what S3 SDK does for listObjects operations
@@ -423,6 +434,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 	tests := []struct {
 		name         string
 		host         string
+		urlHost      string // request-URL form of host, when host is not valid in a URL
 		proto        string
 		expectedHost string
 	}{
@@ -489,12 +501,14 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		{
 			name:         "IPv6 HTTP without port",
 			host:         "::1",
+			urlHost:      "[::1]",
 			proto:        "http",
 			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTPS without port",
 			host:         "::1",
+			urlHost:      "[::1]",
 			proto:        "https",
 			expectedHost: "::1",
 		},
@@ -504,11 +518,19 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			iam := newTestIAM()
 
+			// A bare IPv6 literal is legal in a Host header but not in a URL, so the
+			// two forms are carried separately.
+			urlHost := tt.urlHost
+			if urlHost == "" {
+				urlHost = tt.host
+			}
+
 			// Create a request
-			r, err := newTestRequest("GET", tt.proto+"://"+tt.host+"/test-bucket/test-object", 0, nil)
+			r, err := newTestRequest("GET", tt.proto+"://"+urlHost+"/test-bucket/test-object", 0, nil)
 			if err != nil {
 				t.Fatalf("Failed to create test request: %v", err)
 			}
+			r.Host = tt.host
 
 			// Set the mux variables manually since we're not going through the actual router
 			r = mux.SetURLVars(r, map[string]string{
@@ -815,7 +837,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a presigned request that simulates reverse proxy scenario:
 			// 1. Client generates presigned URL with prefixed path
@@ -848,6 +870,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Test presigned signature verification
 			_, _, errCode := iam.doesPresignedSignatureMatch(r)
@@ -889,7 +912,7 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a presigned request that simulates reverse proxy scenario with trailing slashes:
 			// 1. Client generates presigned URL with prefixed path including trailing slash
@@ -916,6 +939,7 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Test presigned signature verification - this should succeed with trailing slashes
 			_, _, errCode := iam.doesPresignedSignatureMatch(r)
@@ -925,6 +949,53 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A presigned URL holder may replay the signed query against a different
+// request path and claim the skipped part via X-Forwarded-Prefix. The header
+// is only meaningful when the direct peer is a configured trusted proxy.
+func TestPresignedSignatureV4ForwardedPrefixPeerTrust(t *testing.T) {
+	const proxyIP = "10.0.0.1"
+
+	newRetargetedRequest := func(t *testing.T) *http.Request {
+		// Sign over the full external path, as a client of the reverse proxy would.
+		r, err := newTestRequest("GET", "https://example.com/shared/tenanta/report.txt", 0, nil)
+		if err != nil {
+			t.Fatalf("Failed to create test request: %v", err)
+		}
+		if err = preSignV4WithPath(newTestIAM(), r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, "/shared/tenanta/report.txt"); err != nil {
+			t.Fatalf("Failed to presign request: %v", err)
+		}
+
+		// Replay the same query string at a suffix path, supplying the
+		// skipped segment as the forwarded prefix.
+		r.URL.Path = "/tenanta/report.txt"
+		r = mux.SetURLVars(r, map[string]string{
+			"bucket": "tenanta",
+			"object": "report.txt",
+		})
+		r.Header.Set("X-Forwarded-Prefix", "/shared")
+		r.Header.Set("Host", "example.com")
+		r.RemoteAddr = proxyIP + ":54321"
+		return r
+	}
+
+	t.Run("untrusted peer", func(t *testing.T) {
+		iam := newTestIAM()
+		_, _, errCode := iam.doesPresignedSignatureMatch(newRetargetedRequest(t))
+		if errCode != s3err.ErrSignatureDoesNotMatch {
+			t.Errorf("Expected ErrSignatureDoesNotMatch for untrusted peer, got: %v (code: %d)", errCode, int(errCode))
+		}
+	})
+
+	t.Run("trusted proxy", func(t *testing.T) {
+		iam := newTestIAM()
+		iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{proxyIP}))
+		_, _, errCode := iam.doesPresignedSignatureMatch(newRetargetedRequest(t))
+		if errCode != s3err.ErrNone {
+			t.Errorf("Expected successful presigned signature validation from trusted proxy, got: %v (code: %d)", errCode, int(errCode))
+		}
+	})
 }
 
 // preSignV4WithPath adds presigned URL parameters to the request with a custom path
@@ -1899,4 +1970,128 @@ func BenchmarkStreamingVsNonStreaming(b *testing.B) {
 			sha256.Sum256([]byte(payload))
 		}
 	})
+}
+
+func TestBucketFromVirtualHost(t *testing.T) {
+	tests := []struct {
+		host       string
+		domain     string
+		wantBucket string
+		wantOk     bool
+	}{
+		{"alpha-bkt.s3.test", "s3.test", "alpha-bkt", true},
+		{"alpha-bkt.s3.test:8333", "s3.test", "alpha-bkt", true},
+		{"alpha-bkt.S3.TEST", "s3.test", "alpha-bkt", true},
+		{"s3.test", "s3.test", "", false},
+		{"example.com", "s3.test", "", false},
+		{"alpha-bkt.s3.test", "", "", false},
+		{"alpha-bkt.s3.test", "s3.test,develop.s3.test", "alpha-bkt", true},
+		{"bucket.develop.s3.test", "s3.test,develop.s3.test", "bucket.develop", true},
+		{"develop.s3.test", "s3.test,develop.s3.test", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			bucket, ok := bucketFromVirtualHost(tt.host, tt.domain)
+			if bucket != tt.wantBucket || ok != tt.wantOk {
+				t.Errorf("bucketFromVirtualHost(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.host, tt.domain, bucket, ok, tt.wantBucket, tt.wantOk)
+			}
+		})
+	}
+}
+
+func newVirtualHostTestIAM(domain string) *IdentityAccessManagement {
+	iam := &IdentityAccessManagement{
+		domain:       domain,
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "someone",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "access_key_1", SecretKey: "secret_key_1"},
+				},
+				Actions: []string{"Read", "Write"},
+			},
+		},
+	})
+	return iam
+}
+
+func TestPresignedVirtualHostRetargetRejected(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	if err := preSignV4WithPath(iam, r, "access_key_1", "secret_key_1", 3600, r.URL.Path); err != nil {
+		t.Fatalf("Failed to presign request: %v", err)
+	}
+
+	r.Host = "beta-bkt.s3.test"
+	r.Header.Set("X-Forwarded-Host", "alpha-bkt.s3.test")
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "beta-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrAccessDenied {
+		t.Errorf("Expected ErrAccessDenied for retargeted presigned URL, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+func TestSignedVirtualHostRetargetRejected(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	signV4WithPath(r, "access_key_1", "secret_key_1", r.URL.Path)
+
+	r.Host = "beta-bkt.s3.test"
+	r.Header.Set("X-Forwarded-Host", "alpha-bkt.s3.test")
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "beta-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesSignatureMatch(r)
+	if errCode != s3err.ErrAccessDenied {
+		t.Errorf("Expected ErrAccessDenied for retargeted signed URL, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+func TestPresignedVirtualHostNoRetarget(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	if err := preSignV4WithPath(iam, r, "access_key_1", "secret_key_1", 3600, r.URL.Path); err != nil {
+		t.Fatalf("Failed to presign request: %v", err)
+	}
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "alpha-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrNone {
+		t.Errorf("Expected successful presigned signature validation, got: %v (code: %d)", errCode, int(errCode))
+	}
 }

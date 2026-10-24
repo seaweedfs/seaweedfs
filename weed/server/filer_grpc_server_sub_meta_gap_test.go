@@ -7,6 +7,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -15,8 +16,8 @@ import (
 // TestResolveGapResume pins the one decision both subscribe paths share: a gap
 // the disk read found empty may be skipped only when it is provably so - the
 // ring never evicted past the cursor, or the flush watermark observed before
-// the read had already passed the earliest in-memory time. The aggregated ring
-// never flushes, so it is the flushedTsNs=0 column of this table.
+// the read had already passed the earliest in-memory time. The flushedTsNs=0
+// column models an aggregated pass whose peers have not proven anything yet.
 func TestResolveGapResume(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
 	ago := func(d time.Duration) int64 { return now - int64(d) }
@@ -160,6 +161,81 @@ func TestResolveGapResume(t *testing.T) {
 	}
 }
 
+// TestGapPassProvenEmptyCrossing pins the crossing that needs no memory to
+// land in: an empty disk pass proven through the eviction watermark crosses to
+// it silently - no park, no loss counter. This is the only exit past the
+// aggregated ring's pre-subscription mark, which no rotation ever proves.
+func TestGapPassProvenEmptyCrossing(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
+	evicted := now - int64(time.Minute) // the ring's startFrom mark
+	cursorTs := evicted - int64(2*time.Minute)
+
+	crossings := func() float64 {
+		m := &dto.Metric{}
+		if err := stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Write(m); err != nil {
+			t.Fatal(err)
+		}
+		return m.GetCounter().GetValue()
+	}
+
+	proven := evicted
+	p := &gapPass{
+		gapStall: &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"},
+		earliest: func() time.Time { return time.Time{} }, // ring still empty
+		evicted:  func() int64 { return evicted },
+		flushed:  func() int64 { return proven },
+	}
+
+	cursor := log_buffer.NewMessagePosition(cursorTs, gapResumeCursorOffset)
+	latch := error(log_buffer.ResumeFromDiskError) // stale latch must not survive the move
+	start := crossings()
+	if got := p.resolve(context.Background(), &cursor, &latch, false); got != gapContinue {
+		t.Fatalf("outcome = %v, want gapContinue", got)
+	}
+	if got := cursor.Time.UnixNano(); got != evicted {
+		t.Fatalf("cursor = %v, want the proven watermark %v", time.Unix(0, got), time.Unix(0, evicted))
+	}
+	if latch != nil {
+		t.Fatalf("latch not cleared: %v", latch)
+	}
+	if got := crossings(); got != start {
+		t.Fatalf("proven crossing moved the loss counter by %v", got-start)
+	}
+
+	// diskAdvanced defers everything: the disk may hold more of the gap.
+	cursor = log_buffer.NewMessagePosition(cursorTs, gapResumeCursorOffset)
+	if got := p.resolve(context.Background(), &cursor, &latch, true); got != gapContinue {
+		t.Fatalf("diskAdvanced: outcome = %v, want gapContinue", got)
+	}
+	if got := cursor.Time.UnixNano(); got != cursorTs {
+		t.Fatalf("diskAdvanced: cursor moved to %v", time.Unix(0, got))
+	}
+}
+
+// TestChunkRefsStopTsNs pins the chunk listing bound: the newest admitted file
+// name sits a minute plus a flush interval below the hold; UntilNs caps it.
+func TestChunkRefsStopTsNs(t *testing.T) {
+	hold := time.Date(2026, 6, 29, 12, 10, 45, 500, time.UTC).UnixNano()
+
+	stop := chunkRefsStopTsNs(hold, 0)
+	newestFileTsNs := stop - stop%int64(time.Minute)
+	if newestFileTsNs+int64(time.Minute)+int64(filer.LogFlushInterval) > hold {
+		t.Fatalf("file named %v may hold entries past the hold %v",
+			time.Unix(0, newestFileTsNs), time.Unix(0, hold))
+	}
+	want := time.Date(2026, 6, 29, 12, 8, 59, 999999999, time.UTC).UnixNano()
+	if stop != want {
+		t.Fatalf("stop = %v, want %v", time.Unix(0, stop), time.Unix(0, want))
+	}
+
+	if got := chunkRefsStopTsNs(hold, want-5); got != want-5 {
+		t.Fatalf("UntilNs cap: got %v, want %v", time.Unix(0, got), time.Unix(0, want-5))
+	}
+	if got := chunkRefsStopTsNs(hold, want+5); got != want {
+		t.Fatalf("UntilNs above the bound must not widen it: got %v", time.Unix(0, got))
+	}
+}
+
 // TestInclusiveDiskCursorOnWatermarkStillAdvances pins the disk-to-memory
 // handoff. A cursor built from a disk position stays inclusive, because memory
 // above the eviction watermark may hold a different entry sharing that
@@ -209,7 +285,7 @@ func TestParkOnGapExits(t *testing.T) {
 		gapStall := newStall()
 		defer gapStall.resumed()
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, nil, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, nil, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -223,7 +299,7 @@ func TestParkOnGapExits(t *testing.T) {
 		// old one keeps scanning the filer store until its TCP connection dies.
 		gapStall := newStall()
 		superseded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 2}
-		if _, _, done := fs.parkOnGap(context.Background(), superseded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), superseded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -234,7 +310,7 @@ func TestParkOnGapExits(t *testing.T) {
 	t.Run("a bounded subscription past its window ends without parking", func(t *testing.T) {
 		gapStall := newStall()
 		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs - 1}
-		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -248,7 +324,7 @@ func TestParkOnGapExits(t *testing.T) {
 		// everything <= UntilNs delivered. Parking would make fs.verify hang.
 		gapStall := newStall()
 		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs}
-		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -262,7 +338,7 @@ func TestParkOnGapExits(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		if _, _, done := fs.parkOnGap(ctx, req, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(ctx, req, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
@@ -278,7 +354,7 @@ func TestParkOnGapExits(t *testing.T) {
 		closed := make(chan struct{})
 		close(closed)
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, closed, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, closed, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -293,7 +369,7 @@ func TestParkOnGapExits(t *testing.T) {
 		notify := make(chan struct{}, 1)
 		notify <- struct{}{}
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, notify, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, notify, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -361,17 +437,21 @@ func TestReportUnprovenAggregatedCrossing(t *testing.T) {
 
 	start := crossings()
 	// Nothing evicted: no range to cross.
-	reportUnprovenAggregatedCrossing(before, after, 0, "c", "/")
+	reportUnprovenAggregatedCrossing(before, after, 0, 0, "c", "/")
 	// Cursor already past the watermark: the evicted range was behind it.
-	reportUnprovenAggregatedCrossing(evicted, after, evicted, "c", "/")
+	reportUnprovenAggregatedCrossing(evicted, after, evicted, 0, "c", "/")
 	// Cursor still short of the watermark: the gap is open, not crossed.
-	reportUnprovenAggregatedCrossing(before, evicted-1, evicted, "c", "/")
+	reportUnprovenAggregatedCrossing(before, evicted-1, evicted, 0, "c", "/")
+	// Crossed, but every peer's flush watermark already passed the eviction
+	// boundary: the crossed range was fully on peer disks — proven, not counted.
+	reportUnprovenAggregatedCrossing(before, after, evicted, evicted, "c", "/")
 	if got := crossings(); got != start {
 		t.Fatalf("counter moved by %v on advances that cross nothing", got-start)
 	}
 
-	// From below the watermark to above it: unproven.
-	reportUnprovenAggregatedCrossing(before, after, evicted, "c", "/")
+	// From below the watermark to above it, flush watermark short of the
+	// boundary: unproven.
+	reportUnprovenAggregatedCrossing(before, after, evicted, evicted-1, "c", "/")
 	if got := crossings(); got != start+1 {
 		t.Fatalf("counter = %v, want %v after one unproven crossing", got, start+1)
 	}
@@ -427,7 +507,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		gapStall.since = time.Now().Add(-maxGapStall)
 
 		before := crossings()
-		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
+		skipTo, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test", nil)
 		if done || !skip {
 			t.Fatalf("skip=%v done=%v, want a forced skip", skip, done)
 		}
@@ -450,7 +530,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		defer gapStall.close() // release the gauge this test's park holds
 
 		before := crossings()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want neither: nothing is being lost", skip, done)
 		}

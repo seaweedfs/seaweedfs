@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/apache/iceberg-go"
@@ -116,6 +117,18 @@ func (s *Server) tablePathOccupied(ctx context.Context, bucketName, tablePath st
 		return nil
 	})
 	return occupied, err
+}
+
+// authorizeCreateTable checks the caller may create the table, for the create
+// paths that write to the bucket before the catalog registers it.
+func (s *Server) authorizeCreateTable(ctx context.Context, bucketARN string, namespace []string, tableName, identityName string) error {
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeCreateTable(ctx, s3tables.NewManagerClient(client), &s3tables.CreateTableRequest{
+			TableBucketARN: bucketARN,
+			Namespace:      namespace,
+			Name:           tableName,
+		}, identityName)
+	})
 }
 
 // handleCreateTable creates a new table.
@@ -262,10 +275,18 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Both branches below write into the table bucket, and stage-create never
+	// reaches the registration that carries the authorization, so the caller has
+	// to pass the CreateTable gate here.
+	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+		writeManagerError(w, authErr)
+		return
+	}
+
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
 		stagedTablePath := stageCreateStagedTablePath(namespace, tableName, tableUUID)
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes); err != nil {
+		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes, false); err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save staged metadata file: "+err.Error())
 			return
 		}
@@ -273,15 +294,20 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
+		// The staged table is not registered yet, so there is nothing to
+		// authorize an update against; the create gate above is the write
+		// authority for the prefix the staged table will occupy.
+		config, storageCredentials := s.buildFileIOConfig(r, location, func() bool { return true })
 		result := LoadTableResult{
-			MetadataLocation: metadataLocation,
-			Metadata:         metadata,
-			Config:           s.buildFileIOConfig(r),
+			MetadataLocation:   metadataLocation,
+			Metadata:           metadata,
+			Config:             config,
+			StorageCredentials: storageCredentials,
 		}
 		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
@@ -372,10 +398,14 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, req.Name)
+	})
 	result := LoadTableResult{
-		MetadataLocation: finalLocation,
-		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		MetadataLocation:   finalLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
 	}
 	writeLoadResult(w, http.StatusOK, result)
 }
@@ -516,6 +546,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+	if buildErr == nil {
+		// Only LoadTable defines ?snapshots=; a create response always carries
+		// the metadata it just wrote.
+		result.Metadata, buildErr = applySnapshotsParam(r, result.Metadata)
+	}
 	if buildErr != nil {
 		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
@@ -560,11 +595,55 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, tableName)
+	})
 	return LoadTableResult{
-		MetadataLocation: getResp.MetadataLocation,
-		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		MetadataLocation:   getResp.MetadataLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
 	}, nil
+}
+
+// applySnapshotsParam honours ?snapshots=refs, which asks for only the
+// snapshots that branches and tags point at. Clients use it to avoid pulling a
+// long snapshot history they will not read. Anything else, including the
+// default, returns the metadata untouched.
+func applySnapshotsParam(r *http.Request, metadata table.Metadata) (table.Metadata, error) {
+	if !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("snapshots")), "refs") {
+		return metadata, nil
+	}
+	if metadata == nil {
+		return metadata, nil
+	}
+
+	referenced := make(map[int64]struct{})
+	for _, ref := range metadata.Refs() {
+		referenced[ref.SnapshotID] = struct{}{}
+	}
+	if current := metadata.CurrentSnapshot(); current != nil {
+		referenced[current.SnapshotID] = struct{}{}
+	}
+
+	var unreferenced []int64
+	for _, snapshot := range metadata.Snapshots() {
+		if _, keep := referenced[snapshot.SnapshotID]; !keep {
+			unreferenced = append(unreferenced, snapshot.SnapshotID)
+		}
+	}
+	if len(unreferenced) == 0 {
+		return metadata, nil
+	}
+
+	builder, err := table.MetadataBuilderFromBase(metadata, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := builder.RemoveSnapshots(unreferenced, false); err != nil {
+		return nil, err
+	}
+	return builder.Build()
 }
 
 // buildFileIOConfig returns the FileIO properties to advertise to catalog
@@ -572,22 +651,115 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 // separately discovering the endpoint. The region defaults to the same
 // value baked into table bucket ARNs so clients like DuckDB that require
 // a region on attach don't need to be told it out-of-band. See issue #9103.
-func (s *Server) buildFileIOConfig(r *http.Request) iceberg.Properties {
+// It also returns, for a client that asked for credential vending, the
+// credentials scoped to this table.
+func (s *Server) buildFileIOConfig(r *http.Request, location string, canWrite func() bool) (iceberg.Properties, []StorageCredential) {
 	config := make(iceberg.Properties)
 	if s.s3Endpoint == "" {
-		return config
+		return config, nil
 	}
-	// A client asking for vended credentials builds its storage credential out
-	// of whatever comes back here and stops using the one it was configured
-	// with. We vend none, so an endpoint on its own leaves it sending unsigned
-	// requests; say nothing instead and let it keep its own credentials.
+
+	vended := iceberg.Properties(nil)
 	if wantsVendedCredentials(r) {
-		return config
+		vended = s.vendCredentials(r, location, canWrite)
+		// A client asking for vended credentials builds its storage credential
+		// out of whatever comes back here and stops using the one it was
+		// configured with. With nothing to vend, an endpoint on its own leaves
+		// it sending unsigned requests; say nothing instead and let it keep its
+		// own credentials.
+		if vended == nil {
+			return config, nil
+		}
 	}
+
 	config["s3.endpoint"] = s.s3Endpoint
 	config["s3.path-style-access"] = "true"
 	config["s3.region"] = s3tables.DefaultRegion
-	return config
+	if vended == nil {
+		return config, nil
+	}
+
+	credentialConfig := make(iceberg.Properties, len(config)+len(vended))
+	for key, value := range config {
+		credentialConfig[key] = value
+	}
+	for key, value := range vended {
+		config[key] = value
+		credentialConfig[key] = value
+	}
+	return config, []StorageCredential{{Prefix: location, Config: credentialConfig}}
+}
+
+// vendCredentials mints credentials limited to this table's prefix. It returns
+// nil when the deployment has no vending configured or the mint failed, which
+// leaves the caller withholding the endpoint so the client keeps its own
+// credentials rather than falling back to unsigned requests.
+func (s *Server) vendCredentials(r *http.Request, location string, canWrite func() bool) iceberg.Properties {
+	if s.credentialVendor == nil || location == "" {
+		return nil
+	}
+
+	bucket, prefix, err := parseS3Location(location)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: cannot vend credentials for %s: %v", location, err)
+		return nil
+	}
+
+	principal := s3_constants.GetIdentityNameFromContext(r)
+	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, prefix, canWrite == nil || !canWrite())
+	if err != nil {
+		glog.Warningf("Iceberg: failed to vend credentials for %s: %v", location, err)
+		return nil
+	}
+	if credentials == nil {
+		return nil
+	}
+
+	vended := iceberg.Properties{
+		"s3.access-key-id":     credentials.AccessKeyID,
+		"s3.secret-access-key": credentials.SecretAccessKey,
+		"s3.session-token":     credentials.SessionToken,
+	}
+	if !credentials.Expiration.IsZero() {
+		vended["s3.session-token-expires-at-ms"] = strconv.FormatInt(credentials.Expiration.UnixMilli(), 10)
+	}
+	return vended
+}
+
+// mayUpdateTable reports whether the caller may commit to the table the
+// credentials would cover. The session stays read-only when it may not, so
+// the vend carries no more authority than the caller holds at the catalog.
+func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []string, tableName string) bool {
+	updateReq := &s3tables.UpdateTableRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
+	}
+	return err == nil
+}
+
+// mayUpdateView is mayUpdateTable for a view, whose commit path is UpdateView.
+func (s *Server) mayUpdateView(r *http.Request, bucketName string, namespace []string, viewName string) bool {
+	updateReq := &s3tables.UpdateViewRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           viewName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateView(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateView check for %s/%s failed, vending read-only: %v", bucketName, viewName, err)
+	}
+	return err == nil
 }
 
 // handleTableExists checks if a table exists.

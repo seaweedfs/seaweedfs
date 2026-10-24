@@ -123,3 +123,19 @@ func TestDirectoryMarkersCostNoLookups(t *testing.T) {
 	assert.Equal(t, []string{"d1", "d2", "d3"}, seen)
 	assert.Equal(t, 1, client.calls, "listing directory markers must not cost a round trip per marker")
 }
+
+// TestDirectoryMarkerWithBodyListsItsSize covers a trailing-slash key PUT with a body:
+// the body is kept inline in the directory entry, which has no FileSize, and GET/HEAD
+// already report its length.
+func TestDirectoryMarkerWithBodyListsItsSize(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	entry := directoryMarker("m2")
+	entry.Content = []byte("marker body")
+
+	listed := newListEntry(s3a, entry, "", "/buckets/test", "m2", "/buckets/test/", false, true, false)
+	assert.Equal(t, "m2/", listed.Key)
+	assert.Equal(t, int64(len("marker body")), listed.Size)
+
+	listed = newListEntry(s3a, directoryMarker("m3"), "", "/buckets/test", "m3", "/buckets/test/", false, true, false)
+	assert.Equal(t, int64(0), listed.Size)
+}

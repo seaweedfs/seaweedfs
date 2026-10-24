@@ -6,17 +6,23 @@ on:
     paths:
       - 'weed/**'
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
+      - 'seaweed-worker/**'
       - 'docker/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/container_dev.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
 
 jobs:
 
-  # ── Pre-build Rust volume server binaries natively ──────────────────
+  # ── Pre-build the Rust binaries natively ────────────────────────────
   build-rust-binaries:
     runs-on: ubuntu-22.04
     strategy:
@@ -30,9 +36,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -52,15 +55,32 @@ jobs:
           echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+            seaweed-worker/target/${{ matrix.target }}/release
+          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-worker/Cargo.lock') }}
           restore-keys: |
             rust-docker-dev-${{ matrix.target }}-
+
+      # lance's build scripts compile their own protos and look for a protoc.
+      # Point them at the one protoc-bin-vendored ships, which seaweed-worker's
+      # own build already uses, so no job depends on a system package and every
+      # build sees the same version.
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-worker
+          cargo fetch
+          # The version from the lock, not whatever else a restored cache holds.
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
 
       - name: Build normal variant
         env:
@@ -70,15 +90,26 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --no-default-features
           cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-normal-${{ matrix.arch }}
 
+      - name: Build the Rust maintenance worker
+        run: |
+          cd seaweed-worker
+          cargo build --release -p weed-lance-worker --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weed-worker ../weed-worker-${{ matrix.arch }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: rust-volume-${{ matrix.arch }}
-          path: weed-volume-normal-${{ matrix.arch }}
+          name: rust-bins-${{ matrix.arch }}
+          path: |
+            weed-volume-normal-${{ matrix.arch }}
+            weed-worker-${{ matrix.arch }}
 
   build-dev-containers:
     needs: [build-rust-binaries]
     runs-on: [ubuntu-latest]
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -87,7 +118,7 @@ jobs:
       - name: Download pre-built Rust binaries
         uses: actions/download-artifact@v8
         with:
-          pattern: rust-volume-*
+          pattern: rust-bins-*
           merge-multiple: true
           path: ./rust-bins
 
@@ -101,7 +132,16 @@ jobs:
               echo "Placed pre-built Rust binary for ${arch}"
             fi
           done
+          mkdir -p docker/weed-worker-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-worker-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-worker-prebuilt/weed-worker-${arch}"
+              echo "Placed pre-built Rust worker for ${arch}"
+            fi
+          done
           ls -la docker/weed-volume-prebuilt/
+          ls -la docker/weed-worker-prebuilt/
 
       - name: Docker meta
         id: docker_meta
@@ -118,7 +158,7 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Create BuildKit config
         run: |
@@ -149,6 +189,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./docker
@@ -157,3 +198,17 @@ jobs:
           platforms: linux/amd64, linux/arm64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Key the checkout layer on the pushed sha so cached layers can't
+          # serve stale code; the Dockerfile fetch fallback picks it up.
+          build-args: |
+            BRANCH=${{ github.sha }}
+
+      - name: Sign
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/sign-image
+        with:
+          images: >-
+            chrislusf/seaweedfs@${{ steps.build.outputs.digest }}
+            ghcr.io/chrislusf/seaweedfs@${{ steps.build.outputs.digest }}

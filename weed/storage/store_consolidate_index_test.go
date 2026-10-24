@@ -86,14 +86,14 @@ func TestConsolidateVolumeIndexMovesIdxToIdxDir(t *testing.T) {
 	require.FileExists(t, dataIdx, "precondition: index co-located with the data")
 
 	store := newIdxSplitStore(t, dataDir, idxDir)
-	require.NoError(t, store.MountVolume(vid))
+	require.NoError(t, store.MountVolume(vid, nil))
 
 	// Write a needle so the relocate has real index state to preserve.
 	mounted := store.findVolume(vid)
 	require.NotNil(t, mounted)
 	n := &needle.Needle{Id: types.Uint64ToNeedleId(42), Data: []byte("payload-across-relocate")}
 	n.Checksum = needle.NewCRC(n.Data)
-	_, _, _, err = mounted.writeNeedle2(n, true, false)
+	_, _, _, err = mounted.writeNeedle2(n, true, false, false)
 	require.NoError(t, err)
 
 	require.NoError(t, store.ConsolidateVolumeIndex(vid))
@@ -122,7 +122,7 @@ func TestConsolidateVolumeIndexNoopWithoutIdxDir(t *testing.T) {
 	v.Close()
 
 	store := newIdxSplitStore(t, dataDir, dataDir) // idx dir == data dir
-	require.NoError(t, store.MountVolume(vid))
+	require.NoError(t, store.MountVolume(vid, nil))
 
 	require.NoError(t, store.ConsolidateVolumeIndex(vid))
 	require.FileExists(t, filepath.Join(dataDir, "8.idx"), "index stays put without -dir.idx")

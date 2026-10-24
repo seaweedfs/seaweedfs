@@ -37,13 +37,17 @@ spec:
         {{- with .Values.allInOne.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.allInOne.podAnnotations | default dict) }}
+      {{- $existingS3ConfigSecret := or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
+      {{- if $existingS3ConfigSecret }}
+      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace $existingS3ConfigSecret) | default dict }}
+      {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
+      {{- else }}
+      {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
+      {{- end }}
+      {{- $_ := set $podAnnotations "checksum/master-config" (include (print .Template.BasePath "/master/master-configmap.yaml") . | sha256sum) }}
       annotations:
-        {{- with .Values.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-        {{- with .Values.allInOne.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+        {{- toYaml $podAnnotations | nindent 8 }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.allInOne.restartPolicy }}
       {{- if .Values.allInOne.affinity }}
@@ -64,6 +68,9 @@ spec:
       {{- if .Values.allInOne.priorityClassName }}
       priorityClassName: {{ .Values.allInOne.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.allInOne.schedulerName }}
+      schedulerName: {{ .Values.allInOne.schedulerName | quote }}
+      {{- end }}
       {{- if .Values.allInOne.serviceAccountName }}
       serviceAccountName: {{ .Values.allInOne.serviceAccountName | quote }}
       {{- end }}
@@ -81,6 +88,9 @@ spec:
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
+            {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.allInOne "target" $mergedExtraEnvironmentVars) }}
@@ -296,6 +306,7 @@ spec:
               {{- end }}
 
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.allInOne.containerSecurityContext (tpl (.Values.allInOne.extraVolumeMounts | default "") .) (tpl (.Values.allInOne.extraVolumes | default "") .)) | nindent 12 }}
             - name: data
               mountPath: /data
             {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
@@ -423,6 +434,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.allInOne.containerSecurityContext (tpl (.Values.allInOne.extraVolumeMounts | default "") .) (tpl (.Values.allInOne.extraVolumes | default "") .) false) | nindent 8 }}
         {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         - name: data
           {{- if eq .Values.allInOne.data.type "hostPath" }}

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -79,10 +81,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify policy signature.
-	errCode := s3a.iam.doesPolicySignatureMatch(formValues)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
+	}
+	if identity != nil {
+		r = r.WithContext(recordIdentityInContext(r, identity))
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
@@ -123,8 +128,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
 	contentType := formValues.Get("Content-Type")
@@ -136,15 +139,63 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Forward validated POST form fields to the underlying PUT as headers.
 	applyPostPolicyFormHeaders(r, formValues)
 
-	// Use fileSize, not r.ContentLength: the multipart body wrapping form
-	// fields and boundaries inflates ContentLength relative to the
-	// object body, which would mis-evaluate any size-filtered rule.
-	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false)
+	// Authorize the object like the PUT path; the coarse Write check above does not consult the bucket policy.
+	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+		return
+	}
+	// An acl or x-amz-grant-* form field rides onto the upload as ACL headers,
+	// which the PUT path only applies under s3:PutObjectAcl.
+	if postRequestsAcl(r) {
+		if errCode := s3a.iam.AuthorizeObjectAclWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+			return
+		}
+	}
+
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("PostPolicyBucketHandler: object lock state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	if err := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); err != nil {
+		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
+		return
+	}
+
+	var etag string
+	var versionId string
+	var sseMetadata SSEResponseMetadata
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		versionId, etag, errCode, sseMetadata = s3a.putVersionedObject(r, bucket, object, fileBody, contentType)
+	case s3_constants.VersioningSuspended:
+		etag, errCode, sseMetadata = s3a.putSuspendedVersioningObject(r, bucket, object, fileBody, contentType)
+	default:
+		filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
+		// Use fileSize, not r.ContentLength: the multipart body inflates ContentLength.
+		ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
+		etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	}
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	if successRedirect != "" {
@@ -230,6 +281,17 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 			r.Header.Set(k, formValues.Get(k))
 		}
 	}
+}
+
+// postRequestsAcl reports whether the request carries ACL headers, whether
+// promoted from the POST form fields or supplied on the request itself.
+func postRequestsAcl(r *http.Request) bool {
+	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(header) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Extract form fields and file data from a HTTP POST Policy
@@ -319,11 +381,26 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 	return redirectValues.Encode()
 }
 
-// Check to see if Policy is signed correctly.
-func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) s3err.ErrorCode {
+// Check to see if Policy is signed correctly, returning the signing identity.
+// The verified form's access key is recorded in ctx's identity holder. The
+// identity's Write permission on the bucket is checked only once the signature
+// verifies, as on the header-signed path, so a form that fails verification
+// learns nothing about the key's permissions. A verified identity that may not
+// write is returned with ErrAccessDenied.
+func (iam *IdentityAccessManagement) doesPolicySignatureMatch(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var errCode s3err.ErrorCode
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
-		return iam.doesPolicySignatureV2Match(formValues)
+		identity, errCode = iam.doesPolicySignatureV2Match(ctx, formValues)
+	} else {
+		identity, errCode = iam.doesPolicySignatureV4Match(ctx, formValues)
 	}
-	return iam.doesPolicySignatureV4Match(formValues)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	if !identity.CanDo(s3_constants.ACTION_WRITE, formValues.Get("bucket"), "") {
+		return identity, s3err.ErrAccessDenied
+	}
+	return identity, s3err.ErrNone
 }

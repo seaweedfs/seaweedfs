@@ -37,6 +37,9 @@ type HandlerBuildOptions struct {
 	GrpcDialOption grpc.DialOption
 	MaxExecute     int
 	WorkingDir     string
+	// WorkerAddress is the advertised weed worker -address (host:port).
+	// It is not a volume-server URL; handlers match replicas by hostname.
+	WorkerAddress string
 }
 
 var (

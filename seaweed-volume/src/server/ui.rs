@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use crate::server::absolute_display_path;
 use crate::server::server_stats;
 use crate::server::volume_server::VolumeServerState;
 use crate::storage::store::Store;
@@ -399,7 +400,7 @@ fn collect_ui_data(
                 file_count: volume.file_count(),
                 delete_count: volume.deleted_count(),
                 deleted_byte_count: volume.deleted_size(),
-                ttl: volume.super_block.ttl.to_string(),
+                ttl: volume.super_block().ttl.to_string(),
                 read_only: volume.is_read_only(),
                 version: volume.version().0 as u32,
                 remote_storage_name,
@@ -423,13 +424,12 @@ fn collect_ui_data(
                     shard_id: shard.shard_id,
                     size: shard_size,
                 });
-                if created_at == "-" {
-                    if let Ok(metadata) = std::fs::metadata(shard.file_name()) {
-                        if let Ok(modified) = metadata.modified() {
-                            let ts: chrono::DateTime<chrono::Local> = modified.into();
-                            created_at = ts.format("%Y-%m-%d %H:%M").to_string();
-                        }
-                    }
+                if created_at == "-"
+                    && let Ok(metadata) = std::fs::metadata(shard.file_name())
+                    && let Ok(modified) = metadata.modified()
+                {
+                    let ts: chrono::DateTime<chrono::Local> = modified.into();
+                    created_at = ts.format("%Y-%m-%d %H:%M").to_string();
                 }
             }
             let preferred_size = ec_volume.dat_file_size.max(0) as u64;
@@ -449,16 +449,6 @@ fn collect_ui_data(
     ec_volumes.sort_by_key(|row| row.volume_id);
 
     (disk_rows, volumes, remote_volumes, ec_volumes)
-}
-
-fn absolute_display_path(path: &str) -> String {
-    let p = std::path::Path::new(path);
-    if p.is_absolute() {
-        return path.to_string();
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(p).to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string())
 }
 
 fn join_i64(values: &[i64]) -> String {

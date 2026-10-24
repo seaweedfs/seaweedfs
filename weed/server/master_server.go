@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -28,6 +30,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
@@ -45,11 +48,16 @@ const (
 )
 
 type MasterOption struct {
-	Master                     pb.ServerAddress
-	MetaFolder                 string
-	VolumeSizeLimitMB          uint32
-	VolumePreallocate          bool
-	MaxParallelVacuumPerServer int
+	Master                        pb.ServerAddress
+	MetaFolder                    string
+	VolumeSizeLimitMB             uint32
+	FileSizeLimitMB               int
+	VolumePreallocate             bool
+	MaxParallelVacuumPerServer    int
+	MaxParallelVacuumPerRack      int
+	MaxWritableVolumes            int
+	VacuumIntervalSeconds         int
+	VacuumDeleteEmptyAfterSeconds int
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
@@ -58,6 +66,7 @@ type MasterOption struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
+	SingleMaster            bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
 	VolumeGrowthDisabled    bool
@@ -82,6 +91,9 @@ type MasterServer struct {
 
 	topologyIdGenLock sync.Mutex
 
+	// masters currently being admitted into the raft quorum, keyed by raft id
+	raftPeerAdmissions sync.Map
+
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
@@ -95,7 +107,6 @@ type MasterServer struct {
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
-
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
@@ -113,14 +124,25 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.copy_3", topology.VolumeGrowStrategy.Copy3Count)
 	v.SetDefault("master.volume_growth.copy_other", topology.VolumeGrowStrategy.CopyOtherCount)
 	v.SetDefault("master.volume_growth.threshold", topology.VolumeGrowStrategy.Threshold)
+	v.SetDefault("master.volume_growth.reservation_timeout", "5m")
 	v.SetDefault("master.volume_growth.disable", false)
 	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
+	v.SetDefault("master.volume_growth.freeze_on_topology_mismatch", true)
+	v.SetDefault("master.volume_growth.state_loss_recovery_wait", "0s")
+	v.SetDefault("master.vacuum.max_parallel_per_rack", 0)
+	option.MaxParallelVacuumPerRack = v.GetInt("master.vacuum.max_parallel_per_rack")
+	if v.IsSet("master.vacuum.max_parallel_per_server") {
+		option.MaxParallelVacuumPerServer = v.GetInt("master.vacuum.max_parallel_per_server")
+	}
+	v.SetDefault("master.max_writable_volumes_per_layout", option.MaxWritableVolumes)
+	option.MaxWritableVolumes = v.GetInt("master.max_writable_volumes_per_layout")
 
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
 	topology.VolumeGrowStrategy.Copy3Count = v.GetUint32("master.volume_growth.copy_3")
 	topology.VolumeGrowStrategy.CopyOtherCount = v.GetUint32("master.volume_growth.copy_other")
 	topology.VolumeGrowStrategy.Threshold = v.GetFloat64("master.volume_growth.threshold")
+	topology.VolumeGrowStrategy.ReservationTimeout = parseReservationTimeout(v)
 	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
 
 	var preallocateSize int64
@@ -149,6 +171,26 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		glog.Fatalf("create sequencer failed.")
 	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
+	ms.Topo.SetMaxWritableVolumes(ms.option.MaxWritableVolumes)
+	ms.Topo.SetGrowthFreezeConfig(
+		v.GetBool("master.volume_growth.freeze_on_topology_mismatch"),
+		v.GetDuration("master.volume_growth.state_loss_recovery_wait"))
+	ms.Topo.QuarantineVolumeFn = func(dn *topology.DataNode, vid needle.VolumeId, readOnly bool) error {
+		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if readOnly {
+				_, err := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: uint32(vid), CanDelete: true})
+				return err
+			}
+			_, err := client.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: uint32(vid)})
+			return err
+		})
+		if err != nil {
+			glog.Warningf("quarantine volume %d on %s readOnly=%v: %v", vid, dn.Id(), readOnly, err)
+		}
+		return err
+	}
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
@@ -196,8 +238,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
 		ms.option.MaxParallelVacuumPerServer,
+		ms.option.MaxParallelVacuumPerRack,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
+		time.Duration(ms.option.VacuumIntervalSeconds)*time.Second,
+		time.Duration(ms.option.VacuumDeleteEmptyAfterSeconds)*time.Second,
 	)
 
 	ms.ProcessGrowRequest()
@@ -216,9 +261,10 @@ func (ms *MasterServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ms *MasterServer) readyzHandler(w http.ResponseWriter, r *http.Request) {
-	// Readiness: check we can serve traffic.
-	leader, err := ms.Topo.Leader()
-	if err != nil {
+	// Readiness: check we can serve traffic. Answer from what raft knows now
+	// rather than waiting out an election, so the probe's own timeout decides.
+	leader, err := ms.Topo.MaybeLeader()
+	if err != nil || leader == "" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
@@ -469,6 +515,11 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 				continue
 			}
 			glog.V(0).Infof("executing: %s %v", cmd, args)
+			// noLock belongs to the invocation that set it, not to the
+			// CommandEnv this loop reuses for every line of the script. Without
+			// this, a dry run earlier in the script leaves the mutations after
+			// it unlocked.
+			commandEnv.SetNoLock(false)
 			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 				glog.V(0).Infof("error: %v", err)
 			}
@@ -499,61 +550,146 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 }
 
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
-	ms.Topo.RaftServerAccessLock.RLock()
-	defer ms.Topo.RaftServerAccessLock.RUnlock()
-
-	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
+	if update.NodeType != cluster.MasterType {
 		return
 	}
 	glog.V(4).Infof("OnPeerUpdate: %+v", update)
 
 	peerAddress := pb.ServerAddress(update.Address)
-	peerName := raftServerID(peerAddress)
-	if ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
+	if update.IsAdd {
+		ms.AdmitRaftPeer(peerAddress)
 		return
 	}
-	if update.IsAdd {
-		raftServerFound := false
-		for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
-			if string(server.ID) == peerName {
-				raftServerFound = true
-			}
-		}
-		if !raftServerFound {
-			glog.V(0).Infof("adding new raft server: %s", peerName)
-			ms.Topo.HashicorpRaft.AddVoter(
-				hashicorpRaft.ServerID(peerName),
-				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
-		}
-	} else {
-		pb.WithMasterClient(context.Background(), false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
-			ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
-			defer cancel()
-			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
-				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
-				// We are the leader here, so drop the dead peer through the local
-				// raft handle, mirroring the AddVoter branch above, instead of
-				// dialing our own RaftRemoveServer RPC.
-				if err := ms.Topo.HashicorpRaft.RemoveServer(hashicorpRaft.ServerID(peerName), 0, 0).Error(); err != nil {
-					glog.Warningf("failed removing old raft server: %v", err)
-					return err
-				}
-			} else {
-				glog.V(0).Infof("master %s successfully responded to ping", peerName)
-			}
-			return nil
-		})
+
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	// goraft rebuilds its peer set from -peers on every start, so a departed
+	// master is already out of the list there and would come back on the next
+	// restart anyway; only hashicorp raft carries membership across restarts.
+	if ms.Topo.HashicorpRaft == nil || ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
+		return
 	}
+	// A master that is merely down is still a member: -peers is what declares
+	// membership, and updatePeers reconciles the configuration against it on
+	// every leadership change. Evicting one here would shrink the quorum behind
+	// the operator's back, and a restart then races the eviction — the master
+	// gets re-admitted, the removal lands after it, and it is left out of the
+	// configuration with nobody left to vote it back in.
+	for _, peer := range ms.MasterClient.GetMasters(context.Background()) {
+		if peer.ToHttpAddress() == peerAddress.ToHttpAddress() {
+			return
+		}
+	}
+
+	peerName := raftServerID(peerAddress)
+	pb.WithMasterClient(context.Background(), false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
+		defer cancel()
+		if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
+			glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
+			// We are the leader here, so drop the dead peer through the local
+			// raft handle instead of dialing our own RaftRemoveServer RPC.
+			if err := ms.Topo.HashicorpRaft.RemoveServer(hashicorpRaft.ServerID(peerName), 0, 0).Error(); err != nil {
+				glog.Warningf("failed removing old raft server: %v", err)
+				return err
+			}
+		} else {
+			glog.V(0).Infof("master %s successfully responded to ping", peerName)
+		}
+		return nil
+	})
+}
+
+// AdmitRaftPeer pulls a master into the raft quorum, if we are the leader and
+// do not have it yet. A master that starts with no raft state cannot campaign
+// under either implementation, so this is its only way in. The returned
+// channel resolves with the admission result, or nil when no admission ran.
+func (ms *MasterServer) AdmitRaftPeer(peerAddress pb.ServerAddress) <-chan error {
+	if ms.option.SingleMaster || peerAddress.ToHttpAddress() == ms.option.Master.ToHttpAddress() {
+		return nil
+	}
+
+	peerName, ok := ms.missingRaftPeerName(peerAddress)
+	if !ok {
+		return nil
+	}
+	admission := make(chan error, 1)
+	if inFlight, alreadyAdmitting := ms.raftPeerAdmissions.LoadOrStore(peerName, admission); alreadyAdmitting {
+		return inFlight.(chan error)
+	}
+	glog.V(0).Infof("adding new raft server: %s", peerName)
+	// The join commits through raft, which waits on the other peers, so keep it
+	// off the caller: this runs on the peer update stream and on the grpc
+	// handler that a joining master is still blocked in.
+	go func() {
+		defer ms.raftPeerAdmissions.Delete(peerName)
+		defer close(admission)
+		if err := ms.raftAddServer(peerName, peerAddress.ToGrpcAddress(), true); err != nil {
+			glog.Warningf("failed adding raft server %s: %v", peerName, err)
+			admission <- err
+			return
+		}
+		admission <- nil
+	}()
+	return admission
+}
+
+// missingRaftPeerName returns the raft id to admit peerAddress under, and
+// whether this master is the leader and is missing that peer.
+func (ms *MasterServer) missingRaftPeerName(peerAddress pb.ServerAddress) (string, bool) {
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if ms.Topo.RaftServer != nil {
+		if ms.Topo.RaftServer.State() != raft.Leader {
+			return "", false
+		}
+		// Peers are keyed by the name a master calls itself, which carries the
+		// grpc port; match on the http address so a peer already known under
+		// another spelling is not added twice.
+		for name := range ms.Topo.RaftServer.Peers() {
+			if pb.ServerAddress(name).ToHttpAddress() == peerAddress.ToHttpAddress() {
+				return "", false
+			}
+		}
+		return string(peerAddress), true
+	}
+
+	if ms.Topo.HashicorpRaft == nil || ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
+		return "", false
+	}
+	peerName := raftServerID(peerAddress)
+	for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
+		if string(server.ID) == peerName {
+			return "", false
+		}
+	}
+	return peerName, true
 }
 
 func (ms *MasterServer) Shutdown() {
-	if ms.Topo == nil || ms.Topo.HashicorpRaft == nil {
+	if ms.Topo == nil {
 		return
 	}
-	if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
-		ms.Topo.HashicorpRaft.LeadershipTransfer()
+	ms.Topo.RaftServerAccessLock.RLock()
+	raftServer := ms.Topo.RaftServer
+	hashRaft := ms.Topo.HashicorpRaft
+	ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if hashRaft != nil {
+		if hashRaft.State() == hashicorpRaft.Leader {
+			hashRaft.LeadershipTransfer()
+		}
+		hashRaft.Shutdown()
 	}
-	ms.Topo.HashicorpRaft.Shutdown()
+	// Stop the goraft server too. Without this, the raft event loop
+	// goroutine (leaderLoop/followerLoop) keeps running after the master
+	// shuts down, leaking goroutines across test runs and occasionally
+	// processing stale events that trigger safety assertions.
+	if raftServer != nil {
+		raftServer.Stop()
+	}
 }
 
 func (ms *MasterServer) Reload() {
@@ -570,4 +706,17 @@ func (ms *MasterServer) Reload() {
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
 	)
+}
+
+func parseReservationTimeout(v *util.ViperProxy) time.Duration {
+	if str := strings.TrimSpace(v.GetString("master.volume_growth.reservation_timeout")); str != "" {
+		if d, err := time.ParseDuration(str); err == nil && d > 0 {
+			return d
+		}
+	}
+	// A bare number in the config means seconds; GetDuration would read it as nanoseconds.
+	if sec := v.GetInt("master.volume_growth.reservation_timeout"); sec > 0 {
+		return time.Duration(sec) * time.Second
+	}
+	return topology.DefaultReservationTimeout
 }

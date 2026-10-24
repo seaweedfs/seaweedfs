@@ -10,9 +10,17 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var RetryWaitTime = 6 * time.Second
+
+// ErrLockContended marks a lock acquisition abandoned instead of waited on —
+// the caller already holds other locks and cannot queue without inverting
+// their order. The holder's write settles the contested state, so callers
+// treat it as transient and retry.
+var ErrLockContended = errors.New("a local write holds the entry lock")
 
 // transientErrorMessages are substrings of failures that a later attempt is
 // likely to get past: connection resets, timeouts, and the throttling or
@@ -37,6 +45,9 @@ var transientErrorMessages = []string{
 	"requesttimeout",
 	"slowdown",
 	"throttling",
+	"ratelimitexceeded",
+	"rate limit",
+	"too many requests",
 	"internalerror",
 	"resourceexhausted",
 	"unavailable",
@@ -56,6 +67,20 @@ func IsTransientErrorMessage(msg string) bool {
 	return false
 }
 
+// ServerStatus returns the status a gRPC server sent, when the error chain
+// still carries one. Unlike status.FromError it keeps the server's own message
+// instead of the whole wrapped string: callers routinely format a path the
+// client chose into their wrapper, so a classifier that matches substrings has
+// to read what the server said and not what the caller added around it.
+func ServerStatus(err error) (*status.Status, bool) {
+	var carrier interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &carrier) {
+		return nil, false
+	}
+	st := carrier.GRPCStatus()
+	return st, st != nil
+}
+
 // IsTransientError reports whether err is a network or service condition worth
 // retrying. A cancelled or expired context never is: the caller is already gone.
 func IsTransientError(err error) bool {
@@ -64,6 +89,9 @@ func IsTransientError(err error) bool {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	if errors.Is(err, ErrLockContended) {
+		return true
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
@@ -74,6 +102,13 @@ func IsTransientError(err error) bool {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
+	}
+	if st, ok := ServerStatus(err); ok {
+		if st.Code() == codes.Canceled {
+			return strings.Contains(st.Message(), "the client connection is closing")
+		}
+		return st.Code() == codes.Unavailable || st.Code() == codes.ResourceExhausted ||
+			IsTransientErrorMessage(st.Message())
 	}
 	return IsTransientErrorMessage(err.Error())
 }

@@ -124,6 +124,8 @@ func runFuse(cmd *Command, args []string) bool {
 			mountOptions.filer = &parameter.value
 		case "filer.path":
 			mountOptions.filerMountRootPath = &parameter.value
+		case "volumeName":
+			mountOptions.volumeName = &parameter.value
 		case "dirAutoCreate":
 			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.dirAutoCreate = &parsed

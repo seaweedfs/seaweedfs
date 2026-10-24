@@ -112,10 +112,10 @@ templ TopicDetails(data dash.TopicDetailsData) {
                         <div class="card">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">
-                                    <i class="fas fa-clock me-2"></i>Retention Policy
+                                    <i class="bi bi-clock me-2"></i>Retention Policy
                                 </h5>
                                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="showEditRetentionModal()">
-                                    <i class="fas fa-edit me-1"></i>Edit
+                                    <i class="bi bi-pencil-square me-1"></i>Edit
                                 </button>
                             </div>
                             <div class="card-body">
@@ -172,9 +172,9 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                         <td><span class="badge bg-secondary">{field.Type}</span></td>
                                                         <td>
                                                             if field.Required {
-                                                                <i class="fas fa-check text-success"></i>
+                                                                <i class="bi bi-check text-success"></i>
                                                             } else {
-                                                                <i class="fas fa-times text-muted"></i>
+                                                                <i class="bi bi-x text-muted"></i>
                                                             }
                                                         </td>
                                                         <td><span class="badge bg-primary">Key</span></td>
@@ -186,9 +186,9 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                         <td><span class="badge bg-secondary">{field.Type}</span></td>
                                                         <td>
                                                             if field.Required {
-                                                                <i class="fas fa-check text-success"></i>
+                                                                <i class="bi bi-check text-success"></i>
                                                             } else {
-                                                                <i class="fas fa-times text-muted"></i>
+                                                                <i class="bi bi-x text-muted"></i>
                                                             }
                                                         </td>
                                                         <td><span class="badge bg-info">Value</span></td>
@@ -209,14 +209,14 @@ templ TopicDetails(data dash.TopicDetailsData) {
                         <h5 class="mb-0">Partitions</h5>
                         <div>
                             <button class="btn btn-sm btn-outline-secondary" onclick="exportPartitionsCSV()">
-                                <i class="fas fa-download me-1"></i>Export CSV
+                                <i class="bi bi-download me-1"></i>Export CSV
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
                         if len(data.Partitions) == 0 {
                             <div class="text-center py-4">
-                                <i class="fas fa-server fa-3x text-muted mb-3"></i>
+                                <i class="bi bi-server icon-3x text-muted mb-3"></i>
                                 <h5>No Partitions Found</h5>
                                 <p class="text-muted">No partitions are configured for this topic.</p>
                             </div>
@@ -281,7 +281,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             <div class="card-body">
                                 if len(data.Publishers) == 0 {
                                     <div class="alert alert-info mb-0">
-                                        <i class="fas fa-info-circle"></i> No active publishers found for this topic.
+                                        <i class="bi bi-info-circle"></i> No active publishers found for this topic.
                                     </div>
                                 } else {
                                     <div class="table-responsive">
@@ -351,7 +351,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             <div class="card-body">
                                 if len(data.Subscribers) == 0 {
                                     <div class="alert alert-info mb-0">
-                                        <i class="fas fa-info-circle"></i> No active subscribers found for this topic.
+                                        <i class="bi bi-info-circle"></i> No active subscribers found for this topic.
                                     </div>
                                 } else {
                                     <div class="table-responsive">
@@ -424,7 +424,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             <div class="card-body">
                                 if len(data.ConsumerGroupOffsets) == 0 {
                                     <div class="alert alert-info mb-0">
-                                        <i class="fas fa-info-circle"></i> No consumer group offsets found for this topic.
+                                        <i class="bi bi-info-circle"></i> No consumer group offsets found for this topic.
                                     </div>
                                 } else {
                                     <div class="table-responsive">
@@ -594,7 +594,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
             // Show loading state
             const updateButton = document.querySelector('#editRetentionModal .btn-primary');
             updateButton.disabled = true;
-            updateButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Updating...';
+            updateButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Updating...';
 
             // Send API request
             fetch((window.__BASE_PATH__ || '') + '/api/mq/topics/retention/update', {
@@ -622,7 +622,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
             .finally(() => {
                 // Reset button state
                 updateButton.disabled = false;
-                updateButton.innerHTML = '<i class="fas fa-save me-1"></i>Update Retention';
+                updateButton.innerHTML = '<i class="bi bi-floppy me-1"></i>Update Retention';
             });
         }
     </script>
@@ -633,7 +633,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-edit me-2"></i>Edit Retention Policy
+                        <i class="bi bi-pencil-square me-2"></i>Edit Retention Policy
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -642,7 +642,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                         <div class="card">
                             <div class="card-header">
                                 <h6 class="mb-0">
-                                    <i class="fas fa-clock me-2"></i>Retention Configuration
+                                    <i class="bi bi-clock me-2"></i>Retention Configuration
                                 </h6>
                             </div>
                             <div class="card-body">
@@ -673,7 +673,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                         </div>
                                     </div>
                                     <div class="alert alert-info">
-                                        <i class="fas fa-info-circle me-2"></i>
+                                        <i class="bi bi-info-circle me-2"></i>
                                         Data older than this duration will be automatically purged to save storage space.
                                     </div>
                                 </div>
@@ -684,7 +684,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="updateRetention()">
-                        <i class="fas fa-save me-1"></i>Update Retention
+                        <i class="bi bi-floppy me-1"></i>Update Retention
                     </button>
                 </div>
             </div>

@@ -94,6 +94,7 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
 	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT) -s3.config=../../../docker/compose/s3.json"
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-dir=./test-volume-data \
 		-s3.port=$(S3_PORT) \
 		-s3.config=../../../docker/compose/s3.json \
@@ -228,14 +229,14 @@ test-with-server: start-server
 # Test with different configurations
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
-	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
+	@echo "Testing with delete bucket not empty allowed..."
+	@$(WEED_BINARY) mini -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
+	@$(WEED_BINARY) mini -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config2.pid ]; then kill -TERM $$(cat weed-config2.pid) 2>/dev/null || true; rm -f weed-config2.pid; fi
@@ -279,6 +280,7 @@ debug-server:
 	@$(MAKE) stop-server
 	@mkdir -p ./test-volume-data
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-debug \
 		-s3.port=$(S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
@@ -323,6 +325,7 @@ health-check:
 start-server-simple: check-deps
 	@echo "Starting SeaweedFS server (simple mode)..."
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-dir=$(SERVER_DIR) \
 		-s3 \
 		-s3.port=$(S3_PORT) \
@@ -331,7 +334,7 @@ start-server-simple: check-deps
 		echo $$! > weed-server.pid
 	
 	@echo "Waiting for S3 server to be ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if echo | nc -z localhost $(S3_PORT); then \
 			echo "S3 server is ready!"; \
 			exit 0; \

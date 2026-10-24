@@ -7,7 +7,7 @@ pub mod endpoint_guard;
 pub mod s3;
 pub mod s3_tier;
 
-pub use endpoint_guard::validate_remote_endpoint;
+pub use endpoint_guard::{guarded_tcp_connect, validate_remote_endpoint, validate_replica_target};
 
 use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 
@@ -210,5 +210,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s3_compatible_endpoint(&gcs), None);
+    }
+
+    #[test]
+    fn azure_endpoint_has_no_ssrf_path() {
+        // The Go volume server guards the caller-supplied azure endpoint against
+        // SSRF. This server has no azure backend, so there is nothing to dial:
+        // azure is not S3-compatible (the endpoint guard does not apply) and
+        // make_remote_storage_client rejects the type before building a client.
+        let azure = RemoteConf {
+            r#type: "azure".to_string(),
+            azure_endpoint: "https://169.254.169.254/".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s3_compatible_endpoint(&azure), None);
+        assert!(make_remote_storage_client(&azure).is_err());
+    }
+
+    #[test]
+    fn gcs_credentials_have_no_ssrf_path() {
+        // The Go volume server accepts only static-key gcs credentials and puts
+        // their token endpoint behind the SSRF guard, because the SDK dials
+        // whatever url, file or executable the credentials name. This server has
+        // no gcs backend, so make_remote_storage_client rejects the type before
+        // any credentials are parsed. Anyone adding one must carry both guards
+        // over with it.
+        let gcs = RemoteConf {
+            r#type: "gcs".to_string(),
+            gcs_google_application_credentials: r#"{"type":"external_account","credential_source":{"url":"http://169.254.169.254/"}}"#.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s3_compatible_endpoint(&gcs), None);
+        assert!(make_remote_storage_client(&gcs).is_err());
     }
 }

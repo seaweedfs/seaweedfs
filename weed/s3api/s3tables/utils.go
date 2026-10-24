@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -23,9 +24,17 @@ const (
 	tableObjectRootDirName = ".objects"
 )
 
+// ARNPartitionPatternStr matches any AWS partition, not just the commercial
+// one: aws-cn and aws-us-gov ARNs are valid and must reach the handlers.
+const ARNPartitionPatternStr = `aws[-a-z0-9]*`
+
+// ARNPrefixPatternStr is the leading, partition-tolerant part of every S3
+// Tables ARN. The HTTP router shares it so routes and parsing agree.
+const ARNPrefixPatternStr = `arn:` + ARNPartitionPatternStr + `:s3tables`
+
 var (
-	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
-	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
+	bucketARNPattern = regexp.MustCompile(`^` + ARNPrefixPatternStr + `:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
+	tableARNPattern  = regexp.MustCompile(`^` + ARNPrefixPatternStr + `:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
 	tagPattern       = regexp.MustCompile(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`)
 )
 
@@ -118,6 +127,63 @@ func TableDataDirFromMetadataLocation(metadataLocation string) string {
 	return path.Join(TablesPath, loc)
 }
 
+// ValidateMetadataLocation checks that an s3:// metadata location stays within
+// the authorized table bucket and inside the caller's own namespace subtree,
+// the boundary per-tenant policies are delegated on. Without the namespace
+// check a caller could register a location inside another tenant's data
+// directory and DeleteTable would purge it. Empty locations are allowed (the
+// catalog derives one). A non-empty location must include a table path so its
+// metadata directory is table-specific, not shared at the bucket level.
+func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) error {
+	if metadataLocation == "" {
+		return nil
+	}
+	bucket, tablePath, err := parseS3Location(metadataLocation)
+	if err != nil {
+		return err
+	}
+	if bucket != bucketName {
+		return fmt.Errorf("metadata location must be within bucket %s", bucketName)
+	}
+	hasSegment := false
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" {
+			continue
+		}
+		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\\\x00") {
+			return fmt.Errorf("invalid metadata location path")
+		}
+		hasSegment = true
+	}
+	if !hasSegment {
+		return fmt.Errorf("metadata location must include a table path")
+	}
+	if !strings.HasPrefix(tablePath, namespace+"/") {
+		return fmt.Errorf("metadata location must be within namespace %s", namespace)
+	}
+	return nil
+}
+
+func parseS3Location(location string) (bucket, tablePath string, err error) {
+	if !strings.HasPrefix(location, "s3://") {
+		return "", "", fmt.Errorf("unsupported location: %s", location)
+	}
+	trimmed := strings.TrimPrefix(location, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", "", fmt.Errorf("invalid location: %s", location)
+	}
+	parts := strings.SplitN(trimmed, "/", 2)
+	bucket = parts[0]
+	if bucket == "" {
+		return "", "", fmt.Errorf("invalid location bucket: %s", location)
+	}
+	if len(parts) == 2 {
+		tablePath = parts[1]
+	}
+	return bucket, tablePath, nil
+}
+
 // GetTableObjectRootDir returns the root path for table bucket object storage
 func GetTableObjectRootDir() string {
 	return path.Join(TablesPath, tableObjectRootDirName)
@@ -134,6 +200,7 @@ type tableBucketMetadata struct {
 	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"createdAt"`
 	OwnerAccountID string    `json:"ownerAccountId"`
+	Format         string    `json:"format,omitempty"`
 }
 
 // namespaceMetadata stores metadata for a namespace
@@ -167,10 +234,10 @@ func IsTableBucketEntry(entry *filer_pb.Entry) bool {
 	return ok
 }
 
-// entryType returns the entry-type marker for a catalog entry. Tables and views
+// EntryType returns the entry-type marker for a catalog entry. Tables and views
 // share the same on-disk layout; the marker distinguishes them. An absent marker
 // means table for back-compat.
-func entryType(extended map[string][]byte) string {
+func EntryType(extended map[string][]byte) string {
 	if extended == nil {
 		return EntryTypeTable
 	}
@@ -278,22 +345,53 @@ func BuildTableARN(region, accountID, bucketName, namespace, tableName string) (
 }
 
 func buildARN(region, accountID, resourcePath string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:%s", region, accountID, resourcePath)
+	return fmt.Sprintf("arn:%s:s3tables:%s:%s:%s", arnPartitionForRegion(region), region, accountID, resourcePath)
+}
+
+// arnPartitionForRegion returns the ARN partition a region belongs to, so an
+// ARN this handler emits round-trips through a client in that partition.
+func arnPartitionForRegion(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	case strings.HasPrefix(region, "us-iso-"):
+		return "aws-iso"
+	case strings.HasPrefix(region, "us-isob-"):
+		return "aws-iso-b"
+	case strings.HasPrefix(region, "eu-isoe-"):
+		return "aws-iso-e"
+	case strings.HasPrefix(region, "us-isof-"):
+		return "aws-iso-f"
+	case strings.HasPrefix(region, "eusc-"):
+		return "aws-eusc"
+	default:
+		return "aws"
+	}
 }
 
 // ValidateTags validates tags for S3 Tables.
 func ValidateTags(tags map[string]string) error {
-	if len(tags) > 10 {
-		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
+	return ValidateTagsWithLimit(tags, 10)
+}
+
+// ValidateTagsWithLimit validates a tag set that may hold up to maxTags tags.
+func ValidateTagsWithLimit(tags map[string]string, maxTags int) error {
+	if len(tags) > maxTags {
+		return fmt.Errorf("validate tags: %d tags more than %d", len(tags), maxTags)
 	}
 	for k, v := range tags {
-		if len(k) > 128 {
+		if len(k) == 0 {
+			return fmt.Errorf("validate tags: empty tag key")
+		}
+		if utf8.RuneCountInString(k) > 128 {
 			return fmt.Errorf("validate tags: tag key longer than 128")
 		}
 		if !tagPattern.MatchString(k) {
 			return fmt.Errorf("validate tags key %s error, incorrect key", k)
 		}
-		if len(v) > 256 {
+		if utf8.RuneCountInString(v) > 256 {
 			return fmt.Errorf("validate tags: tag value longer than 256")
 		}
 		if !tagPattern.MatchString(v) {

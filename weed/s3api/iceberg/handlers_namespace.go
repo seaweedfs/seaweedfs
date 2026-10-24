@@ -140,7 +140,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
-		glog.Errorf("Iceberg: CreateNamespace error: %v", err)
+		logManagerError("CreateNamespace", err)
 		writeManagerError(w, err)
 		return
 	}

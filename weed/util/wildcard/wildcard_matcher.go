@@ -155,12 +155,14 @@ func matchWildcardString(pattern, str string) bool {
 
 	for targetIndex < len(str) {
 		switch {
-		case patternIndex < len(pattern) && (pattern[patternIndex] == '?' || pattern[patternIndex] == str[targetIndex]):
-			targetIndex++
-			patternIndex++
+		// '*' must be checked before literal equality so a '*' in the target
+		// cannot consume the pattern wildcard without a backtrack point
 		case patternIndex < len(pattern) && pattern[patternIndex] == '*':
 			lastStarIndex = patternIndex
 			lastStarMatchIndex = targetIndex
+			patternIndex++
+		case patternIndex < len(pattern) && (pattern[patternIndex] == '?' || pattern[patternIndex] == str[targetIndex]):
+			targetIndex++
 			patternIndex++
 		case lastStarIndex != -1:
 			patternIndex = lastStarIndex + 1

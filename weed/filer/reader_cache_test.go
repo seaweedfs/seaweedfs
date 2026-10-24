@@ -3,10 +3,14 @@ package filer
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // mockChunkCacheForReaderCache implements chunk cache for testing
@@ -100,7 +104,7 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 
 	var fetchCount int32
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		if requestedFileId != fileId {
 			return 0, fmt.Errorf("unexpected fetch file id %s", requestedFileId)
 		}
@@ -146,6 +150,47 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 }
 
+// TestReaderCacheRefreshesLocationsAfterPartialFailure is the mount reading
+// through a cached location list that still names a replica the master has
+// dropped: the read succeeds on the other replica, and the cached entry must
+// be dropped and looked up again so the next read starts without the dead one.
+func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	fileId := "3,abc"
+	invalidator := &mockCacheInvalidatorForReaderCache{}
+	var lookupCount int32
+	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
+		atomic.AddInt32(&lookupCount, 1)
+		if atomic.LoadInt32(&invalidator.calls) == 0 {
+			return []string{deadURL + "/" + fileId, live.URL + "/" + fileId}, nil
+		}
+		return []string{live.URL + "/" + fileId}, nil
+	}
+
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, invalidator)
+	defer rc.destroy()
+
+	buffer := make([]byte, len(payload))
+	n, err := rc.ReadChunkAt(context.Background(), buffer, fileId, nil, false, 0, len(payload), false)
+	if err != nil || string(buffer[:n]) != string(payload) {
+		t.Fatalf("got %q, %v; want %q", buffer[:n], err, payload)
+	}
+	if got := atomic.LoadInt32(&invalidator.calls); got != 1 {
+		t.Fatalf("expected the stale entry to be invalidated once, got %d", got)
+	}
+	if got := atomic.LoadInt32(&lookupCount); got != 2 {
+		t.Fatalf("expected a lookup before the read and one after invalidation, got %d", got)
+	}
+}
+
 func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
 	fileId := "425141,failed"
@@ -161,7 +206,7 @@ func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 	}
 
 	var fetchCount int32
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		return 0, fmt.Errorf("fetch failed")
 	}
@@ -575,7 +620,7 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 		return []string{"http://volume/" + fileId}, nil
 	}
 
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		<-fetchGate
 		return copy(buffer, testData), nil
@@ -592,7 +637,7 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 	for i := 0; i < numReaders; i++ {
 		go func() {
 			defer wg.Done()
-			buffer := make([]byte, 100)
+			buffer := make([]byte, 50)
 			rc.ReadChunkAt(context.Background(), buffer, "dedup-file", nil, false, 0, 100, false)
 		}()
 	}
@@ -678,4 +723,35 @@ func TestSingleChunkCacherOneReaderCancelsOthersContinue(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("Other reader did not complete")
 	}
+}
+
+// TestReaderCacheBookkeepingOffCacheLock guards the contention fix: pin
+// lifecycle calls that cannot remove a cacher must not block on the
+// ReaderCache lock.
+func TestReaderCacheBookkeepingOffCacheLock(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	rc := NewReaderCache(10, cache, nil, nil)
+	defer rc.destroy()
+
+	cacher := &SingleChunkCacher{parent: rc, chunkFileId: "pinned-chunk"}
+	atomic.StoreInt32(&cacher.readers, 1) // a read in flight: not consumable
+
+	rc.Lock()
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		close(started)
+		defer close(done)
+		var stream chunkStream
+		stream.pin(cacher)
+		rc.releaseStream(&stream)
+	}()
+	<-started
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		rc.Unlock()
+		t.Fatal("stream pin lifecycle blocked on the cache lock")
+	}
+	rc.Unlock()
 }

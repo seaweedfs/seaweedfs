@@ -35,14 +35,14 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"fas fa-layer-group me-2\"></i>Collection Details: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"bi bi-layers me-2\"></i>Collection Details: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 13, Col: 83}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 13, Col: 77}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -87,7 +87,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"fas fa-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"fas fa-refresh me-1\"></i>Refresh</button></div></div></div><!-- Collection Summary --><div class=\"row mb-4\"><div class=\"col-md-3\"><div class=\"card text-bg-primary\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Regular Volumes</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"bi bi-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"bi bi-arrow-clockwise me-1\"></i>Refresh</button></div></div></div><!-- Collection Summary --><div class=\"row mb-4\"><div class=\"col-md-3\"><div class=\"card text-bg-primary\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Regular Volumes</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -100,7 +100,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h4><small>Traditional volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-database fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-info\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">EC Volumes</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h4><small>Traditional volumes</small></div><div class=\"align-self-center\"><i class=\"bi bi-database icon-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-info\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">EC Volumes</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -113,7 +113,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</h4><small>Erasure coded volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-th-large fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-success\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Chunks</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</h4><small>Erasure coded volumes</small></div><div class=\"align-self-center\"><i class=\"bi bi-grid icon-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-success\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Chunks</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -126,7 +126,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</h4><small>A file is split into one or more chunks</small></div><div class=\"align-self-center\"><i class=\"fas fa-cubes fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-warning\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Size (Logical)</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</h4><small>A file is split into one or more chunks</small></div><div class=\"align-self-center\"><i class=\"bi bi-boxes icon-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-warning\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Size (Logical)</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -139,7 +139,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</h4><small>Data stored (regular volumes only)</small></div><div class=\"align-self-center\"><i class=\"fas fa-hdd fa-2x\"></i></div></div></div></div></div></div><!-- Size Information Note --><div class=\"alert alert-info\" role=\"alert\"><i class=\"fas fa-info-circle me-2\"></i> <strong>Size Information:</strong> Logical size represents the actual data stored (regular volumes only).  EC volumes show shard counts instead of size - physical storage for EC volumes is approximately 1.4x the original data due to erasure coding redundancy.</div><!-- Pagination Info --><div class=\"d-flex justify-content-between align-items-center mb-3\"><div class=\"d-flex align-items-center\"><span class=\"me-3\">Showing ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</h4><small>Data stored (regular volumes only)</small></div><div class=\"align-self-center\"><i class=\"bi bi-device-hdd icon-2x\"></i></div></div></div></div></div></div><!-- Size Information Note --><div class=\"alert alert-info\" role=\"alert\"><i class=\"bi bi-info-circle me-2\"></i> <strong>Size Information:</strong> Logical size represents the actual data stored (regular volumes only).  EC volumes show shard counts instead of size - physical storage for EC volumes is approximately 1.4x the original data due to erasure coding redundancy.</div><!-- Pagination Info --><div class=\"d-flex justify-content-between align-items-center mb-3\"><div class=\"d-flex align-items-center\"><span class=\"me-3\">Showing ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -231,18 +231,18 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		}
 		if data.SortBy == "volume_id" {
 			if data.SortOrder == "asc" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"fas fa-sort-up ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"bi bi-sort-up ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<i class=\"fas fa-sort-down ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<i class=\"bi bi-sort-down ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<i class=\"bi bi-arrow-down-up ms-1 text-muted\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -253,18 +253,18 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		}
 		if data.SortBy == "type" {
 			if data.SortOrder == "asc" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<i class=\"fas fa-sort-up ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<i class=\"bi bi-sort-up ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<i class=\"fas fa-sort-down ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<i class=\"bi bi-sort-down ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<i class=\"bi bi-arrow-down-up ms-1 text-muted\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -287,7 +287,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</strong></td><td><span class=\"badge bg-primary\"><i class=\"fas fa-database me-1\"></i>Regular</span></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</strong></td><td><span class=\"badge bg-primary\"><i class=\"bi bi-database me-1\"></i>Regular</span></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -354,7 +354,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "\" title=\"View volume details\"><i class=\"fas fa-info-circle\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "\" title=\"View volume details\"><i class=\"bi bi-info-circle\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -373,7 +373,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</strong></td><td><span class=\"badge bg-info\"><i class=\"fas fa-th-large me-1\"></i>EC</span></td><td><span class=\"badge bg-primary\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</strong></td><td><span class=\"badge bg-info\"><i class=\"bi bi-grid me-1\"></i>EC</span></td><td><span class=\"badge bg-primary\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -391,12 +391,12 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if ecVolume.IsComplete {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Complete</span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "<span class=\"badge bg-success\"><i class=\"bi bi-check me-1\"></i>Complete</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i> Missing ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "<span class=\"badge bg-warning\"><i class=\"bi bi-exclamation-triangle me-1\"></i> Missing ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -427,13 +427,13 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" title=\"View EC volume details\"><i class=\"fas fa-info-circle\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" title=\"View EC volume details\"><i class=\"bi bi-info-circle\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.RegularVolumes) == 0 && len(data.EcVolumes) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No volumes found for collection \"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"bi bi-info-circle me-2\"></i> No volumes found for collection \"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

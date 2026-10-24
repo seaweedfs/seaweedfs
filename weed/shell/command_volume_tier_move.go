@@ -2,19 +2,22 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/placement"
 	"io"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/placement"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -63,8 +66,9 @@ func (c *commandVolumeTierMove) Help() string {
 	replication setting. Otherwise, the volume's existing replication is preserved.
 
 	Note:
-		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
-		Empty collectionPattern matches all collections.
+		-collectionPattern is a comma-separated list of collection names, with "*" and "?"
+		wildcards, and regex patterns. Use "` + CollectionDefault + `" to match only the default collection
+		(volumes with no collection name). An empty pattern matches all collections.
 
 `
 }
@@ -76,7 +80,7 @@ func (c *commandVolumeTierMove) HasTag(CommandTag) bool {
 func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collectionPattern := tierCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := tierCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	fullPercentage := tierCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	source := tierCommand.String("fromDiskType", "", "the source disk type")
@@ -318,7 +322,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	}
 
 	// mark all replicas as read only
-	if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
+	if _, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 	newAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
@@ -327,13 +331,18 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	deletedSource := sourceVolumeServer
 	if alreadyPlaced {
 		deletedSource = ""
-	} else if err = LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
-		// mark all replicas as writable
-		if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
-			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+	} else if moveErr := LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond); moveErr != nil {
+		// A move that deliberately kept the source readonly (its delete may
+		// have happened, leaving the target authoritative) must not be thawed
+		// — reopening the replicas beside that copy would fork the volume.
+		if !errors.Is(moveErr, volume_move.ErrSourceKeptReadonly) {
+			// mark all replicas as writable
+			if _, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
+				glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+			}
 		}
 
-		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
+		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, moveErr)
 	}
 
 	// If move is successful and replication is not empty, alter moved volume's replication setting
@@ -350,7 +359,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// deleting old replicas to avoid data-loss risk.
 	// Use the explicit -toReplication if given, otherwise preserve the volume's
 	// existing replication from the source tier.
-	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString)
+	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString, ioBytePerSecond)
 	if replicateErr != nil {
 		// Replication not fully achieved — do NOT delete old replicas.
 		restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
@@ -380,7 +389,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		}
 		// keepRemoteData=true: remote-tiered replicas share one cloud object, so
 		// deleting a replica must not delete the object the survivors still point at.
-		if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, true); err != nil {
+		if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, false, true); err != nil {
 			fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 		}
 	}
@@ -405,7 +414,7 @@ func restoreSurvivingReplicasWritable(commandEnv *CommandEnv, vid needle.VolumeI
 // move so it can see the newly placed volume and find suitable destinations for additional copies.
 // It returns a set of server URLs (from the original locations) that host target-tier replicas
 // counted toward fulfillment, so the caller can avoid deleting them during cleanup.
-func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, movedDst location, replicationString string) (preserveServers map[string]bool, err error) {
+func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, movedDst location, replicationString string, ioBytePerSecond int64) (preserveServers map[string]bool, err error) {
 	preserveServers = make(map[string]bool)
 	// keeps an anchored pre-existing replica writable on the early-return paths
 	preserveServers[movedDst.dataNode.Id] = true
@@ -521,7 +530,7 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 		candidateDst := placeOf[dst.Id]
 		candidateAddress := pb.NewServerAddressFromDataNode(dst)
 
-		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
+		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString(), ioBytePerSecond); copyErr != nil {
 			return nil, fmt.Errorf("replicate volume %d to %s: %v", vid, candidateDst.dataNode.Id, copyErr)
 		}
 
@@ -553,6 +562,11 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 
 func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, sourceTier types.DiskType, sourceDataCenter string, collectionPattern string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(collectionPattern)
+	if err != nil {
+		return nil, err
+	}
+
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 
@@ -565,22 +579,8 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 		}
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				// check collection name pattern
-				if collectionPattern != "" {
-					var matched bool
-					if collectionPattern == CollectionDefault {
-						matched = v.Collection == ""
-					} else {
-						var matchErr error
-						matched, matchErr = filepath.Match(collectionPattern, v.Collection)
-						if matchErr != nil {
-							err = fmt.Errorf("collection pattern %q failed to match: %w", collectionPattern, matchErr)
-							return
-						}
-					}
-					if !matched {
-						continue
-					}
+				if !collectionMatcher.Matches(v.Collection) {
+					continue
 				}
 
 				if v.ModifiedAtSecond+quietSeconds < nowUnixSeconds && types.ToDiskType(v.DiskType) == sourceTier {

@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"sort"
 	"strings"
 	"testing"
 
@@ -76,6 +78,35 @@ func (m *memFiler) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryReques
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
+func (m *memFiler) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
+	var names []string
+	for p := range m.entries {
+		if path.Dir(p) == in.Directory {
+			names = append(names, p)
+		}
+	}
+	sort.Strings(names)
+	stream := &memListEntries{}
+	for _, name := range names {
+		stream.entries = append(stream.entries, m.entries[name])
+	}
+	return stream, nil
+}
+
+type memListEntries struct {
+	grpc.ClientStream
+	entries []*filer_pb.Entry
+}
+
+func (m *memListEntries) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if len(m.entries) == 0 {
+		return nil, io.EOF
+	}
+	entry := m.entries[0]
+	m.entries = m.entries[1:]
+	return &filer_pb.ListEntriesResponse{Entry: entry}, nil
+}
+
 func newCreateViewRequest(t *testing.T, namespace, name, sql string) *http.Request {
 	t.Helper()
 	schema := iceberg.NewSchemaWithIdentifiers(0, nil,
@@ -95,12 +126,11 @@ func newCreateViewRequest(t *testing.T, namespace, name, sql string) *http.Reque
 	return r
 }
 
-// seedNamespace registers a bucket and namespace so the s3tables existence and
-// auth-context lookups pass; ownership is irrelevant since the admin principal
-// is always allowed.
-func seedNamespace(fc *memFiler, bucket, namespace string) {
+// seedNamespace registers a bucket and namespace owned by owner so the s3tables
+// existence and auth-context lookups pass.
+func seedNamespace(fc *memFiler, bucket, namespace, owner string) {
 	fc.seed(s3tables.GetTableBucketPath(bucket), &filer_pb.Entry{Name: bucket, IsDirectory: true})
-	meta, _ := json.Marshal(map[string]any{"namespace": []string{namespace}, "ownerAccountId": s3_constants.AccountAdminId})
+	meta, _ := json.Marshal(map[string]any{"namespace": []string{namespace}, "ownerAccountId": owner})
 	fc.seed(s3tables.GetNamespacePath(bucket, namespace), &filer_pb.Entry{
 		Name:        namespace,
 		IsDirectory: true,
@@ -130,7 +160,7 @@ func TestCreateViewMissingNamespaceReturns404(t *testing.T) {
 func TestCreateViewTagsEntryAsView(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()
-	seedNamespace(fc, bucket, "ns")
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
 	s := NewServer(fc, nil)
 
 	w := httptest.NewRecorder()
@@ -154,7 +184,7 @@ func TestCreateViewTagsEntryAsView(t *testing.T) {
 func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()
-	seedNamespace(fc, bucket, "ns")
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
 	s := NewServer(fc, nil)
 
 	w := httptest.NewRecorder()
@@ -185,7 +215,7 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 func TestCreateViewRollsBackEntryWhenMetadataWriteFails(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()
-	seedNamespace(fc, bucket, "ns")
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
 	fc.failFileCreate = errors.New("disk full")
 	s := NewServer(fc, nil)
 

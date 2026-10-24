@@ -46,16 +46,19 @@ const (
 )
 
 type MasterOptions struct {
-	port                       *int
-	portGrpc                   *int
-	ip                         *string
-	ipBind                     *string
-	metaFolder                 *string
-	peers                      *string
-	mastersDeprecated          *string // deprecated, for backward compatibility in master.follower
-	volumeSizeLimitMB          *uint
-	volumePreallocate          *bool
-	maxParallelVacuumPerServer *int
+	port                          *int
+	portGrpc                      *int
+	ip                            *string
+	ipBind                        *string
+	metaFolder                    *string
+	peers                         *string
+	mastersDeprecated             *string // deprecated, for backward compatibility in master.follower
+	volumeSizeLimitMB             *uint
+	fileSizeLimitMB               *int
+	volumePreallocate             *bool
+	maxParallelVacuumPerServer    *int
+	vacuumIntervalSeconds         *int
+	vacuumDeleteEmptyAfterSeconds *int
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -88,9 +91,12 @@ func init() {
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095; use 'none' for single-master mode")
-	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
+	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
-	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
+	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server; 0 for no limit (deprecated, use master.vacuum.max_parallel_per_server in master.toml)")
+	m.vacuumIntervalSeconds = cmdMaster.Flag.Int("vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
+	m.vacuumDeleteEmptyAfterSeconds = cmdMaster.Flag.Int("vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
@@ -104,7 +110,7 @@ func init() {
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
-	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
+	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "deprecated and ignored: the first master in -peers mints the Raft cluster on its own once it sees no leader anywhere")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", true, "report anonymous cluster statistics to telemetry.url, use -telemetry=false to opt out")
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
@@ -160,8 +166,8 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	masterWhiteList := util.StringSplit(*m.whiteList, ",")
-	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+	if *m.volumeSizeLimitMB > util.MaxVolumeSizeLimitMB {
+		glog.Fatalf("volumeSizeLimitMB should not exceed %d", util.MaxVolumeSizeLimitMB)
 	}
 
 	switch {
@@ -211,6 +217,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	isSingleMaster := isSingleMasterMode(*masterOption.peers)
 
+	if *masterOption.raftBootstrap {
+		glog.V(0).Infof("-raftBootstrap is ignored: masters mint a cluster on their own when no peer has a leader, and never over existing raft state")
+	}
+
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
@@ -221,7 +231,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		SingleMaster:      isSingleMaster,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
 		ElectionTimeout:   *masterOption.electionTimeout,
-		RaftBootstrap:     *masterOption.raftBootstrap,
 	}
 	var raftServer *weed_server.RaftServer
 	var err error
@@ -234,15 +243,17 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		if raftServer == nil {
 			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
-		// For single-master mode with a fresh log, initialize cluster immediately.
-		// When resuming with existing state, the server is already a member and
-		// will self-elect via fastResume — sending another JoinCommand would block
-		// because goraft's setCommitIndex returns early on JoinCommand entries,
-		// preventing the new entry's event from being notified when old uncommitted
-		// JoinCommands exist in the log.
-		if isSingleMaster && !raftServer.HasExistingState() {
-			glog.V(0).Infof("Single-master mode: initializing cluster immediately")
-			raftServer.DoJoinCommand()
+	}
+	// For single-master mode with a fresh log, initialize cluster immediately.
+	// When resuming with existing state, the server is already a member and
+	// will self-elect via fastResume — sending another JoinCommand would block
+	// because goraft's setCommitIndex returns early on JoinCommand entries,
+	// preventing the new entry's event from being notified when old uncommitted
+	// JoinCommands exist in the log.
+	if isSingleMaster && !raftServer.HasExistingState() {
+		glog.V(0).Infof("Single-master mode: initializing cluster immediately")
+		if err := raftServer.Bootstrap(); err != nil {
+			glog.Errorf("fail to bootstrap the cluster: %v", err)
 		}
 	}
 	ms.SetRaftServer(raftServer)
@@ -272,8 +283,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
-	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
-	if !*masterOption.raftHashicorp && !isSingleMaster {
+	// A master that starts with no raft state cannot elect on its own — neither
+	// raft implementation lets a server outside the configuration campaign — so
+	// it has to be pulled in by a leader. Keep asking the peers who the leader is
+	// until we are in: the leader admits us once our master client registers, and
+	// only when nobody has one does the first peer mint a new cluster. Keeping
+	// that one peer the sole authority is what stops a partition from minting
+	// two clusters. Restarting a master alone, or scaling the peer list up,
+	// both land here.
+	if !isSingleMaster {
 		go func() {
 			// Stagger bootstrap by peer index so masters don't all check
 			// simultaneously. Peer 0 waits ~1.5s, peer 1 ~3s, etc.
@@ -282,22 +300,24 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			glog.V(0).Infof("bootstrap check in %v (peer index %d of %d)", delay, idx, len(peers))
 			time.Sleep(delay)
 
-			ms.Topo.RaftServerAccessLock.RLock()
-			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
-			isFirst := idx == 0
-			if isEmptyMaster && isFirst {
-				existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress)
-				if existingLeader == "" {
-					raftServer.DoJoinCommand()
-				} else {
-					glog.V(0).Infof("skip bootstrap: existing leader %s found from peers", existingLeader)
+			for {
+				if raftServer.HasExistingState() {
+					return
 				}
-			} else if !isEmptyMaster {
-				glog.V(0).Infof("skip bootstrap: leader=%q logEmpty=%v", ms.Topo.RaftServer.Leader(), ms.Topo.RaftServer.IsLogEmpty())
-			} else {
-				glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
+				if leader, err := ms.Topo.MaybeLeader(); err == nil && leader != "" {
+					return
+				}
+				if existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress); existingLeader != "" {
+					glog.V(0).Infof("waiting to be admitted by existing leader %s", existingLeader)
+				} else if idx == 0 {
+					if err := raftServer.Bootstrap(); err != nil {
+						glog.Errorf("fail to bootstrap the cluster: %v", err)
+					}
+				} else {
+					glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
+				}
+				time.Sleep(raftJoinCheckDelay)
 			}
-			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
 	}
 
@@ -451,11 +471,14 @@ func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
-		Master:                     masterAddress,
-		MetaFolder:                 *m.metaFolder,
-		VolumeSizeLimitMB:          uint32(*m.volumeSizeLimitMB),
-		VolumePreallocate:          *m.volumePreallocate,
-		MaxParallelVacuumPerServer: *m.maxParallelVacuumPerServer,
+		Master:                        masterAddress,
+		MetaFolder:                    *m.metaFolder,
+		VolumeSizeLimitMB:             uint32(*m.volumeSizeLimitMB),
+		FileSizeLimitMB:               *m.fileSizeLimitMB,
+		VolumePreallocate:             *m.volumePreallocate,
+		MaxParallelVacuumPerServer:    *m.maxParallelVacuumPerServer,
+		VacuumIntervalSeconds:         *m.vacuumIntervalSeconds,
+		VacuumDeleteEmptyAfterSeconds: *m.vacuumDeleteEmptyAfterSeconds,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,
@@ -465,5 +488,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,
+		SingleMaster:            isSingleMasterMode(*m.peers),
 	}
 }

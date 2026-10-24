@@ -2,12 +2,13 @@ package maintenance
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // DefaultMaintenanceConfigProto returns default configuration as protobuf
 func DefaultMaintenanceConfigProto() *worker_pb.MaintenanceConfig {
 	return &worker_pb.MaintenanceConfig{
-		Enabled:                true,
+		Enabled:                proto.Bool(true),
 		ScanIntervalSeconds:    30 * 60,     // 30 minutes
 		WorkerTimeoutSeconds:   5 * 60,      // 5 minutes
 		TaskTimeoutSeconds:     2 * 60 * 60, // 2 hours

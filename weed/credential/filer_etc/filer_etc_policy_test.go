@@ -192,6 +192,22 @@ func TestFilerEtcStoreListPolicyNamesIncludesLegacyPolicies(t *testing.T) {
 	assert.ElementsMatch(t, []string{"legacy-only", "multi-file-only", "shared"}, names)
 }
 
+// A non-JSON auxiliary file in the policies directory must not be listed as a
+// policy name (it cannot be retrieved by GetPolicy either).
+func TestFilerEtcStoreListPolicyNamesSkipsNonJsonAuxiliary(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	require.NoError(t, store.savePolicy(ctx, "real", testPolicyDocument("s3:GetObject", "arn:aws:s3:::real/*")))
+
+	polDir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
+	putEntry(t, server, polDir, "notes.md", []byte(`# not a policy`))
+
+	names, err := store.ListPolicyNames(ctx)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"real"}, names)
+}
+
 func TestFilerEtcStoreDeletePolicyRemovesLegacyManagedCopy(t *testing.T) {
 	ctx := context.Background()
 	store := newPolicyTestStore(t)

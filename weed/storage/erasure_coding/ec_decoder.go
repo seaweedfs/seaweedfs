@@ -93,11 +93,15 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 // FindDatFileSize calculate .dat file size from max offset entry
 // there may be extra deletions after that entry
 // but they are deletions anyway
-func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64, err error) {
+// shard0FileName is the actual path of the .ec00 shard file, which on a
+// multi-disk server may sit on a different disk than the EcVolume's own base
+// path — the store registers shards per disk, so the caller must pass the
+// path CollectEcShards resolved rather than deriving it from a base name.
+func FindDatFileSize(shard0FileName, indexBaseFileName string) (datSize int64, err error) {
 
-	version, err := readEcVolumeVersion(dataBaseFileName)
+	version, err := readEcVolumeVersion(shard0FileName)
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s version: %v", shard0FileName, err)
 	}
 
 	// Safety: ensure datSize is at least SuperBlockSize. While the caller typically
@@ -122,19 +126,37 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 	return
 }
 
-func readEcVolumeVersion(baseFileName string) (version needle.Version, err error) {
+// VerifyDecodedDatFile checks that a reconstructed .dat is long enough to hold
+// every needle its index references. datFileSize is the extent the EC index
+// describes (see FindDatFileSize), so a shorter file cannot serve the needles
+// past the cut -- and the caller is about to delete the shards that are their
+// only other copy, which turns a short write into data loss rather than a
+// failed decode.
+func VerifyDecodedDatFile(dataBaseFileName string, datFileSize int64) error {
+	datPath := dataBaseFileName + ".dat"
+	stat, err := os.Stat(datPath)
+	if err != nil {
+		return fmt.Errorf("stat decoded %s: %w", datPath, err)
+	}
+	if stat.Size() < datFileSize {
+		return fmt.Errorf("decoded %s is %d bytes, short of the %d its ec index references", datPath, stat.Size(), datFileSize)
+	}
+	return nil
+}
+
+func readEcVolumeVersion(shard0FileName string) (version needle.Version, err error) {
 
 	// find volume version
-	datFile, err := os.OpenFile(baseFileName+".ec00", os.O_RDONLY, 0644)
+	datFile, err := os.OpenFile(shard0FileName, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, fmt.Errorf("open ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("open ec volume %s superblock: %v", shard0FileName, err)
 	}
 	datBackend := backend.NewDiskFile(datFile)
 
 	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	datBackend.Close()
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s superblock: %v", shard0FileName, err)
 	}
 
 	return superBlock.Version, nil
@@ -211,8 +233,10 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 // large-block row boundary, and deriving the layout from the shrunk extent
 // would read the shards in the wrong block order. Pass zero when the .vif does
 // not record the encode-time size to infer the layout from the shard size.
-func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string) error {
-	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+// largeBlockSize/smallBlockSize are the volume's shard block layout, e.g.
+// ctx.LargeBlockSize()/ctx.SmallBlockSize() from its .vif EC config.
+func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, largeBlockSize, smallBlockSize)
 }
 
 func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
@@ -266,7 +290,11 @@ func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int
 		// A shard size that is an exact multiple of the large block size is
 		// ambiguous: N large rows, or N-1 large rows plus a full small-block
 		// region. The two layouts only agree below the last large row.
-		if shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
+		// A uniform layout has no such ambiguity — its large and small blocks
+		// are the same size, so every reading of the shard is the same one, and
+		// without this precondition the check fires on every volume.
+		if largeBlockSize != smallBlockSize &&
+			shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
 			return fmt.Errorf("shard size %d of %s does not identify the block layout; re-encode to record the dat size in .vif", shardSize, baseFileName)
 		}
 		encodedDatFileSize = int64(dataShards) * shardSize

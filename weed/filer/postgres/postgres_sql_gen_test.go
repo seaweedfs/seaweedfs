@@ -62,6 +62,15 @@ func TestListSqlBinaryOrderingOnNonBinaryColumn(t *testing.T) {
 	}
 }
 
+func TestListSqlEscapesLikeWildcards(t *testing.T) {
+	gen := &SqlGenPostgres{}
+	for _, got := range []string{gen.GetSqlListExclusive("filemeta"), gen.GetSqlListInclusive("filemeta")} {
+		if !strings.Contains(got, "like $4 ESCAPE '!'") {
+			t.Fatalf("list query must declare the escape char matching LikePattern, got: %s", got)
+		}
+	}
+}
+
 func TestIsByteOrderedCollation(t *testing.T) {
 	byteOrdered := []string{"C", "POSIX", "c", "C.UTF-8", "C.utf8"}
 	for _, c := range byteOrdered {
@@ -73,6 +82,22 @@ func TestIsByteOrderedCollation(t *testing.T) {
 	for _, c := range locale {
 		if isByteOrderedCollation(c) {
 			t.Fatalf("expected %q to be treated as locale-aware", c)
+		}
+	}
+}
+
+func TestResolveCreateTableQuery(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"true", DefaultCreateTableQuery},
+		{"false", ""},
+		{"CREATE TABLE custom", "CREATE TABLE custom"},
+	}
+	for _, c := range cases {
+		if got := ResolveCreateTableQuery(c.in); got != c.want {
+			t.Fatalf("ResolveCreateTableQuery(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

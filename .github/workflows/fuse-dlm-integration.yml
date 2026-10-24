@@ -19,8 +19,8 @@ on:
       - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/fuse-dlm-integration
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -39,11 +39,13 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
-      - name: Install FUSE dependencies
+      - name: Configure FUSE
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse3-dev
+          # Nothing to install: fuse3 ships fusermount3 and is pre-installed,
+          # and go-fuse is pure Go, so the libfuse headers were never linked
+          # against.
           echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
           sudo chmod 644 /etc/fuse.conf
 

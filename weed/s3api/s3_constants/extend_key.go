@@ -28,6 +28,12 @@ const (
 	// the entry's own mtime so legacy data still expires.
 	ExtNoncurrentSinceNsKey = "Seaweed-X-Amz-Noncurrent-Since-Ns"
 
+	// Set on a .versions directory when a suspended-versioning write made the
+	// base-path null object the current version; cleared whenever a version in
+	// the directory becomes current. Unlike an absent latest pointer, which a
+	// replica may simply not have received yet, this is an explicit signal.
+	ExtNullVersionIsLatestKey = "Seaweed-X-Amz-Null-Version-Is-Latest"
+
 	// Per-bucket opt-in for the PutObject lifecycle TTL fast path ("true"
 	// to enable). When on, an Expiration.Days rule is stamped as a volume
 	// TTL at write time instead of being expired by the worker. Off by
@@ -42,6 +48,10 @@ const (
 
 	// Bucket Policy
 	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"
+
+	// Every attribute the s3tables catalog stores on a table bucket, namespace,
+	// table or view directory entry starts with this.
+	ExtS3TablesPrefix = "s3tables."
 
 	// Object Retention and Legal Hold
 	ExtObjectLockModeKey     = "Seaweed-X-Amz-Object-Lock-Mode"

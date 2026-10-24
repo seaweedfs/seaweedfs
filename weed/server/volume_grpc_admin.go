@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -23,9 +24,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // checkGrpcAdminAuth verifies the gRPC caller is authorized for destructive
@@ -79,9 +82,9 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 
 	if err != nil {
 		glog.Errorf("delete collection %s: %v", req.Collection, err)
-	} else {
-		glog.V(2).Infof("delete collection %v", req)
+		return resp, volumeStatusError(fmt.Errorf("delete collection %s: %w", req.Collection, err))
 	}
+	glog.V(2).Infof("delete collection %v", req)
 
 	return resp, err
 
@@ -129,7 +132,7 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
-	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
+	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -185,6 +188,9 @@ func (vs *VolumeServer) VolumeConsolidateIndex(ctx context.Context, req *volume_
 
 }
 
+// VolumeDelete is allowed in maintenance mode: it removes data from the server
+// rather than adding any, and evacuating a server in maintenance mode ends each
+// move by deleting the source copy (issue #11066).
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
@@ -192,14 +198,11 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 		return resp, err
 	}
 
-	if err := vs.CheckMaintenanceMode(); err != nil {
-		return resp, err
-	}
-
-	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.KeepRemoteData)
+	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.OnlyGarbage, req.KeepRemoteData)
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
+		return resp, volumeStatusError(err)
 	} else {
 		// V(0) so destructive RPCs are always traceable.
 		glog.Infof("volume delete %v", req)
@@ -207,6 +210,22 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	return resp, err
 
+}
+
+// volumeStatusError keeps the store's message so callers matching on
+// "not found" or "volume not empty" keep working, and adds the status code so
+// new callers do not have to.
+func volumeStatusError(err error) error {
+	if errors.Is(err, storage.ErrVolumeNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	if errors.Is(err, storage.ErrVolumeNotEmpty) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if errors.Is(err, storage.ErrInsufficientSpace) {
+		return status.Error(codes.ResourceExhausted, err.Error())
+	}
+	return err
 }
 
 func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
@@ -238,7 +257,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		// Try to re-mount to restore the volume state
-		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); mountErr != nil {
+		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); mountErr != nil {
 			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
 			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
 		}
@@ -246,7 +265,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	}
 
 	// mount
-	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); err != nil {
+	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); err != nil {
 		glog.Errorf("volume configure mount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure mount %v: %v", req, err)
 		return resp, nil
@@ -256,11 +275,10 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 
 }
 
-func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volume, persist bool) error {
-	if err := vs.CheckMaintenanceMode(); err != nil {
-		return err
-	}
-
+// makeVolumeReadonly is not gated on maintenance mode: marking a volume readonly
+// only restricts a server that is already meant to be read-only, and it is the
+// first step of moving a volume off a server under evacuation (issue #11066).
+func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volume, canDelete bool, persist bool) error {
 	// step 1: stop master from redirecting traffic here
 	if err := vs.notifyMasterVolumeReadonly(ctx, v, true); err != nil {
 		return err
@@ -269,9 +287,18 @@ func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volum
 	// rare case 1.5: it will be unlucky if heartbeat happened between step 1 and 2.
 
 	// step 2: mark local volume as readonly
-	if err := vs.store.MarkVolumeReadonly(v.Id, persist); err != nil {
-		glog.Errorf("mark volume %d readonly: %v", v.Id, err)
-		return err
+	var persistErr error
+	if err := vs.store.MarkVolumeReadonly(v.Id, canDelete, persist); err != nil {
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			glog.Errorf("mark volume %d readonly: %v", v.Id, err)
+			return err
+		}
+		// Post-rename durability failure: the .vif already holds the new
+		// mode. Continue with step 3 so the master reflects the change,
+		// then propagate the durability warning.
+		glog.Warningf("mark volume %d readonly: %v", v.Id, err)
+		persistErr = err
 	} else {
 		glog.V(2).Infof("volume %d marked readonly", v.Id)
 	}
@@ -281,7 +308,7 @@ func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volum
 		return err
 	}
 
-	return nil
+	return persistErr
 }
 
 func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volume) error {
@@ -289,9 +316,18 @@ func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volum
 		return err
 	}
 
+	var persistErr error
 	if err := vs.store.MarkVolumeWritable(v.Id); err != nil {
-		glog.Errorf("mark volume %d writable: %v", v.Id, err)
-		return err
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			glog.Errorf("mark volume %d writable: %v", v.Id, err)
+			return err
+		}
+		// Post-rename durability failure: the .vif already holds the new
+		// mode. Continue notifying the master so traffic is redirected,
+		// then propagate the durability warning.
+		glog.Warningf("mark volume %d writable: %v", v.Id, err)
+		persistErr = err
 	} else {
 		glog.V(2).Infof("volume %d marked writable", v.Id)
 	}
@@ -301,7 +337,7 @@ func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volum
 		return err
 	}
 
-	return nil
+	return persistErr
 }
 
 func isNotLeaderErr(err error) bool {
@@ -357,7 +393,7 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 		return resp, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
-	if err := vs.makeVolumeReadonly(ctx, v, req.GetPersist()); err != nil {
+	if err := vs.makeVolumeReadonly(ctx, v, req.GetCanDelete(), req.GetPersist()); err != nil {
 		return resp, err
 	}
 
@@ -465,10 +501,13 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
 	}
 	if err != nil {
+		if errors.Is(err, storage.ErrorNotFound) || errors.Is(err, erasure_coding.NotFoundError) {
+			return nil, status.Errorf(codes.NotFound, "needle not found %d", n.Id)
+		}
 		return nil, err
 	}
 	if count < 0 {
-		return nil, fmt.Errorf("needle not found %d", n.Id)
+		return nil, status.Errorf(codes.NotFound, "needle not found %d", n.Id)
 	}
 
 	resp.NeedleId = uint64(n.Id)

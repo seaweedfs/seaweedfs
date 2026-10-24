@@ -29,7 +29,7 @@ func init() {
 }
 
 type commandVolumeFixReplication struct {
-	collectionPattern *string
+	collectionMatcher *wildcard.CollectionMatcher
 	// TODO: move parameter flags here so we don't shuffle them around via function calls.
 }
 
@@ -71,7 +71,7 @@ func (c *commandVolumeFixReplication) HasTag(tag CommandTag) bool {
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := volFixReplicationCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	applyChanges := volFixReplicationCommand.Bool("apply", false, "apply the fix")
 	// TODO: remove this alias
 	applyChangesAlias := volFixReplicationCommand.Bool("force", false, "apply the fix (alias for -apply)")
@@ -85,6 +85,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*collectionPattern); err != nil {
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, volFixReplicationCommand, applyChangesAlias, applyChanges)
@@ -127,7 +131,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			replica := replicas[0]
 
 			// Filter here so the termination counter matches what gets fixed; else -apply loops forever.
-			if !c.matchCollectionPattern(replica.info.Collection) {
+			if !c.collectionMatcher.Matches(replica.info.Collection) {
 				continue
 			}
 
@@ -330,18 +334,6 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
-// matchCollectionPattern reports whether collection matches -collectionPattern:
-// empty matches everything, CollectionDefault matches the unnamed collection.
-func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
-	if *c.collectionPattern == "" {
-		return true
-	}
-	if *c.collectionPattern == CollectionDefault {
-		return collection == ""
-	}
-	return wildcard.MatchesWildcard(*c.collectionPattern, collection)
-}
-
 // deleteOneVolume trims one replica from each of the given volumes, and
 // reports how many replicas it actually deleted.
 func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, selectOneVolumeFn SelectOneVolumeFunc) (deleted int, err error) {
@@ -398,7 +390,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 		// Surplus replica being trimmed; keep the remote object since other
 		// replicas of the same .vif still reference it.
 		if err := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
-			pb.NewServerAddressFromDataNode(replica.location.dataNode), false, true); err != nil {
+			pb.NewServerAddressFromDataNode(replica.location.dataNode), false, false, true); err != nil {
 			fmt.Fprintf(writer, "deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
 		} else {
 			deleted++
@@ -542,7 +534,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	err := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
 		pb.NewServerAddressFromDataNode(replica.location.dataNode),
 		pb.NewServerAddressFromDataNode(dst.dataNode),
-		replica.info.DiskType)
+		replica.info.DiskType, 0)
 	scheduler.releaseTarget(dst, replica.info.DiskType, err == nil)
 	if err != nil {
 		return false, err

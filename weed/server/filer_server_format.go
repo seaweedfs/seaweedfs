@@ -217,7 +217,7 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
-	fileChunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fileChunks)
+	fileChunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, fileChunks)
 	if err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -367,7 +367,11 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	}
 	size := int64(entry.FileSize)
 	lookup := fs.filer.MasterClient.GetLookupFileIdFunction()
-	chunkViews := filer.ViewFromChunks(ctx, lookup, oldChunks, 0, size)
+	chunkViews, err := filer.ViewFromChunks(ctx, lookup, oldChunks, 0, size)
+	if err != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	readerCache := filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(16), lookup, nil)
 	readerAt := filer.NewChunkReaderAtFromClient(ctx, readerCache, chunkViews, size, filer.DefaultPrefetchCount)
 	// Close releases the private reader cache and its in-flight prefetches.
@@ -420,7 +424,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read %d of %d bytes", written, size))
 		return
 	}
-	newChunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), newChunks)
+	newChunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, newChunks)
 	if err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -478,7 +482,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	if len(newEntry.Md5) == 0 {
 		newEntry.Md5 = md5Hash.Sum(nil)
 	}
-	if err := fs.filer.UpdateEntry(context.WithoutCancel(ctx), current, &newEntry); err != nil {
+	if err := fs.filer.UpdateEntry(context.WithoutCancel(ctx), current, &newEntry, false); err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

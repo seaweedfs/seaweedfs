@@ -290,6 +290,11 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 				continue
 			}
 			found = true
+			// The env is reused for every command in the script, and noLock
+			// belongs to the invocation that set it. ForceNoLock already exempts
+			// this path, so this changes nothing today -- it keeps the rule the
+			// same in all three dispatchers rather than resting on that.
+			commandEnv.SetNoLock(false)
 			if err := command.Do(cmd.Args, commandEnv, output); err != nil {
 				msg := fmt.Sprintf("%s: %v", cmd.Name, err)
 				errorMessages = append(errorMessages, msg)

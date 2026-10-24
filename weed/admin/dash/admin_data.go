@@ -44,6 +44,10 @@ type AdminData struct {
 	// Trends holds at-a-glance sparklines built from the admin's own recent
 	// cluster snapshots (no Prometheus required).
 	Trends DashboardTrends `json:"trends"`
+
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 // Object Store Users management structures
@@ -107,6 +111,34 @@ type UserDetails struct {
 	PolicyNames []string        `json:"policy_names"`
 	AccessKeys  []AccessKeyInfo `json:"access_keys"`
 	Groups      []string        `json:"groups"`
+}
+
+// RoleReadOnly is the session role assigned to read-only (view-only) admin
+// accounts. It matches the value stored by HandleLogin when the read-only
+// credentials are used.
+const RoleReadOnly = "readonly"
+
+// IsReadOnlyRole reports whether the given admin session role grants only
+// view-only access. Any other role (admin, or the empty role used when auth
+// is disabled) is treated as non-read-only.
+func IsReadOnlyRole(role string) bool {
+	return role == RoleReadOnly
+}
+
+// RedactSecretKey clears the plaintext S3 secret key from an object-store
+// user record. The access key (a public identifier) is retained so the
+// identity can still be listed; only the reusable secret is removed.
+func (u *ObjectStoreUser) RedactSecretKey() {
+	u.SecretKey = ""
+}
+
+// RedactSecretKeys clears the plaintext S3 secret keys from a user's access
+// key records. Access key identifiers are retained so the set of keys remains
+// visible; only the reusable secrets are removed.
+func (d *UserDetails) RedactSecretKeys() {
+	for i := range d.AccessKeys {
+		d.AccessKeys[i].SecretKey = ""
+	}
 }
 
 type FilerNode struct {
@@ -213,6 +245,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		TotalEcShards:     totalEcShards,
 		TotalMountClients: totalMountClients,
 		Trends:            s.GetDashboardTrends(),
+		TierStats:         topology.TierStats,
 	}
 
 	return adminData, nil
@@ -249,7 +282,7 @@ func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 // dashboard never shows an empty list.
 func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	masterMap := make(map[string]MasterNode)
-	raftCallSucceeded := false
+	raftReturnedEmpty := false
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -258,16 +291,19 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		if err != nil {
 			return err
 		}
-		raftCallSucceeded = true
+		raftReturnedEmpty = len(resp.ClusterServers) == 0
 		for _, server := range resp.ClusterServers {
-			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
-			// error, so pre-validate the raft address with net.SplitHostPort
-			// and skip malformed entries instead of taking the process down.
+			// Skip malformed raft addresses instead of letting an
+			// unconvertible value into masterMap.
 			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
 				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
 				continue
 			}
 			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			if httpAddress == "" {
+				glog.Warningf("skip master with invalid raft address %q", server.Address)
+				continue
+			}
 			masterMap[httpAddress] = MasterNode{
 				Address:  httpAddress,
 				IsLeader: server.IsLeader,
@@ -287,10 +323,11 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
 			// A successful empty raft response means raft is not initialized
 			// (standalone/non-raft cluster); the only master IS the leader.
-			// A failed RPC means connectivity issue; do not claim leadership.
+			// A failed RPC or a nonempty response whose entries were all
+			// rejected must not claim leadership.
 			masterMap[addr] = MasterNode{
 				Address:  addr,
-				IsLeader: raftCallSucceeded,
+				IsLeader: raftReturnedEmpty,
 			}
 		}
 	}

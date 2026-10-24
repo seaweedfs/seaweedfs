@@ -52,21 +52,23 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	time.Sleep(2 * time.Second)
 	glog.V(1).Infof("Initial connection delay completed")
 
-	// Discover brokers from masters using master client
+	// Discover brokers and filers from masters using master client. A fresh
+	// node registers only after its announce delay (a filer also waits out its
+	// empty-membership confirm window), so an empty list right after startup
+	// is normal: wait rather than fail fast.
 	glog.V(1).Infof("About to call discoverBrokersWithMasterClient...")
-	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)
+	brokerAddresses, err := waitForClusterNodes(ctx, "brokers", clusterNodeDiscoveryTimeout, func() ([]string, error) {
+		return discoverBrokersWithMasterClient(ctx, masterClient, filerGroup)
+	})
 	if err != nil {
 		glog.Errorf("Broker discovery failed: %v", err)
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
 	}
 	glog.V(1).Infof("Broker discovery returned: %v", brokerAddresses)
 
-	if len(brokerAddresses) == 0 {
-		return nil, fmt.Errorf("no brokers discovered from masters")
-	}
-
-	// Discover filers from masters using master client
-	filerAddresses, err := discoverFilersWithMasterClient(masterClient, filerGroup)
+	filerAddresses, err := waitForClusterNodes(ctx, "filers", clusterNodeDiscoveryTimeout, func() ([]pb.ServerAddress, error) {
+		return discoverFilersWithMasterClient(ctx, masterClient, filerGroup)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
@@ -107,12 +109,12 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 }
 
 // discoverBrokersWithMasterClient queries masters for available brokers using reusable master client
-func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
+func discoverBrokersWithMasterClient(ctx context.Context, masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
 
-	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		glog.V(1).Infof("Inside MasterClient.WithClient callback - client obtained successfully")
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: filerGroup,
 			Limit:      1000,
@@ -143,12 +145,36 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 	return brokers, err
 }
 
-// discoverFilersWithMasterClient queries masters for available filers using reusable master client
-func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
+// clusterNodeDiscoveryTimeout bounds how long the gateway waits for the
+// masters to list a node; well above a fresh node's announce delay.
+var clusterNodeDiscoveryTimeout = 60 * time.Second
+
+// waitForClusterNodes calls discover until it returns at least one node, an
+// error, or timeout passes, retrying once a second while the list is empty.
+func waitForClusterNodes[T any](ctx context.Context, nodeType string, timeout time.Duration, discover func() ([]T, error)) ([]T, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		nodes, err := discover()
+		if err != nil || len(nodes) > 0 {
+			return nodes, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("no %s registered with the masters after %v", nodeType, timeout)
+		}
+		glog.V(1).Infof("no %s registered with the masters yet; retrying", nodeType)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func discoverFilersWithMasterClient(ctx context.Context, masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
 	var filers []pb.ServerAddress
 
-	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+	err := masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: filerGroup,
 			Limit:      1000,

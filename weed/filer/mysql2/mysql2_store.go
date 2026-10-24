@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -33,8 +32,12 @@ func (store *MysqlStore2) GetName() string {
 }
 
 func (store *MysqlStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
-	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
-	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
 	// Default on so minimal configs avoid the duplicate-key roundtrip the
 	// inode-index KvPut would otherwise emit on every write.
 	configuration.SetDefault(prefix+"enableUpsert", true)
@@ -80,19 +83,19 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 		adaptedSqlUrl += "&interpolateParams=true"
 	}
 
-	var dbErr error
-	store.DB, dbErr = sql.Open("mysql", sqlUrl)
+	db, dbErr := sql.Open("mysql", sqlUrl)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
+		if db != nil {
+			db.Close()
 		}
-		store.DB = nil
 		return fmt.Errorf("can not connect to %s error:%w", adaptedSqlUrl, dbErr)
 	}
 
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return sql.Open("mysql", sqlUrl)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)

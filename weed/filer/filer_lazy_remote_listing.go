@@ -56,6 +56,14 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		}
 	}
 
+	if done := f.remoteTombstonesDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-ctx.Done():
+			return
+		}
+	}
+
 	// Lazy listing is opt-in: disabled when TTL is 0
 	if remoteLoc.ListingCacheTtlSeconds <= 0 {
 		return
@@ -75,13 +83,18 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		}
 	}
 
-	client, _, found := f.RemoteStorage.FindRemoteStorageClient(lookupPath)
+	remoteConf, found := f.RemoteStorage.FindRemoteStorageConf(lookupPath)
 	if !found {
 		return
 	}
 
 	key := "list:" + string(p)
 	f.lazyListGroup.Do(key, func() (interface{}, error) {
+		client, clientErr := f.buildRemoteStorageClient(context.WithoutCancel(ctx), remoteConf)
+		if clientErr != nil {
+			glog.V(1).InfofCtx(ctx, "maybeLazyListFromRemote: reject %s: %v", p, clientErr)
+			return nil, nil
+		}
 		startTime := time.Now()
 		objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, p)
 
@@ -89,6 +102,10 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		// trace/span values for distributed tracing.
 		persistCtx := context.WithValue(context.WithoutCancel(ctx), lazyListContextKey{}, true)
 		persistCtx = context.WithValue(persistCtx, lazyFetchContextKey{}, true)
+
+		// Entries listed under p must stay reachable by a walk from the mount
+		// directory, the same reason the lazy fetch fills in missing parents.
+		f.fetchMissingRemoteParents(context.WithoutCancel(ctx), mountDir, p)
 
 		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			childPath := p.Child(name)
@@ -101,6 +118,10 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
 			if existingEntry != nil && existingEntry.Remote == nil {
+				return nil
+			}
+
+			if existingEntry == nil && f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
 				return nil
 			}
 
@@ -156,6 +177,9 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 				}
 				if saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 					glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
+				} else if f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
+					// a delete landed between the check above and the insert
+					f.retractLazyRemoteEntry(persistCtx, entry)
 				}
 			}
 			return nil
@@ -195,7 +219,7 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 			dirEntry.Extended = make(map[string][]byte)
 		}
 		dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", syncTime.Unix()))
-		if saveErr := f.CreateEntry(ctx, dirEntry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+		if saveErr := f.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, f.MaxFilenameLength); saveErr != nil {
 			glog.Warningf("maybeLazyListFromRemote: create dir synced_at for %s: %v", p, saveErr)
 		}
 		return

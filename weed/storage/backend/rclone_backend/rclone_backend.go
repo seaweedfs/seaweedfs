@@ -103,7 +103,7 @@ func (s *RcloneBackendStorage) NewStorageFile(key string, tierInfo *volume_serve
 	return f
 }
 
-func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	randomUuid, err := uuid.NewRandom()
 	if err != nil {
 		return key, 0, err
@@ -154,7 +154,7 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 	return obj.Size(), err
 }
 
-func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
 	glog.V(1).Infof("download dat file of %s from remote rclone.%s as %s", filename, s.id, key)
 
 	util.Retry("download via Rclone", func() error {

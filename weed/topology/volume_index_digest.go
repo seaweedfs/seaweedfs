@@ -51,6 +51,7 @@ func (vl *VolumeLayout) releaseLookupOwnership() {
 		}
 	}
 	vl.vid2location = make(map[needle.VolumeId]*VolumeLocationList)
+	vl.dropped = true
 }
 
 // moveLookupOwnership transfers the digest bit for vid from the node a lookup

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -102,6 +105,7 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 	v.CommitCompact()
 	realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
+	liveRowCount := uint64(countLiveIndexRows(t, v.FileName(".idx")))
 	if needleMapKind == NeedleMapLevelDb {
 		nm := reflect.ValueOf(v.nm).Interface().(*LevelDbNeedleMap)
 		mm := nm.mapMetric
@@ -112,10 +116,10 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 			t.Fatalf("testing watermark failed")
 		}
 	} else {
-		t.Logf("realRecordCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, v.FileCount(), v.DeletedCount())
+		t.Logf("realRecordCount:%d, liveRowCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, liveRowCount, v.FileCount(), v.DeletedCount())
 	}
-	if realRecordCount != v.FileCount() {
-		t.Fatalf("testing file count failed")
+	if liveRowCount != v.FileCount() {
+		t.Fatalf("testing file count failed: live idx rows %d, FileCount %d", liveRowCount, v.FileCount())
 	}
 
 	v.Close()
@@ -166,7 +170,7 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	}
 
 	for i := uint64(1); i <= 5; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -299,7 +303,7 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	infos := make([]*needleInfo, goodNeedleCount)
 	for i := 1; i <= goodNeedleCount; i++ {
 		n := newRandomNeedle(uint64(i))
-		_, size, _, err := v.writeNeedle2(n, true, false)
+		_, size, _, err := v.writeNeedle2(n, true, false, false)
 		if err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
@@ -367,9 +371,224 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	v.Close()
 }
 
+// TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck reproduces the
+// vacuum-vs-live-traffic race: a needle written to the volume after
+// CompactByIndex has already loaded its point-in-time index snapshot must not
+// trip the post-copy integrity check. CommitCompact's makeupDiff is what
+// reconciles a write landing mid-copy (see TestCommitCompactDeletionTailKeepsWritable);
+// the copy-phase check must not treat that expected case as corruption.
+func TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 8; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+
+	wroteConcurrently := false
+	opts := &CompactOptions{
+		ProgressCallback: func(processed int64) bool {
+			if !wroteConcurrently {
+				wroteConcurrently = true
+				// Simulate a client write landing on the live volume while
+				// CompactByIndex is still copying the pre-write snapshot.
+				if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(100)), true, false, false); err != nil {
+					t.Fatalf("concurrent write: %v", err)
+				}
+			}
+			return true
+		},
+	}
+
+	if err := v.CompactByIndex(opts); err != nil {
+		t.Fatalf("CompactByIndex should tolerate a write that lands mid-copy, got: %v", err)
+	}
+}
+
+// TestCompactByVolumeData_SkipsNegativeSizeHeader covers issue #6763: a .dat
+// record whose header carries size -1 made compaction panic with "slice bounds
+// out of range [:-1]". The corrupt record must be skipped and the needles on
+// both sides of it kept.
+func TestCompactByVolumeData_SkipsNegativeSizeHeader(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle 1: %v", err)
+	}
+
+	// Size -1 still yields a positive body length, so the scan reads a body
+	// for this record and parses it.
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat .dat: %v", err)
+	}
+	corrupt := make([]byte, needle.GetActualSize(-1, v.Version()))
+	types.NeedleIdToBytes(corrupt[types.CookieSize:types.CookieSize+types.NeedleIdSize], types.Uint64ToNeedleId(99))
+	types.SizeToBytes(corrupt[types.CookieSize+types.NeedleIdSize:types.NeedleHeaderSize], -1)
+	if _, err := v.DataBackend.WriteAt(corrupt, datSize); err != nil {
+		t.Fatalf("append corrupt record: %v", err)
+	}
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+		t.Fatalf("write needle 2: %v", err)
+	}
+
+	if err := v.CompactByVolumeData(nil); err != nil {
+		t.Fatalf("CompactByVolumeData: %v", err)
+	}
+
+	cpx, err := os.Open(filepath.Join(dir, "1.cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	kept := map[types.NeedleId]bool{}
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+		if size.IsValid() {
+			kept[key] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	for _, id := range []uint64{1, 2} {
+		if !kept[types.Uint64ToNeedleId(id)] {
+			t.Errorf("needle %d missing from the compacted index", id)
+		}
+	}
+	if kept[types.Uint64ToNeedleId(99)] {
+		t.Errorf("corrupt record 99 should not be in the compacted index")
+	}
+}
+
+// A corrupt header the scan cannot advance past must fail compaction and
+// leave the original volume untouched.
+func TestCompactByVolumeData_FailsOnHeaderThatCannotAdvance(t *testing.T) {
+	for _, size := range []types.Size{-36, -100} {
+		t.Run(fmt.Sprintf("size%d", size), func(t *testing.T) {
+			dir := t.TempDir()
+
+			v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			stuck := false
+			defer func() {
+				if !stuck {
+					v.Close() // blocks until a running compaction ends
+				}
+			}()
+
+			if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+				t.Fatalf("write needle 1: %v", err)
+			}
+			datSize, _, err := v.DataBackend.GetStat()
+			if err != nil {
+				t.Fatalf("stat .dat: %v", err)
+			}
+			corrupt := make([]byte, types.NeedleHeaderSize)
+			types.NeedleIdToBytes(corrupt[types.CookieSize:types.CookieSize+types.NeedleIdSize], types.Uint64ToNeedleId(99))
+			types.SizeToBytes(corrupt[types.CookieSize+types.NeedleIdSize:], size)
+			if _, err := v.DataBackend.WriteAt(corrupt, datSize); err != nil {
+				t.Fatalf("append corrupt header: %v", err)
+			}
+			if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+				t.Fatalf("write needle 2: %v", err)
+			}
+			datBefore, err := os.ReadFile(v.FileName(".dat"))
+			if err != nil {
+				t.Fatalf("read .dat: %v", err)
+			}
+
+			err = runWithTimeout(10*time.Second, func() error { return v.CompactByVolumeData(nil) })
+			if errors.Is(err, errDidNotReturn) {
+				stuck = true
+				t.Fatalf("CompactByVolumeData: %v", err)
+			}
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				t.Fatalf("CompactByVolumeData error = %v, want one wrapping ErrorCorrupted", err)
+			}
+
+			if _, err := os.Stat(v.FileName(".cpx")); !os.IsNotExist(err) {
+				t.Errorf("failed compaction left a compacted index: %v", err)
+			}
+			datAfter, err := os.ReadFile(v.FileName(".dat"))
+			if err != nil {
+				t.Fatalf("read .dat: %v", err)
+			}
+			if !bytes.Equal(datBefore, datAfter) {
+				t.Errorf(".dat changed: %d bytes before, %d after", len(datBefore), len(datAfter))
+			}
+			for _, id := range []uint64{1, 2} {
+				n := &needle.Needle{Id: types.Uint64ToNeedleId(id)}
+				if _, err := v.readNeedle(n, &ReadOption{}, nil); err != nil {
+					t.Errorf("read needle %d from the original volume: %v", id, err)
+				}
+			}
+		})
+	}
+}
+
+// TestExceedsExpectedCompactedSize guards the copy-phase integrity check
+// against regressing into double-subtracting skipped bytes: expectedLiveBytes
+// already excludes needles dropped as unreadable (they return before being
+// added to the tally), so the check must compare it directly against the
+// compacted .dat size, with no further adjustment for skipped bytes.
+func TestExceedsExpectedCompactedSize(t *testing.T) {
+	cases := []struct {
+		name              string
+		expectedLiveBytes uint64
+		dstDatSize        int64
+		wantExceeds       bool
+	}{
+		{"destination matches expected size exactly", 100, 100, false},
+		{"destination larger than expected is fine", 100, 150, false},
+		{"destination short of expected signals data loss", 100, 90, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := exceedsExpectedCompactedSize(c.expectedLiveBytes, c.dstDatSize); got != c.wantExceeds {
+				t.Fatalf("exceedsExpectedCompactedSize(%d, %d) = %v, want %v", c.expectedLiveBytes, c.dstDatSize, got, c.wantExceeds)
+			}
+		})
+	}
+}
+
+func countLiveIndexRows(t *testing.T, indexFileName string) int {
+	t.Helper()
+	f, err := os.Open(indexFileName)
+	if err != nil {
+		t.Fatalf("open index file %s: %v", indexFileName, err)
+	}
+	defer f.Close()
+	count := 0
+	if err := idx.WalkIndexFile(f, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		if !offset.IsZero() && !size.IsDeleted() {
+			count++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk index file %s: %v", indexFileName, err)
+	}
+	return count
+}
+
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, _, err := v.writeNeedle2(n, true, false)
+	_, size, _, err := v.writeNeedle2(n, true, false, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}

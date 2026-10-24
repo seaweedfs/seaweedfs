@@ -357,6 +357,20 @@ func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *Polic
 	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
 }
 
+// GetPolicy returns a stored policy document, or an error when it does not
+// exist in the configured store.
+func (e *PolicyEngine) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if name == "" {
+		return nil, fmt.Errorf("policy name cannot be empty")
+	}
+
+	return e.store.GetPolicy(ctx, filerAddress, name)
+}
+
 // DeletePolicy removes a policy from the configured store.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
 	if !e.initialized {
@@ -459,8 +473,11 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 		return nil, fmt.Errorf("trust policy cannot be nil")
 	}
 
+	// A trust policy is deny-by-default, whatever the engine's DefaultEffect:
+	// a role may be assumed only by a principal a trust statement explicitly
+	// allows.
 	result := &EvaluationResult{
-		Effect: Effect(e.config.DefaultEffect),
+		Effect: EffectDeny,
 		EvaluationDetails: &EvaluationDetails{
 			Principal:         evalCtx.Principal,
 			Action:            evalCtx.Action,
@@ -497,7 +514,7 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 	// AWS IAM evaluation logic:
 	// 1. If there's an explicit Deny, the result is Deny
 	// 2. If there's an Allow and no Deny, the result is Allow
-	// 3. Otherwise, use the default effect
+	// 3. Otherwise, the implicit deny stands
 	if explicitDeny {
 		result.Effect = EffectDeny
 	} else if hasAllow {
@@ -1221,6 +1238,18 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 	// Step 2: Handle special patterns
 	if expandedPattern == "*" {
 		return true // Universal wildcard
+	}
+
+	// IAM identity ARNs match case-sensitively: identity lookup is
+	// case-sensitive, so a case-variant names a different identity.
+	if strings.HasPrefix(value, "arn:aws:iam::") {
+		if expandedPattern == value {
+			return true
+		}
+		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+			return wildcard.MatchesWildcard(expandedPattern, value)
+		}
+		return false
 	}
 
 	// Step 3: Case-insensitive exact match

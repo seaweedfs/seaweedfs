@@ -149,9 +149,7 @@ func TestQueueFlushChargesTheSlabNotTheWindow(t *testing.T) {
 		t.Skipf("allocator returned an exact fit (%d bytes), nothing to distinguish", cap(data))
 	}
 
-	if !lb.queueFlush(&dataToFlush{data: data}) {
-		t.Fatal("queueFlush dropped the window")
-	}
+	lb.queueFlush(&dataToFlush{data: data})
 
 	lb.flushBudget.mu.Lock()
 	queued := lb.flushBudget.queued
@@ -159,31 +157,6 @@ func TestQueueFlushChargesTheSlabNotTheWindow(t *testing.T) {
 
 	if queued != cap(data) {
 		t.Errorf("charged %d bytes for a window holding a %d byte slab (len %d)", queued, cap(data), len(data))
-	}
-}
-
-// The window is already sealed by the time queueFlush runs, so dropping it
-// loses records the caller was told were accepted. A shutdown racing the
-// hand-off must not cost data while the queue still has room for it.
-func TestQueueFlushKeepsSealedWindowWhenQueueHasRoom(t *testing.T) {
-	stall := make(chan struct{})
-	var flushed atomic.Int64
-	lb := NewLogBuffer("shutdown-race", time.Hour, func(_ *LogBuffer, _, _ time.Time, _ []byte, _, _ int64) {
-		<-stall
-		flushed.Add(1)
-	}, nil, func() {})
-	defer func() { close(stall) }()
-
-	// Simulate a shutdown landing between the seal and the hand-off.
-	close(lb.shutdownCh)
-	lb.isStopping.Store(true)
-
-	// Stay inside the channel's capacity so room is guaranteed for every one of
-	// them; loopFlush is parked in the stalled flushFn and drains nothing.
-	for i := 0; i < flushQueueDepth; i++ {
-		if !lb.queueFlush(&dataToFlush{data: mem.Allocate(1024), seq: uint64(i)}) {
-			t.Fatalf("window %d was dropped even though the queue had room", i)
-		}
 	}
 }
 

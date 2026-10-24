@@ -21,6 +21,8 @@ percent = 20
 [volume.disk.io.error]
 percent = 10
 
+# slow threshold per disk type, matched against each -dir's -disk tag.
+# a disk whose type is not listed here uses the hdd threshold.
 [volume.disk.io.slow.latency]
 hdd = "500ms"
 ssd = "100ms"

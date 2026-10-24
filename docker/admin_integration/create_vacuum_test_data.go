@@ -243,7 +243,7 @@ func printTestingInstructions() {
 	fmt.Println("🧪 Testing Instructions:")
 	fmt.Println()
 	fmt.Println("1. Configure Vacuum for Testing:")
-	fmt.Println("   Visit: http://localhost:23646/maintenance/config/vacuum")
+	fmt.Println("   Visit: http://localhost:12535/maintenance/config/vacuum")
 	fmt.Println("   Set:")
 	fmt.Printf("   - Garbage Percentage Threshold: 20 (20%% - lower than default 30)\n")
 	fmt.Printf("   - Scan Interval: [30] [Seconds] (faster than default)\n")
@@ -253,7 +253,7 @@ func printTestingInstructions() {
 	fmt.Println()
 
 	fmt.Println("2. Monitor Vacuum Tasks:")
-	fmt.Println("   Visit: http://localhost:23646/maintenance")
+	fmt.Println("   Visit: http://localhost:12535/maintenance")
 	fmt.Println("   Watch for vacuum tasks to appear in the queue")
 	fmt.Println()
 

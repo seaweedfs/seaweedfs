@@ -3,18 +3,20 @@ package storage
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-func mountTestVolume(t *testing.T, loc *DiskLocation, vid needle.VolumeId) {
+func mountTestVolume(t testing.TB, loc *DiskLocation, vid needle.VolumeId, collection string) *Volume {
 	t.Helper()
-	v, err := NewVolume(loc.Directory, loc.IdxDirectory, "", vid, NeedleMapInMemory,
+	v, err := NewVolume(loc.Directory, loc.IdxDirectory, collection, vid, NeedleMapInMemory,
 		&super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	loc.SetVolume(vid, v)
+	return v
 }
 
 // The digest has to cover exactly the volumes the heartbeat carries. A volume
@@ -22,9 +24,9 @@ func mountTestVolume(t *testing.T, loc *DiskLocation, vid needle.VolumeId) {
 // comparison disagree forever.
 func TestCollectHeartbeatDigestsExactlyWhatItReports(t *testing.T) {
 	store := newTestStore(t, 2)
-	mountTestVolume(t, store.Locations[0], 1)
-	mountTestVolume(t, store.Locations[0], 2)
-	mountTestVolume(t, store.Locations[1], 3)
+	mountTestVolume(t, store.Locations[0], 1, "")
+	mountTestVolume(t, store.Locations[0], 2, "")
+	mountTestVolume(t, store.Locations[1], 3, "")
 
 	heartbeat := store.CollectHeartbeat()
 	if heartbeat.VolumeDigest == nil {
@@ -65,16 +67,38 @@ func TestCollectHeartbeatDigestsAnEmptyStore(t *testing.T) {
 	}
 }
 
+// The maintenance flag has to reach a master that never saw the change: a
+// leader elected while a server sits in maintenance only hears from it through
+// the regular heartbeats, so each one carries the state.
+func TestCollectHeartbeatCarriesState(t *testing.T) {
+	store := newTestStore(t, 1)
+
+	heartbeat := store.CollectHeartbeat()
+	if heartbeat.State == nil {
+		t.Fatal("heartbeat carried no state")
+	}
+	if heartbeat.State.GetMaintenance() {
+		t.Fatal("a fresh store must not report maintenance mode")
+	}
+
+	if err := store.State.Update(&volume_server_pb.VolumeServerState{Maintenance: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.CollectHeartbeat().GetState().GetMaintenance() {
+		t.Error("heartbeat did not report maintenance mode after it was switched on")
+	}
+}
+
 func TestCollectHeartbeatDigestFollowsVolumeChanges(t *testing.T) {
 	store := newTestStore(t, 1)
-	mountTestVolume(t, store.Locations[0], 1)
+	mountTestVolume(t, store.Locations[0], 1, "")
 	first := store.CollectHeartbeat().GetVolumeDigest()
 
 	if second := store.CollectHeartbeat().GetVolumeDigest(); second != first {
 		t.Errorf("an unchanged store reported a different digest: %d then %d", first, second)
 	}
 
-	mountTestVolume(t, store.Locations[0], 2)
+	mountTestVolume(t, store.Locations[0], 2, "")
 	if grown := store.CollectHeartbeat().GetVolumeDigest(); grown == first {
 		t.Error("mounting a volume left the digest unchanged")
 	}

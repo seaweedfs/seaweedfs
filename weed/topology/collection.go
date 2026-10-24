@@ -14,6 +14,7 @@ type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
 	replicationAsMin         bool
+	maxWritableVolumes       int
 	storageType2VolumeLayout *util.ConcurrentReadMap
 }
 
@@ -40,7 +41,9 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, t
 		keyString += string(diskType)
 	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
-		return NewVolumeLayout(rp, ttl, diskType, c.volumeSizeLimit, c.replicationAsMin)
+		layout := NewVolumeLayout(rp, ttl, diskType, c.volumeSizeLimit, c.replicationAsMin)
+		layout.maxWritableVolumes = c.maxWritableVolumes
+		return layout
 	})
 	return vl.(*VolumeLayout)
 }
@@ -54,7 +57,10 @@ func (c *Collection) GetVolumeLayout(rp *super_block.ReplicaPlacement, ttl *need
 		keyString += string(diskType)
 	}
 	vl, ok := c.storageType2VolumeLayout.Find(keyString)
-	return vl.(*VolumeLayout), ok
+	if !ok {
+		return nil, false
+	}
+	return vl.(*VolumeLayout), true
 }
 
 func (c *Collection) GetAllVolumeLayouts() []*VolumeLayout {
@@ -75,10 +81,10 @@ func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *n
 	if diskType != types.HardDriveType {
 		keyString += string(diskType)
 	}
-	if vl, found := c.GetVolumeLayout(rp, ttl, diskType); found {
-		vl.releaseLookupOwnership()
+	// Unpublish first so a racing registration re-resolves into a fresh layout.
+	if vl, found := c.storageType2VolumeLayout.Delete(keyString); found {
+		vl.(*VolumeLayout).releaseLookupOwnership()
 	}
-	c.storageType2VolumeLayout.Delete(keyString)
 }
 
 func (c *Collection) Lookup(vid needle.VolumeId) []*DataNode {

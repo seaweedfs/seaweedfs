@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -49,6 +50,17 @@ func (h *PolicyHandlers) GetPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
+}
+
+// GetPrincipalSuggestions returns candidate ARNs (existing users and IAM
+// roles) for the policy editor's Principal/NotPrincipal autocomplete.
+func (h *PolicyHandlers) GetPrincipalSuggestions(w http.ResponseWriter, r *http.Request) {
+	suggestions, err := h.adminServer.GetPrincipalSuggestions(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get principal suggestions: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"principals": suggestions})
 }
 
 // CreatePolicy handles policy creation
@@ -175,8 +187,13 @@ func (h *PolicyHandlers) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 	// Delete the policy
 	err = h.adminServer.DeletePolicy(policyName)
 	if err != nil {
-		glog.Errorf("Failed to delete policy %s: %v", policyName, err)
-		writeJSONError(w, http.StatusInternalServerError, "Failed to delete policy: "+err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, dash.ErrPolicyStillAttached) {
+			status = http.StatusConflict
+		} else {
+			glog.Errorf("Failed to delete policy %s: %v", policyName, err)
+		}
+		writeJSONError(w, status, "Failed to delete policy: "+err.Error())
 		return
 	}
 
@@ -221,8 +238,18 @@ func (h *PolicyHandlers) ValidatePolicy(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		if len(statement.Resource.Strings()) == 0 {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Resource is required", i+1))
+		if len(statement.Resource.Strings()) == 0 && len(statement.NotResource.Strings()) == 0 {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Resource or NotResource is required", i+1))
+			return
+		}
+
+		if statement.Resource != nil && statement.NotResource != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: cannot specify both Resource and NotResource", i+1))
+			return
+		}
+
+		if statement.Principal != nil && statement.NotPrincipal != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: cannot specify both Principal and NotPrincipal", i+1))
 			return
 		}
 	}

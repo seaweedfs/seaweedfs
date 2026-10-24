@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -22,14 +23,22 @@ type SqlGenerator interface {
 	GetSqlDeleteFolderChildren(tableName string) string
 	GetSqlListExclusive(tableName string) string
 	GetSqlListInclusive(tableName string) string
+	// GetSqlScanPage returns the query and arguments selecting dirhash, name,
+	// directory and meta of up to limit rows after the (dirhash, name) cursor.
+	GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{})
 	GetSqlCreateTable(tableName string) string
 	GetSqlDropTable(tableName string) string
 }
 
 type AbstractSqlStore struct {
 	SqlGenerator
-	DB                     *sql.DB
+	DB   *sql.DB
+	KvDB *sql.DB
+	// ScanDB, when set, is the pool snapshot scans run on (SQLite's main pool
+	// is a single connection that a long scan must not hold).
+	ScanDB                 *sql.DB
 	SupportBucketTable     bool
+	SkipDDL                bool
 	dbs                    map[string]bool
 	dbsLock                sync.Mutex
 	RetryableErrorCallback func(err error) bool
@@ -38,7 +47,7 @@ type AbstractSqlStore struct {
 var _ filer.BucketAware = (*AbstractSqlStore)(nil)
 
 func (store *AbstractSqlStore) CanDropWholeBucket() bool {
-	return store.SupportBucketTable
+	return store.SupportBucketTable && !store.SkipDDL
 }
 func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
@@ -94,6 +103,49 @@ func (store *AbstractSqlStore) RollbackTransaction(ctx context.Context) error {
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
 		return tx.Rollback()
 	}
+	return nil
+}
+
+// A listing holds its connection for the whole row iteration while its callback
+// reads a hard link through KvGet, so both cannot come out of one bounded pool:
+// the listings fill it and then wait for a connection none of them will release.
+// Give the key-value reads their own slice of connection_max_open. A cap of 1 is
+// the exception -- it has to become 2, or a single listing cannot finish.
+func splitPoolForKv(maxOpen int) (mainOpen, kvOpen int) {
+	if maxOpen <= 0 {
+		return maxOpen, 0
+	}
+	kvOpen = min(max(maxOpen/4, 1), maxKvPoolSize)
+	return max(maxOpen-kvOpen, 1), kvOpen
+}
+
+const maxKvPoolSize = 8
+
+// UseConnectionPools sizes the store's pool and, when it is bounded, opens the
+// separate pool the key-value reads run on.
+func (store *AbstractSqlStore) UseConnectionPools(db *sql.DB, openKv func() (*sql.DB, error), maxIdle, maxOpen, maxLifetimeSeconds int) error {
+
+	lifetime := time.Duration(maxLifetimeSeconds) * time.Second
+	mainOpen, kvOpen := splitPoolForKv(maxOpen)
+
+	db.SetMaxIdleConns(maxIdle)
+	db.SetMaxOpenConns(mainOpen)
+	db.SetConnMaxLifetime(lifetime)
+	store.DB = db
+
+	if kvOpen == 0 {
+		return nil
+	}
+
+	kvDB, err := openKv()
+	if err != nil {
+		return err
+	}
+	kvDB.SetMaxIdleConns(kvOpen)
+	kvDB.SetMaxOpenConns(kvOpen)
+	kvDB.SetConnMaxLifetime(lifetime)
+	store.KvDB = kvDB
+
 	return nil
 }
 
@@ -311,7 +363,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 			return fmt.Errorf("findDB %s : %w", fullpath, err)
 		}
 
-		if isValidBucket(bucket) && shortPath == "/" {
+		if isValidBucket(bucket) && shortPath == "/" && store.CanDropWholeBucket() {
 			if err = store.deleteTable(ctx, bucket); err == nil {
 				store.dbsLock.Lock()
 				delete(store.dbs, bucket)
@@ -344,6 +396,14 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return doDeleteFolderChildren()
 }
 
+var likeEscaper = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+
+// LikePattern escapes LIKE wildcards so the prefix matches literally;
+// '!' pairs with the ESCAPE '!' clause emitted by the SqlGenerators.
+func LikePattern(prefix string) string {
+	return likeEscaper.Replace(prefix) + "%"
+}
+
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
@@ -356,7 +416,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		sqlText = store.GetSqlListInclusive(bucket)
 	}
 
-	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", limit+1)
+	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), LikePattern(prefix), limit+1)
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
@@ -400,6 +460,12 @@ func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath
 
 func (store *AbstractSqlStore) Shutdown() {
 	store.DB.Close()
+	if store.KvDB != nil {
+		store.KvDB.Close()
+	}
+	if store.ScanDB != nil {
+		store.ScanDB.Close()
+	}
 }
 
 func isValidBucket(bucket string) bool {
@@ -410,15 +476,19 @@ func isValidBucket(bucket string) bool {
 }
 
 func (store *AbstractSqlStore) CreateTable(ctx context.Context, bucket string) error {
-	if !store.SupportBucketTable {
+	if !store.SupportBucketTable || store.SkipDDL {
 		return nil
 	}
-	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlCreateTable(bucket))
+	sql := store.SqlGenerator.GetSqlCreateTable(bucket)
+	if sql == "" {
+		return nil
+	}
+	_, err := store.DB.ExecContext(ctx, sql)
 	return err
 }
 
 func (store *AbstractSqlStore) deleteTable(ctx context.Context, bucket string) error {
-	if !store.SupportBucketTable {
+	if !store.SupportBucketTable || store.SkipDDL {
 		return nil
 	}
 	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlDropTable(bucket))

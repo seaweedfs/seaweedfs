@@ -3,8 +3,10 @@ package ec_balance
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -48,7 +50,12 @@ func Detection(
 		return nil, false, fmt.Errorf("topology info not available")
 	}
 
-	topo, nodeCount, volumeRatio := buildBalancerTopology(topoInfo, ecConfig)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	if err != nil {
+		return nil, false, err
+	}
+
+	topo, nodeCount, volumeRatio := buildBalancerTopology(topoInfo, ecConfig, allowedCollections)
 	if nodeCount < ecConfig.MinServerCount {
 		glog.V(1).Infof("EC balance: only %d servers, need at least %d", nodeCount, ecConfig.MinServerCount)
 		return nil, false, nil
@@ -82,6 +89,9 @@ func Detection(
 		GlobalMaxMovesPerRack: 10,
 		// Balance heterogeneous-capacity racks by fractional fullness.
 		GlobalUtilizationBased: true,
+		RackTotalCapRaised: func(collection string, vid uint32, rackCap, evenCap int) {
+			glog.Warningf("EC volume %d (collection %q): rack-total-cap raised to %d shards per rack, above the even %d: the racks lack room for an even spread", vid, collection, rackCap, evenCap)
+		},
 	})
 	if len(moves) == 0 {
 		return nil, false, nil
@@ -126,8 +136,10 @@ func Detection(
 				}},
 				TaskParams: &worker_pb.TaskParams_EcBalanceParams{
 					EcBalanceParams: &worker_pb.EcBalanceTaskParams{
-						DiskType:       normalizedDiskType,
-						TimeoutSeconds: 600,
+						DiskType:        normalizedDiskType,
+						DedupKeepNode:   m.KeepNode,
+						TimeoutSeconds:  600,
+						IoBytePerSecond: ecConfig.IoBytePerSecond,
 					},
 				},
 			},
@@ -146,9 +158,8 @@ func Detection(
 // per-volume ratio lookup built from each shard's heartbeat (0,0 when unreported,
 // e.g. always in OSS) which Plan prefers over the collection ratio for mixed-ratio
 // clusters.
-func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
+func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, allowedCollections *wildcard.CollectionMatcher) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
 	topo := ecbalancer.NewTopology()
-	allowedCollections := wildcard.CompileWildcardMatchers(config.CollectionFilter)
 
 	type volRatioKey struct {
 		collection string
@@ -177,6 +188,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 
 			for _, dn := range rack.DataNodeInfos {
 				freeSlots := 0
+				freeByType := make(map[string]int)    // disk type -> free EC slots
 				diskTypeOf := make(map[uint32]string) // physical disk_id -> disk type
 				diskShardCount := make(map[uint32]int)
 				fullDiskTypes := make(map[string]bool) // physically near-full, ineligible as a target
@@ -184,6 +196,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 
 				for diskType, diskInfo := range dn.DiskInfos {
 					if filterByDiskType && diskType != wantDiskType {
+						continue
+					}
+					if topology.IsPhantomDiskTypeEntry(dn, diskType) {
 						continue
 					}
 					hasMatchingDisk = true
@@ -198,6 +213,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 					fs := int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countEcShards(diskInfo.EcShardInfos)
 					if fs > 0 && !fullDiskTypes[diskType] {
 						freeSlots += fs
+						freeByType[diskType] += fs
 					}
 					// Discover physical disks from regular volumes too, so an
 					// EC-empty disk is still a candidate destination.
@@ -225,23 +241,33 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 				// machines, not just nodes (servers on one host are one fault domain).
 				node.SetHost(pb.NewServerAddressFromDataNode(dn).ToHost())
 
-				// Spread the node's free slots only over its non-full disks, so a
-				// physically full disk type doesn't dilute the share the usable disks
-				// advertise (its own disks get 0 below). The total is preserved.
-				nonFullDiskCount := 0
+				// Spread each disk type's free slots over that type's non-full
+				// disks, so a physically full disk type doesn't dilute the share
+				// the usable disks advertise (its own disks get 0 below) and other
+				// types don't inflate it. Ceil division keeps the remainder on the
+				// first disks instead of dropping it.
+				nonFullByType := make(map[string]int)
 				for _, dt := range diskTypeOf {
 					if !fullDiskTypes[dt] {
-						nonFullDiskCount++
+						nonFullByType[dt]++
 					}
 				}
-				perDiskFree := 0
-				if nonFullDiskCount > 0 && freeSlots > 0 {
-					perDiskFree = freeSlots / nonFullDiskCount
+				var diskIDs []uint32
+				for diskID := range diskTypeOf {
+					diskIDs = append(diskIDs, diskID)
 				}
-				for diskID, diskType := range diskTypeOf {
-					diskFree := perDiskFree
-					if fullDiskTypes[diskType] {
-						diskFree = 0
+				slices.Sort(diskIDs)
+				remainingByType := make(map[string]int, len(freeByType))
+				for dt, free := range freeByType {
+					remainingByType[dt] = free
+				}
+				for _, diskID := range diskIDs {
+					diskType := diskTypeOf[diskID]
+					diskFree := 0
+					if count := nonFullByType[diskType]; !fullDiskTypes[diskType] && count > 0 {
+						diskFree = (remainingByType[diskType] + count - 1) / count
+						remainingByType[diskType] -= diskFree
+						nonFullByType[diskType]--
 					}
 					node.AddDisk(diskID, diskType, diskFree, diskShardCount[diskID])
 				}
@@ -253,7 +279,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 						continue
 					}
 					for _, eci := range diskInfo.EcShardInfos {
-						if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, eci.Collection) {
+						if !allowedCollections.Matches(eci.Collection) {
 							continue
 						}
 						node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))

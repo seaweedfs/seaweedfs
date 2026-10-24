@@ -63,15 +63,22 @@ func loadVolumeWithoutWorker(dirname string, dirIdx string, collection string, i
 //
 // No-op when v.nm is already a writable form.
 func (v *Volume) reopenIdxForWrite() error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	return v.reopenIdxForWriteLocked()
+}
 
+// reopenIdxForWriteLocked is reopenIdxForWrite for callers already holding
+// dataFileAccessLock (MarkVolumeReadonly).
+func (v *Volume) reopenIdxForWriteLocked() error {
 	oldNm, isSorted := v.nm.(*SortedFileNeedleMap)
 	if !isSorted {
 		return nil
 	}
 
-	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644)
+	indexFile, err := backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return fmt.Errorf("reopen %s read-write: %v", v.FileName(".idx"), err)
 	}
@@ -154,7 +161,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	if v.volumeInfo.ReadOnly && !v.HasRemoteFile() {
 		// this covers the case where the volume is marked as read-only and has no remote file
-		v.noWriteOrDelete = true
+		if v.volumeInfo.ReadOnlyCanDelete {
+			v.noWriteCanDelete = true
+		} else {
+			v.noWriteOrDelete = true
+		}
 	}
 
 	if v.HasRemoteFile() {
@@ -168,7 +179,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			return fmt.Errorf("load remote file %v: %w", v.volumeInfo, err)
 		}
 		// Set lastModifiedTsSeconds from remote file to prevent premature expiry on startup
-		if len(v.volumeInfo.GetFiles()) > 0 {
+		if len(v.volumeInfo.GetFiles()) > 0 && !v.keepLastModifiedTsOnLoad {
 			remoteFileModifiedTime := v.volumeInfo.GetFiles()[0].GetModifiedTime()
 			if remoteFileModifiedTime > 0 {
 				v.lastModifiedTsSeconds = remoteFileModifiedTime
@@ -188,13 +199,18 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 		var dataFile *os.File
 		if canWrite {
-			dataFile, err = os.OpenFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE, 0644)
+			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE)
 		} else {
 			glog.V(0).Infof("opening %s in READONLY mode", v.FileName(".dat"))
-			dataFile, err = os.Open(v.FileName(".dat"))
+			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDONLY)
 			v.noWriteOrDelete = true
 		}
-		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
+		if err != nil {
+			return datFileLoadError(v.FileName(".dat"), err)
+		}
+		if !v.keepLastModifiedTsOnLoad {
+			v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
+		}
 		if fileSize >= super_block.SuperBlockSize {
 			alreadyHasSuperBlock = true
 		}
@@ -208,11 +224,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	if err != nil {
-		if !os.IsPermission(err) {
-			return fmt.Errorf("cannot load volume data %s: %v", v.FileName(".dat"), err)
-		} else {
-			return fmt.Errorf("load data file %s: %v", v.FileName(".dat"), err)
-		}
+		return datFileLoadError(v.FileName(".dat"), err)
 	}
 
 	if alreadyHasSuperBlock {
@@ -226,7 +238,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		glog.V(2).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
 		if v.HasRemoteFile() {
 			// maybe temporary network problem
-			glog.Errorf("readSuperBlock remote volume %d: %v", v.Id, err)
+			logRemoteSuperBlockErr(v.Id, err)
 			err = nil
 		}
 	} else {
@@ -250,7 +262,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				glog.Errorf("skip remote volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), err)
 				return fmt.Errorf("check volume idx file %s: %w", v.FileName(".idx"), err)
 			}
-			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
+			// A changed -dir.idx leaves the new directory without an index.
+			// The .dat still holds every row, so rebuild rather than exit.
+			if rebuildErr := v.rebuildIdxFile(); rebuildErr != nil {
+				glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
+				return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
+			}
+			glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 		}
 		// Recover rows that deletes on a tiered read-only volume overwrote at
 		// the front of .idx. Best effort: a volume that cannot be repaired is
@@ -263,12 +281,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		var indexFile *os.File
 		if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
-			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644); err != nil {
+			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDONLY); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", v.FileName(".idx"))
-			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644); err != nil {
+			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE); err != nil {
 				return fmt.Errorf("cannot write Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		}
@@ -283,11 +301,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.noWriteOrDelete = true
 				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 			}
+			if !v.keepLastModifiedTsOnLoad {
+				v.recoverLastModifiedTs(indexFile)
+			}
 		}
 
 		// The post-load structural check below uses the in-memory needle map
-		// to verify that no .idx entry references bytes past the end of .dat
-		// (issue #8928). The check piggybacks on MaxNeedleEnd, which the load
+		// to verify that no .idx entry references bytes past the end of .dat.
+		// The check piggybacks on MaxNeedleEnd, which the load
 		// walks below populate without a second linear scan.
 
 		// Loaders can return a typed-nil pointer with err set; assigning that
@@ -375,7 +396,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// MaximumNeedleEnd, so this is just a numeric comparison — no extra
 		// disk I/O. A violation marks the volume read-only so a corrupt
 		// .idx left over from a crashed batched write does not silently
-		// power vacuum to drop reachable data. See issue #8928. err == nil
+		// power vacuum to drop reachable data. err == nil
 		// guards against a partial-walk MaximumNeedleEnd.
 		if err == nil && !v.HasRemoteFile() && v.nm != nil && v.DataBackend != nil {
 			if datSize, _, statErr := v.DataBackend.GetStat(); statErr == nil && datSize > 0 {
@@ -387,6 +408,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			}
 		}
 	}
+
+	v.restoreUnavailable()
 
 	if !hasVolumeInfoFile {
 		v.volumeInfo.Version = uint32(v.SuperBlock.Version)
@@ -403,4 +426,19 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	return err
+}
+
+func datFileLoadError(fileName string, err error) error {
+	if os.IsPermission(err) {
+		return fmt.Errorf("load data file %s: %v", fileName, err)
+	}
+	return fmt.Errorf("cannot load volume data %s: %v", fileName, err)
+}
+
+var logRemoteSuperBlockFault = glog.Errorf
+
+func logRemoteSuperBlockErr(id needle.VolumeId, err error) {
+	if err != nil {
+		logRemoteSuperBlockFault("readSuperBlock remote volume %d: %v", id, err)
+	}
 }

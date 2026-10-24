@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -32,6 +33,7 @@ type VolumeServer struct {
 
 	mu                   sync.Mutex
 	receivedFiles        map[string]uint64
+	readonlyVolumes      map[uint32]bool
 	mountRequests        []*volume_server_pb.VolumeEcShardsMountRequest
 	deleteRequests       []*volume_server_pb.VolumeDeleteRequest
 	markReadonlyCalls    int
@@ -67,12 +69,13 @@ func NewVolumeServer(t *testing.T, baseDir string) *VolumeServer {
 	grpcPort := listener.Addr().(*net.TCPAddr).Port
 	server := pb.NewGrpcServer()
 	vs := &VolumeServer{
-		t:             t,
-		server:        server,
-		listener:      listener,
-		address:       fmt.Sprintf("127.0.0.1:0.%d", grpcPort),
-		baseDir:       baseDir,
-		receivedFiles: make(map[string]uint64),
+		t:               t,
+		server:          server,
+		listener:        listener,
+		address:         fmt.Sprintf("127.0.0.1:0.%d", grpcPort),
+		baseDir:         baseDir,
+		receivedFiles:   make(map[string]uint64),
+		readonlyVolumes: make(map[uint32]bool),
 	}
 
 	volume_server_pb.RegisterVolumeServerServer(server, vs)
@@ -337,7 +340,14 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 		}
 	}
 
-	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	// Answer with the layout out of the .vif that was actually delivered here,
+	// the way a real holder answers from the context it mounted the shards
+	// with. A coordinator uses this to tell a server that understands the
+	// shard block layout from one that never knew the field, so a fake that
+	// always reported "unset" would look like a pre-upgrade server.
+	resp := &volume_server_pb.VolumeEcShardsInfoResponse{
+		EcShardConfig: v.ecShardConfigFromVif(req.VolumeId),
+	}
 	prefix := fmt.Sprintf("%d.ec", req.VolumeId)
 	entries, _ := os.ReadDir(v.baseDir)
 	for _, entry := range entries {
@@ -370,6 +380,16 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 	return resp, nil
 }
 
+// ecShardConfigFromVif reads the EC layout out of the .vif this server was
+// given, which distribution ships to every holder alongside its shards.
+func (v *VolumeServer) ecShardConfigFromVif(volumeID uint32) *volume_server_pb.EcShardConfig {
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(v.filePath(volumeID, ".vif"))
+	if err != nil || !found {
+		return nil
+	}
+	return vi.GetEcShardConfig()
+}
+
 func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	v.mu.Lock()
 	v.deleteRequests = append(v.deleteRequests, req)
@@ -386,6 +406,9 @@ func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.V
 func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
 	v.mu.Lock()
 	v.markReadonlyCalls++
+	if req != nil {
+		v.readonlyVolumes[req.VolumeId] = true
+	}
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
 }
@@ -393,8 +416,17 @@ func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serve
 func (v *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 	v.mu.Lock()
 	v.markWritableCalls++
+	if req != nil {
+		v.readonlyVolumes[req.VolumeId] = false
+	}
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkWritableResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return &volume_server_pb.VolumeStatusResponse{IsReadOnly: v.readonlyVolumes[req.GetVolumeId()]}, nil
 }
 
 func (v *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {

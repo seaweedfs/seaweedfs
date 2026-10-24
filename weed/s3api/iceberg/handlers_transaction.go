@@ -36,6 +36,7 @@ type preparedTableCommit struct {
 	versionToken     string
 	metadataBucket   string
 	metadataPath     string
+	location         string
 	metadataFileName string
 	metadataBytes    []byte
 	metadataVersion  int
@@ -81,15 +82,21 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 		prepared = append(prepared, *pc)
 	}
 
-	// Phase 2: write each new metadata.json object.
+	// Phase 2: write each new metadata.json object. Staging is exclusive for the
+	// same reason a single-table commit stages exclusively: a transaction racing
+	// another writer on one of its tables would otherwise overwrite that
+	// writer's metadata, and the pointer flip below decides who won.
 	for i := range prepared {
 		pc := &prepared[i]
-		if err := s.saveMetadataFile(r.Context(), pc.metadataBucket, pc.metadataPath, pc.metadataFileName, pc.metadataBytes); err != nil {
+		fileName, location, err := s.stageCommitMetadata(r.Context(), pc.metadataBucket, pc.metadataPath, pc.location, pc.metadataFileName, pc.metadataBytes)
+		if err != nil {
 			// No pointer flipped yet, so every written file is safe to delete.
 			s.cleanupPreparedMetadata(r.Context(), prepared[:i+1], nil)
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 			return
 		}
+		pc.metadataFileName = fileName
+		pc.newMetadataLoc = location
 	}
 
 	// Phase 3: flip each table's pointer xattr; on failure roll back prior flips.
@@ -102,8 +109,8 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")
 				return
 			}
-			glog.Errorf("Iceberg: CommitTransaction UpdateTable error: %v", err)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+			logManagerError("CommitTransaction UpdateTable", err)
+			writeManagerError(w, err)
 			return
 		}
 	}
@@ -132,6 +139,9 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		}
 		glog.V(1).Infof("Iceberg: CommitTransaction GetTable error: %v", err)
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", err.Error()}
+	}
+	if reqErr := s.authorizeCommit(ctx, bucketARN, namespace, tableName, identityName); reqErr != nil {
+		return nil, reqErr
 	}
 
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
@@ -200,6 +210,9 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if err != nil {
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Invalid table location: " + err.Error()}
 	}
+	if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
+		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
+	}
 
 	return &preparedTableCommit{
 		namespace:           namespace,
@@ -208,6 +221,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		versionToken:        getResp.VersionToken,
 		metadataBucket:      metadataBucket,
 		metadataPath:        metadataPath,
+		location:            location,
 		metadataFileName:    metadataFileName,
 		metadataBytes:       metadataBytes,
 		metadataVersion:     metadataVersion,
@@ -238,7 +252,11 @@ func cloneTableMetadata(m *s3tables.TableMetadata) *s3tables.TableMetadata {
 func parseTableChange(change tableChangeRequest) (table.Requirements, table.Updates, []statisticsUpdate, *icebergRequestError) {
 	var requirements table.Requirements
 	if len(change.Requirements) > 0 {
-		if err := json.Unmarshal(change.Requirements, &requirements); err != nil {
+		normalized, err := normalizeRequirements(change.Requirements)
+		if err != nil {
+			return nil, nil, nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Invalid requirements: " + err.Error()}
+		}
+		if err := json.Unmarshal(normalized, &requirements); err != nil {
 			return nil, nil, nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Invalid requirements: " + err.Error()}
 		}
 	}

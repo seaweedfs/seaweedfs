@@ -49,7 +49,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	listClusterNodes := func(clientType string) ([]*master_pb.ListClusterNodesResponse_ClusterNode, error) {
 		var nodes []*master_pb.ListClusterNodesResponse_ClusterNode
-		err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: clientType,
 				FilerGroup: *commandEnv.option.FilerGroup,

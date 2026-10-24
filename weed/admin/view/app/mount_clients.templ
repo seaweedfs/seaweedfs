@@ -8,12 +8,12 @@ import (
 templ MountClients(data dash.MountClientsData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="fas fa-plug me-2"></i>Mount Clients
+			<i class="bi bi-plug me-2"></i>Mount Clients
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportMountClients()">
-					<i class="fas fa-download me-1"></i>Export
+					<i class="bi bi-download me-1"></i>Export
 				</button>
 			</div>
 		</div>
@@ -35,7 +35,7 @@ templ MountClients(data dash.MountClientsData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-plug fa-2x text-gray-300"></i>
+								<i class="bi bi-plug icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -47,7 +47,7 @@ templ MountClients(data dash.MountClientsData) {
 		<div class="card shadow mb-4">
 			<div class="card-header py-3">
 				<h6 class="m-0 font-weight-bold text-primary">
-					<i class="fas fa-plug me-2"></i>Mount Clients
+					<i class="bi bi-plug me-2"></i>Mount Clients
 				</h6>
 			</div>
 			<div class="card-body">
@@ -90,7 +90,7 @@ templ MountClients(data dash.MountClientsData) {
 					</div>
 				} else {
 					<div class="text-center py-5">
-						<i class="fas fa-plug fa-3x text-muted mb-3"></i>
+						<i class="bi bi-plug icon-3x text-muted mb-3"></i>
 						<h5 class="text-muted">No Mount Clients Found</h5>
 						<p class="text-muted">No FUSE or VFS mounts are currently connected to the cluster's filers.</p>
 					</div>
@@ -102,7 +102,7 @@ templ MountClients(data dash.MountClientsData) {
 		<div class="row">
 			<div class="col-12">
 				<small class="text-muted">
-					<i class="fas fa-clock me-1"></i>
+					<i class="bi bi-clock me-1"></i>
 					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
 				</small>
 			</div>

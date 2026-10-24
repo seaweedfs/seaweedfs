@@ -92,7 +92,8 @@ func TestDeriveS3AdvertisedEndpoint(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
+	for i := range tests {
+		tc := &tests[i]
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.opt.deriveS3AdvertisedEndpoint()
 			if got != tc.want {

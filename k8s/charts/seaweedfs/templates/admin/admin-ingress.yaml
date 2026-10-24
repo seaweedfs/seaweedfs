@@ -23,6 +23,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: admin
+    {{- with .Values.admin.ingress.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.admin.ingress.className }}
   ingressClassName: {{ .Values.admin.ingress.className | quote }}

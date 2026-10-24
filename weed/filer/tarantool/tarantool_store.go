@@ -143,7 +143,7 @@ func (store *TarantoolStore) InsertEntry(ctx context.Context, entry *filer.Entry
 
 	var operations = []crud.Operation{
 		{
-			Operator: crud.Insert,
+			Operator: crud.Assign,
 			Field:    "data",
 			Value:    string(meta),
 		},
@@ -151,7 +151,8 @@ func (store *TarantoolStore) InsertEntry(ctx context.Context, entry *filer.Entry
 
 	req := crud.NewUpsertRequest(tarantoolSpaceName).
 		Tuple([]interface{}{dir, nil, name, ttl, string(meta)}).
-		Operations(operations)
+		Operations(operations).
+		Context(ctx)
 
 	ret := crud.Result{}
 
@@ -178,7 +179,8 @@ func (store *TarantoolStore) FindEntry(ctx context.Context, fullpath weed_util.F
 
 	req := crud.NewGetRequest(tarantoolSpaceName).
 		Key([]interface{}{dir, name}).
-		Opts(findEntryGetOpts)
+		Opts(findEntryGetOpts).
+		Context(ctx)
 
 	resp := crud.Result{}
 
@@ -223,7 +225,8 @@ func (store *TarantoolStore) DeleteEntry(ctx context.Context, fullpath weed_util
 
 	req := crud.NewDeleteRequest(tarantoolSpaceName).
 		Key([]interface{}{dir, name}).
-		Opts(delOpts)
+		Opts(delOpts).
+		Context(ctx)
 
 	if _, err := store.pool.Do(req, pool.ModeRW).Get(); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -234,7 +237,8 @@ func (store *TarantoolStore) DeleteEntry(ctx context.Context, fullpath weed_util
 
 func (store *TarantoolStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	req := tarantool.NewCallRequest("filer_metadata.delete_by_directory_idx").
-		Args([]interface{}{fullpath})
+		Args([]interface{}{fullpath}).
+		Context(ctx)
 
 	if _, err := store.pool.Do(req, pool.ModeRW).Get(); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -250,7 +254,8 @@ func (store *TarantoolStore) ListDirectoryPrefixedEntries(ctx context.Context, d
 func (store *TarantoolStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	req := tarantool.NewCallRequest("filer_metadata.find_by_directory_idx_and_name").
-		Args([]interface{}{string(dirPath), startFileName, includeStartFile, limit})
+		Args([]interface{}{string(dirPath), startFileName, includeStartFile, limit}).
+		Context(ctx)
 
 	results, err := store.pool.Do(req, pool.ModePreferRO).Get()
 	if err != nil {

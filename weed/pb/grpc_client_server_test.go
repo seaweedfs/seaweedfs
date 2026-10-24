@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -49,19 +50,50 @@ func TestShouldInvalidateConnection_CallerContextExpiryIsPerRequest(t *testing.T
 }
 
 // TestShouldInvalidateConnection_StaleChannelStillInvalidates ensures the
-// carve-out above is gated on the caller's context: a Canceled/DeadlineExceeded
-// while the context is still live is the genuine stale-channel signal (e.g. a
+// carve-out above is gated on the RPC's context: a Canceled/DeadlineExceeded
+// while that context is still live is the genuine stale-channel signal (e.g. a
 // peer restart behind a k8s Service VIP) and must still invalidate so the next
 // attempt dials fresh.
 func TestShouldInvalidateConnection_StaleChannelStillInvalidates(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
-		err := status.Error(code, "the client connection is closing")
-		if !shouldInvalidateConnection(context.Background(), err) {
-			t.Fatalf("%v with a live caller context must still invalidate the connection", code)
+		err := status.Error(code, "stale channel")
+		if !shouldInvalidateConnection(live, err) {
+			t.Fatalf("%v with a live attempt context must still invalidate the connection", code)
 		}
-		// nil context is treated as live for the context-free WithGrpcClient path.
-		if !shouldInvalidateConnection(nil, err) {
-			t.Fatalf("%v with a nil caller context must still invalidate the connection", code)
+	}
+}
+
+// TestShouldInvalidateConnection_NonCancellableContextIsNoEvidence covers
+// seaweedfs#10947. Background/TODO never expires, so Err() stays nil forever and
+// the guard above answered "stale channel" for every caller that has no deadline
+// to honor — which is almost all of them, the S3 gateway included. One client
+// abandoning a request then closed the shared filer channel and every concurrent
+// multipart part died with "the client connection is closing".
+func TestShouldInvalidateConnection_NonCancellableContextIsNoEvidence(t *testing.T) {
+	for _, ctx := range []context.Context{context.Background(), context.TODO(), nil} {
+		for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
+			err := status.Error(code, "context canceled")
+			if shouldInvalidateConnection(ctx, err) {
+				t.Fatalf("%v must not invalidate the shared connection on a non-cancellable context", code)
+			}
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_ClientConnClosingIsNotStale ensures a caller
+// whose RPC was rejected because this process is already closing the shared
+// ClientConn does not close it again. gRPC raises ErrClientConnClosing locally,
+// so it is only ever the footprint of another goroutine's teardown - reading it
+// as a stale-channel signal lets one teardown re-arm itself across the herd of
+// callers it just cancelled.
+func TestShouldInvalidateConnection_ClientConnClosingIsNotStale(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, err := range []error{grpc.ErrClientConnClosing, fmt.Errorf("assign volume: %w", grpc.ErrClientConnClosing)} {
+		if shouldInvalidateConnection(live, err) {
+			t.Fatalf("%v must not invalidate the shared connection", err)
 		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -51,47 +52,13 @@ func (h *Handler) expireSnapshots(
 		return "no snapshots", nil, nil
 	}
 
-	// Determine which snapshots to expire
 	currentSnap := meta.CurrentSnapshot()
 	var currentSnapID int64
 	if currentSnap != nil {
 		currentSnapID = currentSnap.SnapshotID
 	}
 
-	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
-	nowMs := time.Now().UnixMilli()
-
-	// Sort snapshots by timestamp descending (most recent first) so that
-	// the keep-count logic always preserves the newest snapshots.
-	sorted := make([]table.Snapshot, len(snapshots))
-	copy(sorted, snapshots)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].TimestampMs > sorted[j].TimestampMs
-	})
-
-	// Walk from newest to oldest. The current snapshot is always kept.
-	// Among the remaining, keep up to MaxSnapshotsToKeep-1 (since current
-	// counts toward the quota). Expire the rest only if they exceed the
-	// retention window; snapshots within the window are kept regardless.
-	var toExpire []int64
-	var kept int64
-	for _, snap := range sorted {
-		if snap.SnapshotID == currentSnapID {
-			kept++
-			continue
-		}
-		age := nowMs - snap.TimestampMs
-		if kept < config.MaxSnapshotsToKeep {
-			kept++
-			continue
-		}
-		if age > retentionMs {
-			toExpire = append(toExpire, snap.SnapshotID)
-		} else {
-			kept++
-		}
-	}
-
+	toExpire := snapshotsToExpire(meta, config, time.Now().UnixMilli())
 	if len(toExpire) == 0 {
 		return "no snapshots expired", nil, nil
 	}
@@ -102,7 +69,7 @@ func (h *Handler) expireSnapshots(
 		expireSet[id] = struct{}{}
 	}
 	var expiredSnaps, keptSnaps []table.Snapshot
-	for _, snap := range sorted {
+	for _, snap := range snapshots {
 		if _, ok := expireSet[snap.SnapshotID]; ok {
 			expiredSnaps = append(expiredSnaps, snap)
 		} else {
@@ -124,9 +91,7 @@ func (h *Handler) expireSnapshots(
 	// Resolve kept file paths for consistent comparison
 	keptFilerPaths := make(map[string]struct{}, len(keptFiles))
 	for f := range keptFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, f); err == nil {
-			keptFilerPaths[filerPath] = struct{}{}
-		}
+		addFilerPathSpellings(keptFilerPaths, bucketName, dataPath, f)
 	}
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
@@ -136,6 +101,15 @@ func (h *Handler) expireSnapshots(
 		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
 			return errStalePlan
 		}
+		// A tag or branch created since planning can pin a snapshot this plan
+		// expires without moving the head, and RemoveSnapshots would drop that
+		// ref along with it. Re-plan instead.
+		nowProtected := protectedSnapshots(currentMeta, time.Now().UnixMilli())
+		for _, id := range toExpire {
+			if _, pinned := nowProtected[id]; pinned {
+				return errStalePlan
+			}
+		}
 		return builder.RemoveSnapshots(toExpire, false)
 	})
 	if err != nil {
@@ -143,11 +117,18 @@ func (h *Handler) expireSnapshots(
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
+	tableBase := path.Join(s3tables.TablesPath, bucketName, dataPath) + "/"
 	deletedCount := 0
 	for filePath := range expiredFiles {
-		resolved, err := icebergFilerPath(bucketName, dataPath, filePath)
+		resolved, err := resolveFilerPath(ctx, filerClient, bucketName, dataPath, filePath)
 		if err != nil {
-			glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			if !isFilerNotFound(err) {
+				glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			}
+			continue
+		}
+		if !strings.HasPrefix(resolved, tableBase) {
+			glog.Warningf("iceberg maintenance: refusing to delete %s outside table path", resolved)
 			continue
 		}
 		if _, stillReferenced := keptFilerPaths[resolved]; stillReferenced {
@@ -166,6 +147,106 @@ func (h *Handler) expireSnapshots(
 		MetricDurationMs:       time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("expired %d snapshot(s), deleted %d unreferenced file(s)", len(toExpire), deletedCount), metrics, nil
+}
+
+// snapshotsToExpire returns the snapshot IDs that fall outside the configured
+// retention. Detection and execution both call it so a table is only proposed
+// for expiry when the run would actually remove something.
+func snapshotsToExpire(meta table.Metadata, config Config, nowMs int64) []int64 {
+	var currentSnapID int64
+	if currentSnap := meta.CurrentSnapshot(); currentSnap != nil {
+		currentSnapID = currentSnap.SnapshotID
+	}
+	retentionMs := config.SnapshotRetentionMs
+	protected := protectedSnapshots(meta, nowMs)
+
+	// Sort snapshots by timestamp descending (most recent first) so that
+	// the keep-count logic always preserves the newest snapshots.
+	sorted := make([]table.Snapshot, len(meta.Snapshots()))
+	copy(sorted, meta.Snapshots())
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].TimestampMs > sorted[j].TimestampMs
+	})
+
+	// Walk from newest to oldest. The current snapshot is always kept.
+	// Among the remaining, keep up to MaxSnapshotsToKeep-1 (since current
+	// counts toward the quota). Expire the rest only if they exceed the
+	// retention window; snapshots within the window are kept regardless.
+	var toExpire []int64
+	var kept int64
+	for _, snap := range sorted {
+		if snap.SnapshotID == currentSnapID {
+			kept++
+			continue
+		}
+		if _, isProtected := protected[snap.SnapshotID]; isProtected {
+			kept++
+			continue
+		}
+		if kept < config.MaxSnapshotsToKeep {
+			kept++
+			continue
+		}
+		if nowMs-snap.TimestampMs > retentionMs {
+			toExpire = append(toExpire, snap.SnapshotID)
+		} else {
+			kept++
+		}
+	}
+	return toExpire
+}
+
+// protectedSnapshots returns the snapshots that named refs hold in place.
+// A branch head or a tag pins its snapshot no matter how old it is, and a
+// branch may carry its own retention overrides for the ancestors behind it.
+// iceberg-go's RemoveSnapshots drops any ref whose snapshot is gone without
+// complaint, so expiring one of these would silently delete the tag and then
+// the files it pointed at.
+func protectedSnapshots(meta table.Metadata, nowMs int64) map[int64]struct{} {
+	protected := make(map[int64]struct{})
+	byID := make(map[int64]table.Snapshot)
+	for _, snap := range meta.Snapshots() {
+		byID[snap.SnapshotID] = snap
+	}
+
+	for _, ref := range meta.Refs() {
+		protected[ref.SnapshotID] = struct{}{}
+		if ref.SnapshotRefType != table.BranchRef {
+			continue
+		}
+		// Without overrides the branch keeps only its head here; the ancestors
+		// behind it stay under the worker's own retention config.
+		if ref.MinSnapshotsToKeep == nil && ref.MaxSnapshotAgeMs == nil {
+			continue
+		}
+		minToKeep := 1
+		if ref.MinSnapshotsToKeep != nil {
+			minToKeep = *ref.MinSnapshotsToKeep
+		}
+		seen := make(map[int64]struct{})
+		kept := 0
+		for id := ref.SnapshotID; ; {
+			if _, looped := seen[id]; looped {
+				break
+			}
+			seen[id] = struct{}{}
+			snap, ok := byID[id]
+			if !ok {
+				break
+			}
+			withinAge := ref.MaxSnapshotAgeMs != nil && nowMs-snap.TimestampMs <= *ref.MaxSnapshotAgeMs
+			if kept >= minToKeep && !withinAge {
+				break
+			}
+			protected[snap.SnapshotID] = struct{}{}
+			kept++
+			if snap.ParentSnapshotID == nil {
+				break
+			}
+			id = *snap.ParentSnapshotID
+		}
+	}
+	return protected
 }
 
 // collectSnapshotFiles returns all file paths (manifest lists, manifest files,
@@ -267,15 +348,26 @@ func collectOrphanCandidates(
 	}
 
 	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
+	// Table-root readers (DuckDB iceberg_scan, Hadoop tables) open this to find
+	// the current metadata; nothing in the metadata references it.
+	referencedFiles[path.Join("metadata", "version-hint.text")] = struct{}{}
 	for mle := range meta.PreviousFiles() {
 		referencedFiles[mle.MetadataFile] = struct{}{}
+	}
+	for sf := range meta.Statistics() {
+		referencedFiles[sf.StatisticsPath] = struct{}{}
+	}
+	for psf := range meta.PartitionStatistics() {
+		referencedFiles[psf.StatisticsPath] = struct{}{}
 	}
 
 	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, ref); err == nil {
-			referencedFilerPaths[filerPath] = struct{}{}
-		}
+		// Writers percent-escape partition directory names (e.g. "a=1" stored
+		// as "a%3D1" in the manifest path), but the S3 layer decodes the key
+		// before it lands on the filer. Match every spelling the resolver can
+		// return, or a live file is counted as an orphan and deleted.
+		addFilerPathSpellings(referencedFilerPaths, bucketName, dataPath, ref)
 	}
 
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, dataPath)
@@ -367,6 +459,7 @@ func (h *Handler) rewriteManifests(
 
 	// Build a lookup from spec ID to PartitionSpec
 	specByID := specByID(meta)
+	schema := meta.CurrentSchema()
 	var carriedDataManifests []iceberg.ManifestFile
 	var manifestsRewritten int64
 
@@ -375,16 +468,17 @@ func (h *Handler) rewriteManifests(
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		entries, err := s3tables.ReadManifest(mf, manifestData, true, specByID, schema)
 		if err != nil {
 			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
+		sid := mf.PartitionSpecID()
+		spec, found := specByID[int(sid)]
+		if !found {
+			return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
+		}
 
 		if predicate != nil {
-			spec, found := specByID[int(mf.PartitionSpecID())]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", mf.PartitionSpecID())
-			}
 			allMatch := len(entries) > 0
 			for _, entry := range entries {
 				match, err := predicate.Matches(spec, entry.DataFile().Partition())
@@ -402,14 +496,9 @@ func (h *Handler) rewriteManifests(
 			}
 		}
 
-		sid := mf.PartitionSpecID()
 		se, ok := specMap[sid]
 		if !ok {
-			ps, found := specByID[int(sid)]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
-			}
-			se = &specEntries{specID: sid, spec: ps}
+			se = &specEntries{specID: sid, spec: spec}
 			specMap[sid] = se
 		}
 		se.entries = append(se.entries, entries...)
@@ -424,7 +513,6 @@ func (h *Handler) rewriteManifests(
 		return "no data entries to rewrite", nil, nil
 	}
 
-	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
 	newSnapshotID := time.Now().UnixMilli()
@@ -489,8 +577,11 @@ func (h *Handler) rewriteManifests(
 		}
 	}
 
+	// v3 row lineage (row_lineage.go): the merged manifests are assigned first_row_id from the table's next-row-id; the
+	// data files keep the first_row_id they carry, so no row is renumbered
+	firstRowID := rowLineageFirstRowID(meta)
 	var manifestListBuf bytes.Buffer
-	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapshotID, &snapshotID, &newSeqNum, 0, newManifests)
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapshotID, &snapshotID, &newSeqNum, firstRowID, newManifests)
 	if err != nil {
 		return "", nil, fmt.Errorf("write manifest list: %w", err)
 	}
@@ -509,9 +600,9 @@ func (h *Handler) rewriteManifests(
 		// Guard: verify table head hasn't advanced since we planned.
 		// The merged manifest and manifest list were built against snapshotID;
 		// if the head moved, they reference stale state.
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 
 		newSnapshot := &table.Snapshot{
@@ -527,6 +618,7 @@ func (h *Handler) rewriteManifests(
 				return &id
 			}(),
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}

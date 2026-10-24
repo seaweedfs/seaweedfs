@@ -38,6 +38,12 @@ func isSkippableNeedleReadError(err error) bool {
 		errors.Is(err, needle.ErrorCorrupted)
 }
 
+// exceedsExpectedCompactedSize reports whether the compacted .dat is short of
+// the live bytes the pre-compaction index snapshot expected.
+func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bool {
+	return expectedLiveBytes > uint64(dstDatSize)
+}
+
 type ProgressFunc func(processed int64) bool
 
 func (v *Volume) garbageLevel() float64 {
@@ -54,6 +60,14 @@ func (v *Volume) garbageLevel() float64 {
 		fileSize = datFileSize
 	}
 	return float64(deletedSize) / float64(fileSize)
+}
+
+// errTieredVolumeCompact refuses a compaction of a volume whose .dat is in the
+// remote tier: the copy reads the local .dat, which tiering removes (or leaves
+// behind as a stale copy), and the reload after a commit would read the remote
+// object through the compacted index.
+func errTieredVolumeCompact(vid needle.VolumeId) error {
+	return fmt.Errorf("volume %d is tiered to remote storage, cannot compact", vid)
 }
 
 type CompactOptions struct {
@@ -81,6 +95,9 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compacting volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -126,6 +143,9 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
@@ -171,10 +191,27 @@ func (v *Volume) CommitCompact() error {
 	}
 	defer v.isCompactionInProgress.Store(false)
 
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
+	if v.HasRemoteFile() {
+		// The volume was tiered after the copy started: the reload would read
+		// the remote object through the compacted index. Drop the copy and its
+		// temporary needle map; no later vacuum of this volume would.
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+		for _, ext := range []string{".cpd", ".cpx", ".cpldb"} {
+			if e := os.RemoveAll(v.FileName(ext)); e != nil {
+				glog.V(0).Infof("remove %s: %v", v.FileName(ext), e)
+			}
+		}
+		return errTieredVolumeCompact(v.Id)
+	}
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
@@ -216,7 +253,17 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e := v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
+	// The write watermark already equals what recoverLastModifiedTs would
+	// rescan, so keep the clock instead of paying for the scan under the lock.
+	// If its write was itself deleted, the reload recovers the newest
+	// surviving write instead.
+	if v.lastWriteAppendAtNs != 0 {
+		v.lastModifiedTsSeconds = v.lastWriteAppendAtNs / uint64(time.Second)
+	}
+	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0 && !v.lastWriteDeleted
+	e := v.load(true, false, v.needleMapKind, 0, v.Version())
+	v.keepLastModifiedTsOnLoad = false
+	if e != nil {
 		return e
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)
@@ -351,6 +398,8 @@ func (v *Volume) cleanupCompact() error {
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll
 	// forward to, so removing them mid-commit would strand a decided swap.
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if util.FileExists(v.FileName(".cpc")) {
@@ -480,7 +529,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	defer func() {
 		// makeupDiff appends new needles/tombstones to the .cpx; its fsync is the
 		// durability gate that must succeed before CommitCompact writes the .cpc
-		// marker and swaps the files.
+		// marker and swaps the files. Sync the dat file once after all appends
+		// rather than per-needle — a fsync per entry scales poorly on slow disks
+		// and can exceed test timeouts with large entry counts.
+		if syncErr := dstDatBackend.Sync(); syncErr != nil && err == nil {
+			err = fmt.Errorf("sync dat %s: %v", newDatFileName, syncErr)
+		}
 		if syncErr := idx.Sync(); syncErr != nil && err == nil {
 			err = fmt.Errorf("sync idx %s: %v", newIdxFileName, syncErr)
 		}
@@ -530,10 +584,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
-			if err := dstDatBackend.Sync(); err != nil {
-				return fmt.Errorf("cannot sync needle %s: %v", dstDatBackend.File.Name(), err)
-			}
-			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
+			idxEntryBytes = needle_map.ToBytes(key, ToOffset(offset), increIdxEntry.size)
 		} else { //deleted needle
 			//fakeDelNeedle's default Data field is nil
 			fakeDelNeedle := new(needle.Needle)
@@ -674,8 +725,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	var (
-		skippedNeedles   int
-		skippedDataBytes uint64
+		skippedNeedles    int
+		skippedDataBytes  uint64
+		expectedLiveBytes uint64
 	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
@@ -715,6 +767,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			return nil
 		}
 
+		expectedLiveBytes += uint64(size)
+
 		if err = newNm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
 		}
@@ -735,28 +789,17 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
 			v.Id, skippedNeedles, skippedDataBytes)
 	}
-	if v.Ttl.String() == "" && v.nm != nil {
+	if v.Ttl.String() == "" {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
 			return err
 		}
-		if v.nm.ContentSize() > v.nm.DeletedSize() {
-			expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
-			// Skipped needles still contribute to the source-side ContentSize but
-			// were not written to the destination, so subtract them before the
-			// safety check to avoid a false positive.
-			if skippedDataBytes >= expectedContentSize {
-				expectedContentSize = 0
-			} else {
-				expectedContentSize -= skippedDataBytes
-			}
-			if expectedContentSize > uint64(dstDatSize) {
-				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
-					v.Id.String(), dstDatSize, expectedContentSize)
-			}
-		} else if v.nm.DeletedSize() > v.nm.ContentSize() {
-			glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
-				v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
+		// expectedLiveBytes is tallied from oldNm (the frozen snapshot this
+		// loop copied from), not the live v.nm; unreadable needles already
+		// return before the tally, so no further skipped-byte adjustment.
+		if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
+			return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
+				v.Id.String(), dstDatSize, expectedLiveBytes)
 		}
 	}
 	err = newNm.SaveToIdx(opts.destIdxPath)

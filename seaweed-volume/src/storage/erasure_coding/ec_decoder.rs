@@ -3,10 +3,12 @@
 //! Rebuilds the original .dat + .idx files from data shards (.ec00-.ec09)
 //! and the sorted index (.ecx) + deletion journal (.ecj).
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 
 use crate::storage::erasure_coding::ec_shard::*;
+use crate::storage::erasure_coding::ec_volume::read_ecj_ids;
 use crate::storage::idx;
 use crate::storage::needle::needle::get_actual_size;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
@@ -20,18 +22,21 @@ use crate::storage::volume::{fsync_dir, volume_file_name};
 /// `dir` is used both for reading `.ec00` and `.ecx`. For split-disk
 /// reconciled volumes call [`find_dat_file_size_with_dirs`] instead.
 pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<i64> {
-    find_dat_file_size_with_dirs(dir, dir, collection, volume_id)
+    let deleted = read_ecj_deletions(&[dir], collection, volume_id)?;
+    find_dat_file_size_with_dirs(dir, dir, collection, volume_id, &deleted)
 }
 
 /// Like [`find_dat_file_size`] but lets the caller pass separate dirs
 /// for `.ec00` (the data shard) and `.ecx` (the sealed index). This
 /// is the form needed when shards are split across data dirs and the
-/// `.ecx` lives on a sibling disk's idx dir (#9252).
+/// `.ecx` lives on a sibling disk's idx dir (#9252). Needles in `deleted`
+/// count as deleted.
 pub fn find_dat_file_size_with_dirs(
     ec00_dir: &str,
     ecx_dir: &str,
     collection: &str,
     volume_id: VolumeId,
+    deleted: &HashSet<NeedleId>,
 ) -> io::Result<i64> {
     let ec00_base = volume_file_name(ec00_dir, collection, volume_id);
     let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
@@ -53,9 +58,9 @@ pub fn find_dat_file_size_with_dirs(
 
     for i in 0..entry_count {
         let start = i * NEEDLE_MAP_ENTRY_SIZE;
-        let (_, offset, size) =
+        let (key, offset, size) =
             idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
-        if size.is_deleted() {
+        if size.is_deleted() || deleted.contains(&key) {
             continue;
         }
         let entry_stop = offset.to_actual_offset() + get_actual_size(size, version);
@@ -67,63 +72,163 @@ pub fn find_dat_file_size_with_dirs(
     Ok(dat_size)
 }
 
-/// Reconstruct a .dat file from EC data shards.
-///
-/// Reads from .ec00-.ec09 and writes a new .dat file. All data shards
-/// must live in `dir`. For the cross-disk reconciled layout where
-/// shards are split across multiple data dirs of the same node, use
-/// [`write_dat_file_from_shards_with_dirs`] instead.
-pub fn write_dat_file_from_shards(
-    dir: &str,
+/// Whether the `.ecx` in `ecx_dir` indexes a needle deleted neither there nor
+/// in `deleted`.
+pub fn has_live_needles(
+    ecx_dir: &str,
     collection: &str,
     volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-) -> io::Result<()> {
-    let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
-    write_dat_file_from_shards_with_dirs(
-        dir,
-        collection,
-        volume_id,
-        dat_file_size,
-        encoded_dat_file_size,
-        data_shards,
-        &dirs,
-    )
+    deleted: &HashSet<NeedleId>,
+) -> io::Result<bool> {
+    let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
+    let ecx_data = std::fs::read(format!("{}.ecx", ecx_base))?;
+    let (entries, _) = ecx_data.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>();
+    Ok(entries.iter().any(|entry| {
+        let (key, _, size) = idx_entry_from_bytes(entry);
+        !size.is_deleted() && !deleted.contains(&key)
+    }))
 }
 
-/// Reconstruct a .dat file from EC data shards, taking the source
-/// directory for each shard separately.
-///
-/// `dat_dir` is where the produced `.dat` is written. `shard_dirs[i]`
-/// is the directory holding shard `i`. For the simple "all shards in
-/// one dir" case both can be the same value.
+/// Distinct needle ids journaled in the `.ecj` of any of `dirs`. Go folds the
+/// journal into the `.ecx` (RebuildEcxFile) before a decode; reading it leaves
+/// the sealed index untouched. Only NotFound means "no journal".
+pub fn read_ecj_deletions(
+    dirs: &[&str],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<HashSet<NeedleId>> {
+    Ok(EcjDeletions::read(dirs, collection, volume_id)?.ids)
+}
+
+/// The ids [`read_ecj_deletions`] returns, plus how far each journal was read
+/// so that ids journaled later can be added.
+pub struct EcjDeletions {
+    pub ids: HashSet<NeedleId>,
+    /// Each distinct journal path and the whole-record length read so far.
+    journals: Vec<(String, u64)>,
+}
+
+impl EcjDeletions {
+    pub fn read(dirs: &[&str], collection: &str, volume_id: VolumeId) -> io::Result<Self> {
+        let mut journals: Vec<(String, u64)> = Vec::new();
+        for dir in dirs {
+            let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
+            if !journals.iter().any(|(p, _)| *p == path) {
+                journals.push((path, 0));
+            }
+        }
+        let mut deletions = EcjDeletions {
+            ids: HashSet::new(),
+            journals,
+        };
+        deletions.catch_up()?;
+        Ok(deletions)
+    }
+
+    /// Adds the ids appended to each journal since the last read. A journal
+    /// that shrank is read again from the start — and the whole set rebuilt,
+    /// since ids already folded in from the truncated tail may have been a
+    /// rolled-back append. Non-regular journals (the FIFOs the tests stand
+    /// in for a blocking disk) stat empty and cannot be rolled back, so they
+    /// never count as shrunk.
+    pub fn catch_up(&mut self) -> io::Result<()> {
+        let mut shrank = false;
+        for (path, read_to) in &self.journals {
+            if *read_to == 0 {
+                continue;
+            }
+            match std::fs::metadata(path) {
+                Ok(m) => {
+                    if m.is_file() && m.len() < *read_to {
+                        shrank = true;
+                        break;
+                    }
+                }
+                // A journal that was read before and is now gone shrank to
+                // nothing (e.g. the volume was destroyed mid-scan) — the ids
+                // read from it no longer reflect committed content.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    shrank = true;
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        if shrank {
+            self.ids.clear();
+            for (_, read_to) in &mut self.journals {
+                *read_to = 0;
+            }
+        }
+        for (path, read_to) in &mut self.journals {
+            let file = match File::open(&*path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            let len = file.metadata()?.len();
+            if len < *read_to {
+                *read_to = 0;
+            }
+            read_ecj_ids(&file, *read_to, len, &mut self.ids)?;
+            *read_to = len - len % NEEDLE_ID_SIZE as u64;
+        }
+        Ok(())
+    }
+
+    /// Clears the set and re-reads every journal from the start. Run under
+    /// the caller's store read lock (no append in flight): the result is
+    /// then exactly the committed content — an earlier unlocked read may
+    /// have folded in bytes a rolled-back append later truncated, or missed
+    /// a record re-appended to the very offset a rollback freed.
+    pub fn rescan(&mut self) -> io::Result<()> {
+        self.ids.clear();
+        for (_, read_to) in &mut self.journals {
+            *read_to = 0;
+        }
+        self.catch_up()
+    }
+}
+
+/// What it takes to rebuild a volume's .dat from its EC data shards.
 ///
 /// Mirrors Go's `WriteDatFile(baseFileName, datFileSize,
 /// encodedDatFileSize, shardFileNames)` shape — Go passes per-shard
 /// paths so a reconciled volume with shards split across disks of the
 /// same volume server can still be decoded back to a regular .dat
 /// (seaweedfs/seaweedfs#9252).
+#[derive(Clone, Copy, Debug)]
+pub struct DatRebuild<'a> {
+    /// Where the produced `.dat` is written.
+    pub dat_dir: &'a str,
+    pub collection: &'a str,
+    pub volume_id: VolumeId,
+    /// The number of bytes to write, i.e. the live data extent from
+    /// [`find_dat_file_size`].
+    pub dat_file_size: i64,
+    /// The .dat size at encode time, which fixed the shard block layout:
+    /// deletions can move the live extent below the large-block row
+    /// boundary, and deriving the layout from the shrunk extent would read
+    /// the shards in the wrong block order. Zero when the .vif does not
+    /// record the encode-time size; the layout is then inferred from the
+    /// shard size.
+    pub encoded_dat_file_size: i64,
+    pub data_shards: usize,
+    /// `shard_dirs[i]` is the directory holding shard `i`. `None` means every
+    /// data shard sits in `dat_dir`.
+    pub shard_dirs: Option<&'a [String]>,
+    /// The volume's shard block layout, e.g. `EcVolume::large_block_size()`
+    /// / `small_block_size()` from its .vif EC config.
+    pub large_block_size: usize,
+    pub small_block_size: usize,
+}
+
+/// Reconstruct a .dat file from EC data shards.
 ///
-/// `dat_file_size` is the number of bytes to write, i.e. the live data
-/// extent from [`find_dat_file_size`]. `encoded_dat_file_size` is the
-/// .dat size at encode time, which fixed the shard block layout:
-/// deletions can move the live extent below the large-block row
-/// boundary, and deriving the layout from the shrunk extent would read
-/// the shards in the wrong block order. Pass zero when the .vif does
-/// not record the encode-time size to infer the layout from the shard
-/// size.
-pub fn write_dat_file_from_shards_with_dirs(
-    dat_dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-    shard_dirs: &[String],
-) -> io::Result<()> {
-    write_dat_file(
+/// Reads from .ec00-.ec09 and writes a new .dat file, from one directory or
+/// from the per-shard directories of a cross-disk reconciled volume.
+pub fn write_dat_file_from_shards(spec: &DatRebuild<'_>) -> io::Result<()> {
+    let DatRebuild {
         dat_dir,
         collection,
         volume_id,
@@ -131,23 +236,17 @@ pub fn write_dat_file_from_shards_with_dirs(
         encoded_dat_file_size,
         data_shards,
         shard_dirs,
-        ERASURE_CODING_LARGE_BLOCK_SIZE,
-        ERASURE_CODING_SMALL_BLOCK_SIZE,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn write_dat_file(
-    dat_dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-    shard_dirs: &[String],
-    large_block_size: usize,
-    small_block_size: usize,
-) -> io::Result<()> {
+        large_block_size,
+        small_block_size,
+    } = *spec;
+    let same_dir: Vec<String>;
+    let shard_dirs: &[String] = match shard_dirs {
+        Some(dirs) => dirs,
+        None => {
+            same_dir = vec![dat_dir.to_string(); data_shards];
+            &same_dir
+        }
+    };
     if data_shards == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -224,10 +323,10 @@ fn write_dat_file(
 
         // Read large blocks
         while encoded_remaining >= large_row_size && remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = large_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -246,10 +345,10 @@ fn write_dat_file(
 
         // Read small blocks
         while remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = small_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -289,56 +388,87 @@ fn write_dat_file(
     write_result
 }
 
+/// Fails when the decoded `.dat` in `dat_dir` is shorter than the
+/// `dat_file_size` bytes its EC index references: the caller deletes the
+/// shards next, and they are the only other copy of the needles past the cut.
+/// A longer file passes.
+pub fn verify_decoded_dat_file(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+) -> io::Result<()> {
+    let dat_path = format!("{}.dat", volume_file_name(dat_dir, collection, volume_id));
+    let size = std::fs::metadata(&dat_path)?.len();
+    if (size as i64) < dat_file_size {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "decoded {} is {} bytes, short of the {} its ec index references",
+                dat_path, size, dat_file_size
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Write .idx file from .ecx index + .ecj deletion journal.
 ///
-/// Copies sorted .ecx entries to .idx, then appends tombstones for
-/// deleted needles from .ecj.
+/// See [`write_idx_file_from_ec_index_with_dirs`]; everything lives in `dir`.
 pub fn write_idx_file_from_ec_index(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<()> {
-    let base = volume_file_name(dir, collection, volume_id);
-    let ecx_path = format!("{}.ecx", base);
-    let ecj_path = format!("{}.ecj", base);
-    let idx_path = format!("{}.idx", base);
+    let deleted = read_ecj_deletions(&[dir], collection, volume_id)?;
+    let dat_file_size = find_dat_file_size_with_dirs(dir, dir, collection, volume_id, &deleted)?;
+    write_idx_file_from_ec_index_with_dirs(dir, dir, collection, volume_id, &deleted, dat_file_size)
+}
+
+/// Write the `.idx` for a `.dat` decoded to `dat_file_size` bytes, from the
+/// `.ecx` in `ecx_dir`, into `idx_dir`.
+///
+/// Copies the `.ecx` rows, then appends one tombstone per row whose needle is
+/// in `deleted`. A deleted needle at or past `dat_file_size` was cut from the
+/// `.dat`, so its row is dropped: a row pointing past the end of the `.dat`
+/// makes the volume load read-only.
+pub fn write_idx_file_from_ec_index_with_dirs(
+    ecx_dir: &str,
+    idx_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    deleted: &HashSet<NeedleId>,
+    dat_file_size: i64,
+) -> io::Result<()> {
+    let ecx_path = format!("{}.ecx", volume_file_name(ecx_dir, collection, volume_id));
+    let idx_path = format!("{}.idx", volume_file_name(idx_dir, collection, volume_id));
     // Write to a temp file and atomically rename into place, so a crash
     // mid-write never leaves a partial .idx at the final name beside the
     // source shards.
     let tmp_path = format!("{}.tmp", idx_path);
 
     let write_result = (|| -> io::Result<()> {
-        // Copy .ecx to the temp .idx
-        std::fs::copy(&ecx_path, &tmp_path)?;
-
-        // Append deletions from .ecj as tombstones. Read the journal directly
-        // and treat only NotFound as "no journal": Path::exists would also
-        // swallow a permission/IO error and silently skip deletions, which
-        // would resurrect deleted needles as live.
-        let mut idx_file = std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&tmp_path)?;
-        match std::fs::read(&ecj_path) {
-            Ok(ecj_data) => {
-                let count = ecj_data.len() / NEEDLE_ID_SIZE;
-                for i in 0..count {
-                    let start = i * NEEDLE_ID_SIZE;
-                    let needle_id = NeedleId::from_bytes(&ecj_data[start..start + NEEDLE_ID_SIZE]);
-                    idx::write_index_entry(
-                        &mut idx_file,
-                        needle_id,
-                        Offset::default(),
-                        TOMBSTONE_FILE_SIZE,
-                    )?;
-                }
+        let mut ecx_file = File::open(&ecx_path)?;
+        let mut idx_file = io::BufWriter::new(File::create(&tmp_path)?);
+        let mut tombstoned = Vec::new();
+        idx::walk_index_file(&mut ecx_file, 0, |key, offset, size| {
+            let is_deleted = size.is_deleted() || deleted.contains(&key);
+            if is_deleted && offset.to_actual_offset() >= dat_file_size {
+                return Ok(());
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
+            idx::write_index_entry(&mut idx_file, key, offset, size)?;
+            if !size.is_deleted() && deleted.contains(&key) {
+                tombstoned.push(key);
+            }
+            Ok(())
+        })?;
+        for key in tombstoned {
+            idx::write_index_entry(&mut idx_file, key, Offset::default(), TOMBSTONE_FILE_SIZE)?;
         }
 
         // fsync, rename, then fsync the dir so the decoded .idx is durable and
         // atomically published before the caller deletes the source shards.
+        let idx_file = idx_file.into_inner().map_err(|e| e.into_error())?;
         idx_file.sync_all()?;
         drop(idx_file);
         // Windows rename does not replace an existing file on every version;
@@ -363,7 +493,7 @@ mod tests {
     use crate::storage::erasure_coding::ec_encoder;
     use crate::storage::needle::needle::Needle;
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::volume::Volume;
+    use crate::storage::volume::{Volume, VolumeSpec};
     use tempfile::TempDir;
 
     #[test]
@@ -372,16 +502,12 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         // Create volume with data
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -400,7 +526,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
         let original_dat_size = v.dat_file_size().unwrap();
@@ -412,21 +538,26 @@ mod tests {
         // Encode to EC
         let data_shards = 10;
         let parity_shards = 4;
-        ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+        let block_size =
+            ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards)
+                .unwrap();
 
         // Delete original .dat and .idx
         std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(
-            dir,
-            "",
-            VolumeId(1),
-            original_dat_size as i64,
-            original_dat_size as i64,
+        write_dat_file_from_shards(&DatRebuild {
+            dat_dir: dir,
+            collection: "",
+            volume_id: VolumeId(1),
+            dat_file_size: original_dat_size as i64,
+            encoded_dat_file_size: original_dat_size as i64,
             data_shards,
-        )
+            shard_dirs: None,
+            large_block_size: block_size as usize,
+            small_block_size: block_size as usize,
+        })
         .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
@@ -446,13 +577,9 @@ mod tests {
         let v2 = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -472,12 +599,21 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         // No shard files exist, so de-striping must fail and publish nothing:
         // neither the final .dat nor a partial .dat.tmp may remain.
-        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 100, 10);
+        let res = write_dat_file_from_shards(&DatRebuild {
+            dat_dir: dir,
+            collection: "",
+            volume_id: VolumeId(7),
+            dat_file_size: 100,
+            encoded_dat_file_size: 100,
+            data_shards: 10,
+            shard_dirs: None,
+            large_block_size: ERASURE_CODING_LARGE_BLOCK_SIZE,
+            small_block_size: ERASURE_CODING_SMALL_BLOCK_SIZE,
+        });
         assert!(res.is_err());
         assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
     }
-
 
     // Decoding when .vif does not record the encode-time size: the layout is
     // inferred from the shard size, except when that is an exact large-block
@@ -485,7 +621,7 @@ mod tests {
     #[test]
     fn test_write_dat_file_fallback_layout() {
         use crate::storage::erasure_coding::ec_bitrot::{
-            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+            DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
         };
         use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -523,10 +659,13 @@ mod tests {
                 &rs,
                 &mut shards,
                 &mut builders,
-                data_shards,
-                parity_shards,
-                LARGE,
-                SMALL,
+                ec_encoder::EcEncodeLayout {
+                    data_shards,
+                    parity_shards,
+                    buffer_size: SMALL,
+                    large_block_size: LARGE,
+                    small_block_size: SMALL,
+                },
             )
             .unwrap();
             for shard in &mut shards {
@@ -544,7 +683,17 @@ mod tests {
          -> io::Result<Vec<u8>> {
             let out = format!("{}/{}", dir, sub);
             std::fs::create_dir_all(&out).unwrap();
-            write_dat_file(&out, "", VolumeId(1), live, encoded, 10, shard_dirs, LARGE, SMALL)?;
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: &out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: live,
+                encoded_dat_file_size: encoded,
+                data_shards: 10,
+                shard_dirs: Some(shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })?;
             Ok(std::fs::read(format!("{}/1.dat", out)).unwrap())
         };
 
@@ -558,14 +707,20 @@ mod tests {
         // each shard exactly one large block, indistinguishable from one large row
         let (dir, shard_dirs, _) = encode("ambig1", large_row_size - 1);
         let err = decode_to(&dir, "out", large_row_size / 2, 0, &shard_dirs).unwrap_err();
-        assert!(err.to_string().contains("does not identify the block layout"));
+        assert!(
+            err.to_string()
+                .contains("does not identify the block layout")
+        );
 
         // two-row equivalent: decoding within the agreed prefix still works
         let (dir, shard_dirs, original) = encode("ambig2", 2 * large_row_size - 1);
         let decoded = decode_to(&dir, "outa", large_row_size, 0, &shard_dirs).unwrap();
         assert_eq!(&original[..large_row_size as usize], &decoded[..]);
         let err = decode_to(&dir, "outb", large_row_size + 1, 0, &shard_dirs).unwrap_err();
-        assert!(err.to_string().contains("does not identify the block layout"));
+        assert!(
+            err.to_string()
+                .contains("does not identify the block layout")
+        );
     }
 
     // Decoding after deletions moved the live extent below the large-block row
@@ -574,7 +729,7 @@ mod tests {
     #[test]
     fn test_write_dat_file_after_tail_deletion() {
         use crate::storage::erasure_coding::ec_bitrot::{
-            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+            DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
         };
         use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -614,10 +769,13 @@ mod tests {
             &rs,
             &mut shards,
             &mut builders,
-            data_shards,
-            parity_shards,
-            LARGE,
-            SMALL,
+            ec_encoder::EcEncodeLayout {
+                data_shards,
+                parity_shards,
+                buffer_size: SMALL,
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            },
         )
         .unwrap();
         for shard in &mut shards {
@@ -633,17 +791,17 @@ mod tests {
         std::fs::create_dir(&out_dir).unwrap();
         let out = out_dir.to_str().unwrap();
         let decode = |live_size: i64, encoded_size: i64| -> Vec<u8> {
-            write_dat_file(
-                out,
-                "",
-                VolumeId(1),
-                live_size,
-                encoded_size,
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: live_size,
+                encoded_dat_file_size: encoded_size,
                 data_shards,
-                &shard_dirs,
-                LARGE,
-                SMALL,
-            )
+                shard_dirs: Some(&shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })
             .unwrap();
             let path = format!("{}/1.dat", out);
             let decoded = std::fs::read(&path).unwrap();
@@ -678,17 +836,131 @@ mod tests {
         assert_ne!(&original[..(large_row_size / 2) as usize], &control[..]);
 
         // the live extent can never exceed the encode-time size
-        assert!(write_dat_file(
-            out,
-            "",
-            VolumeId(1),
-            dat_size + 1,
-            dat_size,
-            data_shards,
-            &shard_dirs,
-            LARGE,
-            SMALL,
-        )
-        .is_err());
+        assert!(
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: dat_size + 1,
+                encoded_dat_file_size: dat_size,
+                data_shards,
+                shard_dirs: Some(&shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })
+            .is_err()
+        );
+    }
+
+    /// A journal many chunks long that repeats a few ids reads back as those
+    /// ids, from each dir once, whatever its length.
+    #[test]
+    fn test_read_ecj_deletions_collects_distinct_ids_across_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        let missing = tmp.path().join("missing");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&idx).unwrap();
+        let (data, idx, missing) = (
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            missing.to_str().unwrap(),
+        );
+
+        let entry = |id: u64| {
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            NeedleId(id).to_bytes(&mut buf);
+            buf
+        };
+        // Past two load chunks of three repeating ids, then an id only in the
+        // last chunk and a torn trailing record.
+        let mut ecj = Vec::new();
+        while ecj.len() <= 2 * (1 << 20) {
+            for id in [1, 2, 3] {
+                ecj.extend_from_slice(&entry(id));
+            }
+        }
+        ecj.extend_from_slice(&entry(7));
+        ecj.extend_from_slice(&entry(8)[..3]);
+        std::fs::write(format!("{idx}/1.ecj"), &ecj).unwrap();
+        std::fs::write(format!("{data}/1.ecj"), entry(9)).unwrap();
+
+        let ids = read_ecj_deletions(&[data, idx, idx, missing], "", VolumeId(1)).unwrap();
+        let expected: HashSet<NeedleId> = [1, 2, 3, 7, 9].into_iter().map(NeedleId).collect();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn test_verify_decoded_dat_file_rejects_a_short_dat() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_path = format!("{dir}/1.dat");
+
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        std::fs::write(&dat_path, vec![0u8; 99]).unwrap();
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert!(err.to_string().contains("short of the 100"), "{err}");
+
+        std::fs::write(&dat_path, vec![0u8; 100]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+        std::fs::write(&dat_path, vec![0u8; 101]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+    }
+
+    /// Ids appended after the first read, including the rest of a record torn
+    /// at that point, are picked up; a journal that shrank is read again.
+    #[test]
+    fn test_ecj_deletions_catch_up_reads_appended_ids() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ecj_path = format!("{dir}/1.ecj");
+        let entry = |id: u64| {
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            NeedleId(id).to_bytes(&mut buf);
+            buf
+        };
+        let append = |bytes: &[u8]| {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&ecj_path)
+                .unwrap();
+            f.write_all(bytes).unwrap();
+        };
+        let ids = |d: &EcjDeletions| {
+            let mut ids: Vec<u64> = d.ids.iter().map(|id| id.0).collect();
+            ids.sort();
+            ids
+        };
+
+        // No journal yet.
+        let mut deletions = EcjDeletions::read(&[dir, dir], "", VolumeId(1)).unwrap();
+        assert!(deletions.ids.is_empty());
+
+        append(&entry(1));
+        append(&entry(2)[..3]);
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1]);
+
+        append(&entry(2)[3..]);
+        append(&entry(3));
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1, 2, 3]);
+
+        // A shrunk journal is rebuilt from its surviving content: ids folded
+        // in from the truncated tail may have been rolled back and must not
+        // linger as phantom tombstones.
+        std::fs::write(&ecj_path, entry(9)).unwrap();
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [9]);
+
+        // A journal removed since it was read is the extreme shrink: its
+        // earlier ids must go with it, not linger.
+        std::fs::remove_file(&ecj_path).unwrap();
+        deletions.catch_up().unwrap();
+        assert!(deletions.ids.is_empty());
     }
 }

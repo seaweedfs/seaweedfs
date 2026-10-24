@@ -3,12 +3,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustls::client::danger::HandshakeSignatureValid;
-use rustls::crypto::aws_lc_rs;
 use rustls::crypto::CryptoProvider;
+use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::UnixTime;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::WebPkiClientVerifier;
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{
     CipherSuite, DigitallySignedStruct, DistinguishedName, RootCertStore, ServerConfig,
     SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion,
@@ -120,10 +120,11 @@ impl ClientCertVerifier for CommonNameVerifier {
 
 // aws-lc-rs and ring both get linked transitively, so rustls can't auto-select
 // a provider and tonic's client TLS panics on first use. Pin the default to
-// aws-lc-rs, matching the server config. Idempotent.
-pub fn install_default_crypto_provider() {
-    let _ = aws_lc_rs::default_provider().install_default();
-}
+// aws-lc-rs, matching the server config. Idempotent. The body lives in
+// seaweed-common so this binary and the Rust plugin workers cannot end up
+// installing different providers; re-exported here so callers keep their
+// import path.
+pub use seaweed_common::tls::install_default_crypto_provider;
 
 pub fn build_rustls_server_config(
     cert_path: &str,
@@ -376,7 +377,7 @@ fn go_tls_version_for_supported(version: &SupportedProtocolVersion) -> GoTlsVers
 
 #[cfg(test)]
 mod tests {
-    use super::{build_supported_versions, common_name_is_allowed, parse_cipher_suites, TlsPolicy};
+    use super::{TlsPolicy, build_supported_versions, common_name_is_allowed, parse_cipher_suites};
     use rustls::crypto::aws_lc_rs;
     use std::collections::HashSet;
 

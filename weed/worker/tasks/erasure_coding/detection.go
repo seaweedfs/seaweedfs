@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
+	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -68,7 +69,10 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		glog.Warningf("EC Detection: replica placement data-center digit (%d) is ignored for EC; only rack/node digits are honored", replicaPlacement.DiffDataCenterCount)
 	}
 
-	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	if err != nil {
+		return nil, false, err
+	}
 
 	// Cluster node count for the min-node safety gate (mirrors the shell ec.encode
 	// guard that refuses to encode when nodes < parity shards, so shards cannot be
@@ -186,7 +190,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		}
 
 		// Check collection filter if specified
-		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
+		if !allowedCollections.Matches(metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}
@@ -481,9 +485,13 @@ func buildNodeAddressMap(at *topology.ActiveTopology) map[string]string {
 // in the same detection cycle see the reduced capacity. Rebuilding it per volume
 // is O(volumes × topology) and times out on large clusters.
 //
-// Encode is lenient (PlaceDurabilityFirst): it relaxes caps/anti-affinity/RP as
-// needed rather than fail, and prefers the source disk type but spills if that
-// type can't hold every shard. rp is the resolved replica placement (may be nil).
+// Encode is lenient (PlaceDurabilityFirst): it relaxes caps/anti-affinity/RP and,
+// last, the total-shards-per-rack cap as needed, failing only when no eligible
+// disk has room. ecConfig.StrictPlacement instead fails the volume's planning
+// when the constraints cannot be satisfied (PlaceStrict), so a volume is only
+// encoded while its configured resilience is preserved. The task prefers the
+// source disk type but spills if that type can't hold every shard. rp is the
+// resolved replica placement (may be nil).
 func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]string, metric *types.VolumeHealthMetrics, ecConfig *Config, rp *super_block.ReplicaPlacement, dataShards, parityShards int) (*topology.MultiDestinationPlan, [][]uint32, error) {
 	if snap == nil {
 		return nil, nil, fmt.Errorf("EC placement snapshot not available")
@@ -506,13 +514,18 @@ func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]stri
 	for i := range need {
 		need[i] = i
 	}
+	mode := ecbalancer.PlaceDurabilityFirst
+	if ecConfig.StrictPlacement {
+		mode = ecbalancer.PlaceStrict
+	}
 	res, err := snap.Place(metric.VolumeID, metric.Collection, need, ecbalancer.Constraints{
-		DiskType:         metric.DiskType,
-		DiskTypePolicy:   ecbalancer.DiskTypePrefer,
-		PreferredTags:    ecConfig.PreferredTags,
-		ReplicaPlacement: rp,
-		Ratio:            func(string) (int, int) { return dataShards, parityShards },
-	}, ecbalancer.PlaceDurabilityFirst)
+		DiskType:          metric.DiskType,
+		DiskTypePolicy:    ecbalancer.DiskTypePrefer,
+		PreferredTags:     ecConfig.PreferredTags,
+		ReplicaPlacement:  rp,
+		Ratio:             func(string) (int, int) { return dataShards, parityShards },
+		FreeSlotsDeadband: ecConfig.FreeSlotsDeadband,
+	}, mode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -525,8 +538,8 @@ func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]stri
 	if len(res.Relaxed) > 0 {
 		// Encode is best-effort (PlaceDurabilityFirst): it relaxes these constraints
 		// rather than defer when the cluster can't satisfy them. Surface it so a tight
-		// replica placement isn't silently weakened; rebalancing tightens the spread.
-		glog.Warningf("EC volume %d: placed with relaxed constraints %v; replica placement not fully satisfied (rebalancing will adjust)", metric.VolumeID, res.Relaxed)
+		// replica placement or rack spread isn't silently weakened.
+		glog.Warningf("EC volume %d: placed with relaxed placement constraints %v", metric.VolumeID, res.Relaxed)
 	}
 
 	// Group the per-shard destinations into one plan per (node,disk), iterating
@@ -757,50 +770,12 @@ func cleanupOrphanSourceReplicas(ctx context.Context, clusterInfo *types.Cluster
 	return deleted, nil
 }
 
-// countExistingEcShardsForVolume returns the number of distinct EC shard IDs
-// for (volumeID, collection) present in the topology, counting only the single
-// largest encode generation. Shards are grouped by encode_ts_ns (the per-encode
-// identity from .vif), so two interrupted encode runs whose shard sets overlap
-// are never unioned into a false-complete set that would wrongly trigger the
-// orphaned-source delete. Walks every disk's EcIndexBits bitmap rather than
-// trusting len(EcShardInfos), because a single info entry can carry multiple
-// shards. Shards reporting encode_ts_ns==0 (pre-upgrade servers) form their own
-// generation bucket.
-//
-// Limitation: the heartbeat carries one encode_ts_ns per (volume, disk), so this
-// separates generations living on different disks; same-disk mixing is prevented
-// upstream by the pre-encode artifact wipe and the cross-run read guard.
+// countExistingEcShardsForVolume counts (volumeID, collection) EC shards in the
+// topology, counting only the single largest encode generation; see
+// ec.CountExistingEcShardsForVolume for the generation semantics.
 func countExistingEcShardsForVolume(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) int {
 	if activeTopology == nil {
 		return 0
 	}
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return 0
-	}
-	perGeneration := make(map[int64]erasure_coding.ShardBits)
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, node := range rack.DataNodeInfos {
-				for _, diskInfo := range node.DiskInfos {
-					for _, ecShardInfo := range diskInfo.EcShardInfos {
-						if ecShardInfo == nil {
-							continue
-						}
-						if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
-							continue
-						}
-						perGeneration[ecShardInfo.EncodeTsNs] |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-					}
-				}
-			}
-		}
-	}
-	best := 0
-	for _, bits := range perGeneration {
-		if c := bits.Count(); c > best {
-			best = c
-		}
-	}
-	return best
+	return ec.CountExistingEcShardsForVolume(activeTopology.GetTopologyInfo(), volumeID, collection)
 }

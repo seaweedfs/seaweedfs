@@ -3,9 +3,11 @@ package s3err
 import (
 	"bytes"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
@@ -18,6 +20,8 @@ type mimeType string
 const (
 	mimeNone mimeType = ""
 	MimeXML  mimeType = "application/xml"
+
+	errorResponseBodyDrainTimeout = 30 * time.Second
 )
 
 func WriteAwsXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, result interface{}) {
@@ -62,8 +66,20 @@ func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, error
 	if message != "" {
 		errorResponse.Message = message
 	}
+	drainRequestBody(w, r)
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
+}
+
+func drainRequestBody(w http.ResponseWriter, r *http.Request) {
+	if r == nil || r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(time.Now().Add(errorResponseBodyDrainTimeout)); err == nil {
+		defer rc.SetReadDeadline(time.Time{})
+	}
+	_, _ = io.Copy(io.Discard, r.Body)
 }
 
 func getRESTErrorResponse(err APIError, resource string, bucket, object, requestID string) RESTErrorResponse {
@@ -121,16 +137,30 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
+}
+
 func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, response []byte, mType mimeType) {
 	setCommonHeaders(w, r)
-	if response != nil {
+	canHaveBody := bodyAllowedForStatus(statusCode)
+	if response != nil && canHaveBody {
 		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
 	}
 	if mType != mimeNone {
 		w.Header().Set("Content-Type", string(mType))
 	}
 	w.WriteHeader(statusCode)
-	if response != nil {
+	if response != nil && canHaveBody && r.Method != http.MethodHead {
 		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {

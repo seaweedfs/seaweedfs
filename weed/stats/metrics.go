@@ -101,6 +101,22 @@ var (
 			Help:      "admin lock",
 		}, []string{"client"})
 
+	MasterVolumeGrowthFrozen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "volume_growth_frozen",
+			Help:      "1 while volume growth is frozen after detected master state loss",
+		})
+
+	MasterDuplicateVolumeIds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "duplicate_volume_ids",
+			Help:      "volume id registered under two different layouts",
+		}, []string{"collection", "volumeId"})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -242,6 +258,14 @@ var (
 			Help:      "Times a metadata subscriber moved past a log range without proof it was persisted: scope=aggregated means a peer may not have flushed it, scope=local means this filer's own log flush was wedged past the give-up bound.",
 		}, []string{"scope"})
 
+	FilerSubscribeWatermarkHolds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_watermark_holds",
+			Help:      "Times an aggregated metadata read stopped at an entry newer than the peers' low-watermark and waited for a peer to report further progress: scope=memory held at the delivery watermark, scope=disk at the flush watermark.",
+		}, []string{"scope"})
+
 	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -249,6 +273,14 @@ var (
 			Name:      "subscribe_gap_stalled",
 			Help:      "Number of metadata subscribers currently parked waiting to read past a gap in the metadata log.",
 		}, []string{"scope"})
+
+	FilerMetaAggregatorReplayFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "meta_aggregator_replay_failures",
+			Help:      "Number of peer metadata events skipped after replay retries were exhausted, leaving that entry diverged from the peer.",
+		}, []string{"peer"})
 
 	// Sampled only on first creation, so counts track distinct objects.
 	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
@@ -283,6 +315,78 @@ var (
 			Subsystem: subsystemFilerSync,
 			Name:      "sync_offset",
 			Help:      "The offset of the filer synchronization service.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncEventsReceivedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_received_total",
+			Help:      "Counter of metadata events read off the source subscription stream.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncEventsProcessedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_processed_total",
+			Help:      "Counter of metadata events successfully replicated to the target.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncEventsFailedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_failed_total",
+			Help:      "Counter of metadata events that failed after retries; the sync offset is held at the oldest failure so it is replayed on restart.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncInFlightJobsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "in_flight_jobs",
+			Help:      "Number of sync jobs currently being replicated; pinned at the concurrency limit means the sync itself is the bottleneck.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncReceivedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "received_bytes_total",
+			Help:      "Counter of chunk data bytes carried by received events: new chunks the old entry does not already have, so deletes, renames, and attribute-only updates count zero.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncProcessedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "processed_bytes_total",
+			Help:      "Counter of chunk data bytes carried by successfully replicated events.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncFailedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "failed_bytes_total",
+			Help:      "Counter of chunk data bytes carried by events that failed after retries.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncInFlightBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "in_flight_bytes",
+			Help:      "Chunk data bytes carried by the jobs currently being replicated; distinguishes workers stuck on a few large files from many small ones.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncLagSecondsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "lag_seconds",
+			Help:      "How far the replicated watermark trails the source filer, in seconds.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
 	VolumeServerStartTimeSeconds = prometheus.NewGauge(
@@ -398,6 +502,22 @@ var (
 			Name:      "disk_error_status",
 			Help:      "Disk error status",
 		}, []string{"name", "type"})
+
+	VolumeServerStorageIoErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "storage_io_error_total",
+			Help:      "Counter of storage read/write EIO errors on volumes and EC shards.",
+		})
+
+	VolumeServerIoQuarantineGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "io_quarantine",
+			Help:      "Number of volumes or EC shards quarantined due to storage IO errors.",
+		}, []string{"kind"})
 
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -685,6 +805,14 @@ var (
 			Help:      "Remote-mount object read attempts by source, bucket and cache result. A cold object retried before caching completes records a miss per attempt; paths outside the buckets folder use bucket \"_other\".",
 		}, []string{"source", "bucket", "result"})
 
+	RemoteCacheEvictedCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "cache_evicted_total",
+			Help:      "Remote-mounted objects whose local chunks were evicted under disk pressure.",
+		})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -879,6 +1007,8 @@ func init() {
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
+	Gather.MustRegister(MasterVolumeGrowthFrozen)
+	Gather.MustRegister(MasterDuplicateVolumeIds)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
@@ -896,9 +1026,20 @@ func init() {
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
+	Gather.MustRegister(FilerSyncEventsReceivedCounter)
+	Gather.MustRegister(FilerSyncEventsProcessedCounter)
+	Gather.MustRegister(FilerSyncEventsFailedCounter)
+	Gather.MustRegister(FilerSyncInFlightJobsGauge)
+	Gather.MustRegister(FilerSyncLagSecondsGauge)
+	Gather.MustRegister(FilerSyncReceivedBytesCounter)
+	Gather.MustRegister(FilerSyncProcessedBytesCounter)
+	Gather.MustRegister(FilerSyncFailedBytesCounter)
+	Gather.MustRegister(FilerSyncInFlightBytesGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
+	Gather.MustRegister(FilerSubscribeWatermarkHolds)
+	Gather.MustRegister(FilerMetaAggregatorReplayFailures)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -917,6 +1058,8 @@ func init() {
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
 	Gather.MustRegister(VolumeServerDiskErrorGauge)
+	Gather.MustRegister(VolumeServerStorageIoErrorCounter)
+	Gather.MustRegister(VolumeServerIoQuarantineGauge)
 	Gather.MustRegister(VolumeServerConcurrentDownloadLimit)
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)
@@ -955,6 +1098,7 @@ func init() {
 	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(RemoteCacheReadCounter)
+	Gather.MustRegister(RemoteCacheEvictedCounter)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
@@ -1081,6 +1225,16 @@ func DeleteCollectionMetrics(collection string) {
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete collection metrics, %s: %d", collection, c)
+}
+
+// DeleteVolumeServerCollectionMetrics drops a collection's volume server series
+// once its last volume leaves this server. These gauges are only ever set for
+// collections still present, so the values from the heartbeat that saw the last
+// volume would otherwise stand until the process restarts.
+func DeleteVolumeServerCollectionMetrics(collection string) {
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "deleted_bytes")
+	VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(prometheus.Labels{"collection": collection})
 }
 
 func bucketMetricTTLControl() {

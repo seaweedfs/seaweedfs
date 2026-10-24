@@ -175,9 +175,34 @@ func TestRenameOverExisting(t *testing.T) {
 	if string(got) != "new" {
 		t.Fatalf("target holds %q, want the source content", got)
 	}
-	if _, err := os.Stat(src); !os.IsNotExist(err) {
-		t.Fatal("source survived the rename")
+	if fi, err := os.Stat(src); !os.IsNotExist(err) {
+		// Both a stale positive and a transient non-ENOENT error land here, and
+		// they indict different layers; a second look says whether it persists.
+		time.Sleep(200 * time.Millisecond)
+		fi2, err2 := os.Stat(src)
+		// A listing reads no per-path cache and the mount's own forgets
+		// within a second, so a name that survives both is back on the filer.
+		listed := dirNames(t, dir)
+		time.Sleep(2 * time.Second)
+		_, errLater := os.Stat(src)
+		t.Fatalf("stat of the renamed-away source did not return not-exist: stat=%v err=%v; 200ms later stat=%v err=%v; past the path cache err=%v; %s lists %v",
+			describeFileInfo(fi), err, describeFileInfo(fi2), err2, errLater, dir, listed)
 	}
+}
+
+// dirNames lists a directory for a failure message, reporting the error in
+// place of the names rather than failing a test that is already failing.
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{"readdir: " + err.Error()}
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 func TestRenameAcrossDirectories(t *testing.T) {
@@ -514,4 +539,11 @@ func TestDeleteOnClose(t *testing.T) {
 	if err := closeHandle(h); err != nil {
 		t.Fatalf("close after recreate: %v", err)
 	}
+}
+
+func describeFileInfo(fi os.FileInfo) string {
+	if fi == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("{size=%d mode=%v mtime=%s}", fi.Size(), fi.Mode(), fi.ModTime().Format(time.RFC3339Nano))
 }

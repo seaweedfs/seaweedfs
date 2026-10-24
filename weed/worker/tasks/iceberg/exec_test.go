@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,7 @@ type fakeFilerServer struct {
 	mu           sync.Mutex
 	entries      map[string]map[string]*filer_pb.Entry // dir → name → entry
 	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest) error
+	beforeLookup func(*fakeFilerServer, *filer_pb.LookupDirectoryEntryRequest)
 
 	// Set by enableAssign to serve AssignVolume against a fake volume server.
 	assignVolumeServer string
@@ -93,6 +95,13 @@ func (f *fakeFilerServer) listDir(dir string) []*filer_pb.Entry {
 }
 
 func (f *fakeFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	beforeLookup := f.beforeLookup
+	f.mu.Unlock()
+	if beforeLookup != nil {
+		beforeLookup(f, req)
+	}
+
 	entry := f.getEntry(req.Directory, req.Name)
 	if entry == nil {
 		return nil, status.Errorf(codes.NotFound, "entry not found: %s/%s", req.Directory, req.Name)
@@ -287,6 +296,16 @@ type tableSetup struct {
 	// that created it would record the table's running totals.
 	SnapshotSummary map[string]string
 	Snapshots       []table.Snapshot
+	// Refs are branches and tags beyond main, which always points at the last
+	// snapshot.
+	Refs map[string]table.SnapshotRef
+	// Age backdates the whole table so its snapshots can sit outside a
+	// retention window.
+	Age time.Duration
+	// Schema and Spec describe the table when the default unpartitioned test
+	// table does not fit.
+	Schema *iceberg.Schema
+	Spec   *iceberg.PartitionSpec
 }
 
 func (ts tableSetup) tablePath() string {
@@ -314,7 +333,7 @@ func (ts tableSetup) fileRef(elem ...string) string {
 func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Metadata {
 	t.Helper()
 
-	meta := buildTestMetadata(t, setup.Snapshots)
+	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age, nil, setup.Schema, setup.Spec)
 	fullMetadataJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
@@ -557,10 +576,10 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0, // expire everything eligible
-		MaxSnapshotsToKeep:     1, // keep only 1
-		MaxCommitRetries:       3,
-		Operations:             "expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(0), // expire everything eligible
+		MaxSnapshotsToKeep:  1,            // keep only 1
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -582,6 +601,244 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 	}
 }
 
+func TestExpireSnapshotsKeepsTaggedSnapshot(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+
+	remaining := map[int64]bool{}
+	for _, snap := range state.Metadata.Snapshots() {
+		remaining[snap.SnapshotID] = true
+	}
+	if !remaining[1] {
+		t.Error("tagged snapshot 1 was expired")
+	}
+	if remaining[2] {
+		t.Error("expected untagged snapshot 2 to be expired")
+	}
+
+	var tagged bool
+	for name, ref := range state.Metadata.Refs() {
+		if name == "release" {
+			tagged = true
+			if ref.SnapshotID != 1 {
+				t.Errorf("tag release points at snapshot %d, want 1", ref.SnapshotID)
+			}
+		}
+	}
+	if !tagged {
+		t.Error("tag release was dropped from the metadata")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.dataPath(), "metadata")
+	if fs.getEntry(metaDir, "snap-1.avro") == nil {
+		t.Error("manifest list of the tagged snapshot was deleted")
+	}
+	if fs.getEntry(metaDir, "snap-2.avro") != nil {
+		t.Error("expected the expired snapshot's manifest list to be deleted")
+	}
+}
+
+func TestExpireSnapshotsHonorsBranchRetention(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	// The branch chain is 1 <- 2 <- 3, with main on 4. Backdating the table by
+	// Age gives every snapshot a real age; the ten-second spacing keeps them
+	// distinct and stays inside what iceberg-go accepts at build time.
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	stepMs := int64(10 * time.Second / time.Millisecond)
+	first, second := int64(1), int64(2)
+	minKeep := 2
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + stepMs, ManifestList: "metadata/snap-2.avro", ParentSnapshotID: &first, SequenceNumber: 2},
+			{SnapshotID: 3, TimestampMs: now + 2*stepMs, ManifestList: "metadata/snap-3.avro", ParentSnapshotID: &second, SequenceNumber: 3},
+			{SnapshotID: 4, TimestampMs: now + 3*stepMs, ManifestList: "metadata/snap-4.avro", SequenceNumber: 4},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"audit": {SnapshotID: 3, SnapshotRefType: table.BranchRef, MinSnapshotsToKeep: &minKeep},
+		},
+		Age: 5 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	// min-snapshots-to-keep=2 reaches from the branch head back to its parent,
+	// and stops there: the grandparent is past the count and expires.
+	assertSnapshots(t, client, setup, []int64{2, 3, 4}, []int64{1})
+}
+
+func TestExpireSnapshotsHonorsBranchMaxSnapshotAge(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	stepMs := int64(10 * time.Second / time.Millisecond)
+	first, second := int64(1), int64(2)
+	// Between the branch head's parent (5h20s) and its grandparent (5h30s), so
+	// the window has to reach past the head to be observable.
+	maxAgeMs := int64(5*time.Hour/time.Millisecond) + 25*1000
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + stepMs, ManifestList: "metadata/snap-2.avro", ParentSnapshotID: &first, SequenceNumber: 2},
+			{SnapshotID: 3, TimestampMs: now + 2*stepMs, ManifestList: "metadata/snap-3.avro", ParentSnapshotID: &second, SequenceNumber: 3},
+			{SnapshotID: 4, TimestampMs: now + 3*stepMs, ManifestList: "metadata/snap-4.avro", SequenceNumber: 4},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"audit": {SnapshotID: 3, SnapshotRefType: table.BranchRef, MaxSnapshotAgeMs: &maxAgeMs},
+		},
+		Age: 5 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	// The window reaches from the branch head back over its parent but stops
+	// short of the grandparent.
+	assertSnapshots(t, client, setup, []int64{2, 3, 4}, []int64{1})
+}
+
+// assertSnapshots reloads the table and checks exactly which snapshots survived.
+func assertSnapshots(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup, want, gone []int64) {
+	t.Helper()
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+	remaining := map[int64]bool{}
+	for _, snap := range state.Metadata.Snapshots() {
+		remaining[snap.SnapshotID] = true
+	}
+	for _, id := range want {
+		if !remaining[id] {
+			t.Errorf("snapshot %d was expired, want kept", id)
+		}
+	}
+	for _, id := range gone {
+		if remaining[id] {
+			t.Errorf("snapshot %d survived, want expired", id)
+		}
+	}
+}
+
+// A tag created between planning and commit pins a snapshot the plan was going
+// to expire. The head has not moved, so only a refs check can catch it.
+func TestExpireSnapshotsRejectsPlanWhenARefAppears(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+		},
+		Age: 200 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	// Re-publish the table with a tag on snapshot 1 while the commit is
+	// re-reading it, which is the window the guard closes.
+	tagged := setup
+	tagged.Refs = map[string]table.SnapshotRef{
+		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+	}
+	lookups := 0
+	fs.beforeLookup = func(f *fakeFilerServer, req *filer_pb.LookupDirectoryEntryRequest) {
+		if req.Name != setup.TableName {
+			return
+		}
+		lookups++
+		if lookups == 2 {
+			populateTable(t, f, tagged)
+		}
+	}
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    1,
+		Operations:          "expire_snapshots",
+	}
+
+	_, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err == nil {
+		t.Fatal("expireSnapshots() error = nil, want the plan rejected as stale")
+	}
+	if !errors.Is(err, errStalePlan) {
+		t.Fatalf("expireSnapshots() error = %v, want errStalePlan", err)
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.dataPath(), "metadata")
+	if fs.getEntry(metaDir, "snap-1.avro") == nil {
+		t.Error("the newly tagged snapshot's manifest list was deleted")
+	}
+}
+
 func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -598,9 +855,9 @@ func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     10,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  10,
+		MaxCommitRetries:    3,
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -639,10 +896,10 @@ func TestMaintenanceOnExternalTableLocation(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
-		Operations:             "expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -871,9 +1128,10 @@ func TestRemoveOrphansPreservesReferencedFiles(t *testing.T) {
 	}
 }
 
-// DuckDB writes manifest lists carrying no Iceberg header metadata, which
-// iceberg-go reads as v1 and then rejects every v2 manifest listed in them,
-// failing all three maintenance operations before they touch anything.
+// DuckDB writes manifest lists carrying no Iceberg header metadata. iceberg-go
+// now infers the format version from the embedded writer schema, so a stripped
+// v2 list is read as v2 and maintenance operations proceed normally. This used
+// to fail because iceberg-go fell back to v1 and rejected every v2 manifest.
 func TestMaintenanceOnManifestListWithoutFormatVersion(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -929,14 +1187,14 @@ func dropManifestListFormatVersion(t *testing.T, fs *fakeFilerServer, dir, name 
 		Content:    patched,
 	})
 
-	// Confirm the fixture reproduces the report: with the entry gone,
-	// iceberg-go alone falls back to v1 and mislabels the v2 manifests.
+	// Confirm the fixture: with the entry gone, iceberg-go infers v2 from
+	// the embedded writer schema (content / sequence_number are v2 fields).
 	manifests, err := iceberg.ReadManifestList(bytes.NewReader(patched))
 	if err != nil {
 		t.Fatalf("read patched manifest list: %v", err)
 	}
-	if got := manifests[0].Version(); got != 1 {
-		t.Fatalf("patched manifest list still reports v%d", got)
+	if got := manifests[0].Version(); got != 2 {
+		t.Fatalf("patched manifest list reports v%d, want v2", got)
 	}
 }
 
@@ -1239,15 +1497,16 @@ func TestDetectWithFakeFiler(t *testing.T) {
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 		},
+		Age: 200 * time.Hour, // past the default 7-day retention
 	}
 	populateTable(t, fs, setup)
 
 	handler := NewHandler(nil)
 
 	config := Config{
-		SnapshotRetentionHours: 0, // everything is expired
-		MaxSnapshotsToKeep:     2, // 3 > 2, needs maintenance
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0), // everything is expired
+		MaxSnapshotsToKeep:  2,            // 3 > 2, needs maintenance
+		MaxCommitRetries:    3,
 	}
 
 	tables, err := handler.scanTablesForMaintenance(
@@ -1286,6 +1545,7 @@ func TestDetectWithFilters(t *testing.T) {
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 		},
+		Age: 200 * time.Hour,
 	}
 	setup2 := tableSetup{
 		BucketName: "bucket-b",
@@ -1296,15 +1556,16 @@ func TestDetectWithFilters(t *testing.T) {
 			{SnapshotID: 5, TimestampMs: now + 4, ManifestList: "metadata/snap-5.avro"},
 			{SnapshotID: 6, TimestampMs: now + 5, ManifestList: "metadata/snap-6.avro"},
 		},
+		Age: 200 * time.Hour,
 	}
 	populateTable(t, fs, setup1)
 	populateTable(t, fs, setup2)
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     2,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  2,
+		MaxCommitRetries:    3,
 	}
 
 	// Without filter: should find both
@@ -1390,11 +1651,11 @@ func TestDetectSchedulesCompactionWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		TargetFileSizeBytes:    4096,
-		MinInputFiles:          2,
-		Operations:             "compact",
+		SnapshotRetentionMs: hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:  10,
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1495,11 +1756,11 @@ func TestDetectSchedulesCompactionWithDeleteManifestPresent(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		TargetFileSizeBytes:    4096,
-		MinInputFiles:          2,
-		Operations:             "compact",
+		SnapshotRetentionMs: hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:  10,
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1523,6 +1784,7 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro", SequenceNumber: 2},
 		},
+		Age: 400 * 24 * time.Hour, // past the year-long retention below
 	}
 	populateTable(t, fs, setup)
 
@@ -1542,9 +1804,9 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention so age doesn't trigger
-		MaxSnapshotsToKeep:     1,        // 2 snapshots > 1 triggers expiry
-		Operations:             "compact,expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention so age doesn't trigger
+		MaxSnapshotsToKeep:  1,                   // 2 snapshots > 1 triggers expiry
+		Operations:          "compact,expire_snapshots",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1580,10 +1842,10 @@ func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		MinManifestsToRewrite:  5,
-		Operations:             "rewrite_manifests",
+		SnapshotRetentionMs:   hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:    10,
+		MinManifestsToRewrite: 5,
+		Operations:            "rewrite_manifests",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -2029,10 +2291,10 @@ func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		MinManifestsToRewrite:  2,
-		Operations:             "rewrite_manifests",
+		SnapshotRetentionMs:   hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:    10,
+		MinManifestsToRewrite: 2,
+		Operations:            "rewrite_manifests",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -2070,10 +2332,10 @@ func TestDetectSchedulesOrphanCleanupWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		OrphanOlderThanHours:   72,
-		Operations:             "remove_orphans",
+		SnapshotRetentionMs:  hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:   10,
+		OrphanOlderThanHours: 72,
+		Operations:           "remove_orphans",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -2267,37 +2529,55 @@ func cloneEntryForTest(t *testing.T, entry *filer_pb.Entry) *filer_pb.Entry {
 }
 
 // ---------------------------------------------------------------------------
-// Avro manifest content patching for tests
+// Delete manifest writing for tests
 // ---------------------------------------------------------------------------
 
-// patchManifestContentToDeletes performs a binary patch on an Avro manifest
-// file to change the "content" metadata value from "data" to "deletes".
-// This workaround is needed because iceberg-go's WriteManifest API always
-// sets content="data" and provides no way to create delete manifests.
-// The function validates the pattern was found (bytes.Equal check) and fails
-// fast if not, so breakage from encoding changes is caught immediately.
-//
-// In Avro OCF encoding, strings are stored as zigzag-encoded length + bytes.
-// "content" (7 chars) = \x0e + "content", "data" (4 chars) = \x08 + "data",
-// "deletes" (7 chars) = \x0e + "deletes".
-func patchManifestContentToDeletes(t *testing.T, manifestBytes []byte) []byte {
+// writeDeleteManifestForTest writes a delete-content manifest for the given
+// entries and returns its ManifestFile along with the serialized bytes.
+// iceberg-go validates that delete entries only land in delete manifests, so
+// the manifest must be written with NewManifestWriter configured with
+// ManifestContentDeletes rather than WriteManifest.
+func writeDeleteManifestForTest(
+	t *testing.T,
+	manifestPath string,
+	version int,
+	spec iceberg.PartitionSpec,
+	schema *iceberg.Schema,
+	snapshotID int64,
+	entries []iceberg.ManifestEntry,
+) (iceberg.ManifestFile, []byte) {
 	t.Helper()
 
-	// Pattern: zigzag(7)="content" zigzag(4)="data"
-	old := append([]byte{0x0e}, []byte("content")...)
-	old = append(old, 0x08)
-	old = append(old, []byte("data")...)
-
-	// Replacement: zigzag(7)="content" zigzag(7)="deletes"
-	new := append([]byte{0x0e}, []byte("content")...)
-	new = append(new, 0x0e)
-	new = append(new, []byte("deletes")...)
-
-	result := bytes.Replace(manifestBytes, old, new, 1)
-	if bytes.Equal(result, manifestBytes) {
-		t.Fatal("patchManifestContentToDeletes: pattern not found in manifest bytes")
+	var buf bytes.Buffer
+	w, err := iceberg.NewManifestWriter(version, &buf, spec, schema, snapshotID,
+		iceberg.WithManifestWriterContent(iceberg.ManifestContentDeletes))
+	if err != nil {
+		t.Fatalf("create delete manifest writer: %v", err)
 	}
-	return result
+	for _, entry := range entries {
+		var addErr error
+		switch entry.Status() {
+		case iceberg.EntryStatusADDED:
+			addErr = w.Add(entry)
+		case iceberg.EntryStatusEXISTING:
+			addErr = w.Existing(entry)
+		case iceberg.EntryStatusDELETED:
+			addErr = w.Delete(entry)
+		default:
+			addErr = fmt.Errorf("unexpected manifest entry status: %v", entry.Status())
+		}
+		if addErr != nil {
+			t.Fatalf("add delete manifest entry: %v", addErr)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close delete manifest writer: %v", err)
+	}
+	mf, err := w.ToManifestFile(manifestPath, int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("finalize delete manifest: %v", err)
+	}
+	return mf, buf.Bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -2468,25 +2748,13 @@ func populateTableWithDeleteFilesAndSortOrder(
 			posDeleteEntries = append(posDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
 		}
 
-		// WriteManifest always sets content="data", so we patch the Avro
-		// metadata to "deletes" and build a ManifestFile with the right content type.
-		var posManifestBuf bytes.Buffer
 		posManifestName := "pos-delete-manifest-1.avro"
-		posManifestPath := setup.fileRef("metadata", posManifestName)
-		_, err := iceberg.WriteManifest(posManifestPath, &posManifestBuf, version, spec, schema, 1, posDeleteEntries)
-		if err != nil {
-			t.Fatalf("write pos delete manifest: %v", err)
-		}
-		patchedBytes := patchManifestContentToDeletes(t, posManifestBuf.Bytes())
+		posMf, posManifestBytes := writeDeleteManifestForTest(
+			t, setup.fileRef("metadata", posManifestName), version, spec, schema, 1, posDeleteEntries)
 		fs.putEntry(metaDir, posManifestName, &filer_pb.Entry{
-			Name: posManifestName, Content: patchedBytes,
-			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(patchedBytes))},
+			Name: posManifestName, Content: posManifestBytes,
+			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(posManifestBytes))},
 		})
-		posMf := iceberg.NewManifestFile(version, posManifestPath, int64(len(patchedBytes)), int32(spec.ID()), 1).
-			Content(iceberg.ManifestContentDeletes).
-			AddedFiles(int32(len(posDeleteEntries))).
-			AddedRows(int64(len(posDeleteFiles[0].Rows))).
-			Build()
 		allManifests = append(allManifests, posMf)
 	}
 
@@ -2521,23 +2789,13 @@ func populateTableWithDeleteFilesAndSortOrder(
 			eqDeleteEntries = append(eqDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
 		}
 
-		var eqManifestBuf bytes.Buffer
 		eqManifestName := "eq-delete-manifest-1.avro"
-		eqManifestPath := setup.fileRef("metadata", eqManifestName)
-		_, err := iceberg.WriteManifest(eqManifestPath, &eqManifestBuf, version, spec, schema, 1, eqDeleteEntries)
-		if err != nil {
-			t.Fatalf("write eq delete manifest: %v", err)
-		}
-		patchedBytes := patchManifestContentToDeletes(t, eqManifestBuf.Bytes())
+		eqMf, eqManifestBytes := writeDeleteManifestForTest(
+			t, setup.fileRef("metadata", eqManifestName), version, spec, schema, 1, eqDeleteEntries)
 		fs.putEntry(metaDir, eqManifestName, &filer_pb.Entry{
-			Name: eqManifestName, Content: patchedBytes,
-			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(patchedBytes))},
+			Name: eqManifestName, Content: eqManifestBytes,
+			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(eqManifestBytes))},
 		})
-		eqMf := iceberg.NewManifestFile(version, eqManifestPath, int64(len(patchedBytes)), int32(spec.ID()), 1).
-			Content(iceberg.ManifestContentDeletes).
-			AddedFiles(int32(len(eqDeleteEntries))).
-			AddedRows(int64(len(eqDeleteFiles[0].Rows))).
-			Build()
 		allManifests = append(allManifests, eqMf)
 	}
 
@@ -2681,21 +2939,12 @@ func rewriteDeleteManifestsAsMixed(
 	manifestName := "mixed-delete-manifest-1.avro"
 	manifestPath := path.Join("metadata", manifestName)
 
-	var manifestBuf bytes.Buffer
-	_, err = iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, state.Metadata.CurrentSchema(), 1, deleteEntries)
-	if err != nil {
-		t.Fatalf("write mixed delete manifest: %v", err)
-	}
-	mixedBytes := patchManifestContentToDeletes(t, manifestBuf.Bytes())
+	mixedManifest, mixedBytes := writeDeleteManifestForTest(
+		t, manifestPath, version, spec, state.Metadata.CurrentSchema(), 1, deleteEntries)
 	fs.putEntry(metaDir, manifestName, &filer_pb.Entry{
 		Name: manifestName, Content: mixedBytes,
 		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(mixedBytes))},
 	})
-
-	mixedManifest := iceberg.NewManifestFile(version, manifestPath, int64(len(mixedBytes)), int32(spec.ID()), 1).
-		Content(iceberg.ManifestContentDeletes).
-		AddedFiles(int32(len(deleteEntries))).
-		Build()
 
 	var manifestListBuf bytes.Buffer
 	seqNum := int64(1)
@@ -3043,9 +3292,9 @@ func TestExpireSnapshotsMetrics(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 
 	_, metrics, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -3082,9 +3331,9 @@ func TestExecuteCompletionOutputValues(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 
 	_, metrics, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -4184,5 +4433,440 @@ func TestResolveCompactionRewritePlanFallsBackForUnsupportedSortTransform(t *tes
 	}
 	if plan == nil || plan.strategy != defaultRewriteStrategy {
 		t.Fatalf("expected fallback to %q for unsupported transform, got %+v", defaultRewriteStrategy, plan)
+	}
+}
+
+// A writer may percent-escape a partition directory name ("part=1" becomes
+// "part%3D1") in the file paths it records in manifests, while the S3 layer
+// decodes the key before storing it. Orphan cleanup must match the decoded
+// spelling or it deletes live data files once they pass the age window.
+func TestRemoveOrphansKeepsPercentEscapedReferences(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	oldTime := time.Now().Add(-200 * time.Hour).Unix()
+
+	// Rewrite the manifest so its entries carry the escaped spelling the
+	// writer recorded.
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month_collected_at_1%%3D681/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(),
+		iceberg.EntryContentData,
+		escapedPath,
+		iceberg.ParquetFile,
+		map[int]any{},
+		nil, nil,
+		10,
+		4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: oldTime, FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	// The object lives at the decoded key, the same place the S3 PUT landed it.
+	fs.putEntry(dataDir, "month_collected_at_1=681", &filer_pb.Entry{
+		Name:        "month_collected_at_1=681",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: oldTime},
+	})
+	partDir := path.Join(dataDir, "month_collected_at_1=681")
+	fs.putEntry(partDir, "f.parquet", &filer_pb.Entry{
+		Name:       "f.parquet",
+		Attributes: &filer_pb.FuseAttributes{Mtime: oldTime, FileSize: 4096},
+		Content:    []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{OrphanOlderThanHours: 0, MaxCommitRetries: 3}
+
+	result, _, err := handler.removeOrphans(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("removeOrphans failed: %v", err)
+	}
+	if !strings.Contains(result, "removed 1 orphan") {
+		t.Errorf("expected only the unreferenced snap-1-data.parquet removed, got %q", result)
+	}
+	if fs.getEntry(partDir, "f.parquet") == nil {
+		t.Error("data file referenced through an escaped manifest path was deleted")
+	}
+}
+
+// The sibling of the orphan-sweep case on the read side: a manifest reference
+// carrying a percent-escaped segment must find the object the S3 layer stored
+// at the decoded key.
+func TestLookupFileByIcebergPathDecodesEscapedReference(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	dir := path.Join(s3tables.TablesPath, "bkt", "ns/tbl/data/part=1")
+	fs.putEntry(dir, "f.parquet", &filer_pb.Entry{
+		Name:    "f.parquet",
+		Content: []byte("data"),
+	})
+	literalDir := path.Join(s3tables.TablesPath, "bkt", "ns/tbl/data/part%3D2")
+	fs.putEntry(literalDir, "g.parquet", &filer_pb.Entry{
+		Name:    "g.parquet",
+		Content: []byte("data"),
+	})
+
+	entry, err := lookupFileByIcebergPath(context.Background(), client, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D1/f.parquet")
+	if err != nil {
+		t.Fatalf("escaped reference should resolve to the decoded key: %v", err)
+	}
+	if entry == nil || entry.Name != "f.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+
+	// A file genuinely stored under an escaped name still resolves verbatim.
+	entry, err = lookupFileByIcebergPath(context.Background(), client, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D2/g.parquet")
+	if err != nil {
+		t.Fatalf("literal escaped key should resolve: %v", err)
+	}
+	if entry == nil || entry.Name != "g.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+
+	// A real filer reports misses as filer_pb.ErrNotFound, not a gRPC NotFound
+	// status; the decoded retry must trigger on that shape too.
+	entry, err = lookupFileByIcebergPath(context.Background(), errNotFoundClient{client}, "bkt", "ns/tbl", "s3://bkt/ns/tbl/data/part%3D1/f.parquet")
+	if err != nil {
+		t.Fatalf("escaped reference should resolve under ErrNotFound misses: %v", err)
+	}
+	if entry == nil || entry.Name != "f.parquet" {
+		t.Fatalf("resolved to wrong entry: %+v", entry)
+	}
+}
+
+// errNotFoundClient converts gRPC NotFound misses into filer_pb.ErrNotFound,
+// the shape a real filer produces through filer_pb.LookupEntry.
+type errNotFoundClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+func (c errNotFoundClient) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	resp, err := c.SeaweedFilerClient.LookupDirectoryEntry(ctx, req, opts...)
+	if status.Code(err) == codes.NotFound {
+		return nil, filer_pb.ErrNotFound
+	}
+	return resp, err
+}
+
+func TestExpireSnapshotsDeletesEscapedReferenceAtExistingKey(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	// Snapshot 1 (expired) references a file the S3 layer stored at the decoded
+	// key; snapshot 2 (kept) does not reference it.
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month%%3D1/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(), iceberg.EntryContentData, escapedPath,
+		iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	partDir := path.Join(dataDir, "month=1")
+	fs.putEntry(dataDir, "month=1", &filer_pb.Entry{
+		Name: "month=1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+	})
+	fs.putEntry(partDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	t.Logf("expireSnapshots result: %s", result)
+
+	if fs.getEntry(partDir, "f.parquet") != nil {
+		t.Error("expired file at the decoded key should have been deleted")
+	}
+}
+
+// A client that escapes its own percent sign on upload leaves an object under
+// a literal %3D-containing key while the manifest spells the same reference.
+// Expiration must delete the entry that actually exists, not the decoded
+// spelling.
+func TestExpireSnapshotsDeletesLiteralPercentKey(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month%%3D1/f.parquet", setup.BucketName, setup.tablePath())
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		meta.PartitionSpec(), iceberg.EntryContentData, escapedPath,
+		iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+	)
+	if err != nil {
+		t.Fatalf("build escaped data file: %v", err)
+	}
+	snapID := int64(1)
+	var manifestBuf bytes.Buffer
+	if _, err := iceberg.WriteManifest(
+		setup.fileRef("metadata", "manifest-1.avro"), &manifestBuf,
+		meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+		[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+	); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	fs.putEntry(metaDir, "manifest-1.avro", &filer_pb.Entry{
+		Name:       "manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+		Content:    manifestBuf.Bytes(),
+	})
+
+	literalDir := path.Join(dataDir, "month%3D1")
+	fs.putEntry(dataDir, "month%3D1", &filer_pb.Entry{
+		Name: "month%3D1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+	})
+	fs.putEntry(literalDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	t.Logf("expireSnapshots result: %s", result)
+
+	if fs.getEntry(literalDir, "f.parquet") != nil {
+		t.Error("expired file at the literal percent key should have been deleted")
+	}
+}
+
+// A client that escapes an already-escaped name writes a manifest reference
+// like month%253D1 while the object sits at month=1. The kept set must hold
+// every decoding in the chain, or the expiry pass deletes a file a live
+// snapshot still references.
+func TestExpireSnapshotsKeepsDoublyEscapedKeptReference(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	escapedPath := fmt.Sprintf("s3://%s/%s/data/month%%253D1/f.parquet", setup.BucketName, setup.tablePath())
+	writeRefManifest := func(fileName string, snapID int64) {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			meta.PartitionSpec(), iceberg.EntryContentData, escapedPath,
+			iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+		)
+		if err != nil {
+			t.Fatalf("build escaped data file: %v", err)
+		}
+		var manifestBuf bytes.Buffer
+		if _, err := iceberg.WriteManifest(
+			setup.fileRef("metadata", fileName), &manifestBuf,
+			meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+			[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+		); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		fs.putEntry(metaDir, fileName, &filer_pb.Entry{
+			Name:       fileName,
+			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+			Content:    manifestBuf.Bytes(),
+		})
+	}
+	writeRefManifest("manifest-1.avro", 1)
+	writeRefManifest("manifest-2.avro", 2)
+
+	partDir := path.Join(dataDir, "month=1")
+	fs.putEntry(dataDir, "month=1", &filer_pb.Entry{
+		Name: "month=1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix()},
+	})
+	fs.putEntry(partDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	if fs.getEntry(partDir, "f.parquet") == nil {
+		t.Error("file referenced by the kept snapshot through a doubly-escaped path was deleted")
+	}
+}
+
+// A kept reference whose decoded spelling contains a parent segment resolves
+// to the cleaned path. The kept set must record the cleaned spelling, or the
+// expiry pass misses the protection and deletes a file a live snapshot still
+// references.
+func TestExpireSnapshotsKeepsDecodedParentReference(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Age:        10 * 24 * time.Hour,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now.UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now.UnixMilli() + 1, ManifestList: "metadata/snap-2.avro"},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+
+	writeRefManifest := func(fileName string, snapID int64, filePath string) {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			meta.PartitionSpec(), iceberg.EntryContentData, filePath,
+			iceberg.ParquetFile, map[int]any{}, nil, nil, 10, 4096,
+		)
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		var manifestBuf bytes.Buffer
+		if _, err := iceberg.WriteManifest(
+			setup.fileRef("metadata", fileName), &manifestBuf,
+			meta.Version(), meta.PartitionSpec(), meta.CurrentSchema(), snapID,
+			[]iceberg.ManifestEntry{iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())},
+		); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		fs.putEntry(metaDir, fileName, &filer_pb.Entry{
+			Name:       fileName,
+			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: uint64(manifestBuf.Len())},
+			Content:    manifestBuf.Bytes(),
+		})
+	}
+	writeRefManifest("manifest-1.avro", 1, fmt.Sprintf("s3://%s/%s/data/f.parquet", setup.BucketName, setup.tablePath()))
+	writeRefManifest("manifest-2.avro", 2, fmt.Sprintf("s3://%s/%s/data/tmp/%%2e%%2e/f.parquet", setup.BucketName, setup.tablePath()))
+
+	fs.putEntry(dataDir, "f.parquet", &filer_pb.Entry{
+		Name: "f.parquet", Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 4096},
+		Content: []byte("fake-parquet-data"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	if fs.getEntry(dataDir, "f.parquet") == nil {
+		t.Error("file referenced by the kept snapshot through a decoded parent segment was deleted")
 	}
 }

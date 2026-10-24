@@ -113,7 +113,7 @@ done
 wait_http "http://127.0.0.1:$VPORT/healthz" 60 && ok "volume /healthz up (mTLS)" || bad "volume /healthz"
 
 launch filer-f0
-wait_http "http://127.0.0.1:$FPORT/" 30 && ok "filer / up (mTLS)" || bad "filer /"
+wait_http "http://127.0.0.1:$FPORT/healthz" 30 && ok "filer /healthz up (mTLS)" || bad "filer /healthz"
 # [jwt.filer_signing] is active, so the filer requires a signed JWT for writes.
 # An unsigned write MUST be rejected with 401 -- this proves the JWT signing key
 # rendered into security.toml is enforced (positive security assertion).

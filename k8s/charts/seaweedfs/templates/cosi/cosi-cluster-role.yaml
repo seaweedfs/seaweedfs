@@ -28,6 +28,13 @@ rules:
     - "update"
     - "create"
     - "delete"
+- apiGroups: ["objectstorage.k8s.io"]
+  resources:
+    - "bucketclasses"
+  verbs:
+    - "get"
+    - "list"
+    - "watch"
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]
   verbs:
@@ -61,7 +68,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.global.seaweedfs.serviceAccountName }}-objectstorage-provisioner
+    name: {{ include "seaweedfs.serviceAccountName" . }}-objectstorage-provisioner
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: ClusterRole

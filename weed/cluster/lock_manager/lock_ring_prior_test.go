@@ -61,3 +61,42 @@ func TestLockRing_PriorOwnerExpires(t *testing.T) {
 		}
 	}
 }
+
+// WriteOwner resolves prior-else-current under one read lock, so the two views
+// can never come from different rings.
+func TestLockRing_WriteOwner(t *testing.T) {
+	r := NewLockRing(5 * time.Second)
+	t.Cleanup(r.WaitForCleanup)
+
+	setA := []pb.ServerAddress{"s1:1", "s2:1", "s3:1"}
+	r.SetSnapshot(setA, 1)
+
+	// One snapshot: no prior owner, so the primary owns every key.
+	if got, want := r.WriteOwner("any"), r.GetPrimary("any"); got != want {
+		t.Fatalf("WriteOwner=%q, want the primary %q", got, want)
+	}
+
+	r.SetSnapshot([]pb.ServerAddress{"s1:1", "s2:1", "s3:1", "s4:1"}, 2)
+
+	var moved, stable string
+	for i := 0; i < 2000 && (moved == "" || stable == ""); i++ {
+		key := fmt.Sprintf("key-%d", i)
+		if r.PriorOwner(key) != "" {
+			if moved == "" {
+				moved = key
+			}
+		} else if stable == "" {
+			stable = key
+		}
+	}
+	if moved == "" || stable == "" {
+		t.Skip("could not find both a moved and a stable key")
+	}
+
+	if got, want := r.WriteOwner(moved), r.PriorOwner(moved); got != want {
+		t.Fatalf("moved key: WriteOwner=%q, want the prior owner %q", got, want)
+	}
+	if got, want := r.WriteOwner(stable), r.GetPrimary(stable); got != want {
+		t.Fatalf("stable key: WriteOwner=%q, want the primary %q", got, want)
+	}
+}

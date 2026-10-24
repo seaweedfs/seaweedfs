@@ -25,8 +25,11 @@ const (
 	TusDefaultSessionExpiry = 24 * time.Hour
 	TusUploadsFolder        = ".uploads.tus"
 	TusInfoFileName         = ".info"
+	TusConsumedFileName     = ".consumed"
 	TusChunkExt             = ".chunk"
-	TusExtensions           = "creation,creation-with-upload,termination"
+	TusExtensions           = "creation,creation-with-upload,termination,concatenation"
+	TusConcatPartial        = "partial"
+	TusConcatFinalPrefix    = "final;"
 )
 
 // ErrWormEnforced marks a TUS completion rejected because the target entry is
@@ -43,7 +46,18 @@ type TusSession struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 	ExpiresAt  time.Time         `json:"expires_at,omitempty"`
+	Concat     string            `json:"concat,omitempty"`
 	Chunks     []*TusChunkInfo   `json:"chunks,omitempty"`
+}
+
+// isPartial reports whether the session is a concatenation partial upload: it
+// holds chunks for a later final upload instead of landing at its target path.
+func (session *TusSession) isPartial() bool {
+	return session.Concat == TusConcatPartial
+}
+
+func (session *TusSession) isFinal() bool {
+	return strings.HasPrefix(session.Concat, TusConcatFinalPrefix)
 }
 
 // TusChunkInfo tracks individual chunk uploads within a session
@@ -67,6 +81,68 @@ func (fs *FilerServer) tusSessionPath(uploadID string) string {
 // tusSessionInfoPath returns the path to the session info file
 func (fs *FilerServer) tusSessionInfoPath(uploadID string) string {
 	return fmt.Sprintf("/%s/%s/%s", TusUploadsFolder, uploadID, TusInfoFileName)
+}
+
+// tusSessionConsumedPath returns the path of the marker recording that a
+// session's chunks belong to a completed upload and must not be freed with it.
+func (fs *FilerServer) tusSessionConsumedPath(uploadID string) string {
+	return fmt.Sprintf("/%s/%s/%s", TusUploadsFolder, uploadID, TusConsumedFileName)
+}
+
+// markTusSessionConsumed claims a session's chunks for a completed upload. With
+// exclusive set, a session already claimed by a concurrent request fails with
+// filer_pb.ErrEntryAlreadyExists so one partial cannot be consumed twice.
+func (fs *FilerServer) markTusSessionConsumed(ctx context.Context, uploadID string, exclusive bool) error {
+	return fs.filer.CreateEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(fs.tusSessionConsumedPath(uploadID)),
+		Attr: filer.Attr{
+			Mode:   0644,
+			Crtime: time.Now(),
+			Mtime:  time.Now(),
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+		},
+	}, nil, exclusive, false, nil, true, fs.filer.MaxFilenameLength)
+}
+
+// isTusSessionConsumed fails closed: when the marker cannot be looked up, the
+// caller must not treat the session's chunks as free.
+// claimTusPartial claims a partial for one final upload, serialized per session
+// on this filer, and re-verifies the pinned session under the claim. A failed
+// verification releases the claim before returning.
+func (fs *FilerServer) claimTusPartial(ctx context.Context, partial *TusSession) error {
+	sessionPath := util.FullPath(fs.tusSessionPath(partial.ID))
+	pathLock := fs.entryLockTable.AcquireLock("tusClaim", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
+
+	if err := fs.markTusSessionConsumed(ctx, partial.ID, true); err != nil {
+		return err
+	}
+	if err := fs.refreshTusSessionChunks(ctx, partial); err != nil {
+		fs.rollbackTusSessionConsumed(ctx, partial.ID)
+		return err
+	}
+	return nil
+}
+
+// rollbackTusSessionConsumed releases a consumed marker after a failed claim or
+// completion. A failed rollback wedges the session as consumed: DELETE and
+// expiry then preserve its chunks, which leak until removed by fsck.
+func (fs *FilerServer) rollbackTusSessionConsumed(ctx context.Context, uploadID string) {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("TUS session %s wedged as consumed, marker rollback failed: %v", uploadID, err)
+	}
+}
+
+func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) (bool, error) {
+	_, err := fs.filer.FindEntry(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
+	return false, err
 }
 
 // tusChunkPath returns the path to store a chunk info file
@@ -117,7 +193,7 @@ func parseTusChunkPath(entry *filer.Entry) (*TusChunkInfo, error) {
 }
 
 // createTusSession creates a new TUS upload session
-func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPath string, size int64, metadata map[string]string) (*TusSession, error) {
+func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPath string, size int64, metadata map[string]string, concat string) (*TusSession, error) {
 	session := &TusSession{
 		ID:         uploadID,
 		TargetPath: targetPath,
@@ -126,6 +202,7 @@ func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPat
 		Metadata:   metadata,
 		CreatedAt:  time.Now(),
 		ExpiresAt:  time.Now().Add(fs.option.TusSessionExpiry),
+		Concat:     concat,
 		Chunks:     []*TusChunkInfo{},
 	}
 
@@ -288,17 +365,26 @@ func (fs *FilerServer) loadTusSessionChunks(ctx context.Context, session *TusSes
 	return nil
 }
 
-// refreshTusSessionChunks verifies the pinned session still exists and still
-// identifies the same upload before refreshing its chunk state, so a PATCH
-// cannot complete after a concurrent DELETE or metadata replacement and land at
-// a TargetPath other than the one that was authorized.
-func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+// verifyTusSessionUnchanged confirms the stored .info still identifies the same
+// pinned session.
+func (fs *FilerServer) verifyTusSessionUnchanged(ctx context.Context, session *TusSession) error {
 	stored, err := fs.readTusSessionInfo(ctx, session.ID)
 	if err != nil {
 		return err
 	}
 	if stored.TargetPath != session.TargetPath || stored.Size != session.Size || !stored.CreatedAt.Equal(session.CreatedAt) {
 		return fmt.Errorf("TUS session identity changed: %s", session.ID)
+	}
+	return nil
+}
+
+// refreshTusSessionChunks verifies the pinned session still exists and still
+// identifies the same upload before refreshing its chunk state, so a PATCH
+// cannot complete after a concurrent DELETE or metadata replacement and land at
+// a TargetPath other than the one that was authorized.
+func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+	if err := fs.verifyTusSessionUnchanged(ctx, session); err != nil {
+		return err
 	}
 	return fs.loadTusSessionChunks(ctx, session)
 }
@@ -331,8 +417,23 @@ func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk 
 	return nil
 }
 
+// deleteTusChunk drops a chunk's record before freeing its data, so a save that
+// failed after the record landed cannot leave the session pointing at a needle
+// that is about to be deleted. Data outliving a lost record only leaks.
+func (fs *FilerServer) deleteTusChunk(ctx context.Context, session *TusSession, chunk *TusChunkInfo) {
+	chunkPath := util.FullPath(fs.tusChunkPath(session.ID, chunk.Offset, chunk.Size, chunk.FileId))
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, chunkPath, false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("TUS chunk %s record kept, its data leaks: %v", chunkPath, err)
+		return
+	}
+	fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{{FileId: chunk.FileId}})
+}
+
 // deleteTusSession removes a TUS upload session and all its data
 func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) error {
+	sessionPath := util.FullPath(fs.tusSessionPath(uploadID))
+	pathLock := fs.entryLockTable.AcquireLock("tusDelete", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
 
 	session, err := fs.getTusSession(ctx, uploadID)
 	if err != nil {
@@ -341,8 +442,21 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 		return nil
 	}
 
-	// Batch delete all uploaded chunks from volume servers
-	if len(session.Chunks) > 0 {
+	// Remove the .info before deciding about chunk data: a final request claims
+	// its consumed marker before re-verifying the .info, so once the .info is
+	// gone no new claim can pass verification, and a claim that did pass was
+	// created earlier and is visible at the check below.
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionInfoPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("delete session info: %w", err)
+	}
+
+	// Batch delete all uploaded chunks from volume servers, unless the session
+	// was consumed: then the chunks belong to a completed upload's entry.
+	consumed, err := fs.isTusSessionConsumed(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("check consumed marker: %w", err)
+	}
+	if len(session.Chunks) > 0 && !consumed {
 		var chunksToDelete []*filer_pb.FileChunk
 		for _, chunk := range session.Chunks {
 			if chunk.FileId != "" {
@@ -370,40 +484,55 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		return fmt.Errorf("upload incomplete: offset=%d, expected=%d", session.Offset, session.Size)
 	}
 
-	// Sort chunks by offset to ensure correct order
+	// Serialize the ownership transition with deleteTusSession on this filer;
+	// the marker/.info handshake below covers a delete served by another filer.
+	sessionPath := util.FullPath(fs.tusSessionPath(session.ID))
+	pathLock := fs.entryLockTable.AcquireLock("tusComplete", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
+
+	// Sort by offset, widest record first among equals, so a duplicate sorts
+	// behind the record that covers it
 	sort.Slice(session.Chunks, func(i, j int) bool {
-		return session.Chunks[i].Offset < session.Chunks[j].Offset
+		if session.Chunks[i].Offset != session.Chunks[j].Offset {
+			return session.Chunks[i].Offset < session.Chunks[j].Offset
+		}
+		return session.Chunks[i].Size > session.Chunks[j].Size
 	})
 
-	// Validate chunks are contiguous with no gaps or overlaps
-	expectedOffset := int64(0)
-	for _, chunk := range session.Chunks {
-		if chunk.Offset != expectedOffset {
-			return fmt.Errorf("chunk gap or overlap detected: expected offset %d, got %d", expectedOffset, chunk.Offset)
-		}
-		expectedOffset = chunk.Offset + chunk.Size
-	}
-	if expectedOffset != session.Size {
-		return fmt.Errorf("chunks do not cover full file: chunks end at %d, expected %d", expectedOffset, session.Size)
-	}
-
-	// Assemble file chunks in order
+	// A PATCH retried while its predecessor was still storing a sub-chunk can
+	// record one range twice. The records must cover the full size with no gap,
+	// the same watermark HEAD reports the offset from; a record extending
+	// coverage joins the entry (the read path resolves a partial overlap by
+	// ModifiedTsNs, and the raced copies carry identical bytes), while a fully
+	// covered duplicate is freed once the entry lands.
 	var fileChunks []*filer_pb.FileChunk
-
+	var duplicateChunks []*filer_pb.FileChunk
+	covered := int64(0)
 	for _, chunk := range session.Chunks {
+		if chunk.Offset > covered {
+			return fmt.Errorf("chunk gap detected: covered up to %d, next chunk at %d", covered, chunk.Offset)
+		}
+		if chunk.Offset+chunk.Size <= covered {
+			duplicateChunks = append(duplicateChunks, &filer_pb.FileChunk{FileId: chunk.FileId})
+			continue
+		}
+		covered = chunk.Offset + chunk.Size
+
 		fid, fidErr := filer_pb.ToFileIdObject(chunk.FileId)
 		if fidErr != nil {
 			return fmt.Errorf("invalid file ID %s at offset %d: %w", chunk.FileId, chunk.Offset, fidErr)
 		}
 
-		fileChunk := &filer_pb.FileChunk{
+		fileChunks = append(fileChunks, &filer_pb.FileChunk{
 			FileId:       chunk.FileId,
 			Offset:       chunk.Offset,
 			Size:         uint64(chunk.Size),
 			ModifiedTsNs: chunk.UploadAt,
 			Fid:          fid,
-		}
-		fileChunks = append(fileChunks, fileChunk)
+		})
+	}
+	if covered != session.Size {
+		return fmt.Errorf("chunks do not cover full file: chunks end at %d, expected %d", covered, session.Size)
 	}
 
 	// Determine content type from metadata
@@ -416,18 +545,6 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 
 	// Create the final file entry
 	targetPath := util.FullPath(session.TargetPath)
-
-	// Apply the same read-only / WORM protections the normal write path enforces
-	// before landing the entry at the client-chosen target path.
-	if fs.filer.FilerConf.MatchStorageRule(string(targetPath)).ReadOnly {
-		return fmt.Errorf("%w: %s", ErrReadOnly, targetPath)
-	}
-	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
-		return fmt.Errorf("check worm: %w", err)
-	} else if wormEnforced {
-		return ErrWormEnforced
-	}
-
 	entry := &filer.Entry{
 		FullPath: targetPath,
 		Attr: filer.Attr{
@@ -441,9 +558,58 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		Chunks: fileChunks,
 	}
 
+	// Apply the same storage rule (read-only prefixes, TTL) and WORM protections
+	// the normal write path enforces before landing the entry at the
+	// client-chosen target path.
+	so, err := fs.applyStorageDefaultsToEntry(ctx, entry)
+	if err != nil {
+		return err
+	}
+	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
+		return fmt.Errorf("check worm: %w", err)
+	} else if wormEnforced {
+		return ErrWormEnforced
+	}
+
+	// Claim the chunks for the entry before creating it: once the marker is
+	// durable, a failed cleanup below cannot lead DELETE or expiry to free the
+	// entry's chunks. If the entry creation then fails, the client retry re-runs
+	// completion; an abandoned marked session leaks its chunks instead of
+	// corrupting a live entry.
+	if err := fs.markTusSessionConsumed(ctx, session.ID, false); err != nil {
+		return fmt.Errorf("mark session consumed: %w", err)
+	}
+
+	// Handshake with deleteTusSession, which removes the .info before checking
+	// the marker: a session whose .info is still present here cannot have its
+	// chunks freed by a delete that missed the marker just made durable.
+	if err := fs.verifyTusSessionUnchanged(ctx, session); err != nil {
+		fs.rollbackTusSessionConsumed(ctx, session.ID)
+		return fmt.Errorf("session deleted before completion: %w", err)
+	}
+
 	// Ensure parent directory exists
-	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, so.MaxFileNameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
+	}
+
+	// Free the duplicates' data; their records go with the session directory
+	// below. A file id the entry still references is never freed: coverage is
+	// computed from ranges, so a malformed record could name one.
+	if len(duplicateChunks) > 0 {
+		referenced := make(map[string]bool, len(fileChunks))
+		for _, chunk := range fileChunks {
+			referenced[chunk.FileId] = true
+		}
+		var chunksToDelete []*filer_pb.FileChunk
+		for _, chunk := range duplicateChunks {
+			if !referenced[chunk.FileId] {
+				chunksToDelete = append(chunksToDelete, chunk)
+			}
+		}
+		if len(chunksToDelete) > 0 {
+			fs.filer.DeleteChunks(ctx, targetPath, chunksToDelete)
+		}
 	}
 
 	// Delete the session (but keep the chunks since they're now part of the final file)

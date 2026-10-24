@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -12,11 +13,17 @@ type TableBucket struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Format         string    `json:"format,omitempty"`
 }
 
 type CreateTableBucketRequest struct {
 	Name string            `json:"name"`
 	Tags map[string]string `json:"tags,omitempty"`
+	// Format is the table format this bucket holds. A bucket is a catalog and a
+	// catalog serves one protocol, so declaring it here is what lets a caller be
+	// told where to connect. Empty means ICEBERG, which is what AWS S3 Tables
+	// serves and therefore what an SDK that has never heard of this field means.
+	Format string `json:"format,omitempty"`
 }
 
 type CreateTableBucketResponse struct {
@@ -32,6 +39,9 @@ type GetTableBucketResponse struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// Format is empty for a bucket created before formats were declared. Such a
+	// bucket accepts any format, which is what it did when it was made.
+	Format string `json:"format,omitempty"`
 }
 
 type ListTableBucketsRequest struct {
@@ -44,6 +54,7 @@ type TableBucketSummary struct {
 	ARN       string    `json:"arn"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	Format    string    `json:"format,omitempty"`
 }
 
 type ListTableBucketsResponse struct {
@@ -235,9 +246,12 @@ type ListTablesRequest struct {
 }
 
 type TableSummary struct {
-	Name             string    `json:"name"`
-	TableARN         string    `json:"tableARN"`
-	Namespace        []string  `json:"namespace"`
+	Name      string   `json:"name"`
+	TableARN  string   `json:"tableARN"`
+	Namespace []string `json:"namespace"`
+	// Format lets a caller tell an Iceberg table from a catalog-only one without
+	// a GetTable per row. AWS omits it; listing a mixed catalog needs it.
+	Format           string    `json:"format,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 	ModifiedAt       time.Time `json:"modifiedAt"`
 	MetadataLocation string    `json:"metadataLocation,omitempty"`
@@ -394,6 +408,143 @@ type DeleteTablePolicyRequest struct {
 	Name           string   `json:"name"`
 }
 
+// Maintenance configuration types
+
+const (
+	MaintenanceTypeIcebergCompaction              = "icebergCompaction"
+	MaintenanceTypeIcebergSnapshotManagement      = "icebergSnapshotManagement"
+	MaintenanceTypeIcebergUnreferencedFileRemoval = "icebergUnreferencedFileRemoval"
+
+	MaintenanceStatusEnabled  = "enabled"
+	MaintenanceStatusDisabled = "disabled"
+)
+
+type IcebergCompactionSettings struct {
+	Strategy         string `json:"strategy,omitempty"`
+	TargetFileSizeMB *int64 `json:"targetFileSizeMB,omitempty"`
+}
+
+// Compaction strategies. AWS also defines z-order, which the maintenance
+// worker cannot produce, so it is rejected rather than silently binpacked.
+const (
+	CompactionStrategyAuto    = "auto"
+	CompactionStrategyBinpack = "binpack"
+	CompactionStrategySort    = "sort"
+	CompactionStrategyZOrder  = "z-order"
+)
+
+type IcebergSnapshotManagementSettings struct {
+	MinSnapshotsToKeep  *int64 `json:"minSnapshotsToKeep,omitempty"`
+	MaxSnapshotAgeHours *int64 `json:"maxSnapshotAgeHours,omitempty"`
+}
+
+type IcebergUnreferencedFileRemovalSettings struct {
+	UnreferencedDays *int64 `json:"unreferencedDays,omitempty"`
+	NonCurrentDays   *int64 `json:"nonCurrentDays,omitempty"`
+}
+
+type MaintenanceSettings struct {
+	IcebergCompaction              *IcebergCompactionSettings              `json:"icebergCompaction,omitempty"`
+	IcebergSnapshotManagement      *IcebergSnapshotManagementSettings      `json:"icebergSnapshotManagement,omitempty"`
+	IcebergUnreferencedFileRemoval *IcebergUnreferencedFileRemovalSettings `json:"icebergUnreferencedFileRemoval,omitempty"`
+}
+
+type MaintenanceConfigurationValue struct {
+	Status   string               `json:"status,omitempty"`
+	Settings *MaintenanceSettings `json:"settings,omitempty"`
+}
+
+// MaintenanceConfiguration maps a maintenance type to its configuration. It is
+// stored verbatim as the maintenance extended attribute so Get is a passthrough.
+type MaintenanceConfiguration map[string]*MaintenanceConfigurationValue
+
+// MergeMaintenanceConfiguration overlays a table's configuration on its
+// bucket's. Unreferenced file removal is only configurable on the bucket, so
+// anything reading a table's effective configuration has to consult both.
+func MergeMaintenanceConfiguration(bucket, table MaintenanceConfiguration) MaintenanceConfiguration {
+	if len(bucket) == 0 {
+		return table
+	}
+	if len(table) == 0 {
+		return bucket
+	}
+
+	merged := make(MaintenanceConfiguration, len(bucket)+len(table))
+	for k, v := range bucket {
+		merged[k] = v
+	}
+	for k, v := range table {
+		merged[k] = v
+	}
+	return merged
+}
+
+type PutTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string `json:"tableBucketARN"`
+}
+
+type GetTableBucketMaintenanceConfigurationResponse struct {
+	TableBucketARN string                   `json:"tableBucketARN"`
+	Configuration  MaintenanceConfiguration `json:"configuration"`
+}
+
+type PutTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Namespace      []string                       `json:"namespace"`
+	Name           string                         `json:"name"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceConfigurationResponse struct {
+	TableARN      string                   `json:"tableARN"`
+	Namespace     []string                 `json:"namespace"`
+	Name          string                   `json:"name"`
+	Configuration MaintenanceConfiguration `json:"configuration"`
+}
+
+// Maintenance job status types
+
+const (
+	MaintenanceJobStatusNotYetRun  = "Not_Yet_Run"
+	MaintenanceJobStatusSuccessful = "Successful"
+	MaintenanceJobStatusFailed     = "Failed"
+	MaintenanceJobStatusDisabled   = "Disabled"
+)
+
+type MaintenanceJobStatusValue struct {
+	Status           string     `json:"status"`
+	LastRunTimestamp *time.Time `json:"lastRunTimestamp,omitempty"`
+	FailureMessage   string     `json:"failureMessage,omitempty"`
+}
+
+// MaintenanceJobStatus maps a maintenance type to the outcome of its last run.
+// The worker writes it; the control plane only reads it.
+type MaintenanceJobStatus map[string]*MaintenanceJobStatusValue
+
+type GetTableMaintenanceJobStatusRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceJobStatusResponse struct {
+	TableARN string               `json:"tableARN"`
+	Status   MaintenanceJobStatus `json:"status"`
+}
+
 // Tagging types
 
 type TagResourceRequest struct {
@@ -423,6 +574,36 @@ type S3TablesError struct {
 
 func (e *S3TablesError) Error() string {
 	return e.Message
+}
+
+// Table formats a catalog entry may declare.
+//
+// ICEBERG tables carry metadata the catalog maintains and the maintenance
+// worker rewrites. LANCE is catalog-only: the entry records a name and the
+// dataset root in MetadataLocation, and the Lance client owns every byte under
+// it. Nothing in this package interprets a catalog-only table's files.
+const (
+	FormatIceberg = "ICEBERG"
+	FormatLance   = "LANCE"
+)
+
+// IsCatalogOnlyFormat reports whether the catalog only records where a table of
+// this format lives, without understanding its files.
+func IsCatalogOnlyFormat(format string) bool {
+	return format == FormatLance
+}
+
+// NormalizeFormat folds a caller's spelling onto the canonical one and reports
+// whether it names a format this catalog serves.
+func NormalizeFormat(format string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(format)) {
+	case FormatIceberg:
+		return FormatIceberg, true
+	case FormatLance:
+		return FormatLance, true
+	default:
+		return "", false
+	}
 }
 
 // Error codes

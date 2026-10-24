@@ -14,7 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -203,6 +206,12 @@ func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
 	client := plugin_pb.NewPluginControlServiceClient(conn)
 	connCtx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
+
+	if md := security.GrpcAdminPeerCredentials(
+		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
+		util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds")); len(md) > 0 {
+		connCtx = metadata.NewOutgoingContext(connCtx, md)
+	}
 
 	stream, err := client.WorkerStream(connCtx)
 	if err != nil {
@@ -651,8 +660,7 @@ func (w *Worker) buildHeartbeat() *plugin_pb.WorkerHeartbeat {
 		if work == nil {
 			continue
 		}
-		cloned := *work
-		running = append(running, &cloned)
+		running = append(running, proto.Clone(work).(*plugin_pb.RunningWork))
 	}
 	w.runningMu.RUnlock()
 

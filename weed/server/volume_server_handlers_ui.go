@@ -15,6 +15,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
+// remoteVolumeRow carries the remote key the store no longer keeps per volume,
+// read from the volume this server holds rather than relayed by a master.
+type remoteVolumeRow struct {
+	*storage.VolumeInfo
+	RemoteStorageKey string
+}
+
 func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	infos := make(map[string]interface{})
@@ -28,13 +35,18 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	volumeInfos := vs.store.VolumeInfos()
-	var normalVolumeInfos, remoteVolumeInfos []*storage.VolumeInfo
+	var normalVolumeInfos []*storage.VolumeInfo
+	var remoteVolumeInfos []remoteVolumeRow
 	for _, vinfo := range volumeInfos {
-		if vinfo.IsRemote() {
-			remoteVolumeInfos = append(remoteVolumeInfos, vinfo)
-		} else {
+		if !vinfo.IsRemote() {
 			normalVolumeInfos = append(normalVolumeInfos, vinfo)
+			continue
 		}
+		row := remoteVolumeRow{VolumeInfo: vinfo}
+		if v := vs.store.GetVolume(vinfo.Id); v != nil {
+			_, row.RemoteStorageKey = v.RemoteStorageNameKey()
+		}
+		remoteVolumeInfos = append(remoteVolumeInfos, row)
 	}
 	args := struct {
 		Version       string

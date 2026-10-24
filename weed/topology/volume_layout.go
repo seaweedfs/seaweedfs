@@ -53,19 +53,28 @@ const capacityRecoveryDelay = 30 * time.Second
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequest      atomic.Bool
-	lastGrowCount    atomic.Uint32
-	rp               *super_block.ReplicaPlacement
-	ttl              *needle.TTL
-	diskType         types.DiskType
-	vid2location     map[needle.VolumeId]*VolumeLocationList
-	writables        []needle.VolumeId // transient array of writable volume id
+	growRequest   atomic.Bool
+	lastGrowCount atomic.Uint32
+	rp            *super_block.ReplicaPlacement
+	ttl           *needle.TTL
+	diskType      types.DiskType
+	vid2location  map[needle.VolumeId]*VolumeLocationList
+	writables     []needle.VolumeId // transient array of writable volume id
+	// writableMembers mirrors writables for membership tests, which run for
+	// every volume on every heartbeat through ensureCorrectWritables.
+	writableMembers  map[needle.VolumeId]struct{}
 	crowded          map[needle.VolumeId]struct{}
 	vacuumedVolumes  map[needle.VolumeId]time.Time
+	deletingVolumes  map[needle.VolumeId]struct{}
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	accessLock       sync.RWMutex
-	sizeTracking     map[needle.VolumeId]*volumeSizeTracking
+	// maxWritableVolumes caps how many writables PickForWrite spreads over;
+	// 0 means every writable volume is a candidate.
+	maxWritableVolumes int
+	accessLock         sync.RWMutex
+	sizeTracking       map[needle.VolumeId]*volumeSizeTracking
+	// dropped: the layout went away with its collection; late registrations must re-resolve.
+	dropped bool
 }
 
 type VolumeLayoutStats struct {
@@ -84,8 +93,10 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		diskType:         diskType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
+		writableMembers:  make(map[needle.VolumeId]struct{}),
 		crowded:          make(map[needle.VolumeId]struct{}),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
+		deletingVolumes:  make(map[needle.VolumeId]struct{}),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
 		sizeTracking:     make(map[needle.VolumeId]*volumeSizeTracking),
@@ -119,41 +130,66 @@ func (vl *VolumeLayout) initSizeTracking(vid needle.VolumeId, size uint64, compa
 	}
 }
 
-func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
+// RegisterVolume records a volume location. It refuses a layout dropped with
+// its collection — the caller must re-resolve, or the bits it sets would leak.
+// Each replica's read-only flag is rebuilt from what its node last reported;
+// isQuarantined folds the master's force-read-only marks into that rebuild,
+// since reported flags deliberately exclude them. nil restores reported state
+// verbatim.
+func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode, isQuarantined func(*DataNode) bool) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	defer vl.rememberOversizedVolume(v, dn)
+	if vl.dropped {
+		return false
+	}
 
-	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
+	location := vl.getOrCreateLocationList(v.Id)
+	moveLookupOwnership(v.Id, location.Set(dn), dn)
 	if !v.ReadOnly {
 		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
 	}
-	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
-	location := vl.vid2location[v.Id]
-	for _, dn := range location.list {
-		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
-			if vInfo.ReadOnly {
-				glog.V(1).Infof("vid %d removed from writable", v.Id)
-				vl.removeFromWritable(v.Id)
-				location.SetReadOnly(dn, true)
-				return
-			}
-			location.SetReadOnly(dn, false)
-		} else {
-			glog.V(1).Infof("vid %d removed from writable", v.Id)
-			vl.removeFromWritable(v.Id)
-			location.SetReadOnly(dn, false)
-			return
-		}
+	if isQuarantined != nil && isQuarantined(dn) {
+		location.SetReadOnly(dn, true)
+		vl.removeFromWritable(v.Id)
 	}
-
+	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
+	for _, n := range location.list {
+		marked := isQuarantined != nil && isQuarantined(n)
+		vInfo, err := n.GetVolumesById(v.Id)
+		if err == nil && !vInfo.ReadOnly && !marked {
+			location.SetReadOnly(n, false)
+			continue
+		}
+		glog.V(1).Infof("vid %d removed from writable", v.Id)
+		vl.removeFromWritable(v.Id)
+		location.SetReadOnly(n, marked || (err == nil && vInfo.ReadOnly))
+		return true
+	}
+	return true
 }
 
 func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataNode) {
 	if location, ok := vl.vid2location[v.Id]; ok {
 		location.SetOversized(dn, vl.isOversized(v))
 	}
+}
+
+// UpdateOversizedState refreshes the per-replica oversized mark from the size
+// reported by this heartbeat, and is the only writer of that mark. The delta
+// heartbeat path (ApplyVolumeChanges) and the full heartbeat path
+// (SyncDataNodeRegistration) both call it, or a volume that grew past the
+// limit would keep looking writable to ensureCorrectWritables and bounce
+// between writable and unwritable on every assign.
+//
+// Registration deliberately does not touch the mark: the incremental path
+// registers from a short heartbeat message that carries no size, so judging
+// the volume by it would clear the mark on every arrival announcement and
+// hand an oversized volume back to the writable list.
+func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	vl.rememberOversizedVolume(v, dn)
 }
 
 // UpdateVolumeSize is called on every heartbeat for every reported volume.
@@ -168,7 +204,14 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 // previously eagerly removed by RecordAssign back under the writable
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
+//
+// fromHeartbeat marks a volume server's report. The periodic decay stands in
+// for the report a quiet volume never sends, so it passes no size of its own —
+// it reads the record under this lock, and never advances lastUpdateTime, or
+// it would swallow the next real report and strand the master on a stale size
+// no one will send again. Both callers give way to a report already handled
+// for this cycle.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, fromHeartbeat bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -188,6 +231,9 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	now := time.Now()
 	st := vl.sizeTracking[vid]
 	if st == nil {
+		if !fromHeartbeat {
+			return false // the entry went while the decay was picking its work
+		}
 		st = &volumeSizeTracking{
 			effectiveSize:   reportedSize,
 			reportedSize:    reportedSize,
@@ -196,10 +242,21 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 		}
 		vl.sizeTracking[vid] = st
 	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
-		return false // duplicate replica in the same heartbeat cycle
+		// Something already decayed this volume for this cycle: another replica
+		// of the same report, or for the decay a heartbeat that arrived after
+		// the pass chose the volume. Halving twice would forget pending bytes
+		// the volume has not written yet.
+		return false
 	} else {
-		st.lastUpdateTime = now
-		st.reportedSize = reportedSize
+		if fromHeartbeat {
+			st.lastUpdateTime = now
+			st.reportedSize = reportedSize
+		} else {
+			// Take the record as it stands under this lock, not as the decay
+			// pass saw it: a heartbeat may have landed since, and replaying
+			// the older size would roll its report back.
+			reportedSize, compactRevision = st.reportedSize, st.compactRevision
+		}
 		if compactRevision != st.compactRevision {
 			// Compaction happened — size drop is real, not pending. Reset.
 			st.compactRevision = compactRevision
@@ -247,6 +304,43 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	return true
 }
 
+// DecayQuietVolumeSizes re-runs the size decay for volumes whose heartbeat
+// reports have gone quiet. Only a volume whose content changed is reported,
+// and a volume held out of the writable list takes no writes, so without this
+// an inflated estimate is never decayed and the volume never returns.
+//
+// A volume the disk really did fill is skipped: UpdateVolumeSize refuses to
+// recover one whose reported size is at the limit, so walking it every pulse
+// only takes the write lock away from the heartbeats. Nothing is lost by
+// waiting — shrinking it means compaction, which changes content and is
+// therefore reported.
+func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
+	for _, vid := range vl.quietDecayCandidates(quietCutoff) {
+		if vl.UpdateVolumeSize(vid, 0, 0, false) {
+			vl.AdjustActiveVolumeCountAfterRecovery(vid)
+		}
+	}
+}
+
+// quietDecayCandidates names the volumes the decay has something to do for.
+// Skipping the rest is what keeps the pass off the write lock: the work is
+// what costs, not the outcome, since replaying a size that cannot move leaves
+// the record exactly as it found it.
+func (vl *VolumeLayout) quietDecayCandidates(quietCutoff time.Duration) (quiets []needle.VolumeId) {
+	now := time.Now()
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid, st := range vl.sizeTracking {
+		if now.Sub(st.lastUpdateTime) < quietCutoff {
+			continue
+		}
+		if st.effectiveSize > st.reportedSize || (!st.fullSince.IsZero() && st.reportedSize < vl.volumeSizeLimit) {
+			quiets = append(quiets, vid)
+		}
+	}
+	return quiets
+}
+
 func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
@@ -283,6 +377,22 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	isAllWritable := vl.isAllWritable(vid)
 	isOversizedVolume := vl.vid2location[vid].AnyOversized()
 	if isEnoughCopies && isAllWritable && !isOversizedVolume {
+		// A volume removed for capacity (fullSince set) must go through the
+		// heartbeat recovery path in UpdateVolumeSize, which enforces
+		// capacityRecoveryDelay. Re-adding it here would bypass the cooldown
+		// and let a just-compacted volume flip back to writable immediately.
+		if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() &&
+			time.Since(st.fullSince) < capacityRecoveryDelay {
+			return
+		}
+		// A volume already at the limit must not be restored here: the next
+		// assign's RecordAssign would remove it again. Crowded is the wrong
+		// test for that -- it starts at 90%, and a crowded volume that lost a
+		// replica would never be writable again once the replica returned,
+		// since nothing writes to it and its size can no longer fall.
+		if st := vl.sizeTracking[vid]; st != nil && st.effectiveSize >= vl.volumeSizeLimit {
+			return
+		}
 		vl.setVolumeWritable(vid)
 		return
 	}
@@ -303,9 +413,18 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	}
 }
 
+// isAllWritable reports whether every replica of vid can take writes. A write
+// lands on one replica and is forwarded to the rest, so one read-only replica,
+// or one on a server in maintenance mode, holds the whole volume out.
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
 	if location, ok := vl.vid2location[vid]; ok {
+		if location.AnyReadOnly() {
+			return false
+		}
 		for _, dn := range location.list {
+			if dn.InMaintenanceMode() {
+				return false
+			}
 			if v, getError := dn.GetVolumesById(vid); getError == nil {
 				if v.ReadOnly {
 					return false
@@ -446,6 +565,30 @@ func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
 	vl.waitForPendingDrain(context.Background(), vid)
 }
 
+// MarkDeleting pins a volume out of the writable list for the duration of a
+// sweep delete. DrainAndRemoveFromWritable alone is not enough here: unlike a
+// compaction the volume disappears, so a heartbeat landing mid-delete must not
+// re-add it and let a write reach a replica whose siblings are already gone.
+func (vl *VolumeLayout) MarkDeleting(vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	vl.deletingVolumes[vid] = struct{}{}
+	vl.removeFromWritable(vid)
+	vl.accessLock.Unlock()
+	vl.waitForPendingDrain(context.Background(), vid)
+}
+
+func (vl *VolumeLayout) UnmarkDeleting(vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	delete(vl.deletingVolumes, vid)
+	// Re-run the standard writable gate so a surviving volume regains
+	// assignment immediately; digest heartbeats only re-report changed
+	// volumes, so waiting on them could strand it unwritable indefinitely.
+	if !vl.vid2location[vid].AnyOversized() && vl.enoughCopies(vid) && vl.isAllWritable(vid) {
+		vl.setVolumeWritable(vid)
+	}
+	vl.accessLock.Unlock()
+}
+
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
@@ -453,12 +596,21 @@ func (vl *VolumeLayout) isEmpty() bool {
 	return len(vl.vid2location) == 0
 }
 
+func (vl *VolumeLayout) ListVids() (vids []needle.VolumeId) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid := range vl.vid2location {
+		vids = append(vids, vid)
+	}
+	return
+}
+
 func (vl *VolumeLayout) Lookup(vid needle.VolumeId) []*DataNode {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
 	if location := vl.vid2location[vid]; location != nil {
-		return location.list
+		return append([]*DataNode(nil), location.list...)
 	}
 	return nil
 }
@@ -501,10 +653,37 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		return 0, 0, nil, true, fmt.Errorf("%s", NoWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid, locationList = vl.pickWeightedByRemaining(vl.writables)
+		writables := vl.writables
+		if vl.maxWritableVolumes > 0 && len(writables) > vl.maxWritableVolumes {
+			writables = vl.fullestWritable(writables)
+		}
+		vid, locationList = vl.pickWeightedByRemaining(writables)
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
 		}
+		return vid, count, locationList.Copy(), false, nil
+	}
+
+	if vl.maxWritableVolumes > 0 {
+		// The cap must hold inside the requested location, so collect every
+		// matching writable before narrowing to the fullest.
+		var matches []needle.VolumeId
+		for _, writableVolumeId := range vl.writables {
+			volumeLocationList := vl.vid2location[writableVolumeId]
+			for _, dn := range volumeLocationList.list {
+				if dn.matchesLocation(option) {
+					matches = append(matches, writableVolumeId)
+					break
+				}
+			}
+		}
+		if len(matches) == 0 {
+			return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", NoWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
+		}
+		if len(matches) > vl.maxWritableVolumes {
+			matches = vl.fullestWritable(matches)
+		}
+		vid, locationList = vl.weightedPick(matches)
 		return vid, count, locationList.Copy(), false, nil
 	}
 
@@ -517,13 +696,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		writableVolumeId := vl.writables[(start+i)%lenWriters]
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
-			if option.DataCenter != "" && dn.GetDataCenter().Id() != NodeId(option.DataCenter) {
-				continue
-			}
-			if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
-				continue
-			}
-			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+			if !dn.matchesLocation(option) {
 				continue
 			}
 			sample[found] = writableVolumeId
@@ -559,6 +732,35 @@ func (vl *VolumeLayout) pickWeightedByRemaining(candidates []needle.VolumeId) (n
 		sample[i] = candidates[rand.IntN(n)]
 	}
 	return vl.weightedPick(sample[:])
+}
+
+// fullestWritable narrows candidates to the maxWritableVolumes fullest ones,
+// so assignments concentrate on the fullest writable volume instead of
+// spreading across many disks at once. The cap is expected to be small, so the
+// top-n are kept by insertion instead of sorting the whole candidate list.
+func (vl *VolumeLayout) fullestWritable(candidates []needle.VolumeId) []needle.VolumeId {
+	n := vl.maxWritableVolumes
+	top := make([]needle.VolumeId, 0, n)
+	remaining := make([]uint64, 0, n)
+	for _, vid := range candidates {
+		r := vl.remainingSize(vid)
+		i := len(top)
+		for i > 0 && (remaining[i-1] > r || (remaining[i-1] == r && top[i-1] > vid)) {
+			i--
+		}
+		if i == n {
+			continue
+		}
+		top = append(top, 0)
+		remaining = append(remaining, 0)
+		copy(top[i+1:], top[i:])
+		copy(remaining[i+1:], remaining[i:])
+		top[i], remaining[i] = vid, r
+		if len(top) > n {
+			top, remaining = top[:n], remaining[:n]
+		}
+	}
+	return top
 }
 
 func (vl *VolumeLayout) weightedPick(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {
@@ -629,6 +831,45 @@ func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 	return writable <= crowded
 }
 
+// WritableAvgFill returns the average fill ratio of the writable volumes and
+// how many there are. The fill of a single volume is its tracked effective
+// size over the layout's volume size limit; volumes without a size-tracking
+// entry yet (freshly created, no heartbeat size report so far) count as
+// empty. A non-empty location filter in option narrows the measure to
+// writables serving that target, so a targeted grow is not blocked or
+// triggered by fill elsewhere in the layout.
+func (vl *VolumeLayout) WritableAvgFill(option *VolumeGrowOption) (avgFill float64, writableCount int) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	var total uint64
+	for _, vid := range vl.writables {
+		if option != nil && (option.DataCenter != "" || option.Rack != "" || option.DataNode != "") {
+			matched := false
+			if loc := vl.vid2location[vid]; loc != nil {
+				for _, dn := range loc.list {
+					if dn.matchesLocation(option) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		writableCount++
+		if st := vl.sizeTracking[vid]; st != nil {
+			total += st.effectiveSize
+		}
+	}
+	if writableCount == 0 || vl.volumeSizeLimit == 0 {
+		return 0, writableCount
+	}
+	avgFill = float64(total) / (float64(writableCount) * float64(vl.volumeSizeLimit))
+	return avgFill, writableCount
+}
+
 func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeId, dcId NodeId, rackId NodeId) bool {
 	// When replication spans multiple racks (DiffRackCount > 0), a writable
 	// volume's replicas only cover some racks in a DC. It is wrong to
@@ -661,6 +902,28 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
+// listVolumeDataCenters returns the data centers hosting at least one volume
+// of this layout, stopping once limit distinct DCs are seen (0 = no limit).
+// The walk holds accessLock and a layout can span millions of volumes, so
+// callers pass the smallest limit that answers their question and only a
+// layout truly confined to fewer DCs pays for a full walk.
+func (vl *VolumeLayout) listVolumeDataCenters(limit int) map[NodeId]struct{} {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	dataCenters := make(map[NodeId]struct{})
+	for _, location := range vl.vid2location {
+		for _, dn := range location.list {
+			if dcId := dn.GetDataCenterId(); dcId != "" {
+				dataCenters[NodeId(dcId)] = struct{}{}
+				if limit > 0 && len(dataCenters) >= limit {
+					return dataCenters
+				}
+			}
+		}
+	}
+	return dataCenters
+}
+
 // RackGrowPlan is one volume grow action produced by the periodic rack-aware
 // growth scan. An empty Rack means the grow is DC-wide.
 type RackGrowPlan struct {
@@ -669,8 +932,8 @@ type RackGrowPlan struct {
 	WritableVolumeCount uint32
 }
 
-// PlanRackAwareGrowth returns the grow actions needed so every location that
-// can serve writes keeps a non-crowded writable volume. stepCount is the
+// PlanRackAwareGrowth returns the grow actions needed so every data center
+// this layout lives in keeps a non-crowded writable volume. stepCount is the
 // default per-event increment.
 //
 // For rack-spanning replication (DiffRackCount > 0) a single logical volume
@@ -685,21 +948,33 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 		stepCount = c
 	}
 	growOncePerDc := vl.rp.DiffRackCount > 0
+	// Only maintain data centers already hosting this layout's volumes: a
+	// collection pinned to one DC (fs.configure -dataCenter) must not sprout
+	// volumes in every other DC, and a DC that does need this layout gets its
+	// volumes from the DC-constrained assign that first asks for them.
+	hostingDCs := vl.listVolumeDataCenters(len(dcs))
 	// Spread lastGrowCount evenly across all grow targets. Summing every rack
 	// up front keeps the divisor global, so DCs with different rack counts do
 	// not each over-grow from a per-DC divisor.
-	var rackPairs uint32
-	for _, racks := range dcs {
+	var rackPairs, dcCount uint32
+	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
+		dcCount++
 		rackPairs += uint32(len(racks))
 	}
 	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
 		if growOncePerDc {
 			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, "") {
 				continue
 			}
 			count := stepCount
 			if lastGrowCount > 0 {
-				count = ceilDiv(lastGrowCount, uint32(len(dcs)))
+				count = ceilDiv(lastGrowCount, dcCount)
 			}
 			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), WritableVolumeCount: count})
 			continue
@@ -765,32 +1040,37 @@ func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
-	toDeleteIndex := -1
+	if _, ok := vl.writableMembers[vid]; !ok {
+		return false
+	}
 	for k, id := range vl.writables {
 		if id == vid {
-			toDeleteIndex = k
-			break
+			glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+			vl.writables = append(vl.writables[0:k], vl.writables[k+1:]...)
+			delete(vl.writableMembers, vid)
+			return true
 		}
-	}
-	if toDeleteIndex >= 0 {
-		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
-		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
-		return true
 	}
 	return false
 }
 func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
-	for _, v := range vl.writables {
-		if v == vid {
-			return false
-		}
+	if _, ok := vl.deletingVolumes[vid]; ok {
+		return false
+	}
+	if _, ok := vl.writableMembers[vid]; ok {
+		return false
 	}
 	glog.V(1).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
+	vl.writableMembers[vid] = struct{}{}
 	return true
 }
 
+// SetVolumeReadOnly and SetVolumeWritable apply what dn itself said about its
+// replica of vid. That is recorded on the node first, so isAllWritable judges
+// the volume by it now rather than by the heartbeat that has yet to repeat it.
 func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, true)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -802,6 +1082,7 @@ func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) boo
 }
 
 func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, false)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -809,10 +1090,38 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 		location.SetReadOnly(dn, false)
 	}
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		return vl.setVolumeWritable(vid)
 	}
 	return false
+}
+
+// SetVolumeQuarantined marks dn's replica read-only at the layout level only.
+// The node's stored report is left untouched so the volume digest still tracks
+// what the server reports and quarantined copies do not force endless full
+// heartbeats.
+func (vl *VolumeLayout) SetVolumeQuarantined(dn *DataNode, vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, true)
+	}
+	vl.removeFromWritable(vid)
+}
+
+// SetReplicaReadOnlyFlag records what dn's latest heartbeat said about its
+// replica of vid, and nothing more: the writable list is left to
+// EnsureCorrectWritables and its capacity guards. Until now the flag only moved
+// on registration and volume.mark, so a replica that went read-only, or came
+// back, while the server ran kept its stale flag until the next restart. The
+// vacuum sweep reads this flag when it decides whether to skip a volume.
+func (vl *VolumeLayout) SetReplicaReadOnlyFlag(dn *DataNode, vid needle.VolumeId, readOnly bool) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, readOnly)
+	}
 }
 
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) bool {
@@ -841,7 +1150,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) (becameWritable bool) {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity, quarantined bool) (becameWritable bool) {
 	restoreActiveVolumeCount := false
 	vl.accessLock.Lock()
 	defer func() {
@@ -855,18 +1164,26 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	if err != nil {
 		return false
 	}
+	if vl.dropped {
+		return false
+	}
 
 	// A disconnect during a long vacuum can drop the entry while the volume is
 	// still on the node; re-create it instead of dereferencing a nil location,
 	// so the commit also repairs the split.
-	moveLookupOwnership(vid, vl.getOrCreateLocationList(vid).Set(dn), dn)
+	location := vl.getOrCreateLocationList(vid)
+	moveLookupOwnership(vid, location.Set(dn), dn)
 
+	if quarantined {
+		location.SetReadOnly(dn, true)
+		return false
+	}
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
 		if becameWritable {
 			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {
@@ -919,11 +1236,14 @@ func (vl *VolumeLayout) setVolumeCrowded(vid needle.VolumeId) {
 }
 
 func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
-	// since delete is guarded by accessLock.Lock(),
-	// and is always called in sequential order,
-	// RLock() should be safe enough
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
+	// setVolumeCrowded mutates the crowded map, and GetWritableVolumeCount
+	// reads it under RLock on the Assign hot path. Two concurrent RLock
+	// holders with one writing the map triggers a fatal
+	// "concurrent map read and map write". Take the write lock: this path
+	// is a low-frequency single consumer driven by the crowded-volume
+	// event loop, and every other mutation of crowded already holds Lock().
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
 
 	vl.setVolumeCrowded(vid)
 }
@@ -946,12 +1266,26 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 }
 
 func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRequest {
-	return &master_pb.VolumeGrowRequest{
+	vgr := &master_pb.VolumeGrowRequest{
 		Collection:  vlc.Collection,
 		Replication: vlc.VolumeLayout.rp.String(),
 		Ttl:         vlc.VolumeLayout.ttl.String(),
 		DiskType:    vlc.VolumeLayout.diskType.String(),
 	}
+	// A layout living in exactly one data center is either pinned there or on
+	// a single-DC cluster; either way unconstrained growth has no business
+	// placing its volumes elsewhere. Cross-DC replication can never
+	// legitimately live in one DC — there a single hosting DC means an
+	// outage, not a pin.
+	if vlc.VolumeLayout.rp.DiffDataCenterCount > 0 {
+		return vgr
+	}
+	if dcs := vlc.VolumeLayout.listVolumeDataCenters(2); len(dcs) == 1 {
+		for dc := range dcs {
+			vgr.DataCenter = string(dc)
+		}
+	}
+	return vgr
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {

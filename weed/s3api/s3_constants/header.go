@@ -18,6 +18,9 @@ package s3_constants
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -58,6 +61,9 @@ const (
 	AmzDeleteMarker     = "X-Amz-Delete-Marker"
 
 	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
+	SeaweedFSExtract                 = "X-Seaweedfs-Extract"
+	SeaweedFSExtractedCount          = "X-Seaweedfs-Extracted-Count"
+	AmzMetaSnowballAutoExtract       = "X-Amz-Meta-Snowball-Auto-Extract"
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
 	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
 	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
@@ -87,6 +93,7 @@ const (
 	AmzTrailer              = "X-Amz-Trailer"
 	AmzSdkChecksumAlgorithm = "X-Amz-Sdk-Checksum-Algorithm"
 	AmzChecksumType         = "X-Amz-Checksum-Type"
+	AmzChecksumMode         = "X-Amz-Checksum-Mode"
 
 	// S3 checksum type values (x-amz-checksum-type). A COMPOSITE checksum is a
 	// checksum-of-per-part-checksums ("base64-N"); a FULL_OBJECT checksum is the
@@ -107,6 +114,9 @@ const (
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
 
 	// RenameObject
+	// AmzClientToken makes a rename idempotent. The AWS SDKs fill it in on every
+	// call, so it arrives on requests that were never written with it in mind.
+	AmzClientToken                   = "X-Amz-Client-Token"
 	AmzRenameSource                  = "X-Amz-Rename-Source"
 	AmzRenameSourceIfMatch           = "X-Amz-Rename-Source-If-Match"
 	AmzRenameSourceIfNoneMatch       = "X-Amz-Rename-Source-If-None-Match"
@@ -139,6 +149,12 @@ const (
 	// SeaweedFS internal metadata prefix (used to filter internal headers from client responses)
 	SeaweedFSInternalPrefix = "x-seaweedfs-"
 
+	// SeaweedFSPrefixObject marks a directory entry that also holds the object named by
+	// its path without a trailing slash. S3 keys are flat, so "a/b" and "a/b/c" are
+	// independent keys, and the filer stores the first one on the directory the second
+	// one lives under.
+	SeaweedFSPrefixObject = "x-seaweedfs-prefix-object"
+
 	// SeaweedFS internal metadata keys for encryption (prefixed to avoid automatic HTTP header conversion)
 	SeaweedFSSSEKMSKey = "x-seaweedfs-sse-kms-key" // Key for storing serialized SSE-KMS metadata
 	SeaweedFSSSES3Key  = "x-seaweedfs-sse-s3-key"  // Key for storing serialized SSE-S3 metadata
@@ -150,6 +166,18 @@ const (
 	SeaweedFSSSEKMSBucketKeyEnabled  = "x-seaweedfs-sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSEncryptionContext = "x-seaweedfs-sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSBaseIV            = "x-seaweedfs-sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
+
+	// SeaweedFSRenameToken records the x-amz-client-token of the rename that put an
+	// object at its key, together with the source that rename named. It rides on the
+	// object itself, so every gateway reads the same answer for a retry of that
+	// rename, and it is dropped whenever the key is written again.
+	SeaweedFSRenameToken = "x-seaweedfs-rename-token"
+
+	// SeaweedFSWriteId identifies the single write that stored an entry: putToFiler
+	// stamps a fresh id into Extended on every call. Recovery for an ambiguously
+	// committed write compares it to tell its own entry from an identical older
+	// object — chunk lists cannot, since an empty object carries none.
+	SeaweedFSWriteId = "x-seaweedfs-write-id"
 
 	// Multipart upload metadata keys for SSE-S3
 	SeaweedFSSSES3Encryption = "x-seaweedfs-sse-s3-encryption" // Encryption type for multipart upload SSE-S3 inheritance
@@ -191,10 +219,21 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	return
 }
 
-// IsValidObjectKey rejects S3 object keys that — after normalization
-// (backslash→slash, slash collapse) — contain a `.` or `..` path segment, or
-// embed a NUL byte. Such keys are collapsed by filepath.Join inside the filer
-// and would escape the bucket directory, so they must not reach the gRPC layer.
+// allowBackslashInObjectKey keeps '\' a literal object-key character instead
+// of normalizing it to '/'. It is a process-wide mode set once at S3 server
+// startup; the filer only treats '/' as a path separator, so a verbatim '\'
+// stays inside one filer entry name.
+var allowBackslashInObjectKey atomic.Bool
+
+func SetAllowBackslashInObjectKey(allow bool) {
+	allowBackslashInObjectKey.Store(allow)
+}
+
+// IsValidObjectKey rejects S3 object keys that — after the mode-dependent
+// normalization NormalizeObjectKey applies — contain a `.` or `..` path
+// segment, or embed a NUL byte. Such keys are collapsed by filepath.Join
+// inside the filer and would escape the bucket directory, so they must not
+// reach the gRPC layer.
 // Gorilla mux URL-decodes captured vars before this runs, so `%2e%2e` is
 // already `..` here.
 func IsValidObjectKey(object string) bool {
@@ -204,7 +243,9 @@ func IsValidObjectKey(object string) bool {
 	if strings.ContainsRune(object, '\x00') {
 		return false
 	}
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	for _, seg := range strings.Split(object, "/") {
 		if seg == "." || seg == ".." {
 			return false
@@ -238,7 +279,8 @@ func IsValidPathSegment(value string) bool {
 
 // NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
-// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility,
+// unless allowBackslashInObjectKey is set.
 // Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
 // Preserves trailing slash if present (e.g., "foo/" stays "foo/").
 func NormalizeObjectKey(object string) string {
@@ -246,7 +288,9 @@ func NormalizeObjectKey(object string) string {
 	hasTrailingSlash := strings.HasSuffix(object, "/")
 
 	// Convert Windows-style backslashes to forward slashes
-	object = strings.ReplaceAll(object, "\\", "/")
+	if !allowBackslashInObjectKey.Load() {
+		object = strings.ReplaceAll(object, "\\", "/")
+	}
 	object = removeDuplicateSlashes(object)
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
@@ -306,10 +350,15 @@ func IsSeaweedFSInternalHeader(headerKey string) bool {
 type contextKey string
 
 const (
-	contextKeyIdentityName   contextKey = "s3-identity-name"
-	contextKeyIdentityObject contextKey = "s3-identity-object"
-	contextKeyIdentityHolder contextKey = "s3-identity-holder"
-	contextKeyPrincipalArn   contextKey = "s3-principal-arn"
+	contextKeyIdentityName        contextKey = "s3-identity-name"
+	contextKeyIdentityObject      contextKey = "s3-identity-object"
+	contextKeyIdentityHolder      contextKey = "s3-identity-holder"
+	contextKeyPrincipalArn        contextKey = "s3-principal-arn"
+	contextKeyIdentityClaim       contextKey = "s3-identity-claim"
+	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
+	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
+	contextKeyAccessKeyId         contextKey = "s3-access-key-id"
+	contextKeyStoredAccessKeyId   contextKey = "s3-stored-access-key-id"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -320,8 +369,37 @@ const (
 // holder installed before authentication is shared across all copies, so the
 // name written by the inner handler is readable by the outer middleware.
 type identityHolder struct {
-	name         atomic.Pointer[string]
-	principalArn atomic.Pointer[string]
+	name             atomic.Pointer[string]
+	principalArn     atomic.Pointer[string]
+	identityClaim    atomic.Pointer[string]
+	accessKeyId      atomic.Pointer[string]
+	storedCredential atomic.Pointer[storedCredential]
+}
+
+// storedCredential is the stored-identity credential a request authenticated
+// with: the access key id and its secret, so a credential vendor can bind
+// what it mints to this exact credential instance.
+type storedCredential struct {
+	accessKeyId string
+	secretKey   string
+}
+
+// StoredCredentialFingerprint identifies one credential instance. The key id
+// alone cannot: an operator can delete a key and re-create it under the same
+// id with a different secret. The fingerprint travels inside the vended
+// session token, so it is keyed with a server-held key — an unkeyed hash of
+// the secret would hand the token holder an offline guessing oracle.
+func StoredCredentialFingerprint(fingerprintKey []byte, accessKeyId, secretKey string) string {
+	if len(fingerprintKey) == 0 {
+		return ""
+	}
+	h := hmac.New(sha256.New, fingerprintKey)
+	h.Write([]byte("seaweedfs-stored-credential"))
+	h.Write([]byte{0})
+	h.Write([]byte(accessKeyId))
+	h.Write([]byte{0})
+	h.Write([]byte(secretKey))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -398,6 +476,193 @@ func GetPrincipalArnFromContext(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// SetIdentityClaimInContext stores the authoritative OIDC identity claim (e.g.
+// preferred_username, email, sub) for the audit log. For an STS-assumed OIDC
+// session the requester name is an opaque session subject, so the claim is the
+// only place a stable, human-readable federated identity survives to the audit
+// log. Empty for non-federated sessions, where the requester name already
+// carries the real username.
+func SetIdentityClaimInContext(ctx context.Context, identityClaim string) context.Context {
+	if identityClaim == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.identityClaim.Store(&identityClaim)
+	}
+	return context.WithValue(ctx, contextKeyIdentityClaim, identityClaim)
+}
+
+// GetIdentityClaimFromContext retrieves the authoritative OIDC identity claim
+// from the request context, or "" when the request is unauthenticated or not
+// federated.
+func GetIdentityClaimFromContext(r *http.Request) string {
+	if claim, ok := r.Context().Value(contextKeyIdentityClaim).(string); ok && claim != "" {
+		return claim
+	}
+	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if claim := h.identityClaim.Load(); claim != nil {
+			return *claim
+		}
+	}
+	return ""
+}
+
+// SetOriginalRequestPathInContext records the path a client actually sent
+// before an internal rewrite (e.g. the Iceberg catalog collapsing a doubled
+// /v1 prefix). SigV4 verification must run against this path: the client
+// signed the URI it requested, not the normalized path it was routed with.
+func SetOriginalRequestPathInContext(ctx context.Context, path string) context.Context {
+	if path == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyOriginalRequestPath, path)
+}
+
+// GetOriginalRequestPathFromContext returns the pre-rewrite request path
+// recorded by SetOriginalRequestPathInContext, or "" when unset.
+func GetOriginalRequestPathFromContext(r *http.Request) string {
+	if path, ok := r.Context().Value(contextKeyOriginalRequestPath).(string); ok {
+		return path
+	}
+	return ""
+}
+
+// SetAccessKeyIdInContext stores the access key id the request authenticated
+// with: a static key's id, or an STS session's temporary key id. Several keys
+// can belong to one identity, so the identity name alone cannot tell their
+// holders apart in the audit log. An access key id is not a secret (AWS logs
+// it in CloudTrail); the secret key never reaches the context.
+func SetAccessKeyIdInContext(ctx context.Context, accessKeyId string) context.Context {
+	if accessKeyId == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.accessKeyId.Store(&accessKeyId)
+	}
+	return context.WithValue(ctx, contextKeyAccessKeyId, accessKeyId)
+}
+
+// RecordAccessKeyId stores the access key id of a credential whose signature
+// was just verified into the request's identity holder, so the outer
+// middleware (the audit fallback) and the handler both see it. A no-op without
+// a holder (EnsureIdentityHolder) or without a key. Only a verifier calls it:
+// the key comes from the credential that matched, never from re-reading the
+// request, whose shape the verifier already resolved.
+func RecordAccessKeyId(ctx context.Context, accessKeyId string) {
+	if ctx == nil || accessKeyId == "" {
+		return
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.accessKeyId.Store(&accessKeyId)
+	}
+}
+
+// GetAccessKeyIdFromContext retrieves the access key id the request
+// authenticated with, or "" when it carried none (anonymous, OIDC bearer).
+func GetAccessKeyIdFromContext(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return AccessKeyIdFromContext(r.Context())
+}
+
+// AccessKeyIdFromContext is GetAccessKeyIdFromContext for code that holds
+// only the request's context, such as the Iceberg credential vendor.
+func AccessKeyIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(contextKeyAccessKeyId).(string); ok && id != "" {
+		return id
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if id := h.accessKeyId.Load(); id != nil {
+			return *id
+		}
+	}
+	return ""
+}
+
+// SetStoredAccessKeyIdInContext records the stored-identity credential the
+// request authenticated with — set by an authenticator that verified the
+// credential against the identity store, so a credential vendor can tell the
+// caller apart from an STS session or OIDC user holding a key the store never
+// issued.
+func SetStoredAccessKeyIdInContext(ctx context.Context, accessKeyId, secretKey string) context.Context {
+	if accessKeyId == "" {
+		return ctx
+	}
+	sc := storedCredential{accessKeyId, secretKey}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedCredential.Store(&sc)
+	}
+	return context.WithValue(ctx, contextKeyStoredAccessKeyId, sc)
+}
+
+// RecordStoredAccessKeyId stores the stored-credential marker into the
+// request's identity holder: a verifier calls it when the credential that
+// matched resolves to a key held by a configured identity. A no-op without a
+// holder (EnsureIdentityHolder) or without a key.
+func RecordStoredAccessKeyId(ctx context.Context, accessKeyId, secretKey string) {
+	if ctx == nil || accessKeyId == "" {
+		return
+	}
+	sc := storedCredential{accessKeyId, secretKey}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedCredential.Store(&sc)
+	}
+}
+
+// StoredAccessKeyIdFromContext retrieves the stored-identity access key id the
+// request authenticated with, or "" when it authenticated another way (STS
+// session, OIDC bearer, anonymous).
+func StoredAccessKeyIdFromContext(ctx context.Context) string {
+	sc, _ := storedCredentialFromContext(ctx)
+	return sc.accessKeyId
+}
+
+// StoredCredentialFromContext retrieves the stored-identity access key id and
+// secret the request authenticated with, or "", "" when it authenticated
+// another way (STS session, OIDC bearer, anonymous).
+func StoredCredentialFromContext(ctx context.Context) (string, string) {
+	sc, ok := storedCredentialFromContext(ctx)
+	if !ok {
+		return "", ""
+	}
+	return sc.accessKeyId, sc.secretKey
+}
+
+func storedCredentialFromContext(ctx context.Context) (storedCredential, bool) {
+	if ctx == nil {
+		return storedCredential{}, false
+	}
+	if sc, ok := ctx.Value(contextKeyStoredAccessKeyId).(storedCredential); ok && sc.accessKeyId != "" {
+		return sc, true
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if sc := h.storedCredential.Load(); sc != nil && sc.accessKeyId != "" {
+			return *sc, true
+		}
+	}
+	return storedCredential{}, false
+}
+
+// IgnoreSessionTokenInContext marks the request's session token as tolerated
+// rather than authenticated: a statically configured access key signed the
+// request, so the token (which credential vendors like Unity Catalog emit on
+// static credentials too) must not steer authorization into the STS session
+// path. A context value because headers can be spoofed; this cannot.
+func IgnoreSessionTokenInContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, contextKeyIgnoredSessionToken, true)
+}
+
+// IsSessionTokenIgnored reports whether the request carries a session token
+// that was tolerated for a statically configured access key.
+func IsSessionTokenIgnored(ctx context.Context) bool {
+	ignored, _ := ctx.Value(contextKeyIgnoredSessionToken).(bool)
+	return ignored
 }
 
 // SetIdentityInContext stores the full authenticated identity object in the request context

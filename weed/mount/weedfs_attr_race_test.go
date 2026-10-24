@@ -23,6 +23,7 @@ func TestAttrChunkRace(t *testing.T) {
 		option:         &Option{},
 		inodeToPath:    NewInodeToPath(util.FullPath("/"), 0),
 		fhMap:          NewFileHandleToInode(),
+		fhLockTable:    util.NewLockTable[FileHandleId](),
 		openMtimeCache: make(map[uint64][2]int64, 8),
 	}
 
@@ -34,7 +35,7 @@ func TestAttrChunkRace(t *testing.T) {
 		Name:       "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
-	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil, nil)
 	if err != nil {
 		t.Fatalf("NewChunkGroup: %v", err)
 	}
@@ -45,6 +46,7 @@ func TestAttrChunkRace(t *testing.T) {
 		entry:           &LockedEntry{Entry: entry},
 		entryChunkGroup: chunkGroup,
 	}
+	fh.dirtyPages = newPageWriter(fh, 1<<20)
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
 
@@ -113,7 +115,7 @@ func TestReadFromChunksRace(t *testing.T) {
 		Name:       "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
-	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil, nil)
 	if err != nil {
 		t.Fatalf("NewChunkGroup: %v", err)
 	}
@@ -124,6 +126,7 @@ func TestReadFromChunksRace(t *testing.T) {
 		entry:           &LockedEntry{Entry: entry},
 		entryChunkGroup: chunkGroup,
 	}
+	fh.dirtyPages = newPageWriter(fh, 1<<20)
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
 

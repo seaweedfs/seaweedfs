@@ -1,6 +1,7 @@
 package lock_manager
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -54,6 +55,14 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		r.Unlock()
 		return false
 	}
+	// An unchanged member list is only a version refresh: installing it as a
+	// new snapshot would run the topology-change callback and restart the
+	// prior-owner window on every periodic rebroadcast.
+	if len(r.snapshots) > 0 && slices.Equal(servers, r.snapshots[0].servers) {
+		r.version = version
+		r.Unlock()
+		return true
+	}
 	r.version = version
 	// Update the ring while holding the lock so version and ring state
 	// are always consistent — prevents a concurrent SetSnapshot from
@@ -72,6 +81,19 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		r.compactSnapshots()
 	}()
 	return true
+}
+
+// Reset clears only the version gate so the first update from a different
+// master always applies: ring versions are per-master monotonic, and a high
+// version accepted from a former leader must not reject the new leader's
+// view. The ring itself stays installed — writes keep routing to the last
+// known owner during the gap instead of every filer treating itself as the
+// owner, and the arriving snapshot transitions off it with the usual
+// prior-owner window.
+func (r *LockRing) Reset() {
+	r.Lock()
+	defer r.Unlock()
+	r.version = 0
 }
 
 // Version returns the current ring version.
@@ -130,6 +152,17 @@ func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
 	return r.snapshots[0].servers
 }
 
+// PriorOwnerWindowEnd is when the latest ring change stops routing moved keys
+// to their prior owner.
+func (r *LockRing) PriorOwnerWindowEnd() time.Time {
+	r.RLock()
+	defer r.RUnlock()
+	if len(r.snapshots) == 0 {
+		return time.Time{}
+	}
+	return r.snapshots[0].ts.Add(r.snapshotInterval)
+}
+
 // WaitForCleanup waits for all pending cleanup operations to complete
 func (r *LockRing) WaitForCleanup() {
 	r.cleanupWg.Wait()
@@ -163,6 +196,24 @@ func (r *LockRing) GetPrimary(key string) pb.ServerAddress {
 func (r *LockRing) PriorOwner(key string) pb.ServerAddress {
 	r.RLock()
 	defer r.RUnlock()
+	return r.priorOwnerLocked(key)
+}
+
+// WriteOwner returns the filer that should serialize writes to key: the prior
+// owner while a ring change is still within the cooling-off window, otherwise
+// the current primary. Both are read under one lock so the pair cannot come
+// from different rings, which could otherwise name the same filer twice.
+func (r *LockRing) WriteOwner(key string) pb.ServerAddress {
+	r.RLock()
+	defer r.RUnlock()
+	if prior := r.priorOwnerLocked(key); prior != "" {
+		return prior
+	}
+	return r.Ring.GetPrimary(key)
+}
+
+// priorOwnerLocked is PriorOwner's body; the caller holds at least RLock.
+func (r *LockRing) priorOwnerLocked(key string) pb.ServerAddress {
 	if len(r.snapshots) < 2 {
 		return ""
 	}

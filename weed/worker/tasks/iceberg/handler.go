@@ -187,10 +187,25 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "rewrite_strategy",
 							Label:       "Rewrite Strategy",
-							Description: "binpack keeps the existing row order; sort rewrites each compaction bin using the Iceberg table sort order.",
+							Description: "binpack keeps the existing row order; sort rewrites each compaction bin using the Iceberg table sort order; auto sorts tables that declare one and bin-packs the rest.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 							Placeholder: "binpack or sort",
+						},
+						{
+							Name:        "sort_buffer_rows",
+							Label:       "Sort Buffer Rows",
+							Description: "Rows a sorted rewrite holds in memory before spilling a sorted run to disk. The writer merges at most 32K runs, so this also bounds how many rows one output file can hold.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: minSortBufferRows}},
+						},
+						{
+							Name:        "sort_spill_dir",
+							Label:       "Sort Spill Directory",
+							Description: "Directory holding a sorted rewrite's temporary runs. Empty uses the system temp directory.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
 						{
 							Name:        "sort_max_input_mb",
@@ -293,6 +308,13 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
 						{
+							Name:        "table_properties_override",
+							Label:       "Table Properties Win",
+							Description: "Let a table's own Iceberg properties override these settings and its maintenance configuration. Clear to make the maintenance configuration authoritative.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
+						{
 							Name:        "where",
 							Label:       "Where Filter",
 							Description: "Optional partition filter for compact, rewrite_position_delete_files, and rewrite_manifests. Supports field = literal, field IN (...), and AND.",
@@ -317,14 +339,17 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 				"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
 				"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+				"table_properties_override":     {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
 				"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultRewriteStrategy}},
 				"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				"sort_buffer_rows":              {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSortBufferRows}},
+				"sort_spill_dir":                {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 				"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       false, // disabled by default
-			DetectionIntervalMinutes:      60, // 1 hour
+			DetectionIntervalMinutes:      60,    // 1 hour
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           100,
 			GlobalExecutionConcurrency:    4,
@@ -347,8 +372,11 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 			"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
 			"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+			"table_properties_override":     {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
 			"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultRewriteStrategy}},
 			"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+			"sort_buffer_rows":              {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSortBufferRows}},
+			"sort_spill_dir":                {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
@@ -519,11 +547,32 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
 
+	// Resolve once for the whole job: compaction commits new metadata as it
+	// runs, and a job should not change settings halfway through. Both reads
+	// fail the job rather than fall back, since without the configuration a
+	// disabled operation would run anyway, and without the properties the
+	// operations would rewrite the table to a size it did not ask for.
+	maintenance, err := loadMaintenanceConfiguration(ctx, filerClient, bucketName, tablePath)
+	if err != nil {
+		return fmt.Errorf("read maintenance configuration for %s/%s: %w", bucketName, tablePath, err)
+	}
+	ops = filterDisabledOperations(ops, maintenance)
+
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	if err != nil {
+		return fmt.Errorf("read table properties for %s/%s: %w", bucketName, tablePath, err)
+	}
+	workerConfig = resolveTableConfig(workerConfig, state.Metadata.Properties(), maintenance)
+
 	var results []string
+	if len(ops) == 0 {
+		results = append(results, "all maintenance operations are disabled for this table")
+	}
 	var lastErr error
 	totalOps := len(ops)
 	completedOps := 0
 	allMetrics := make(map[string]int64)
+	opErrors := make(map[string]error, totalOps)
 
 	// Execute operations in canonical maintenance order as defined by
 	// parseOperations.
@@ -585,6 +634,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		}
 
 		completedOps++
+		opErrors[op] = opErr
 		if opErr != nil {
 			glog.Warningf("iceberg maintenance %s failed for %s/%s/%s: %v", op, bucketName, namespace, tableName, opErr)
 			results = append(results, fmt.Sprintf("%s: error: %v", op, opErr))
@@ -593,6 +643,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 			results = append(results, fmt.Sprintf("%s: %s", op, opResult))
 		}
 	}
+
+	recordJobStatus(ctx, filerClient, bucketName, tablePath, buildJobStatus(opErrors, time.Now().UTC()))
 
 	resultSummary := strings.Join(results, "; ")
 	success := lastErr == nil

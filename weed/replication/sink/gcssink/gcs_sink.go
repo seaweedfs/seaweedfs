@@ -39,6 +39,10 @@ func (g *GcsSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
+func (g *GcsSink) GetDestinationIdentity() string {
+	return g.bucket + "\x00" + g.dir
+}
+
 func (g *GcsSink) IsIncremental() bool {
 	return g.isIncremental
 }
@@ -113,7 +117,10 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

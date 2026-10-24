@@ -26,7 +26,30 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 	// Also true for a file promoted to a directory by a child write, which keeps its
 	// chunks/content, or its remote entry when the file was tiered to remote storage.
 	return entry.IsDirectory &&
-		((entry.Attributes != nil && entry.Attributes.Mime != "") || len(entry.GetChunks()) > 0 || len(entry.GetContent()) > 0 || entry.IsInRemoteOnly())
+		((entry.Attributes != nil && entry.Attributes.Mime != "") || len(entry.GetChunks()) > 0 || len(entry.GetContent()) > 0 || entry.IsInRemoteOnly() || entry.IsPrefixObject())
+}
+
+// IsPrefixObject reports whether the directory entry also holds the object named by its
+// path without a trailing slash, which an empty object leaves no other trace of.
+func (entry *Entry) IsPrefixObject() bool {
+	if entry == nil || !entry.IsDirectory {
+		return false
+	}
+	_, marked := entry.Extended[s3_constants.SeaweedFSPrefixObject]
+	return marked
+}
+
+// MarkPrefixObject turns a file entry into the directory entry that stores it, so keys
+// nested under its key can be created beside it.
+func (entry *Entry) MarkPrefixObject() {
+	entry.IsDirectory = true
+	if entry.Attributes != nil {
+		entry.Attributes.FileMode |= uint32(os.ModeDir) | 0111
+	}
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.SeaweedFSPrefixObject] = []byte("true")
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {
@@ -154,6 +177,22 @@ func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 	return resp, nil
 }
 
+// SnapshotExtended clones extended attributes for use as an UpdateEntry
+// ExpectedExtended precondition. Listed keys are asserted even when absent,
+// so a concurrent add still fails the precondition.
+func SnapshotExtended(extended map[string][]byte, keys ...string) map[string][]byte {
+	expected := make(map[string][]byte, len(extended)+len(keys))
+	for k, v := range extended {
+		expected[k] = v
+	}
+	for _, k := range keys {
+		if _, ok := expected[k]; !ok {
+			expected[k] = nil
+		}
+	}
+	return expected
+}
+
 func UpdateEntry(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) error {
 	_, err := UpdateEntryWithResponse(ctx, client, request)
 	return err
@@ -195,6 +234,8 @@ var (
 	ErrExistingIsDirectory = errors.New("existing entry is a directory")
 	ErrExistingIsFile      = errors.New("existing entry is a file")
 	ErrEntryAlreadyExists  = errors.New("entry already exists")
+	ErrReadOnly            = errors.New("read only")
+	ErrPreconditionFailed  = errors.New("precondition failed")
 )
 
 // FilerErrorToSentinel maps a proto FilerError code to its sentinel error.
@@ -211,10 +252,34 @@ func FilerErrorToSentinel(code FilerError) error {
 		return ErrExistingIsFile
 	case FilerError_ENTRY_ALREADY_EXISTS:
 		return ErrEntryAlreadyExists
+	case FilerError_READ_ONLY:
+		return ErrReadOnly
+	case FilerError_PRECONDITION_FAILED:
+		return ErrPreconditionFailed
 	default:
 		return nil
 	}
 }
+
+// AssignVolumeResponseError returns the failure resp reports, or nil. The error
+// keeps the filer's text and, when error_code is set, unwraps to its sentinel so
+// callers can match it with errors.Is.
+func AssignVolumeResponseError(resp *AssignVolumeResponse) error {
+	if resp.Error == "" && resp.ErrorCode == FilerError_OK {
+		return nil
+	}
+	return &codedError{msg: resp.Error, sentinel: FilerErrorToSentinel(resp.ErrorCode)}
+}
+
+// codedError is a filer error message paired with the sentinel of the code
+// sent alongside it (nil for OK or an unknown code).
+type codedError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *codedError) Error() string { return e.msg }
+func (e *codedError) Unwrap() error { return e.sentinel }
 
 func IsEmpty(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil

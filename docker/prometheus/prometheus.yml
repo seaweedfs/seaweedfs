@@ -12,3 +12,7 @@ scrape_configs:
           - 'volume:9325'
           - 'filer:9326'
           - 's3:9327'
+          # A plugin worker publishes its own metrics when started with
+          # -metricsPort (Go) or --metrics-port (Rust). 9328 continues the
+          # series, since 9327 is already the S3 gateway's.
+          # - 'worker:9328'

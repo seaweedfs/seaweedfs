@@ -2,17 +2,19 @@ package topology
 
 import (
 	"reflect"
+	"testing"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-
-	"testing"
 )
 
 func TestRemoveDataCenter(t *testing.T) {
@@ -88,7 +90,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 		for k := 1; k <= volumeCount; k++ {
 			volumeMessage := &master_pb.VolumeInformationMessage{
 				Id:               uint32(k),
-				Size:             uint64(254320),
+				Size:             uint64(30000),
 				Collection:       "",
 				FileCount:        uint64(2343),
 				DeleteCount:      uint64(345),
@@ -166,6 +168,103 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 }
 
+func TestIncrementalSyncReplacesVolumeReadOnlyState(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		fromReadOnly bool
+		toReadOnly   bool
+	}{
+		{name: "writable to read-only", toReadOnly: true},
+		{name: "read-only to writable", fromReadOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+			dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+				GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+			volume := func(readOnly bool) *master_pb.VolumeShortInformationMessage {
+				return &master_pb.VolumeShortInformationMessage{
+					Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()), ReadOnly: readOnly,
+				}
+			}
+
+			oldVolume := volume(tc.fromReadOnly)
+			topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{oldVolume}, nil, dn)
+			topo.IncrementalSyncDataNodeRegistration(
+				[]*master_pb.VolumeShortInformationMessage{volume(tc.toReadOnly)},
+				[]*master_pb.VolumeShortInformationMessage{oldVolume}, dn)
+
+			locations := topo.Lookup("c", needle.VolumeId(1))
+			if len(locations) != 1 || locations[0] != dn {
+				t.Fatalf("lookup locations = %v, want only %v", locations, dn)
+			}
+			stored, err := dn.GetVolumesById(needle.VolumeId(1))
+			if err != nil || stored.ReadOnly != tc.toReadOnly {
+				t.Fatalf("stored volume = %+v, err = %v, want read-only %t", stored, err, tc.toReadOnly)
+			}
+			rp, _ := super_block.NewReplicaPlacementFromString("000")
+			active, _ := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType).GetWritableVolumeCount()
+			want := 0
+			if !tc.toReadOnly {
+				want = 1
+			}
+			if active != want {
+				t.Fatalf("writable count = %d, want %d", active, want)
+			}
+			if !dn.HasConsistentVolumeIndex() {
+				t.Fatal("replacement left the held and servable volume indexes inconsistent")
+			}
+		})
+	}
+}
+
+func TestIncrementalSyncRegistersMovedVolumeBeforeRemoval(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25, "ssd": 25})
+	oldVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()),
+	}
+	newVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()), DiskType: "ssd",
+	}
+	topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{oldVolume}, nil, dn)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	oldLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	newLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.SsdType)
+	oldLayout.accessLock.Lock()
+	done := make(chan struct{})
+	go func() {
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolume},
+			[]*master_pb.VolumeShortInformationMessage{oldVolume}, dn)
+		close(done)
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	movedBeforeRemoval := false
+	for !movedBeforeRemoval {
+		select {
+		case <-deadline.C:
+			oldLayout.accessLock.Unlock()
+			<-done
+			t.Fatal("destination layout was not registered before source removal")
+		case <-ticker.C:
+			movedBeforeRemoval = len(newLayout.Lookup(needle.VolumeId(1))) == 1
+		}
+	}
+	oldLayout.accessLock.Unlock()
+	<-done
+
+	locations := topo.Lookup("c", needle.VolumeId(1))
+	if len(locations) != 1 || locations[0] != dn {
+		t.Fatalf("lookup locations = %v, want only %v", locations, dn)
+	}
+}
+
 func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
 	dn := NewDataNode("node-1")
 	dn.Ip = "127.0.0.1"
@@ -176,7 +275,7 @@ func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
 	usage := dn.diskUsages.getOrCreateDisk(types.HardDriveType)
 	usage.maxVolumeCount = 8
 
-	info := dn.ToDataNodeInfo()
+	info := dn.ToDataNodeInfo(VolumeFilter{})
 	diskInfo, found := info.DiskInfos[""]
 	if !found {
 		t.Fatalf("expected default disk entry for empty node")
@@ -232,6 +331,94 @@ func TestAddRemoveVolume(t *testing.T) {
 
 	if _, hasCollection := topo.FindCollection(v.Collection); hasCollection {
 		t.Errorf("collection %v should not exist", v.Collection)
+	}
+}
+
+func TestUnRegisterVolumeLayoutClearsReplicaPlacementMismatchMetric(t *testing.T) {
+	stats.MasterReplicaPlacementMismatch.Reset()
+	t.Cleanup(stats.MasterReplicaPlacementMismatch.Reset)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	maxVolumeCounts := map[string]uint32{"": 25}
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
+
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatalf("NewReplicaPlacementFromString: %v", err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(42),
+		Size:             100,
+		Collection:       "metrics-test",
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
+
+	stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 1 {
+		t.Fatalf("expected 1 replica_placement_mismatch series, got %d", n)
+	}
+
+	topo.UnRegisterVolumeLayout(v, dn)
+
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 0 {
+		t.Errorf("%d replica_placement_mismatch series left after volume left topology", n)
+	}
+}
+
+func TestUnRegisterVolumeLayoutKeepsReplicaPlacementMismatchMetricWhilePlacementsRemain(t *testing.T) {
+	stats.MasterReplicaPlacementMismatch.Reset()
+	t.Cleanup(stats.MasterReplicaPlacementMismatch.Reset)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	maxVolumeCounts := map[string]uint32{"": 25}
+	dn1 := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
+	dn2 := rack.GetOrCreateDataNode("127.0.0.1", 34535, 0, "127.0.0.1", "", maxVolumeCounts)
+
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatalf("NewReplicaPlacementFromString: %v", err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(42),
+		Size:             100,
+		Collection:       "metrics-test",
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn1)
+	topo.RegisterVolumeLayout(v, dn2)
+
+	stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 1 {
+		t.Fatalf("expected 1 replica_placement_mismatch series, got %d", n)
+	}
+
+	topo.UnRegisterVolumeLayout(v, dn1)
+
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 1 {
+		t.Errorf("expected series to remain while %s still holds the volume, got %d", dn2.Id(), n)
+	}
+	if got := len(topo.Lookup(v.Collection, v.Id)); got != 1 {
+		t.Fatalf("expected 1 remaining placement, got %d", got)
+	}
+
+	topo.UnRegisterVolumeLayout(v, dn2)
+
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 0 {
+		t.Errorf("%d replica_placement_mismatch series left after last placement left", n)
 	}
 }
 
@@ -320,7 +507,7 @@ func TestVolumeReadOnlyAndRemoteStatusChange(t *testing.T) {
 	// Simultaneously change to read-only AND remote
 	v.ReadOnly = true
 	v.RemoteStorageName = "s3"
-	v.RemoteStorageKey = "key1"
+	v.RemoteStorageName = "s3.default"
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 
 	// Check counts after both changes
@@ -340,7 +527,7 @@ func TestVolumeReadOnlyAndRemoteStatusChange(t *testing.T) {
 	// Change back to local AND read-only simultaneously
 	v.ReadOnly = true
 	v.RemoteStorageName = ""
-	v.RemoteStorageKey = ""
+	v.RemoteStorageName = ""
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 
 	// Check final counts
@@ -664,7 +851,7 @@ func TestSetVolumeAvailableRepairsMissingVolume(t *testing.T) {
 	}
 
 	// The vacuum commit re-marks the volume available; it must re-register it.
-	vl.SetVolumeAvailable(dn, vid, false, false)
+	vl.SetVolumeAvailable(dn, vid, false, false, false)
 	if got := topo.Lookup("", vid); len(got) != 1 {
 		t.Fatalf("after SetVolumeAvailable: lookup %d got %v, want 1 location", vid, got)
 	}
@@ -675,5 +862,50 @@ func TestSetVolumeAvailableRepairsMissingVolume(t *testing.T) {
 	vl.accessLock.RUnlock()
 	if !tracked {
 		t.Fatalf("after SetVolumeAvailable: size tracking for %d not seeded", vid)
+	}
+}
+
+// A read-only change that arrives in the regular heartbeat must reach the
+// layout's per-replica flag, which the vacuum sweep consults. Registration
+// and volume.mark already set it; the heartbeat path did not.
+func TestFullHeartbeatUpdatesLayoutReadOnlyFlag(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+	report := func(readOnly bool) []*master_pb.VolumeInformationMessage {
+		return []*master_pb.VolumeInformationMessage{{
+			Id: 1, Collection: "c", Size: 1 << 20, Version: uint32(needle.GetCurrentVersion()), ReadOnly: readOnly,
+		}}
+	}
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	flag := func() bool {
+		vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+		vl.accessLock.RLock()
+		defer vl.accessLock.RUnlock()
+		return vl.vid2location[needle.VolumeId(1)].AnyReadOnly()
+	}
+
+	// the full list, which a server sends first and whenever the digests disagree
+	topo.SyncDataNodeRegistration(report(false), dn)
+	if flag() {
+		t.Fatal("volume registered writable is flagged read-only")
+	}
+	topo.SyncDataNodeRegistration(report(true), dn)
+	if !flag() {
+		t.Fatal("full heartbeat turned the volume read-only but the layout flag did not follow")
+	}
+	topo.SyncDataNodeRegistration(report(false), dn)
+	if flag() {
+		t.Fatal("full heartbeat turned the volume writable again but the layout flag stayed read-only")
+	}
+
+	// the changed-volumes delta, which is what a running server normally sends
+	topo.ApplyVolumeChanges(report(true), dn)
+	if !flag() {
+		t.Fatal("delta heartbeat turned the volume read-only but the layout flag did not follow")
+	}
+	topo.ApplyVolumeChanges(report(false), dn)
+	if flag() {
+		t.Fatal("delta heartbeat turned the volume writable again but the layout flag stayed read-only")
 	}
 }

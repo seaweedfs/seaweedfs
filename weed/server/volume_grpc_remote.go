@@ -2,21 +2,32 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	azureremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
+	gcsremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/gcs"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // lookupIPAddrFunc resolves a host to one or more IP addresses. It is a
@@ -87,6 +98,15 @@ var imdsIPv4 = net.ParseIP("169.254.169.254")
 var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 func checkBlockedIP(endpoint string, ip net.IP) error {
+	return checkBlockedIPPolicy(endpoint, ip, false)
+}
+
+// checkBlockedIPPolicy rejects addresses that must never be dialed from a
+// server with cluster-internal reach. allowPrivate keeps RFC 1918 / CGNAT
+// reachable for callers whose target legitimately sits on an internal network
+// (peer volume servers), while still blocking loopback, link-local (IMDS) and
+// unspecified.
+func checkBlockedIPPolicy(endpoint string, ip net.IP, allowPrivate bool) error {
 	if ip == nil {
 		return nil
 	}
@@ -102,12 +122,98 @@ func checkBlockedIP(endpoint string, ip net.IP) error {
 		return fmt.Errorf("remote endpoint %q resolves to link-local address %s", endpoint, ip)
 	case ip.IsInterfaceLocalMulticast():
 		return fmt.Errorf("remote endpoint %q resolves to interface-local address %s", endpoint, ip)
-	case ip.IsPrivate():
-		return fmt.Errorf("remote endpoint %q resolves to private address %s", endpoint, ip)
-	case cgnatNet.Contains(ip):
-		return fmt.Errorf("remote endpoint %q resolves to CGNAT address %s", endpoint, ip)
+	}
+	if !allowPrivate {
+		switch {
+		case ip.IsPrivate():
+			return fmt.Errorf("remote endpoint %q resolves to private address %s", endpoint, ip)
+		case cgnatNet.Contains(ip):
+			return fmt.Errorf("remote endpoint %q resolves to CGNAT address %s", endpoint, ip)
+		}
+	}
+	// IPv6 transition addresses embed an IPv4 destination that routes to the
+	// same host wherever the matching relay exists (common in IPv6-only cloud).
+	// net.IP only normalizes ::ffff: mapped addresses, so pull the embedded
+	// IPv4 out of the other forms and re-check it against the deny list.
+	if embedded := embeddedTransitionIPv4(ip); embedded != nil {
+		return checkBlockedIPPolicy(endpoint, embedded, allowPrivate)
 	}
 	return nil
+}
+
+// validateReplicaTarget rejects a peer volume server address that could
+// redirect a dial away from the cluster: replica upload targets and the
+// copy/tail source addresses are all caller-supplied. The target must be a
+// bare host:port -- a scheme, userinfo, path, query or fragment can smuggle a
+// different destination through fmt.Sprintf -- whose host is not loopback,
+// link-local (IMDS) or unspecified. Cluster peers legitimately sit on private
+// networks, so RFC 1918 / CGNAT are allowed.
+func validateReplicaTarget(ctx context.Context, target string) error {
+	if strings.TrimSpace(target) == "" {
+		return fmt.Errorf("replica target is empty")
+	}
+	if strings.Contains(target, "://") || strings.ContainsAny(target, "/?#@\\") {
+		return fmt.Errorf("replica target %q must be a bare host:port", target)
+	}
+	host, _, splitErr := net.SplitHostPort(target)
+	if splitErr != nil {
+		return fmt.Errorf("replica target %q must be a bare host:port: %w", target, splitErr)
+	}
+	if host == "" {
+		return fmt.Errorf("replica target %q has no host", target)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("replica target %q targets instance metadata service", target)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIPPolicy(target, ip, true)
+	}
+	resolveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	addrs, lookupErr := lookupIPAddrFunc(resolveCtx, host)
+	if lookupErr != nil {
+		return fmt.Errorf("resolve replica target host %q: %w", host, lookupErr)
+	}
+	for _, addr := range addrs {
+		if err := checkBlockedIPPolicy(target, addr.IP, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// embeddedTransitionIPv4 returns the IPv4 address carried by an IPv6 transition
+// address -- NAT64 64:ff9b::/96 (RFC 6052), 6to4 2002::/16 (RFC 3056), Teredo
+// 2001:0000::/32 (RFC 4380), and the deprecated IPv4-compatible ::/96 (RFC
+// 4291) -- or nil when ip is not one of those. IPv4-mapped ::ffff:0:0/96 is
+// excluded because net.IP already normalizes it via To4.
+func embeddedTransitionIPv4(ip net.IP) net.IP {
+	v6 := ip.To16()
+	if v6 == nil || ip.To4() != nil {
+		return nil
+	}
+	switch {
+	case v6[0] == 0x00 && v6[1] == 0x64 && v6[2] == 0xff && v6[3] == 0x9b && allZero(v6[4:12]):
+		return net.IPv4(v6[12], v6[13], v6[14], v6[15])
+	case v6[0] == 0x20 && v6[1] == 0x02:
+		return net.IPv4(v6[2], v6[3], v6[4], v6[5])
+	case v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x00 && v6[3] == 0x00:
+		// Teredo obfuscates the client IPv4 as its ones' complement.
+		return net.IPv4(v6[12]^0xff, v6[13]^0xff, v6[14]^0xff, v6[15]^0xff)
+	case allZero(v6[:12]):
+		// IPv4-compatible ::a.b.c.d; :: and ::1 are already handled above.
+		return net.IPv4(v6[12], v6[13], v6[14], v6[15])
+	}
+	return nil
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // guardedDialer returns a DialContext that resolves the host itself and
@@ -117,7 +223,14 @@ func checkBlockedIP(endpoint string, ip net.IP) error {
 // client: even if the attacker's DNS flips to 127.0.0.1 (or any other
 // blocked range) after the up-front check, the dial is refused.
 func guardedDialer(endpoint string) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return guardedDialerPolicy(endpoint, false)
+}
+
+// guardedDialerPolicy is guardedDialer with the same allowPrivate knob as
+// checkBlockedIPPolicy, so the replica upload path can keep dialing private
+// peers while still refusing loopback / link-local / unspecified at connect
+// time (closing the rebinding window for replica hostnames too).
+func guardedDialerPolicy(endpoint string, allowPrivate bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, splitErr := net.SplitHostPort(addr)
 		if splitErr != nil {
@@ -125,10 +238,10 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 		}
 		// If the host is already a literal IP just validate and dial it.
 		if ip := net.ParseIP(host); ip != nil {
-			if err := checkBlockedIP(endpoint, ip); err != nil {
+			if err := checkBlockedIPPolicy(endpoint, ip, allowPrivate); err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, addr)
+			return util.OutboundDialContext(ctx, network, addr)
 		}
 		// Otherwise resolve, validate every answer, and dial the first IP
 		// that passes the deny list. Using a literal-IP target prevents the
@@ -140,13 +253,13 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 		}
 		var firstBlockErr error
 		for _, a := range addrs {
-			if err := checkBlockedIP(endpoint, a.IP); err != nil {
+			if err := checkBlockedIPPolicy(endpoint, a.IP, allowPrivate); err != nil {
 				if firstBlockErr == nil {
 					firstBlockErr = err
 				}
 				continue
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
+			return util.OutboundDialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
 		}
 		if firstBlockErr != nil {
 			return nil, firstBlockErr
@@ -155,14 +268,40 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 	}
 }
 
+// guardedGrpcDialOption returns a grpc.DialOption that re-applies the replica
+// deny list to every resolved address at connect time, pinning a validated
+// copy/tail source against DNS rebinding. It is nil when the operator opted
+// out with AllowUntrustedRemoteEndpoints; pb skips nil dial options.
+func (vs *VolumeServer) guardedGrpcDialOption(endpoint string) grpc.DialOption {
+	if vs.AllowUntrustedRemoteEndpoints {
+		return nil
+	}
+	dial := guardedDialerPolicy(endpoint, true)
+	return grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+		return dial(ctx, "tcp", addr)
+	})
+}
+
 // newGuardedHTTPClient returns an *http.Client whose transport refuses to
 // dial addresses that fail checkBlockedIP at connect time. It is meant for
 // per-request use; do not share across remote configs.
 func newGuardedHTTPClient(endpoint string) *http.Client {
+	return newGuardedHTTPClientPolicy(endpoint, false)
+}
+
+// newGuardedHTTPClientPolicy is newGuardedHTTPClient with the allowPrivate knob
+// for the replica upload path, whose targets are cluster peers on private
+// networks.
+func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           guardedDialer(endpoint),
+			// No proxy: guardedDialer must see the real target address. Through
+			// a proxy it would only validate the proxy's IP while the proxy
+			// re-resolves the endpoint host, reopening the rebinding window the
+			// dialer exists to close. Operators that need a proxy can opt out
+			// with -volume.allowUntrustedRemoteEndpoints.
+			Proxy:                 nil,
+			DialContext:           guardedDialerPolicy(endpoint, allowPrivate),
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          16,
 			IdleConnTimeout:       60 * time.Second,
@@ -170,6 +309,185 @@ func newGuardedHTTPClient(endpoint string) *http.Client {
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
+}
+
+// guardedRemoteClient reports the caller-supplied endpoint a backend dials
+// directly and a constructor that routes through the given HTTP client, or
+// ok=false when nothing in the conf steers a destination. The S3-SDK family,
+// azure (once AzureEndpoint is set) and the gcs token exchange all honor a
+// caller-supplied endpoint, so each must pass the SSRF deny-list and the
+// rebinding-safe dialer.
+func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, makeClient func(*http.Client) (remote_storage.RemoteStorageClient, error), ok bool) {
+	if remoteConf == nil {
+		return "", nil, false
+	}
+	if ep, isS3 := s3remote.S3CompatibleEndpoint(remoteConf); isS3 {
+		if ep == "" && remoteConf.Type == "s3" {
+			return "", nil, false
+		}
+		return ep, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+			return s3remote.MakeWithHTTPClient(remoteConf, httpClient)
+		}, true
+	}
+	if remoteConf.Type == "azure" && remoteConf.AzureEndpoint != "" {
+		return remoteConf.AzureEndpoint, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+			return azureremote.MakeWithHTTPClient(remoteConf, httpClient)
+		}, true
+	}
+	// gcs reaches a fixed object host, but the token exchange goes wherever the
+	// supplied credentials say, so guard that endpoint instead.
+	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
+		if data, err := loadGcsCredentialsContent(remoteConf.GcsGoogleApplicationCredentials); err == nil {
+			if _, tokenURL, parseErr := gcsremote.ParseInlineCredentials(string(data)); parseErr == nil {
+				return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+					return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
+				}, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+// gcsCredentialsArePath reports whether a gcs credentials value is a filesystem
+// path rather than inline JSON, matching the gcs client's own inline detection.
+func gcsCredentialsArePath(creds string) bool {
+	return creds != "" && !strings.HasPrefix(creds, "{")
+}
+
+var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")
+
+// loadGcsCredentialsContent returns the credential JSON for a gcs credentials
+// value, reading from disk when it is a filesystem path (as written by
+// remote.configure -gcs.appCredentialsFile). This mirrors what the gcs client
+// itself does in MakeWithHTTPClient, so the guard validates the same content
+// the client will eventually load.
+func loadGcsCredentialsContent(creds string) ([]byte, error) {
+	if creds == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(creds, "{") {
+		return []byte(creds), nil
+	}
+	data, err := os.ReadFile(util.ResolvePath(creds))
+	if err != nil {
+		return nil, errGcsCredentialsUnreadable
+	}
+	return data, nil
+}
+
+// checkGcsCredentials rejects a caller-supplied gcs credentials value that
+// would make the SDK read from somewhere other than the credentials themselves,
+// so the request fails before any client is built.
+func checkGcsCredentials(creds string) error {
+	if creds == "" {
+		return nil
+	}
+	data, err := loadGcsCredentialsContent(creds)
+	if err != nil {
+		return err
+	}
+	credType, _, parseErr := gcsremote.ParseInlineCredentials(string(data))
+	if parseErr != nil {
+		return parseErr
+	}
+	if !slices.Contains(gcsremote.StaticKeyCredentialTypes, credType) {
+		return fmt.Errorf("gcs credential type %q is not accepted here", credType)
+	}
+	return nil
+}
+
+// BuildGuardedRemoteStorageClient builds a remote storage client whose dial
+// path is validated against the SSRF deny-list and pinned against DNS
+// rebinding, unless allowUntrusted is set. It is the single builder for every
+// caller that dials a caller-influenced RemoteConf endpoint: the volume
+// FetchAndWriteNeedle write path and the filer and S3 gateway remote-mount read
+// paths, which otherwise reach the same s3manager sink unguarded.
+func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) (remote_storage.RemoteStorageClient, error) {
+	if !allowUntrusted {
+		if remoteConf.GetType() == "gcs" {
+			if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+				return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
+			}
+		}
+		if endpoint, makeClient, ok := guardedRemoteClient(remoteConf); ok {
+			if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
+				return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
+			}
+			// Build a one-shot client whose dial path re-validates the resolved
+			// IP every time. This pins the validated endpoint against DNS
+			// rebinding (a hostname that resolves to a public IP for
+			// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
+			// when the SDK dials).
+			client, err := makeClient(newGuardedHTTPClient(endpoint))
+			if err != nil {
+				return nil, fmt.Errorf("get remote client: %w", err)
+			}
+			return client, nil
+		}
+	}
+	client, err := remote_storage.GetRemoteStorage(remoteConf)
+	if err != nil {
+		return nil, fmt.Errorf("get remote client: %w", err)
+	}
+	return client, nil
+}
+
+// ValidateRemoteConfForLoad applies the same SSRF deny-list and gcs credential
+// checks BuildGuardedRemoteStorageClient enforces at dial time, but without
+// building a client. It is injected into the filer's FilerRemoteStorage so a
+// RemoteConf planted under /etc/remote is rejected at load — before the
+// lazy-fetch / lazy-list / remote-delete paths can resolve and dial it. A conf
+// whose type does not steer a caller-supplied endpoint (and so dials a fixed
+// provider host) passes; allowUntrusted skips the check to mirror the volume
+// server opt-out.
+func ValidateRemoteConfForLoad(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) error {
+	if remoteConf == nil {
+		return nil
+	}
+	if allowUntrusted {
+		return nil
+	}
+	if remoteConf.GetType() == "gcs" {
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return fmt.Errorf("reject remote credentials: %w", credsErr)
+		}
+	}
+	if endpoint, _, ok := guardedRemoteClient(remoteConf); ok {
+		if validateErr := validateRemoteEndpointForLoad(endpoint); validateErr != nil {
+			return fmt.Errorf("reject remote endpoint: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+// validateRemoteEndpointForLoad applies the static parts of the SSRF deny-list
+// (scheme, IMDS hostnames, IP-literal blocked addresses) without resolving
+// hostnames. DNS resolution is left to BuildGuardedRemoteStorageClient at dial
+// time, so a transient DNS failure during /etc/remote reload cannot drop a
+// working mount from the live map.
+func validateRemoteEndpointForLoad(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("remote endpoint is empty")
+	}
+	u, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return fmt.Errorf("parse remote endpoint %q: %w", endpoint, parseErr)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("remote endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("remote endpoint %q has no host", endpoint)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("remote endpoint %q targets instance metadata service", endpoint)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIP(endpoint, ip)
+	}
+	return nil
 }
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
@@ -188,27 +506,9 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
-	var client remote_storage.RemoteStorageClient
-	var getClientErr error
-	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil && remoteConf.Type == "s3" {
-		// Endpoint validation is S3-specific: only RemoteConf.S3Endpoint
-		// is a URL the volume server dials directly. Other backends
-		// (gcs, azure, ...) authenticate against their own SDKs and
-		// don't accept an attacker-controlled host.
-		if validateErr := validateRemoteEndpoint(ctx, remoteConf.S3Endpoint); validateErr != nil {
-			return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
-		}
-		// Build a one-shot S3 client whose dial path re-validates the
-		// resolved IP every time. This pins the validated endpoint against
-		// DNS rebinding (a hostname that resolves to a public IP for
-		// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
-		// when the AWS SDK dials).
-		client, getClientErr = s3remote.MakeWithHTTPClient(remoteConf, newGuardedHTTPClient(remoteConf.S3Endpoint))
-	} else {
-		client, getClientErr = remote_storage.GetRemoteStorage(remoteConf)
-	}
+	client, getClientErr := BuildGuardedRemoteStorageClient(ctx, remoteConf, vs.AllowUntrustedRemoteEndpoints)
 	if getClientErr != nil {
-		return nil, fmt.Errorf("get remote client: %w", getClientErr)
+		return nil, getClientErr
 	}
 
 	remoteStorageLocation := req.RemoteLocation
@@ -227,13 +527,23 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		data, readRemoteErr = client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
 	}
 	if readRemoteErr != nil {
-		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
+		return nil, volumeRemoteReadError(remoteStorageLocation, readRemoteErr)
 	}
 	// The chunk is recorded with the requested size, so a short read would be
 	// cached as a full-size chunk with a zero-padded or truncated tail. Fail
 	// loudly instead of persisting silently corrupt content.
 	if int64(len(data)) != req.Size {
 		return nil, fmt.Errorf("read from remote %+v: got %d bytes, want %d", remoteStorageLocation, len(data), req.Size)
+	}
+
+	// Validate every replica target before writing anything, so a malformed or
+	// internal target fails the request instead of leaving a local write behind.
+	if !vs.AllowUntrustedRemoteEndpoints {
+		for _, replica := range req.Replicas {
+			if validateErr := validateReplicaTarget(ctx, replica.Url); validateErr != nil {
+				return nil, fmt.Errorf("reject replica target: %w", validateErr)
+			}
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -274,10 +584,20 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					Jwt:               security.EncodedJwt(req.Auth),
 				}
 
-				uploader, uploaderErr := operation.NewUploader()
-				if uploaderErr != nil {
-					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
-					return
+				// Upload through a client that re-checks the target at connect
+				// time, so a replica hostname cannot rebind to a blocked address
+				// after validateReplicaTarget. Peers may be private, so allow
+				// private here; the opt-out uses the shared global client.
+				var uploader *operation.Uploader
+				if vs.AllowUntrustedRemoteEndpoints {
+					var uploaderErr error
+					uploader, uploaderErr = operation.NewUploader()
+					if uploaderErr != nil {
+						replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
+						return
+					}
+				} else {
+					uploader = operation.NewUploaderWithHttpClient(newGuardedHTTPClientPolicy(targetVolumeServer, true))
 				}
 
 				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil {
@@ -298,4 +618,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	return resp, err
+}
+
+// volumeRemoteReadError keeps a confirmed missing object distinguishable across
+// gRPC, where a wrapped sentinel would arrive as codes.Unknown text. The
+// sentinel's text in the message is what the filer matches, so a NotFound for
+// any other reason cannot pass for it.
+func volumeRemoteReadError(loc *remote_pb.RemoteStorageLocation, err error) error {
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return status.Errorf(codes.NotFound, "read from remote %+v: %v", loc, remote_storage.ErrRemoteObjectNotFound)
+	}
+	return fmt.Errorf("read from remote %+v: %w", loc, err)
 }

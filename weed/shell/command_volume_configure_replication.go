@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func init() {
@@ -45,7 +45,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
-	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	if err = configureReplicationCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -70,7 +70,10 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 
 	vid := needle.VolumeId(*volumeIdInt)
-	volumeFilter := getVolumeFilter(replicaPlacement, uint32(vid), *collectionPattern)
+	volumeFilter, err := getVolumeFilter(replicaPlacement, uint32(vid), *collectionPattern)
+	if err != nil {
+		return err
+	}
 
 	// find all data nodes with volumes that needs replication change
 	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
@@ -108,27 +111,18 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	return err
 }
 
-func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) func(message *master_pb.VolumeInformationMessage) bool {
+func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) (func(message *master_pb.VolumeInformationMessage) bool, error) {
 	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
 	if volumeId > 0 {
 		return func(v *master_pb.VolumeInformationMessage) bool {
 			return v.Id == volumeId && v.ReplicaPlacement != replicaPlacementInt32
-		}
+		}, nil
+	}
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(collectionPattern)
+	if err != nil {
+		return nil, err
 	}
 	return func(v *master_pb.VolumeInformationMessage) bool {
-		var collectionMatched bool
-		if collectionPattern == "" {
-			// Empty pattern matches all collections
-			collectionMatched = true
-		} else if collectionPattern == CollectionDefault {
-			collectionMatched = v.Collection == ""
-		} else {
-			m, err := filepath.Match(collectionPattern, v.Collection)
-			if err != nil {
-				return false
-			}
-			collectionMatched = m
-		}
-		return collectionMatched && v.ReplicaPlacement != replicaPlacementInt32
-	}
+		return collectionMatcher.Matches(v.Collection) && v.ReplicaPlacement != replicaPlacementInt32
+	}, nil
 }

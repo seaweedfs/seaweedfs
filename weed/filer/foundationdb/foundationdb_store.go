@@ -35,8 +35,6 @@ import (
 )
 
 const (
-	// FoundationDB transaction size limit is 10MB
-	FDB_TRANSACTION_SIZE_LIMIT = 10 * 1024 * 1024
 	// Safe limit for batch size (leave margin for FDB overhead)
 	FDB_BATCH_SIZE_LIMIT = 8 * 1024 * 1024
 	// Maximum number of entries to return in a single directory listing
@@ -396,10 +394,8 @@ func (store *FoundationDBStore) UpdateEntry(ctx context.Context, entry *filer.En
 		value = util.MaybeGzipData(value)
 	}
 
-	// Check transaction size limit
-	if len(value) > FDB_TRANSACTION_SIZE_LIMIT {
-		return fmt.Errorf("entry %s exceeds FoundationDB transaction size limit (%d > %d bytes)",
-			entry.FullPath, len(value), FDB_TRANSACTION_SIZE_LIMIT)
+	if err := errIfValueTooLarge(string(entry.FullPath), value); err != nil {
+		return err
 	}
 
 	// Check if there's a transaction in context
@@ -695,6 +691,10 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 // KV operations
 func (store *FoundationDBStore) KvPut(ctx context.Context, key []byte, value []byte) error {
 	fdbKey := store.kvDir.Pack(tuple.Tuple{key})
+
+	if err := errIfValueTooLarge(string(key), value); err != nil {
+		return err
+	}
 
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {

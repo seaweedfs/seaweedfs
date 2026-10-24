@@ -235,13 +235,15 @@ func buildPreflightResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse 
 
 		// Set exposed headers
 		if len(rule.ExposeHeaders) > 0 {
-			response.ExposeHeaders = strings.Join(rule.ExposeHeaders, ", ")
+			response.ExposeHeaders = formatExposeHeaders(rule.ExposeHeaders)
 		}
 
 		// Set max age
 		if rule.MaxAgeSeconds != nil {
 			response.MaxAge = strconv.Itoa(*rule.MaxAgeSeconds)
 		}
+
+		response.AllowCredentials = true
 	}
 
 	return response
@@ -250,7 +252,8 @@ func buildPreflightResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse 
 // buildResponse builds a CORS response from a matching rule
 func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 	response := &CORSResponse{
-		AllowOrigin: corsReq.Origin,
+		AllowOrigin:      corsReq.Origin,
+		AllowCredentials: true,
 	}
 
 	// Set allowed methods
@@ -263,7 +266,7 @@ func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 
 	// Set expose headers
 	if len(rule.ExposeHeaders) > 0 {
-		response.ExposeHeaders = strings.Join(rule.ExposeHeaders, ", ")
+		response.ExposeHeaders = formatExposeHeaders(rule.ExposeHeaders)
 	}
 
 	// Set max age
@@ -272,6 +275,47 @@ func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 	}
 
 	return response
+}
+
+// defaultExposeHeaders are emitted alongside "*" so credentialed CORS requests
+// can read standard response headers ("*" is treated literally when credentials
+// are included, per the Fetch spec).
+var defaultExposeHeaders = []string{
+	"ETag",
+	"Content-Length",
+	"Content-Type",
+	"Last-Modified",
+	"Content-Range",
+	"x-amz-request-id",
+	"x-amz-version-id",
+	"x-amz-tagging-count",
+}
+
+// formatExposeHeaders formats the exposed headers slice into a comma-separated string.
+func formatExposeHeaders(exposeHeaders []string) string {
+	var headers []string
+	hasWildcard := false
+	seen := map[string]bool{}
+	for _, h := range exposeHeaders {
+		if h == "*" {
+			hasWildcard = true
+			continue
+		}
+		if lower := strings.ToLower(h); !seen[lower] {
+			seen[lower] = true
+			headers = append(headers, h)
+		}
+	}
+	if hasWildcard {
+		for _, h := range defaultExposeHeaders {
+			if lower := strings.ToLower(h); !seen[lower] {
+				seen[lower] = true
+				headers = append(headers, h)
+			}
+		}
+		headers = append(headers, "*")
+	}
+	return strings.Join(headers, ", ")
 }
 
 // Helper functions

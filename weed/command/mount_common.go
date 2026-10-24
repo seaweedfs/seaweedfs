@@ -5,17 +5,21 @@ package command
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"path"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
@@ -65,36 +69,46 @@ func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.Fil
 		return nil
 	}
 
-	entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
-	if err != nil {
-		return err
-	}
-	if entry == nil {
-		return fmt.Errorf("bucket %s not found", bucketPath)
-	}
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
-		return nil
-	}
-
-	entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
-
 	bucketFullPath := util.FullPath(bucketPath)
 	parent, _ := bucketFullPath.DirAndName()
-	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-			Directory: parent,
-			Entry:     entry,
+
+	for attempt := 0; attempt < 5; attempt++ {
+		entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
+		if err != nil {
+			return err
+		}
+		if entry == nil {
+			return fmt.Errorf("bucket %s not found", bucketPath)
+		}
+
+		if value := strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])); value != "" {
+			return nil
+		}
+
+		expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtAllowEmptyFolders)
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
+
+		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+				Directory:        parent,
+				Entry:            entry,
+				ExpectedExtended: expected,
+			})
+			return err
 		})
-	}); err != nil {
-		return err
+		if err == nil {
+			glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
+			return nil
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			return err
+		}
 	}
 
-	glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
-	return nil
+	return fmt.Errorf("bucket %s attributes keep changing", bucketPath)
 }
 
 func bucketPathForMountRoot(mountRoot, bucketRootPath string) (string, bool) {
@@ -175,9 +189,19 @@ type fileSystemParams struct {
 	chunkSizeLimitMB int
 	cacheDirForRead  string
 	cacheDirForWrite string
+
+	// eagerFilerCreate persists a created file's entry at create time rather
+	// than at flush. A platform sets it when it cannot run the flush before
+	// the application's close returns, so nothing that reads through the
+	// filer can race an unflushed close.
+	eagerFilerCreate bool
 }
 
 func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS {
+	readerCacheSizeMB := int64(256)
+	if option.readerCacheSizeMB != nil {
+		readerCacheSizeMB = *option.readerCacheSizeMB
+	}
 	return mount.NewSeaweedFileSystem(&mount.Option{
 		MountDirectory:              p.dir,
 		FilerAddresses:              p.filerAddresses,
@@ -192,6 +216,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		ChunkSizeLimit:              int64(p.chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:           *option.concurrentWriters,
 		ConcurrentReaders:           *option.concurrentReaders,
+		ReaderCacheSizeMB:           readerCacheSizeMB,
 		CacheDirForRead:             p.cacheDirForRead,
 		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
 		CacheDirForWrite:            p.cacheDirForWrite,
@@ -215,17 +240,11 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		DisableXAttr:                *option.disableXAttr,
 		IsMacOs:                     runtime.GOOS == "darwin",
 		MetadataFlushSeconds:        *option.metadataFlushSeconds,
-		// RDMA acceleration options
-		RdmaEnabled:           *option.rdmaEnabled,
-		RdmaSidecarAddr:       *option.rdmaSidecarAddr,
-		RdmaFallback:          *option.rdmaFallback,
-		RdmaReadOnly:          *option.rdmaReadOnly,
-		RdmaMaxConcurrent:     *option.rdmaMaxConcurrent,
-		RdmaTimeoutMs:         *option.rdmaTimeoutMs,
-		DirIdleEvictSec:       *option.dirIdleEvictSec,
-		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
-		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
-		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
+		DirIdleEvictSec:             *option.dirIdleEvictSec,
+		EnableDistributedLock:       option.distributedLock != nil && *option.distributedLock,
+		WritebackCache:              option.writebackCache != nil && *option.writebackCache,
+		EagerFilerCreate:            p.eagerFilerCreate,
+		PosixDirNlink:               option.posixDirNlink != nil && *option.posixDirNlink,
 		// Peer chunk sharing
 		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
 		PeerListen:     peerStringOrEmpty(option.peerListen),
@@ -275,4 +294,47 @@ func resolveCacheDirs(option *MountOptions) (string, string) {
 		cacheDirForWrite = cacheDirForRead
 	}
 	return cacheDirForRead, cacheDirForWrite
+}
+
+// volumeName labels the mount where the platform shows one, in Finder and in
+// Explorer. An explicit override always wins; failing that, the mounted path
+// names the disk, then the mount point; the filer address, which every mount
+// from one filer shares, is the last resort.
+func volumeName(filer, filerMountRootPath, dir, override string) string {
+	name := override
+	if name == "" {
+		name = lastSegment(filerMountRootPath)
+	}
+	if name == "" {
+		name = lastSegment(dir)
+	}
+	if name == "" {
+		name = filer
+	}
+	return strings.ReplaceAll(name, ",", "+")
+}
+
+// lastSegment is the name a path ends with, and "" for the ones that name no
+// disk: the root, "." and a bare Windows drive letter.
+func lastSegment(p string) string {
+	name := path.Base(strings.ReplaceAll(p, `\`, "/"))
+	if name == "/" || name == "." || strings.HasSuffix(name, ":") {
+		return ""
+	}
+	return name
+}
+
+func configureMountMemory(option *MountOptions) error {
+	if option.readerCacheSizeMB != nil && (*option.readerCacheSizeMB <= 0 || *option.readerCacheSizeMB > math.MaxInt64>>20) {
+		return fmt.Errorf("readerCacheSizeMB must be positive and fit in an int64 byte budget")
+	}
+	if option.memoryLimitMB != nil {
+		if *option.memoryLimitMB < 0 || *option.memoryLimitMB > math.MaxInt64>>20 {
+			return fmt.Errorf("memoryLimitMB must be non-negative and fit in an int64 byte limit")
+		}
+		if *option.memoryLimitMB > 0 {
+			debug.SetMemoryLimit(*option.memoryLimitMB << 20)
+		}
+	}
+	return nil
 }

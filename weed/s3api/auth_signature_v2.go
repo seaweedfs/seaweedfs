@@ -18,6 +18,7 @@
 package s3api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/subtle"
@@ -68,11 +69,11 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return iam.doesPresignV2SignatureMatch(r)
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.Header) s3err.ErrorCode {
+func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	accessKey := formValues.Get("AWSAccessKeyId")
 	if accessKey == "" {
-		return s3err.ErrMissingFields
+		return nil, s3err.ErrMissingFields
 	}
 
 	identity, cred, found := iam.lookupByAccessKey(accessKey)
@@ -85,35 +86,32 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 		glog.Warningf("InvalidAccessKeyId (V2 POST): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
-		return s3err.ErrInvalidAccessKeyID
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Check service account expiration
 	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrAccessDenied
-	}
-
-	bucket := formValues.Get("bucket")
-	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
-		return s3err.ErrAccessDenied
+		return nil, s3err.ErrAccessDenied
 	}
 
 	policy := formValues.Get("Policy")
 	if policy == "" {
-		return s3err.ErrMissingFields
+		return nil, s3err.ErrMissingFields
 	}
 
 	signature := formValues.Get("Signature")
 	if signature == "" {
-		return s3err.ErrMissingFields
+		return nil, s3err.ErrMissingFields
 	}
 
 	if !compareSignatureV2(signature, calculateSignatureV2(policy, cred.SecretKey)) {
-		return s3err.ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-	return s3err.ErrNone
+	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey, cred.SecretKey)
+	return identity, s3err.ErrNone
 }
 
 // doesSignV2Match - Verify authorization header with calculated header in accordance with
@@ -170,6 +168,8 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	if !compareSignatureV2(v2Signature, expectedV2Signature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey, cred.SecretKey)
 	return identity, s3err.ErrNone
 }
 
@@ -228,6 +228,8 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+	s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey, cred.SecretKey)
 	return identity, s3err.ErrNone
 }
 

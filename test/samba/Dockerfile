@@ -1,14 +1,9 @@
 FROM chrislusf/seaweedfs:e2e
 
-RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
-    --no-install-recommends \
-    --no-install-suggests \
+RUN apt-install \
     samba \
     smbclient \
-    python3-minimal \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    python3-minimal
 
 COPY smb.conf.template /smb.conf.template
 COPY smb_tests.sh /smb_tests.sh

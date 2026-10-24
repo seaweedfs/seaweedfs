@@ -381,6 +381,19 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	config := s3a.newBucketConfigFromEntry(bucket, entry)
 
+	// A cold load is the first time this gateway learns the bucket's policy
+	// exists, and the metadata subscription only mirrors changes - a policy
+	// that predates the IAM integration would otherwise never reach the
+	// advanced-IAM mirror and its grants would not bind on the IAM path.
+	// Synchronous: the IAM auth path primes the bucket through here before
+	// evaluating the mirror, so the backfill has to land first - a one-time
+	// cost on the load that discovers the policy. Raw entry bytes, not the
+	// parsed document, so the backfill can byte-compare against a later
+	// entry read when it reconciles.
+	if policyJSON := entry.Extended[BUCKET_POLICY_METADATA_KEY]; len(policyJSON) > 0 && config.BucketPolicy != nil && s3a.bucketPolicyIAMManager() != nil {
+		s3a.ensureBucketPolicyInIAM(bucket, policyJSON)
+	}
+
 	// Cache the result
 	s3a.bucketConfigCache.Set(bucket, config)
 
@@ -631,6 +644,24 @@ func (s3a *S3ApiServer) isVersioningConfigured(bucket string) (bool, error) {
 	// Versioning is configured if explicitly set to either "Enabled" or "Suspended"
 	// OR if object lock is enabled (which forces versioning)
 	return config.Versioning != "" || config.ObjectLockConfig != nil, nil
+}
+
+// checkVersionIdConfigured reports ErrInvalidArgument when versionId names a
+// specific version on a bucket that has never had versioning configured. The
+// implicit "null" version of pre-versioning objects stays addressable.
+func (s3a *S3ApiServer) checkVersionIdConfigured(bucket, versionId string) s3err.ErrorCode {
+	if versionId == "" || versionId == "null" {
+		return s3err.ErrNone
+	}
+	configured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil {
+		// Missing buckets and lookup failures are answered by the handler path.
+		return s3err.ErrNone
+	}
+	if !configured {
+		return s3err.ErrInvalidArgument
+	}
+	return s3err.ErrNone
 }
 
 // isObjectLockEnabled checks if Object Lock is enabled for a bucket (with caching)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
@@ -116,7 +117,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			defer cancel()
 		}
 		client := &lifecycleClientCallable{c: rpcClient}
-		listFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
 		walkerDispatch := &dailyrun.WalkerDispatcher{Client: client}
 
 		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n",
@@ -165,8 +165,9 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 					buckets = append(buckets, in.Bucket)
 				}
 			}
-			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shardID int) error {
-				return dailyrun.WalkBuckets(walkCtx, view, shardID, buckets, listFn, walkerDispatch)
+			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
+				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
+					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
 			})
 			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,
@@ -180,7 +181,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				// integration tests and CI. Fan out across the selected shards
 				// so recovery walks do not serialize 16 shard scans into a 10s
 				// timeout budget.
-				Workers: len(shards),
+				Workers:     len(shards),
 				Walker:      walker,
 				EventBudget: *eventBudget,
 				ClientName:  fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),
@@ -314,6 +315,7 @@ type lifecycleClientCallable struct {
 }
 
 func (l *lifecycleClientCallable) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	ctx, _ = credential.WithS3InternalAdminAuth(ctx)
 	return l.c.LifecycleDelete(ctx, req)
 }
 

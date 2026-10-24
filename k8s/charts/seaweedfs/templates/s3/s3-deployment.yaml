@@ -17,6 +17,10 @@ metadata:
 {{- end }}
 spec:
   replicas: {{ .Values.s3.replicas }}
+  {{- with .Values.s3.updateStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -35,13 +39,15 @@ spec:
       {{- with .Values.s3.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.s3.podAnnotations | default dict) }}
+      {{- if .Values.s3.existingConfigSecret }}
+      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.s3.existingConfigSecret) | default dict }}
+      {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
+      {{- else }}
+      {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
+      {{- end }}
       annotations:
-      {{ with .Values.podAnnotations }}
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.s3.podAnnotations }}
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml $podAnnotations | nindent 8 }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.affinity }}
@@ -57,9 +63,12 @@ spec:
         {{ tpl .Values.s3.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.s3.terminationGracePeriodSeconds }}
       {{- if .Values.s3.priorityClassName }}
       priorityClassName: {{ .Values.s3.priorityClassName | quote }}
+      {{- end }}
+      {{- if .Values.s3.schedulerName }}
+      schedulerName: {{ .Values.s3.schedulerName | quote }}
       {{- end }}
       enableServiceLinks: false
       {{- if .Values.s3.serviceAccountName }}
@@ -91,6 +100,9 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
+            {{- if .Values.s3.enableAuth }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.s3 "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
@@ -143,10 +155,13 @@ spec:
               {{- if .Values.s3.icebergPort }}
               -port.iceberg={{ .Values.s3.icebergPort }} \
               {{- end }}
+              {{- /* rendered even when 0: an if would drop the flag and weed would serve its default */}}
+              -port.lance={{ .Values.s3.lancePort | default 0 }} \
               {{- range .Values.s3.extraArgs }}
               {{ . }} \
               {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.s3.containerSecurityContext (tpl (.Values.s3.extraVolumeMounts | default "") .) (tpl (.Values.s3.extraVolumes | default "") .)) | nindent 12 }}
             {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
@@ -192,6 +207,10 @@ spec:
             - containerPort: {{ .Values.s3.icebergPort }}
               name: swfs-iceberg
             {{- end }}
+            {{- if .Values.s3.lancePort }}
+            - containerPort: {{ .Values.s3.lancePort }}
+              name: swfs-lance
+            {{- end }}
             {{- if .Values.s3.metricsPort }}
             - containerPort: {{ .Values.s3.metricsPort }}
               name: metrics
@@ -220,6 +239,10 @@ spec:
             failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
           {{- end }}
+          {{- with .Values.s3.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.s3.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -231,6 +254,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.s3.containerSecurityContext (tpl (.Values.s3.extraVolumeMounts | default "") .) (tpl (.Values.s3.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if .Values.s3.enableAuth }}
         - name: config-users
           secret:

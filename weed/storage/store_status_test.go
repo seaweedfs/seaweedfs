@@ -20,7 +20,7 @@ func TestCollectStatForOneVolumeModifiedAtSecond(t *testing.T) {
 	defer v.Close()
 	v.location = &DiskLocation{Directory: dir, DiskType: types.HardDriveType}
 
-	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

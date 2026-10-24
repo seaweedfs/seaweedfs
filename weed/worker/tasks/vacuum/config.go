@@ -73,12 +73,25 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadVacuumTaskPolicy(); err == nil && policy != nil {
-			if err := config.FromTaskPolicy(policy); err == nil {
+		policy, err := persistence.LoadVacuumTaskPolicy()
+		switch {
+		case err != nil:
+			glog.Warningf("Could not read the persisted vacuum configuration, falling back to defaults: %v", err)
+		case policy == nil:
+			glog.V(1).Infof("No vacuum configuration persisted yet, using defaults")
+		default:
+			if err := config.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Could not apply the persisted vacuum configuration, falling back to defaults: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded vacuum configuration from persistence")
 				return config
 			}
 		}
+	} else if configPersistence != nil {
+		// A store was handed in but does not expose the accessor, so the persisted
+		// settings are silently ignored - always a wiring bug, never a normal state.
+		glog.Warningf("%T cannot provide the persisted vacuum configuration: it has no LoadVacuumTaskPolicy() method, "+
+			"so the compiled-in defaults are used and any saved vacuum settings are ignored", configPersistence)
 	}
 
 	glog.V(1).Infof("Using default vacuum configuration")

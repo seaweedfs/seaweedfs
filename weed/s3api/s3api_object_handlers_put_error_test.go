@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -40,6 +41,22 @@ func TestMapChunkedUploadErrorToS3Error(t *testing.T) {
 		{
 			name: "other errors map to InternalError",
 			err:  errors.New("assign volume: no free volumes"),
+			want: s3err.ErrInternalError,
+		},
+		{
+			// Over-quota (read-only) buckets must be 403, not retryable 500.
+			name: "filer read-only verdict maps to AccessDenied",
+			err: fmt.Errorf("upload chunk: assign volume: %w", filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+				Error:     "assign volume: read only: /buckets/q (e.g. bucket over quota)",
+				ErrorCode: filer_pb.FilerError_READ_ONLY,
+			})),
+			want: s3err.ErrAccessDenied,
+		},
+		{
+			// A full volume rejecting a write is a transient server fault the
+			// client should retry, even though its text also says "read only".
+			name: "volume server read-only write stays InternalError",
+			err:  errors.New("upload chunk: upload data: unexpected status 500: volume 5 is read only"),
 			want: s3err.ErrInternalError,
 		},
 	}

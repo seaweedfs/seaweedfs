@@ -58,7 +58,7 @@ func TestPurgeSkippedWhileDirectoryBuilding(t *testing.T) {
 	var resetCalls int32
 	mc.PurgeDirectoryChildren(dir, func() { atomic.AddInt32(&resetCalls, 1) })
 
-	if err := mc.CompleteDirectoryBuild(context.Background(), dir, 0); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), dir, 0, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 

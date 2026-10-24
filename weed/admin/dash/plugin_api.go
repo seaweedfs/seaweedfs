@@ -982,3 +982,27 @@ func parsePositiveInt(raw string, defaultValue int) int {
 }
 
 // cloneConfigValueMap is now exported by the plugin package as CloneConfigValueMap
+
+// GetPluginObservationsAPI returns what workers last reported about the objects
+// they inspected. Accepts an optional ?format= filter.
+//
+// These are cached, not live: a worker reports what it saw when it last looked,
+// and the timestamp is served with each one so a reader can judge the age.
+func (s *AdminServer) GetPluginObservationsAPI(w http.ResponseWriter, r *http.Request) {
+	plugin := s.GetPlugin()
+	if plugin == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+
+	formatFilter := strings.TrimSpace(r.URL.Query().Get("format"))
+	observed := plugin.Observations().List()
+	payload := make([]interface{}, 0, len(observed))
+	for _, o := range observed {
+		if formatFilter != "" && !strings.EqualFold(o.Format, formatFilter) {
+			continue
+		}
+		payload = append(payload, o)
+	}
+	writeJSON(w, http.StatusOK, payload)
+}

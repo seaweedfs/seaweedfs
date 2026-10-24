@@ -11,7 +11,7 @@ templ Groups(data dash.GroupsPageData) {
         <div class="d-sm-flex align-items-center justify-content-between mb-4">
             <div>
                 <h1 class="h3 mb-0 text-gray-800">
-                    <i class="fas fa-users-cog me-2"></i>Groups
+                    <i class="bi bi-people-fill me-2"></i>Groups
                 </h1>
                 <p class="mb-0 text-muted">Manage IAM groups for organizing users and policies</p>
             </div>
@@ -19,7 +19,7 @@ templ Groups(data dash.GroupsPageData) {
                 <button type="button" class="btn btn-primary"
                         data-bs-toggle="modal"
                         data-bs-target="#createGroupModal">
-                    <i class="fas fa-plus me-1"></i>Create Group
+                    <i class="bi bi-plus me-1"></i>Create Group
                 </button>
             </div>
         </div>
@@ -39,7 +39,7 @@ templ Groups(data dash.GroupsPageData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-users-cog fa-2x text-gray-300"></i>
+                                <i class="bi bi-people-fill icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -58,7 +58,7 @@ templ Groups(data dash.GroupsPageData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                <i class="bi bi-check-circle icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -74,7 +74,7 @@ templ Groups(data dash.GroupsPageData) {
             <div class="card-body">
                 if len(data.Groups) == 0 {
                     <div class="text-center py-5 text-muted">
-                        <i class="fas fa-users-cog fa-3x mb-3"></i>
+                        <i class="bi bi-people-fill icon-3x mb-3"></i>
                         <p>No groups found. Create a group to get started.</p>
                     </div>
                 } else {
@@ -114,14 +114,14 @@ templ Groups(data dash.GroupsPageData) {
                                                     data-action="view"
                                                     aria-label={"View group " + group.Name}
                                                     title={"View " + group.Name}>
-                                                <i class="fas fa-eye"></i>
+                                                <i class="bi bi-eye"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-danger"
                                                     data-group-name={group.Name}
                                                     data-action="delete"
                                                     aria-label={"Delete group " + group.Name}
                                                     title={"Delete " + group.Name}>
-                                                <i class="fas fa-trash"></i>
+                                                <i class="bi bi-trash"></i>
                                             </button>
                                         </td>
                                     </tr>
@@ -190,7 +190,7 @@ templ Groups(data dash.GroupsPageData) {
                                             }
                                         </select>
                                         <button class="btn btn-outline-primary" type="button" onclick="addMemberToGroup()">
-                                            <i class="fas fa-plus"></i> Add
+                                            <i class="bi bi-plus"></i> Add
                                         </button>
                                     </div>
                                 </div>
@@ -207,7 +207,7 @@ templ Groups(data dash.GroupsPageData) {
                                             }
                                         </select>
                                         <button class="btn btn-outline-primary" type="button" onclick="attachPolicyToGroup()">
-                                            <i class="fas fa-plus"></i> Attach
+                                            <i class="bi bi-plus"></i> Attach
                                         </button>
                                     </div>
                                 </div>
@@ -288,7 +288,7 @@ templ Groups(data dash.GroupsPageData) {
                         const btn = document.createElement('button');
                         btn.className = 'btn btn-sm btn-outline-danger';
                         btn.onclick = () => removeMember(member);
-                        btn.innerHTML = '<i class="fas fa-times"></i>';
+                        btn.innerHTML = '<i class="bi bi-x"></i>';
                         td2.appendChild(btn);
                     }
                 } else {
@@ -315,7 +315,7 @@ templ Groups(data dash.GroupsPageData) {
                         const btn = document.createElement('button');
                         btn.className = 'btn btn-sm btn-outline-danger';
                         btn.onclick = () => detachPolicy(policy);
-                        btn.innerHTML = '<i class="fas fa-times"></i>';
+                        btn.innerHTML = '<i class="bi bi-x"></i>';
                         td2.appendChild(btn);
                     }
                 } else {

@@ -401,3 +401,70 @@ func TestRegistryHasCapableWorkerIgnoresNilCapability(t *testing.T) {
 		t.Fatalf("expected HasCapableWorker to return false when capability has no detect or execute")
 	}
 }
+
+func TestListExecutorsPrefersMatchingReplicaHost(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-remote",
+		Address:  "10.87.0.4:33646",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 8},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-local",
+		Address:  "10.87.0.3:33646",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	r.UpdateHeartbeat("worker-remote", &plugin_pb.WorkerHeartbeat{
+		WorkerId: "worker-remote", ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 8,
+	})
+	r.UpdateHeartbeat("worker-local", &plugin_pb.WorkerHeartbeat{
+		WorkerId: "worker-local", ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+
+	// Without preference the emptier remote worker wins on slots.
+	plain, err := r.ListExecutors("erasure_coding")
+	if err != nil {
+		t.Fatalf("ListExecutors: %v", err)
+	}
+	if plain[0].WorkerID != "worker-remote" {
+		t.Fatalf("without preference want remote first, got %s", plain[0].WorkerID)
+	}
+
+	// Replica on :8080 of the same host as worker-local.
+	pref, err := r.ListExecutors("erasure_coding", "10.87.0.3:8080")
+	if err != nil {
+		t.Fatalf("ListExecutors preferred: %v", err)
+	}
+	if pref[0].WorkerID != "worker-local" {
+		t.Fatalf("preferred host want worker-local first, got %s", pref[0].WorkerID)
+	}
+	if pref[1].WorkerID != "worker-remote" {
+		t.Fatalf("remote should still be fallback, got %s", pref[1].WorkerID)
+	}
+}
+
+func TestJobReplicaHostsFromSourcesAndReplicaServers(t *testing.T) {
+	t.Parallel()
+	job := &plugin_pb.JobSpec{
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"source_server": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "10.87.0.1:8080"},
+			},
+			"replica_servers": {
+				Kind: &plugin_pb.ConfigValue_StringList{
+					StringList: &plugin_pb.StringList{Values: []string{"10.87.0.1:8080", "10.87.0.2:8081"}},
+				},
+			},
+		},
+	}
+	got := JobReplicaHosts(job)
+	if len(got) != 2 {
+		t.Fatalf("got %v", got)
+	}
+}

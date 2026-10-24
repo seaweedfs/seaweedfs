@@ -27,6 +27,8 @@ message WorkerToAdminMessage {
     DetectionComplete detection_complete = 15;
     JobProgressUpdate job_progress_update = 16;
     JobCompleted job_completed = 17;
+    WorkerObservations observations = 18;
+    ObjectPreviewResponse object_preview_response = 19;
   }
 }
 
@@ -42,6 +44,7 @@ message AdminToWorkerMessage {
     ExecuteJobRequest execute_job_request = 13;
     CancelRequest cancel_request = 14;
     AdminShutdown shutdown = 15;
+    RequestObjectPreview request_object_preview = 16;
   }
 }
 
@@ -451,4 +454,62 @@ enum ActivitySource {
   ACTIVITY_SOURCE_ADMIN = 1;
   ACTIVITY_SOURCE_DETECTOR = 2;
   ACTIVITY_SOURCE_EXECUTOR = 3;
+}
+
+// WorkerObservations reports what a worker learned about the objects it
+// inspected. A worker opens a table to decide whether it needs a job; what it
+// saw is worth keeping either way, because for a format the cluster cannot
+// read, the worker is the only thing that can describe it.
+//
+// Observations are not work. Admin caches them and serves them back, so a
+// worker that goes away leaves its last ones standing rather than blanking a
+// page.
+message WorkerObservations {
+  string job_type = 1;
+  repeated ObjectObservation observations = 2;
+}
+
+// ObjectObservation is one object as a worker last saw it.
+message ObjectObservation {
+  // Identifier of the object, e.g. ["bucket", "namespace", "table"].
+  repeated string object_id = 1;
+  // What kind of object this is, e.g. "table".
+  string object_kind = 2;
+  // The object's format, e.g. "LANCE", so a reader can tell whose observation
+  // this is without parsing the attributes.
+  string format = 3;
+  // Whatever the worker can cheaply say: schema, row count, fragment count.
+  // The keys are the worker's to choose.
+  map<string, ConfigValue> attributes = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// RequestObjectPreview asks a worker for sample rows of an object admin cannot
+// read itself. Unlike an observation this is not cached: it is fetched when
+// someone opens the page, because rows are the object's data rather than a
+// description of it, and holding a copy in admin is neither fresh nor its
+// business.
+message RequestObjectPreview {
+  repeated string object_id = 1;
+  // The format admin believes this object is, so a worker that does not own it
+  // can decline instead of guessing.
+  string format = 2;
+  int32 row_limit = 3;
+}
+
+// ObjectPreviewResponse carries the sample back, already rendered as text. The
+// worker is the only thing that knows the object's types, so it formats them;
+// admin displays what it is given.
+message ObjectPreviewResponse {
+  string request_id = 6;
+  bool success = 1;
+  string error_message = 2;
+  repeated string columns = 3;
+  repeated PreviewRow rows = 4;
+  // Rows in the object, which is not the number sampled.
+  int64 total_rows = 5;
+}
+
+message PreviewRow {
+  repeated string values = 1;
 }

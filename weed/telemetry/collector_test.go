@@ -3,6 +3,7 @@ package telemetry
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -62,5 +63,25 @@ func TestCollectVolumeStatsCountsEcShards(t *testing.T) {
 	// even though two nodes hold its shards.
 	if volumeCount != 4 {
 		t.Errorf("Expected 4 volumes, got %d", volumeCount)
+	}
+}
+
+func TestCollectDataWaitsForMinDiskBytes(t *testing.T) {
+	topo := topology.NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+	collector := NewCollector(nil, topo, nil)
+
+	under := &master_pb.VolumeInformationMessage{Id: 1, Size: proto.MinDiskBytes - 1, Version: uint32(needle.GetCurrentVersion())}
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{under}, dn)
+	if data := collector.collectData(); data != nil {
+		t.Fatalf("cluster under the floor reported %+v", data)
+	}
+
+	one := &master_pb.VolumeInformationMessage{Id: 2, Size: 1, Version: uint32(needle.GetCurrentVersion())}
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{under, one}, dn)
+	data := collector.collectData()
+	if data == nil || data.TotalDiskBytes != proto.MinDiskBytes {
+		t.Fatalf("cluster on the floor reported %+v", data)
 	}
 }

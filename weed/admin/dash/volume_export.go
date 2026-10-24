@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -93,7 +94,6 @@ type ExportVolume struct {
 	DiskType          string  `json:"disk_type"`
 	DiskId            uint32  `json:"disk_id"`
 	RemoteStorageName string  `json:"remote_storage_name,omitempty"`
-	RemoteStorageKey  string  `json:"remote_storage_key,omitempty"`
 }
 
 type ExportEcShard struct {
@@ -122,7 +122,7 @@ func (s *AdminServer) ExportClusterVolumeList(ctx context.Context, collection st
 	}
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(ctx, client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -251,7 +251,6 @@ func buildExportVolume(m *master_pb.VolumeInformationMessage, volumeSizeLimit ui
 		DiskType:          m.DiskType,
 		DiskId:            m.DiskId,
 		RemoteStorageName: m.RemoteStorageName,
-		RemoteStorageKey:  m.RemoteStorageKey,
 	}
 	// Decode replica placement and TTL the way volume.list does.
 	if vi, err := storage.NewVolumeInfo(m); err == nil {

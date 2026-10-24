@@ -7,9 +7,11 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -74,6 +76,7 @@ type syncState struct {
 	grpcDialOption       grpc.DialOption
 	targetFiler          pb.ServerAddress
 	sourcePath           string
+	targetPath           string
 	sourceFilerSignature int32
 }
 
@@ -173,16 +176,23 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	// per-cluster HTTPS clients for volume server connections
 	var httpClientA, httpClientB *util_http_client.HTTPClient
+	var jwtForFilerA, jwtForFilerB security.FilerJwtProvider
 	if *syncOptions.aSecurity != "" {
 		var err error
 		if httpClientA, err = security.LoadHTTPClientFromFile(*syncOptions.aSecurity); err != nil {
 			glog.Fatalf("load HTTPS client config for filer A: %v", err)
+		}
+		if jwtForFilerA, err = security.LoadFilerJwtFromFile(*syncOptions.aSecurity); err != nil {
+			glog.Fatalf("load filer JWT config for filer A: %v", err)
 		}
 	}
 	if *syncOptions.bSecurity != "" {
 		var err error
 		if httpClientB, err = security.LoadHTTPClientFromFile(*syncOptions.bSecurity); err != nil {
 			glog.Fatalf("load HTTPS client config for filer B: %v", err)
+		}
+		if jwtForFilerB, err = security.LoadFilerJwtFromFile(*syncOptions.bSecurity); err != nil {
+			glog.Fatalf("load filer JWT config for filer B: %v", err)
 		}
 	}
 
@@ -213,11 +223,11 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			if state == nil || state.processor == nil {
 				return
 			}
-			offsetTsNs := state.processor.processedTsWatermark.Load()
+			offsetTsNs := resumeTsNsFor(state.processor)
 			if offsetTsNs == 0 {
 				return
 			}
-			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath), state.sourceFilerSignature, offsetTsNs); err != nil {
+			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs); err != nil {
 				glog.Errorf("failed to save checkpoint for %s on shutdown: %v", name, err)
 			} else {
 				glog.V(0).Infof("saved checkpoint for %s on shutdown: %v", name, time.Unix(0, offsetTsNs))
@@ -231,7 +241,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	go func() {
 		// a->b
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOptionB, filerB, aFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath))
+		initOffsetError := initOffsetFromTsMs(grpcDialOptionB, filerB, aFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath, *syncOptions.bPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerA, *syncOptions.filerB, initOffsetError)
 			os.Exit(2)
@@ -262,7 +272,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				bFilerSignature,
 				&syncStateA2B,
 				httpClientA,
-				httpClientB)
+				httpClientB,
+				jwtForFilerA,
+				jwtForFilerB)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -273,7 +285,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	if !*syncOptions.isActivePassive {
 		// b->a
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOptionA, filerA, bFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath))
+		initOffsetError := initOffsetFromTsMs(grpcDialOptionA, filerA, bFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath, *syncOptions.aPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerB, *syncOptions.filerA, initOffsetError)
 			os.Exit(2)
@@ -305,7 +317,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					aFilerSignature,
 					&syncStateB2A,
 					httpClientB,
-					httpClientA)
+					httpClientA,
+					jwtForFilerB,
+					jwtForFilerA)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -335,11 +349,15 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 
 func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceExcludePaths []string, sourceReadChunkFromFiler bool, targetGrpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, targetPath string,
 	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, chunkConcurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState],
-	sourceHttpClient *util_http_client.HTTPClient, sinkHttpClient *util_http_client.HTTPClient) error {
+	sourceHttpClient *util_http_client.HTTPClient, sinkHttpClient *util_http_client.HTTPClient,
+	sourceJwtProvider security.FilerJwtProvider, sinkJwtProvider security.FilerJwtProvider) error {
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
-	sourceFilerOffsetTsNs, err := getOffset(targetGrpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature)
+	// the historical key ignored the target path; falling back to it lets a
+	// sync that predates target-scoped keys survive the upgrade
+	signaturePrefix := getSignaturePrefixByPath(sourcePath, targetPath)
+	sourceFilerOffsetTsNs, err := getOffsetWithFallback(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, getSignaturePrefixByPath(sourcePath, "/"), sourceFilerSignature)
 	if err != nil {
 		return err
 	}
@@ -353,11 +371,17 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 	if sourceHttpClient != nil {
 		filerSource.SetHttpClient(sourceHttpClient)
 	}
+	if sourceJwtProvider != nil {
+		filerSource.SetFilerJwtProvider(sourceJwtProvider)
+	}
 	filerSink := &filersink.FilerSink{}
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, targetGrpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetChunkConcurrency(chunkConcurrency)
 	if sinkHttpClient != nil {
 		filerSink.SetUploader(operation.NewUploaderWithHttpClient(sinkHttpClient))
+	}
+	if sinkJwtProvider != nil {
+		filerSink.SetFilerJwtProvider(sinkJwtProvider)
 	}
 	filerSink.SetSourceFiler(filerSource)
 
@@ -378,7 +402,9 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
 		concurrency = DefaultConcurrencyLimit
 	}
+	clientName := fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processor := NewMetadataProcessor(processEventFn, concurrency, sourceFilerOffsetTsNs)
+	processor.SetMetrics(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
 
 	// update sync state for graceful shutdown checkpoint saving
 	if statePtr != nil {
@@ -387,13 +413,43 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 			grpcDialOption:       targetGrpcDialOption,
 			targetFiler:          targetFiler,
 			sourcePath:           sourcePath,
+			targetPath:           targetPath,
 			sourceFilerSignature: sourceFilerSignature,
 		})
 	}
 
+	// The offset callback below only fires while events flow, so it freezes
+	// exactly when the workers are saturated; a ticker keeps lag honest. The
+	// idle heartbeat is folded in because the watermark stops at the last real
+	// event, so a quiet caught-up stream would otherwise show phantom lag.
+	lagGauge := statsCollect.FilerSyncLagSecondsGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
+	var idleHeartbeatTsNs atomic.Int64
+	stopLagTicker := make(chan struct{})
+	defer close(stopLagTicker)
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopLagTicker:
+				return
+			case <-ticker.C:
+				freshnessTsNs := processor.processedTsWatermark.Load()
+				// a heartbeat means consumed, not replicated: while a failure
+				// pins the watermark it must not mask the growing lag
+				if processor.OldestFailedTsNs() == 0 {
+					freshnessTsNs = max(freshnessTsNs, idleHeartbeatTsNs.Load())
+				}
+				if freshnessTsNs == 0 {
+					continue
+				}
+				lagGauge.Set(max(0, time.Since(time.Unix(0, freshnessTsNs)).Seconds()))
+			}
+		}
+	}()
+
 	var lastLogTsNs = time.Now().UnixNano()
 	var lastProgressedTsNs int64
-	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		processor.AddSyncJob(resp)
 		return nil
@@ -420,7 +476,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastProgressedTsNs = offsetTsNs
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(targetGrpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, offsetTsNs)
+		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, resumeTsNsFor(processor))
 	})
 
 	prefix := sourcePath
@@ -439,12 +495,22 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		StartTsNs:              sourceFilerOffsetTsNs,
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
+		GetResumeTsNs: func() int64 {
+			return resumeTsNsFor(processor)
+		},
+		Resubscribe: processor.ResubscribeCh(),
 		// While the source has only read activity it emits no metadata events, so
 		// the watermark above never advances and sync_offset would look stuck.
 		// The idle heartbeat moves the gauge to the source's current time once we
 		// are caught up, so now-sync_offset reflects real lag and stays alertable.
 		OnIdleHeartbeat: func(tsNs int64) {
+			// same masking concern as the lag ticker: a pinned failure must
+			// keep now-sync_offset growing too
+			if processor.OldestFailedTsNs() != 0 {
+				return
+			}
 			statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(tsNs))
+			idleHeartbeatTsNs.Store(tsNs)
 		},
 	}
 
@@ -452,14 +518,22 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 
 }
 
-// When each business is distinguished according to path, and offsets need to be maintained separately.
-func getSignaturePrefixByPath(path string) string {
-	// compatible historical version
-	if path == "/" {
-		return SyncKeyPrefix
-	} else {
-		return SyncKeyPrefix + path
+// Offsets are kept per (source path, target path): two syncs from the same
+// source to different directories on the same target filer see the same events
+// but progress independently, so a shared key would let one push the other
+// past events it never processed. "/" contributes nothing on either side,
+// keeping the historical key form so existing deployments resume unchanged.
+func getSignaturePrefixByPath(sourcePath, targetPath string) string {
+	prefix := SyncKeyPrefix
+	if sourcePath != "/" {
+		prefix += sourcePath
 	}
+	if targetPath != "/" {
+		// NUL cannot occur in a path, so the combined key can alias neither a
+		// source-only key nor another (source, target) pair
+		prefix += "\x00" + targetPath
+	}
+	return prefix
 }
 
 func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
@@ -489,16 +563,91 @@ func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
-	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+// getOffsetWithFallback reads the offset under the current key, falling back
+// to the historical key when the current one has no value yet, so streams
+// created before a checkpoint key-scheme change resume where they left off
+// instead of replaying from zero. Writes must go only to the current key:
+// keeping the historical key warm would re-create the very sharing between
+// streams that a key-scheme change separates.
+func getOffsetWithFallback(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, legacySignaturePrefix string, legacySignature int32) (int64, error) {
+	lastOffsetTsNs, err := getOffset(grpcDialOption, filer, signaturePrefix, signature)
+	if err == nil && lastOffsetTsNs == 0 {
+		lastOffsetTsNs, err = getOffset(grpcDialOption, filer, legacySignaturePrefix, legacySignature)
+	}
+	return lastOffsetTsNs, err
+}
 
-		syncKey := []byte(signaturePrefix + "____")
-		util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
+// A checkpoint write can outlive its caller's wait and land beside the next
+// subscription attempt's writes; issued concurrently they may be applied out
+// of order, moving saved progress backward or forward past events still owed
+// a replay. Writes to the same persisted key are serialized and each is
+// ordered by issuance: a write issued before the last one to land is stale
+// and dropped. Deliberate regressions — resume floors, operator seeds — are
+// issued after the writes they supersede, so they still apply. State is keyed
+// by target filer so unrelated streams — or the two directions of a
+// bidirectional sync — never block or shadow each other.
+var offsetCheckpointWrites = struct {
+	sync.Mutex
+	byKey map[string]*offsetCheckpoint
+}{byKey: map[string]*offsetCheckpoint{}}
+
+type offsetCheckpoint struct {
+	sync.Mutex
+	lastSeq int64
+}
+
+// resumeTsNsFor floors the processed watermark by the earliest failure the
+// processor saw: a redelivery can clear the pin, but events dropped while it
+// was stopped only replay if the resume position stays behind it. It also
+// stays one tick below the newest timestamp seen — a watermark on the
+// frontier can have finished every job it admitted while more events at the
+// same timestamp still sit unread in the log, and an exclusive resume there
+// would skip them.
+func resumeTsNsFor(p *MetadataProcessor) int64 {
+	ts := p.processedTsWatermark.Load()
+	if newestTsNs := p.NewestSeenTsNs(); newestTsNs > 0 && ts >= newestTsNs {
+		ts = newestTsNs - 1
+	}
+	if failedTsNs := p.EarliestFailedTsNs(); failedTsNs > 0 && failedTsNs-1 < ts {
+		ts = failedTsNs - 1
+	}
+	return ts
+}
+
+// offsetWriteSeq numbers checkpoint writes in issuance order so a write that
+// lands late can be told apart from the fresher write it would shadow.
+var offsetWriteSeq atomic.Int64
+
+func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
+	syncKey := []byte(signaturePrefix + "____")
+	util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
+	key := string(filer) + "\x00" + string(syncKey)
+
+	offsetCheckpointWrites.Lock()
+	checkpoint := offsetCheckpointWrites.byKey[key]
+	if checkpoint == nil {
+		checkpoint = &offsetCheckpoint{}
+		offsetCheckpointWrites.byKey[key] = checkpoint
+	}
+	offsetCheckpointWrites.Unlock()
+
+	seq := offsetWriteSeq.Add(1)
+	checkpoint.Lock()
+	defer checkpoint.Unlock()
+	if seq < checkpoint.lastSeq {
+		return nil
+	}
+	checkpoint.lastSeq = seq
+
+	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
 
-		resp, err := client.KvPut(context.Background(), &filer_pb.KvPutRequest{
+		// a stalled KvPut must not hold a caller's drain or persistence loop
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.KvPut(ctx, &filer_pb.KvPutRequest{
 			Key:   syncKey,
 			Value: valueBuf,
 		})
@@ -513,7 +662,6 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 		return nil
 
 	})
-
 }
 
 func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -585,7 +733,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
-			return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+			return sink.DeleteEntry(dataSink, key, message.OldEntry.IsDirectory, message.DeleteChunks, filer.IsMetadataOnlyDelete(message.OldEntry), message.Signatures)
 		}
 
 		// handle new entries

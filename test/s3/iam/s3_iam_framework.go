@@ -2,9 +2,12 @@ package iam
 
 import (
 	"context"
+	"crypto/hmac"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -354,12 +357,12 @@ func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) strin
 }
 
 // generateSTSSessionToken creates a session token using the actual STS service for proper validation
-func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration, account string, customClaims map[string]interface{}) (string, error) {
+func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration, account string, customClaims map[string]interface{}) (string, *credentials.Credentials, error) {
 	now := time.Now()
 	signingKeyB64 := "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
 	signingKey, err := base64.StdEncoding.DecodeString(signingKeyB64)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode signing key: %v", err)
+		return "", nil, fmt.Errorf("failed to decode signing key: %v", err)
 	}
 
 	// Generate a session ID that would be created by the STS service
@@ -404,10 +407,19 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)
 	tokenString, err := token.SignedString(signingKey)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	return tokenString, nil
+	accessKeyHash := sha256.Sum256([]byte("access-key:" + sessionId))
+	mac := hmac.New(sha256.New, signingKey)
+	mac.Write([]byte("secret-key:" + sessionId))
+	creds := credentials.NewStaticCredentials(
+		"ASIA"+hex.EncodeToString(accessKeyHash[:8]),
+		base64.StdEncoding.EncodeToString(mac.Sum(nil)),
+		tokenString,
+	)
+
+	return tokenString, creds, nil
 }
 
 // CreateS3ClientWithJWT creates an S3 client authenticated with a JWT token for the specified role
@@ -417,36 +429,34 @@ func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*
 
 // CreateS3ClientWithCustomClaims creates an S3 client with specific account ID and custom claims
 func (f *S3IAMTestFramework) CreateS3ClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*s3.S3, error) {
-	var token string
-	var err error
+	var httpClient *http.Client
+	creds := credentials.AnonymousCredentials
 
 	if f.useKeycloak && claims == nil && account == "" {
 		// Use real Keycloak authentication if no custom requirements
-		token, err = f.getKeycloakToken(username)
+		token, err := f.getKeycloakToken(username)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
 		}
+		httpClient = &http.Client{
+			Transport: &BearerTokenTransport{
+				Token: token,
+			},
+		}
 	} else {
 		// Generate STS session token (mock mode or custom requirements)
-		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
+		var err error
+		_, creds, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
 		}
 	}
 
-	// Create custom HTTP client with Bearer token transport
-	httpClient := &http.Client{
-		Transport: &BearerTokenTransport{
-			Token: token,
-		},
-	}
-
 	sess, err := session.NewSession(&aws.Config{
-		Region:     aws.String(TestRegion),
-		Endpoint:   aws.String(TestS3Endpoint),
-		HTTPClient: httpClient,
-		// Use anonymous credentials to avoid AWS signature generation
-		Credentials:      credentials.AnonymousCredentials,
+		Region:           aws.String(TestRegion),
+		Endpoint:         aws.String(TestS3Endpoint),
+		HTTPClient:       httpClient,
+		Credentials:      creds,
 		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
@@ -487,7 +497,7 @@ func (f *S3IAMTestFramework) CreateS3ClientWithInvalidJWT() (*s3.S3, error) {
 // CreateS3ClientWithExpiredJWT creates an S3 client with an expired JWT token
 func (f *S3IAMTestFramework) CreateS3ClientWithExpiredJWT(username, roleName string) (*s3.S3, error) {
 	// Generate expired STS session token (expired 1 hour ago)
-	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour, "", nil)
+	token, _, err := f.generateSTSSessionToken(username, roleName, -time.Hour, "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate expired STS session token: %v", err)
 	}
@@ -942,36 +952,34 @@ func (f *S3IAMTestFramework) CreateIAMClientWithJWT(username, roleName string) (
 
 // CreateIAMClientWithCustomClaims creates an IAM client with specific account ID and custom claims
 func (f *S3IAMTestFramework) CreateIAMClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*iam.IAM, error) {
-	var token string
-	var err error
+	var httpClient *http.Client
+	creds := credentials.AnonymousCredentials
 
 	if f.useKeycloak && claims == nil && account == "" {
 		// Use real Keycloak authentication if no custom requirements
-		token, err = f.getKeycloakToken(username)
+		token, err := f.getKeycloakToken(username)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
 		}
+		httpClient = &http.Client{
+			Transport: &BearerTokenTransport{
+				Token: token,
+			},
+		}
 	} else {
 		// Generate STS session token (mock mode or custom requirements)
-		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
+		var err error
+		_, creds, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
 		}
 	}
 
-	// Create custom HTTP client with Bearer token transport
-	httpClient := &http.Client{
-		Transport: &BearerTokenTransport{
-			Token: token,
-		},
-	}
-
 	sess, err := session.NewSession(&aws.Config{
-		Region:     aws.String(TestRegion),
-		Endpoint:   aws.String(TestS3Endpoint),
-		HTTPClient: httpClient,
-		// Use anonymous credentials to avoid AWS signature generation
-		Credentials: credentials.AnonymousCredentials,
+		Region:      aws.String(TestRegion),
+		Endpoint:    aws.String(TestS3Endpoint),
+		HTTPClient:  httpClient,
+		Credentials: creds,
 		DisableSSL:  aws.Bool(true),
 	})
 	if err != nil {

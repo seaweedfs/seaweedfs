@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
@@ -693,23 +694,25 @@ type ListGroupsResponse struct {
 func callIAMAPIAuthenticated(_ *testing.T, framework *S3IAMTestFramework, action string, params url.Values) (*http.Response, error) {
 	params.Set("Action", action)
 
+	body := params.Encode()
 	req, err := http.NewRequest(http.MethodPost, TestIAMEndpoint+"/",
-		strings.NewReader(params.Encode()))
+		strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	token, err := framework.generateSTSSessionToken("admin-user", "TestAdminRole", time.Hour, "", nil)
+	_, creds, err := framework.generateSTSSessionToken("admin-user", "TestAdminRole", time.Hour, "", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &BearerTokenTransport{Token: token},
+	if _, err := v4.NewSigner(creds).Sign(req, strings.NewReader(body), "iam", TestRegion, time.Now()); err != nil {
+		return nil, err
 	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
 }
 

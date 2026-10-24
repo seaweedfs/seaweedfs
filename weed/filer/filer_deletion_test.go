@@ -10,15 +10,15 @@ func TestDeletionRetryQueue_AddAndRetrieve(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add items
-	queue.AddOrUpdate("file1", "is read only")
-	queue.AddOrUpdate("file2", "connection reset")
+	queue.AddOrUpdate("file1", "is read only", 0)
+	queue.AddOrUpdate("file2", "connection reset", 0)
 
 	if queue.Size() != 2 {
 		t.Errorf("Expected queue size 2, got %d", queue.Size())
 	}
 
 	// Items not ready yet (initial delay is 5 minutes)
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	if len(readyItems) != 0 {
 		t.Errorf("Expected 0 ready items, got %d", len(readyItems))
 	}
@@ -104,7 +104,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add item
-	queue.AddOrUpdate("file1", "error")
+	queue.AddOrUpdate("file1", "error", 0)
 
 	// Manually set retry count to max
 	queue.lock.Lock()
@@ -119,7 +119,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Try to get ready items - should be returned for the last retry (attempt #10)
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	if len(readyItems) != 1 {
 		t.Fatalf("Expected 1 item for last retry, got %d", len(readyItems))
 	}
@@ -139,7 +139,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Now it should be discarded (retry count is 11, exceeds max of 10)
-	readyItems = queue.GetReadyItems(10)
+	readyItems, _ = queue.GetReadyItems(10)
 	if len(readyItems) != 0 {
 		t.Errorf("Expected 0 items (max attempts exceeded), got %d", len(readyItems))
 	}
@@ -248,7 +248,7 @@ func TestDeletionRetryQueue_HeapOrdering(t *testing.T) {
 	queue.lock.Unlock()
 
 	// GetReadyItems should return in NextRetryAt order
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	expectedOrder := []string{"file1", "file2", "file3"}
 
 	if len(readyItems) != 3 {
@@ -266,7 +266,7 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add same file ID twice with retryable error - simulates duplicate in batch
-	queue.AddOrUpdate("file1", "timeout error")
+	queue.AddOrUpdate("file1", "timeout error", 0)
 
 	// Verify only one item exists in queue
 	if queue.Size() != 1 {
@@ -284,7 +284,7 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Add same file ID again - should NOT increment retry count (just update error)
-	queue.AddOrUpdate("file1", "timeout error again")
+	queue.AddOrUpdate("file1", "timeout error again", 0)
 
 	// Verify still only one item exists in queue (not duplicated)
 	if queue.Size() != 1 {
@@ -304,5 +304,29 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 	}
 	if item2.LastError != "timeout error again" {
 		t.Errorf("Expected LastError to be updated to 'timeout error again', got %q", item2.LastError)
+	}
+}
+
+// AddOrUpdate must not overwrite the ledger epoch on an in-flight item: the
+// worker that popped it reads that field without the queue lock, and its
+// expiry/permanent-forget must only match the record the attempt started with.
+func TestDeletionRetryQueue_InFlightKeepsEpoch(t *testing.T) {
+	queue := NewDeletionRetryQueue()
+	queue.AddOrUpdate("file1", "timeout", 7)
+
+	queue.lock.Lock()
+	item := queue.itemIndex["file1"]
+	item.NextRetryAt = time.Now().Add(-time.Second)
+	heap.Init(&queue.heap)
+	queue.lock.Unlock()
+
+	ready, _ := queue.GetReadyItems(1)
+	if len(ready) != 1 {
+		t.Fatalf("expected the item ready, got %d", len(ready))
+	}
+
+	queue.AddOrUpdate("file1", "newer error", 42)
+	if got := ready[0].ledgerEpoch; got != 7 {
+		t.Fatalf("in-flight epoch must stay 7, got %d", got)
 	}
 }

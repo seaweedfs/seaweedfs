@@ -1,7 +1,10 @@
 package iceberg
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -33,6 +36,22 @@ type CredentialValidator interface {
 	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
 }
 
+// VendedCredentials are short-lived S3 credentials scoped to one table.
+type VendedCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	Expiration      time.Time
+}
+
+// CredentialVendor mints credentials limited to a single table's prefix for a
+// caller the catalog has already authenticated and authorized, read-only when
+// readOnly is set. A nil result with no error means the deployment has vending
+// switched off.
+type CredentialVendor interface {
+	VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error)
+}
+
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
 	filerClient         FilerClient
@@ -40,6 +59,7 @@ type Server struct {
 	prefix              string // optional prefix for routes
 	authenticator       S3Authenticator
 	credentialValidator CredentialValidator
+	credentialVendor    CredentialVendor
 	s3Endpoint          string // http(s):// URL advertised in LoadTable FileIO config
 }
 
@@ -59,6 +79,12 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 		prefix:        "",
 		authenticator: authenticator,
 	}
+}
+
+// SetCredentialVendor enables credential vending for clients that ask for it
+// with X-Iceberg-Access-Delegation: vended-credentials.
+func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
+	s.credentialVendor = vendor
 }
 
 // SetCredentialValidator sets the credential validator for OAuth token support.
@@ -84,6 +110,14 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Registered after loggingMiddleware so rejected requests still get
 	// audit-logged.
 	router.Use(validateRequestPath)
+
+	// Clients pointed at a catalog URI ending in /v1 still append the API
+	// version themselves, producing /v1/v1/... requests (iceberg-java does
+	// this when configured with a /v1-suffixed URI). Collapse the repeated
+	// segments before routing so those requests reach the intended handler;
+	// a table bucket can never be named "v1" (names require 3-63 chars), so
+	// the rewrite is unambiguous.
+	router.Use(collapseDoubledV1Middleware(router))
 
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
@@ -116,6 +150,8 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
 
 	// Multi-table transaction commit - wrapped with Auth middleware
 	router.HandleFunc("/v1/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
@@ -141,6 +177,8 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
 	// Catch-all for debugging
@@ -150,6 +188,39 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	})
 
 	glog.V(2).Infof("Registered Iceberg REST Catalog routes")
+}
+
+// collapseDoubledV1Middleware rewrites /v1/v1/... (and deeper repetitions) to
+// the single-/v1 path and re-dispatches through the router once. The collapsed
+// path never starts with /v1/v1 again, so re-entry cannot recurse. The path
+// the client sent is kept in the request context for SigV4 verification,
+// which must check the signature against what was actually signed.
+func collapseDoubledV1Middleware(router *mux.Router) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			if path != "/v1/v1" && !strings.HasPrefix(path, "/v1/v1/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for path == "/v1/v1" || strings.HasPrefix(path, "/v1/v1/") {
+				path = path[len("/v1"):]
+			}
+			signedPath := r.URL.EscapedPath()
+			if signedPath == "" {
+				signedPath = r.URL.Path
+			}
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = path
+			r2.URL.RawPath = ""
+			r2.RequestURI = r2.URL.EscapedPath()
+			if r.URL.RawQuery != "" {
+				r2.RequestURI += "?" + r.URL.RawQuery
+			}
+			r2 = r2.WithContext(s3_constants.SetOriginalRequestPathInContext(r2.Context(), signedPath))
+			router.ServeHTTP(w, r2)
+		})
+	}
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -189,15 +260,30 @@ func (w *responseWriter) WriteHeader(code int) {
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try Bearer token authentication first (from OAuth2 flow)
-		if identityName, identity, ok := s.authenticateBearer(r); ok {
-			ctx := r.Context()
-			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
-			if identity != nil {
-				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+		// A request carrying a Bearer token is an Iceberg REST client. When
+		// the token is invalid or expired, answer 401 immediately so clients
+		// (Iceberg Java OAuth2Manager, pyiceberg) refresh their token and
+		// retry. Falling through to the S3 authenticator instead would parse
+		// the Authorization header as SigV4, fail with NotImplemented (501),
+		// and clients would retry the dead token forever.
+		// The auth scheme is case-insensitive (RFC 7235), matching
+		// authenticateBearer below.
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
+			if identityName, identity, accessKey, secretKey, ok := s.authenticateBearerKey(r); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey, secretKey)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
 			}
-			r = r.WithContext(ctx)
-			handler(w, r)
+			// RFC 6750 / Iceberg REST spec: 401 is the refresh signal.
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Bearer token is invalid or expired")
 			return
 		}
 
@@ -206,27 +292,25 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// The verifier records the key of the credential that matched into
+		// this holder; the vended credentials name it.
+		r = s3_constants.EnsureIdentityHolder(r)
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
-			// If authentication failed but DefaultAllow is enabled, proceed without identity
-			if s.authenticator.DefaultAllow() {
-				glog.V(2).Infof("Iceberg: AuthenticateRequest failed (%v), but DefaultAllow is true, proceeding", errCode)
-			} else {
-				apiErr := s3err.GetAPIError(errCode)
-				errorType := "RESTException"
-				switch apiErr.HTTPStatusCode {
-				case http.StatusForbidden:
-					errorType = "ForbiddenException"
-				case http.StatusUnauthorized:
-					errorType = "NotAuthorizedException"
-				case http.StatusBadRequest:
-					errorType = "BadRequestException"
-				case http.StatusInternalServerError:
-					errorType = "InternalServerError"
-				}
-				writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
-				return
+			apiErr := s3err.GetAPIError(errCode)
+			errorType := "RESTException"
+			switch apiErr.HTTPStatusCode {
+			case http.StatusForbidden:
+				errorType = "ForbiddenException"
+			case http.StatusUnauthorized:
+				errorType = "NotAuthorizedException"
+			case http.StatusBadRequest:
+				errorType = "BadRequestException"
+			case http.StatusInternalServerError:
+				errorType = "InternalServerError"
 			}
+			writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
+			return
 		}
 
 		if identityName != "" || identity != nil {

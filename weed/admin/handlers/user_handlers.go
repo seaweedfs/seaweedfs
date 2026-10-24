@@ -55,6 +55,14 @@ func (h *UserHandlers) GetUsers(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to get users: "+err.Error())
 		return
 	}
+	// Read-only (view-only) admin sessions must never receive reusable
+	// object-store secrets. Redact the secret key before serializing so a
+	// viewer cannot lift another user's live S3 credential pair.
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
+		for i := range users {
+			users[i].RedactSecretKey()
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
 }
 
@@ -154,6 +162,13 @@ func (h *UserHandlers) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "User not found: "+err.Error())
 		return
+	}
+
+	// Read-only (view-only) admin sessions must never receive reusable
+	// object-store secrets. Redact the secret keys before serializing so a
+	// viewer cannot lift another user's live S3 credential pair.
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
+		user.RedactSecretKeys()
 	}
 
 	writeJSON(w, http.StatusOK, user)
@@ -318,6 +333,14 @@ func (h *UserHandlers) getObjectStoreUsersData(r *http.Request) dash.ObjectStore
 			Users:       []dash.ObjectStoreUser{},
 			TotalUsers:  0,
 			LastUpdated: time.Now(),
+		}
+	}
+
+	// Read-only (view-only) admin sessions must never receive reusable
+	// object-store secrets, including via the rendered HTML users page.
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
+		for i := range users {
+			users[i].RedactSecretKey()
 		}
 	}
 

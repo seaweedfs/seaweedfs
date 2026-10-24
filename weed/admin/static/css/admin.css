@@ -4,6 +4,34 @@
     --navbar-height: 56px;
 }
 
+/* Icon sizing and animation helpers used by the admin templates. */
+.icon-fixed-width {
+    width: 1.25em;
+    text-align: center;
+}
+
+.icon-sm {
+    font-size: .875em;
+}
+
+.icon-2x {
+    font-size: 2em;
+}
+
+.icon-3x {
+    font-size: 3em;
+}
+
+.icon-spin {
+    animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Link colors - muted */
 a {
     color: #5b7c99;
@@ -286,7 +314,7 @@ main {
 }
 
 /* Navbar user icon color */
-.navbar-toggler .fa-user {
+.navbar-toggler .bi-person {
     color: rgba(255, 255, 255, 0.75);
 }
 
@@ -295,11 +323,11 @@ main {
     position: relative;
 }
 
-.nav-link[data-bs-toggle="collapse"] .fa-chevron-down {
+.nav-link[data-bs-toggle="collapse"] .bi-chevron-down {
     transition: transform 0.2s ease;
 }
 
-.nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .fa-chevron-down {
+.nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down {
     transform: rotate(180deg);
 }
 
@@ -307,7 +335,7 @@ main {
     color: #5b7c99;
 }
 
-.nav-link[data-bs-toggle="collapse"]:not(.collapsed) .fa-chevron-down {
+.nav-link[data-bs-toggle="collapse"]:not(.collapsed) .bi-chevron-down {
     color: #5b7c99;
 }
 
@@ -335,4 +363,4 @@ main {
     .h5 {
         font-size: 1rem;
     }
-} 
+}

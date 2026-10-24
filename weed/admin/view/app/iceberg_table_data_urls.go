@@ -3,6 +3,10 @@ package app
 import (
 	"net/url"
 	"strconv"
+	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 // icebergTableDataURL builds the table data-preview page URL. Zero snapshotID
@@ -25,4 +29,11 @@ func icebergTableDataURL(catalog, namespace, table string, snapshotID int64, lim
 		u += "?" + q.Encode()
 	}
 	return u
+}
+
+// previewIsWorkerSourced reports whether these rows came from a plugin worker
+// rather than from metadata admin read itself. Snapshots and data files are
+// Iceberg's shape, and showing them empty for another format reads as a fault.
+func previewIsWorkerSourced(data dash.IcebergDataPreviewData) bool {
+	return data.Format != "" && !strings.EqualFold(data.Format, s3tables.FormatIceberg)
 }

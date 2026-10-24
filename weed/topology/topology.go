@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +50,7 @@ type Topology struct {
 
 	volumeSizeLimit          uint64
 	replicationAsMin         bool
+	maxWritableVolumes       int
 	vacuumDisabledByOperator atomic.Bool // true when operator manually disables vacuum
 	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
 	adminServerConnectedFunc func() bool // optional callback to check admin server presence
@@ -81,6 +85,224 @@ type Topology struct {
 	// the same node whether or not the grpc port suffix is present.
 	dataNodeIndex     map[string]*DataNode
 	dataNodeIndexLock sync.RWMutex
+
+	maxVolumeIdFile           string
+	maxVolumeIdFileLock       sync.Mutex
+	lastPersistedMaxVolumeId  atomic.Uint32
+	lastPersistedTopologyId   atomic.Value
+	lastPersistedGrowthFrozen atomic.Bool
+
+	growthFrozen          atomic.Bool
+	growthFrozenAt        atomic.Int64
+	freezeOnMismatch      atomic.Bool
+	stateLossRecoveryWait atomic.Int64
+	allocationNotBefore   atomic.Int64
+	topologyInitPending   atomic.Bool
+
+	reportedTopologyIdsLock    sync.Mutex
+	pendingReportedTopologyIds map[string]struct{}
+
+	// quarantinedVolumeIds are (node, vid) pairs force-read-only because the
+	// vid collided across layouts. Kept separate from the reported flag so
+	// later heartbeats from the same server cannot quietly undo it.
+	quarantinedVolumeIds sync.Map
+	// quarantineLock serializes each quarantine record update with the layout
+	// mark it justifies: a release pass and a heartbeat read-only flag update
+	// each observe record and mark as one state, never a mark whose record
+	// was already deleted or a cleared mark whose record is not yet visible.
+	quarantineLock sync.Mutex
+	// quarantinePushLocks serialize the remote mark/unmark calls per replica
+	// so a push decided under an older record state cannot land on the
+	// volume server after a newer one. Keyed by replica so a slow server
+	// does not stall pushes to the others.
+	quarantinePushLocks   map[quarantinedVolume]*quarantinePushLock
+	quarantinePushLocksMu sync.Mutex
+
+	// duplicateFlagChecks tracks in-flight flagDuplicateVolumeId passes so
+	// tests can wait for the async checks a registration started.
+	duplicateFlagChecks sync.WaitGroup
+
+	// QuarantineVolumeFn pushes the quarantine onto the volume server itself
+	// (VolumeMarkReadonly/VolumeMarkWritable). nil keeps quarantine at the
+	// layout level only.
+	QuarantineVolumeFn func(dn *DataNode, vid needle.VolumeId, readOnly bool) error
+}
+
+type quarantinedVolume struct {
+	dnId NodeId
+	vid  needle.VolumeId
+}
+
+type quarantinedVolumeState struct {
+	reported bool
+	enforced bool
+	retry    bool
+}
+
+type quarantinePushLock struct {
+	sync.Mutex
+	refs int
+}
+
+func (t *Topology) isQuarantined(dn *DataNode, vid needle.VolumeId) bool {
+	_, ok := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
+	return ok
+}
+
+// pushQuarantine sends the remote mark only while it still matches the
+// record: a read-only push requires the pair to exist, a writable push
+// requires it to be gone. The bool reports whether the remote call was
+// actually made, so callers can tell a skipped stale push from a failed one.
+func (t *Topology) pushQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
+	unlock := t.lockQuarantinePush(quarantinedVolume{dn.Id(), vid})
+	defer unlock()
+	return t.sendQuarantine(dn, vid, readOnly)
+}
+
+// sendQuarantine runs the record check and remote mark; the caller holds
+// the replica's push lock.
+func (t *Topology) sendQuarantine(dn *DataNode, vid needle.VolumeId, readOnly bool) (bool, error) {
+	t.quarantineLock.Lock()
+	_, exists := t.quarantinedVolumeIds.Load(quarantinedVolume{dn.Id(), vid})
+	t.quarantineLock.Unlock()
+	if exists != readOnly {
+		return false, nil
+	}
+	return true, t.QuarantineVolumeFn(dn, vid, readOnly)
+}
+
+// releaseQuarantineWritable pushes the writable mark and re-arms the record
+// on failure, all under the replica's push lock so a queued stale push cannot
+// slip between the failure and the restore and undo the re-armed record.
+func (t *Topology) releaseQuarantineWritable(dn *DataNode, vid needle.VolumeId) {
+	unlock := t.lockQuarantinePush(quarantinedVolume{dn.Id(), vid})
+	defer unlock()
+	if _, err := t.sendQuarantine(dn, vid, false); err != nil {
+		t.restoreQuarantineRecord(dn, vid)
+	}
+}
+
+// lockQuarantinePush returns the release for q's push lock, creating the lock
+// on first use and dropping it once the last holder lets go.
+func (t *Topology) lockQuarantinePush(q quarantinedVolume) func() {
+	t.quarantinePushLocksMu.Lock()
+	if t.quarantinePushLocks == nil {
+		t.quarantinePushLocks = make(map[quarantinedVolume]*quarantinePushLock)
+	}
+	l, ok := t.quarantinePushLocks[q]
+	if !ok {
+		l = &quarantinePushLock{}
+		t.quarantinePushLocks[q] = l
+	}
+	l.refs++
+	t.quarantinePushLocksMu.Unlock()
+	l.Lock()
+	return func() {
+		t.quarantinePushLocksMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(t.quarantinePushLocks, q)
+		}
+		t.quarantinePushLocksMu.Unlock()
+		l.Unlock()
+	}
+}
+
+// takeQuarantineRetryLocked disarms a pending release retry and reports
+// whether one was armed. The caller holds quarantineLock.
+func (t *Topology) takeQuarantineRetryLocked(q quarantinedVolume) bool {
+	v, ok := t.quarantinedVolumeIds.Load(q)
+	if !ok {
+		return false
+	}
+	state := v.(quarantinedVolumeState)
+	if !state.retry {
+		return false
+	}
+	state.retry = false
+	t.quarantinedVolumeIds.Store(q, state)
+	return true
+}
+
+// retryPendingQuarantineReleases re-runs the release pass for every record a
+// failed writable push re-armed. The retry in enforceQuarantine only fires
+// while a heartbeat keeps carrying the volume, and an idle replica drops out
+// of the delta reports once its stored flag matches the server's, so pending
+// retries also run off the leader pulse.
+func (t *Topology) retryPendingQuarantineReleases() {
+	vids := make(map[needle.VolumeId]struct{})
+	t.quarantineLock.Lock()
+	t.quarantinedVolumeIds.Range(func(key, _ any) bool {
+		q := key.(quarantinedVolume)
+		if t.takeQuarantineRetryLocked(q) {
+			vids[q.vid] = struct{}{}
+		}
+		return true
+	})
+	t.quarantineLock.Unlock()
+	for vid := range vids {
+		go t.releaseResolvedQuarantine(vid)
+	}
+}
+
+// enforceQuarantine keeps the latest reported read-only flag for a quarantined
+// copy so a later release restores the server's true state. The stored report
+// keeps the server's flag: quarantine lives at the layout level, and folding
+// it into the record here would make the master's volume digest permanently
+// disagree with the server's and force a full volume list on every heartbeat.
+func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storage.VolumeInfo {
+	q := quarantinedVolume{dn.Id(), vi.Id}
+	t.quarantineLock.Lock()
+	v, ok := t.quarantinedVolumeIds.Load(q)
+	if !ok {
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	if t.takeQuarantineRetryLocked(q) {
+		// A failed writable push re-armed this record; hand the release pass
+		// one retry per report. Clearing it first keeps a surviving conflict
+		// on the normal enforce path afterwards.
+		t.quarantineLock.Unlock()
+		go t.releaseResolvedQuarantine(vi.Id)
+		return vi
+	}
+	state := v.(quarantinedVolumeState)
+	if !state.enforced {
+		state.reported = vi.ReadOnly
+	}
+	if t.QuarantineVolumeFn == nil || (state.enforced && vi.ReadOnly) {
+		t.quarantinedVolumeIds.Store(q, state)
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	t.quarantineLock.Unlock()
+
+	// The mark never landed on the server, or the server lost it (restart,
+	// manual unquarantine); push it while the conflict stands. The call is
+	// remote, so it runs outside the lock.
+	pushed, err := t.pushQuarantine(dn, vi.Id, true)
+	if pushed && err == nil {
+		state.enforced = true
+	}
+	t.quarantineLock.Lock()
+	cur, still := t.quarantinedVolumeIds.Load(q)
+	if still {
+		latest := cur.(quarantinedVolumeState)
+		if !latest.enforced {
+			latest.reported = state.reported
+		}
+		latest.enforced = latest.enforced || state.enforced
+		t.quarantinedVolumeIds.Store(q, latest)
+		t.quarantineLock.Unlock()
+		return vi
+	}
+	t.quarantineLock.Unlock()
+	if state.enforced && !state.reported {
+		// The conflict resolved while the push was in flight; leave the
+		// server consistent with the released layout.
+		t.releaseQuarantineWritable(dn, vi.Id)
+	}
+	return vi
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -104,6 +326,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 	t.Configuration = &Configuration{}
 	t.dataNodeIndex = make(map[string]*DataNode)
+	t.quarantinePushLocks = make(map[quarantinedVolume]*quarantinePushLock)
 
 	return t
 }
@@ -160,6 +383,25 @@ func (t *Topology) unregisterDataNodeAddress(addr pb.ServerAddress, dn *DataNode
 	if existing, ok := t.dataNodeIndex[key]; ok && (dn == nil || existing == dn) {
 		delete(t.dataNodeIndex, key)
 	}
+}
+
+// FreeBytes sums what every volume server reports as free on its filesystems.
+// reported is false unless all of them answered: the one that stayed quiet may
+// be the one holding the room, and a partial sum would read as a cluster with
+// none left.
+func (t *Topology) FreeBytes() (freeBytes uint64, reported bool) {
+	for _, dcNode := range t.Children() {
+		for _, rackNode := range dcNode.Children() {
+			for _, dataNode := range rackNode.Children() {
+				nodeFreeBytes, nodeReported := dataNode.GetDiskUsages().FreeBytes()
+				if !nodeReported {
+					return 0, false
+				}
+				freeBytes += nodeFreeBytes
+			}
+		}
+	}
+	return freeBytes, true
 }
 
 func (t *Topology) IsChildLocked() (bool, error) {
@@ -310,16 +552,6 @@ func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 		func() (l pb.ServerAddress, err error) {
 			l, err = t.MaybeLeader()
 			if err == nil && l == "" {
-				// Thread-safe check if we are the leader
-				t.RaftServerAccessLock.RLock()
-				if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
-					l = pb.ServerAddress(t.RaftServer.Name())
-				}
-				t.RaftServerAccessLock.RUnlock()
-
-				if l != "" {
-					return l, nil
-				}
 				err = leaderNotSelected
 			}
 			return l, err
@@ -337,6 +569,9 @@ func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
 
 	if t.RaftServer != nil {
 		l = pb.ServerAddress(t.RaftServer.Leader())
+		if l == "" && t.RaftServer.State() == raft.Leader {
+			l = pb.ServerAddress(t.RaftServer.Name())
+		}
 	} else if t.HashicorpRaft != nil {
 		l = pb.ServerAddress(t.HashicorpRaft.Leader())
 	} else {
@@ -375,8 +610,28 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 		return 0, fmt.Errorf("as leader can not read yet")
 
 	}
+	for t.topologyInitPending.Load() {
+		if !t.IsLeaderAndCanRead() {
+			return 0, fmt.Errorf("as leader can not read yet")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if t.IsGrowthFrozen() {
+		return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+	}
+	if wait := t.allocationDelay(); wait > 0 {
+		glog.V(0).Infof("deferring volume id allocation for %v", wait)
+		time.Sleep(wait)
+		if t.IsGrowthFrozen() {
+			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
+		}
+	}
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
+
+	if err := t.PersistMaxVolumeId(next); err != nil {
+		return 0, fmt.Errorf("persist max volume id %d: %w", next, err)
+	}
 
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
@@ -410,11 +665,16 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
-	// Track estimated assigned bytes to spread load between heartbeats.
-	// Use the client hint if provided, otherwise fall back to 1MB estimate.
+	// Track estimated assigned bytes to spread load between heartbeats. A flat
+	// fallback overcharges a small-file workload enough to mark near-empty
+	// volumes full, so prefer the volume's own average.
 	sizePerFile := DefaultNeedleSizeEstimate
 	if expectedDataSize > 0 {
 		sizePerFile = expectedDataSize
+	} else if vi, infoErr := volumeLocationList.Head().GetVolumesById(vid); infoErr == nil && vi.FileCount > 0 {
+		if avg := vi.Size / uint64(vi.FileCount); avg > 0 {
+			sizePerFile = avg
+		}
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
 	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
@@ -427,8 +687,46 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 
 func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
-		return NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
+		c := NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
+		c.maxWritableVolumes = t.maxWritableVolumes
+		return c
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
+}
+
+// SetMaxWritableVolumes caps how many writable volumes in a volume layout
+// (collection + replica placement + ttl + disk type) assignments are spread
+// over; 0 means every writable volume is a candidate. It only affects
+// collections created afterwards, so call it before serving.
+func (t *Topology) SetMaxWritableVolumes(n int) {
+	t.maxWritableVolumes = n
+}
+
+// FindVolumeLayout is the read-only counterpart of GetVolumeLayout: it returns
+// nil when the collection or its layout does not exist, instead of creating
+// one. Lets callers check a layout's state without polluting the collection
+// map with an empty collection.
+func (t *Topology) FindVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
+	c, ok := t.collectionMap.Find(collectionName)
+	if !ok {
+		return nil
+	}
+	vl, ok := c.(*Collection).GetVolumeLayout(rp, ttl, diskType)
+	if !ok {
+		return nil
+	}
+	return vl
+}
+
+// DecayQuietVolumeSizes decays pending assign estimates across every layout.
+// A volume that changed reports within a pulse, so two quiet pulses mean the
+// size on record is the size there is.
+func (t *Topology) DecayQuietVolumeSizes() {
+	quietCutoff := time.Duration(2*t.pulse) * time.Second
+	for _, c := range t.collectionMap.Items() {
+		for _, vl := range c.(*Collection).GetAllVolumeLayouts() {
+			vl.DecayQuietVolumeSizes(quietCutoff)
+		}
+	}
 }
 
 // CollectionVolumeStats aggregates stats across all volume layouts and EC
@@ -503,12 +801,20 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	// holds a bit in its node's lookup digest. Left in place, those bits keep
 	// the node's held and servable digests apart forever, and the master asks
 	// for the full volume list on every heartbeat from then on.
-	if collection, found := t.FindCollection(collectionName); found {
-		for _, vl := range collection.GetAllVolumeLayouts() {
-			vl.releaseLookupOwnership()
-		}
+	// Unpublish first so a racing registration re-resolves into a fresh collection.
+	collection, found := t.collectionMap.Delete(collectionName)
+	if !found {
+		return
 	}
-	t.collectionMap.Delete(collectionName)
+	var vids []needle.VolumeId
+	for _, vl := range collection.(*Collection).GetAllVolumeLayouts() {
+		vids = append(vids, vl.ListVids()...)
+		vl.releaseLookupOwnership()
+	}
+	// a vid colliding with a copy in this collection is no longer a duplicate
+	for _, vid := range vids {
+		t.releaseResolvedQuarantine(vid)
+	}
 }
 
 func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) {
@@ -524,19 +830,257 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	diskType := types.ToDiskType(v.DiskType)
-	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-	vl.RegisterVolume(&v, dn)
-	vl.EnsureCorrectWritables(&v)
+	for {
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		// RegisterVolume reads the quarantine record and marks under
+		// accessLock; holding quarantineLock keeps that pair serialized with
+		// releaseResolvedQuarantine's clear-and-delete.
+		t.quarantineLock.Lock()
+		registered := vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+			return t.isQuarantined(n, v.Id)
+		})
+		t.quarantineLock.Unlock()
+		if registered {
+			vl.EnsureCorrectWritables(&v)
+			t.flagDuplicateVolumeIdAsync(v, dn)
+			return
+		}
+		// Dropped with its collection; the next lookup creates a fresh one.
+	}
+}
+
+func (t *Topology) flagDuplicateVolumeIdAsync(v storage.VolumeInfo, dn *DataNode) {
+	t.duplicateFlagChecks.Add(1)
+	go func() {
+		defer t.duplicateFlagChecks.Done()
+		t.flagDuplicateVolumeId(v, dn)
+	}()
+}
+
+// flagDuplicateVolumeId reports and quarantines v.Id when another data node
+// already serves it under a different layout key. It runs after registration
+// so a legitimate same-node move (disk type or collection change) settles
+// first and does not trip it. Every copy across the conflicting layouts is
+// quarantined: either could be the impostor, and arrival order must not
+// decide which copy stays writable.
+func (t *Topology) flagDuplicateVolumeId(v storage.VolumeInfo, dn *DataNode) {
+	// Every pass ends with a release: a conflict could resolve between the
+	// scan below and the marks, and a check finding no hits is also the retry
+	// a kept record waits for once its replica reports a readable layout.
+	defer t.releaseResolvedQuarantine(v.Id)
+	hits := t.findDuplicateVolumeLayouts(v, dn)
+	if len(hits) == 0 {
+		return
+	}
+	// This runs on a goroutine after registration, so the reporter's copy may
+	// already be unregistered (a finished move drops the losing copy). The
+	// surviving copies are then legitimate, and flagging them quarantines a
+	// healthy volume.
+	own := t.FindVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType))
+	if own == nil || !own.HasDataNode(v.Id, dn) {
+		return
+	}
+	stats.MasterDuplicateVolumeIds.WithLabelValues(v.Collection, v.Id.String()).Inc()
+	var otherKeys []string
+	for _, h := range hits {
+		otherKeys = append(otherKeys, h.layoutKey())
+	}
+	glog.Errorf("duplicate volume id %d: %s reports it under %s but other data nodes also serve it under %s; marking all copies read-only", v.Id, dn.Id(), volumeLayoutKey(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)), strings.Join(otherKeys, ", "))
+	quarantine := func(n *DataNode, vl *VolumeLayout) {
+		q := quarantinedVolume{n.Id(), v.Id}
+		reported := false
+		if vi, err := n.GetVolumesById(v.Id); err == nil {
+			reported = vi.ReadOnly
+		}
+		t.quarantineLock.Lock()
+		t.quarantinedVolumeIds.LoadOrStore(q, quarantinedVolumeState{reported: reported})
+		if vl != nil {
+			vl.SetVolumeQuarantined(n, v.Id)
+		}
+		t.quarantineLock.Unlock()
+		if t.QuarantineVolumeFn == nil {
+			return
+		}
+		pushed, err := t.pushQuarantine(n, v.Id, true)
+		if err != nil {
+			return
+		}
+		t.quarantineLock.Lock()
+		val, ok := t.quarantinedVolumeIds.Load(q)
+		if ok {
+			state := val.(quarantinedVolumeState)
+			state.enforced = state.enforced || pushed
+			t.quarantinedVolumeIds.Store(q, state)
+			t.quarantineLock.Unlock()
+			return
+		}
+		t.quarantineLock.Unlock()
+		if pushed && !reported {
+			// The conflict resolved while the push was in flight; leave the
+			// server consistent with the released layout.
+			t.releaseQuarantineWritable(n, v.Id)
+		}
+	}
+	quarantine(dn, own)
+	for _, h := range hits {
+		for _, n := range h.nodes {
+			quarantine(n, h.vl)
+		}
+	}
+}
+
+// releaseResolvedQuarantine lifts read-only marks once the conflicting copy
+// is gone, so a finished move does not leave the surviving copy quarantined.
+// The writable push is a remote call, so the locked pass only applies the
+// layout marks and records which replicas still need it; the pushes run
+// after the lock is dropped, a skipped push means a newer record re-armed
+// the pair so its quarantine stands, and a failed push re-adds the record
+// so a later release pass retries it.
+func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
+	var writablePushes []*DataNode
+	t.quarantineLock.Lock()
+	t.quarantinedVolumeIds.Range(func(key, val any) bool {
+		q := key.(quarantinedVolume)
+		if q.vid != vid {
+			return true
+		}
+		dn, vl, vi := t.findQuarantinedVolume(q.dnId, vid)
+		if dn == nil {
+			t.quarantinedVolumeIds.Delete(key)
+			return true
+		}
+		if vi.ReplicaPlacement == nil {
+			// The replica is in the lookup index but unreadable on its node,
+			// so its layout key is unknown and the conflict cannot be ruled
+			// out; keep the mark for a later pass.
+			return true
+		}
+		if hits := t.findDuplicateVolumeLayouts(vi, dn); len(hits) > 0 {
+			return true
+		}
+		state, _ := val.(quarantinedVolumeState)
+		if state.reported {
+			dn.SetVolumeReadOnly(vid, true)
+			vl.SetReplicaReadOnlyFlag(dn, vid, true)
+		} else {
+			vl.SetVolumeWritable(dn, vid)
+			if state.enforced && t.QuarantineVolumeFn != nil {
+				writablePushes = append(writablePushes, dn)
+			}
+		}
+		t.quarantinedVolumeIds.Delete(key)
+		return true
+	})
+	t.quarantineLock.Unlock()
+	for _, dn := range writablePushes {
+		t.releaseQuarantineWritable(dn, vid)
+	}
+}
+
+// restoreQuarantineRecord re-adds a released record after a failed writable
+// push so the next volume report retries the release. An existing record keeps its
+// reported flag; the server is known read-only, so enforced and retry are set.
+// A record restored from scratch also gets its layout read-only mark back:
+// the release pass cleared it with the record, and leaving it cleared would
+// advertise a writable replica the server still holds read-only.
+func (t *Topology) restoreQuarantineRecord(dn *DataNode, vid needle.VolumeId) {
+	t.quarantineLock.Lock()
+	defer t.quarantineLock.Unlock()
+	key := quarantinedVolume{dn.Id(), vid}
+	if cur, ok := t.quarantinedVolumeIds.LoadOrStore(key, quarantinedVolumeState{enforced: true, retry: true}); ok {
+		state := cur.(quarantinedVolumeState)
+		state.enforced = true
+		state.retry = true
+		t.quarantinedVolumeIds.Store(key, state)
+		return
+	}
+	if _, vl, _ := t.findQuarantinedVolume(dn.Id(), vid); vl != nil {
+		vl.SetVolumeReadOnly(dn, vid)
+	}
+}
+
+func (t *Topology) findQuarantinedVolume(dnId NodeId, vid needle.VolumeId) (*DataNode, *VolumeLayout, storage.VolumeInfo) {
+	for _, item := range t.collectionMap.Items() {
+		for _, vl := range item.(*Collection).GetAllVolumeLayouts() {
+			for _, n := range vl.Lookup(vid) {
+				if n.Id() == dnId {
+					vi, _ := n.GetVolumesById(vid)
+					return n, vl, vi
+				}
+			}
+		}
+	}
+	return nil, nil, storage.VolumeInfo{}
+}
+
+// duplicateHit is one layout that holds v.Id on data nodes other than the
+// reporter's.
+type duplicateHit struct {
+	collection string
+	vl         *VolumeLayout
+	nodes      []*DataNode
+}
+
+func (h duplicateHit) layoutKey() string {
+	return volumeLayoutKey(h.collection, h.vl.rp, h.vl.ttl, h.vl.diskType)
+}
+
+func volumeLayoutKey(collection string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) string {
+	return fmt.Sprintf("collection=%q rp=%s ttl=%s disk=%s", collection, rp, ttl, diskType)
+}
+
+func ttlEqual(a, b *needle.TTL) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ToUint32() == b.ToUint32()
+}
+
+// findDuplicateVolumeLayouts reports every layout that already holds v.Id on
+// data nodes other than dn. Volume ids are global, so the same id held by two
+// nodes under two layouts means the allocator reused an id.
+func (t *Topology) findDuplicateVolumeLayouts(v storage.VolumeInfo, dn *DataNode) []duplicateHit {
+	if v.ReplicaPlacement == nil {
+		return nil
+	}
+	diskType := types.ToDiskType(v.DiskType)
+	var hits []duplicateHit
+	for _, item := range t.collectionMap.Items() {
+		c := item.(*Collection)
+		for _, vl := range c.GetAllVolumeLayouts() {
+			if c.Name == v.Collection && vl.diskType == diskType && ttlEqual(vl.ttl, v.Ttl) {
+				// The reporter's own layout, or an rp-only difference:
+				// a replication change rolls through the nodes one at a
+				// time, so the same volume legitimately reports the old
+				// and new rp while it settles.
+				continue
+			}
+			var others []*DataNode
+			for _, n := range vl.Lookup(v.Id) {
+				if n != dn {
+					others = append(others, n)
+				}
+			}
+			if len(others) > 0 {
+				hits = append(hits, duplicateHit{collection: c.Name, vl: vl, nodes: others})
+			}
+		}
+	}
+	return hits
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
-	if v.ReplicaPlacement.GetCopyCount() > 1 {
-		stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
-	}
+	defer t.releaseResolvedQuarantine(v.Id)
 	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)
+	// Drop the series only after the last placement is gone. Deleting while
+	// another data node still holds v would hide under-replication until the
+	// next CollectDeadNodeAndFullVolumes cycle recreates the label.
+	if v.ReplicaPlacement.GetCopyCount() > 1 && len(t.Lookup(v.Collection, v.Id)) == 0 {
+		stats.MasterReplicaPlacementMismatch.DeleteLabelValues(v.Collection, v.Id.String())
+	}
 	if volumeLayout.isEmpty() {
 		t.DeleteLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	}
@@ -544,6 +1088,54 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 
 func (t *Topology) DataCenterExists(dcName string) bool {
 	return dcName == "" || t.GetDataCenter(dcName) != nil
+}
+
+// RackExists reports whether a rack with the id exists under dcName; an
+// empty dcName searches every data center, an empty rackName always matches.
+func (t *Topology) RackExists(dcName, rackName string) bool {
+	if rackName == "" {
+		return true
+	}
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		if dcName != "" && string(c.Id()) != dcName {
+			continue
+		}
+		for _, r := range c.Children() {
+			if string(r.Id()) == rackName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// DataNodeExists reports whether a data node with the id exists under
+// dcName/rackName; empty parents search every data center and rack, an empty
+// nodeId always matches.
+func (t *Topology) DataNodeExists(dcName, rackName, nodeId string) bool {
+	if nodeId == "" {
+		return true
+	}
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		if dcName != "" && string(c.Id()) != dcName {
+			continue
+		}
+		for _, r := range c.Children() {
+			if rackName != "" && string(r.Id()) != rackName {
+				continue
+			}
+			for _, dn := range r.Children() {
+				if string(dn.Id()) == nodeId {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
@@ -594,7 +1186,7 @@ func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
 	return dcs
 }
 
-func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes []storage.VolumeInfo) {
+func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 	// convert into in memory struct storage.VolumeInfo
 	volumeInfos := make([]storage.VolumeInfo, 0, len(volumes))
 	for _, v := range volumes {
@@ -604,8 +1196,10 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			glog.V(0).Infof("Fail to convert joined volume information: %v", err)
 		}
 	}
+	for i := range volumeInfos {
+		volumeInfos[i] = t.enforceQuarantine(dn, volumeInfos[i])
+	}
 	// find out the delta volumes
-	var changedVolumes []storage.VolumeInfo
 	newVolumes, deletedVolumes, changedVolumes = dn.UpdateVolumes(volumeInfos)
 	for _, v := range newVolumes {
 		t.RegisterVolumeLayout(v, dn)
@@ -614,9 +1208,12 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		t.UnRegisterVolumeLayout(v, dn)
 	}
 	for _, v := range changedVolumes {
-		diskType := types.ToDiskType(v.DiskType)
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		vl.EnsureCorrectWritables(&v)
+		if v.ReplicaPlacement == nil {
+			continue
+		}
+		t.quarantineLock.Lock()
+		t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)).SetReplicaReadOnlyFlag(dn, v.Id, v.ReadOnly || t.isQuarantined(dn, v.Id))
+		t.quarantineLock.Unlock()
 	}
 	// Update effective sizes for all reported volumes (decay pending estimates).
 	// If decay brings a volume eagerly removed by RecordAssign back under the
@@ -635,19 +1232,31 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			// vl is already resolved above; call it directly instead of
-			// RegisterVolumeLayout, which would repeat the GetVolumeLayout lookup.
-			vl.RegisterVolume(&v, dn)
-			vl.EnsureCorrectWritables(&v)
+			for {
+				t.quarantineLock.Lock()
+				registered := vl.RegisterVolume(&v, dn, func(n *DataNode) bool {
+					return t.isQuarantined(n, v.Id)
+				})
+				t.quarantineLock.Unlock()
+				if registered {
+					break
+				}
+				// Dropped with its collection; the next lookup creates a fresh
+				// one, which the calls below must use too.
+				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+			}
+			t.flagDuplicateVolumeIdAsync(v, dn)
 			// Volumes new to the disk map were registered above, so reaching
 			// here means only the lookup index had lost it. Clients were told
 			// it went when the node dropped out, so the repair has to tell them
 			// it is back.
 			newVolumes = append(newVolumes, v)
 		}
-		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+		vl.UpdateOversizedState(&v, dn)
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
 		}
+		vl.EnsureCorrectWritables(&v)
 	}
 	return
 }
@@ -660,7 +1269,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
-		newVis = append(newVis, vi)
+		newVis = append(newVis, t.enforceQuarantine(dn, vi))
 	}
 	for _, v := range deletedVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
@@ -672,11 +1281,31 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	}
 	dn.DeltaUpdateVolumes(newVis, oldVis)
 
+	type layoutKey struct {
+		id               needle.VolumeId
+		collection       string
+		replicaPlacement byte
+		ttl              uint32
+		diskType         types.DiskType
+	}
+	key := func(vi storage.VolumeInfo) layoutKey {
+		return layoutKey{
+			id:               vi.Id,
+			collection:       vi.Collection,
+			replicaPlacement: vi.ReplicaPlacement.Byte(),
+			ttl:              vi.Ttl.ToUint32(),
+			diskType:         types.ToDiskType(vi.DiskType),
+		}
+	}
+	replacements := make(map[layoutKey]struct{}, len(newVis))
 	for _, vi := range newVis {
+		replacements[key(vi)] = struct{}{}
 		t.RegisterVolumeLayout(vi, dn)
 	}
-	for _, vi := range oldVis {
-		t.UnRegisterVolumeLayout(vi, dn)
+	for _, oldVi := range oldVis {
+		if _, replaced := replacements[key(oldVi)]; !replaced {
+			t.UnRegisterVolumeLayout(oldVi, dn)
+		}
 	}
 
 	return
@@ -689,7 +1318,10 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 //
 // Most changes are a volume growing, which moves no location, so returning
 // only the arrivals keeps a busy cluster from telling every client about
-// volumes they can already reach.
+// volumes they can already reach. The arrival set also includes replicas whose
+// IsRemote() classification flipped on tier transition: the volume is still
+// servable from the same node, but every connected client has stale replica
+// priority and must be told to refresh.
 func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes []storage.VolumeInfo) {
 	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
 	for _, v := range changed {
@@ -698,11 +1330,11 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			glog.V(0).Infof("Fail to convert changed volume information: %v", err)
 			continue
 		}
-		volumeInfos = append(volumeInfos, vi)
+		volumeInfos = append(volumeInfos, t.enforceQuarantine(dn, vi))
 	}
 
 	for _, vi := range volumeInfos {
-		isNew, _ := dn.AddOrUpdateVolume(vi)
+		isNew, isChanged, tierTransition := dn.AddOrUpdateVolume(vi)
 		if vi.ReplicaPlacement == nil {
 			if isNew {
 				newVolumes = append(newVolumes, vi)
@@ -714,16 +1346,34 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		// volume only that index had lost is an arrival as far as clients are
 		// concerned: they were told it went when the node dropped out.
 		becameServable := !vl.HasDataNode(vi.Id, dn)
-		if becameServable {
-			vl.RegisterVolume(&vi, dn)
+		for becameServable {
+			t.quarantineLock.Lock()
+			registered := vl.RegisterVolume(&vi, dn, func(n *DataNode) bool {
+				return t.isQuarantined(n, vi.Id)
+			})
+			t.quarantineLock.Unlock()
+			if registered {
+				break
+			}
+			// Dropped with its collection; the next lookup creates a fresh one.
+			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
-		if isNew || becameServable {
+		if becameServable {
+			t.flagDuplicateVolumeIdAsync(vi, dn)
+		}
+		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)
 		}
-		vl.EnsureCorrectWritables(&vi)
-		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
+		if isChanged {
+			t.quarantineLock.Lock()
+			vl.SetReplicaReadOnlyFlag(dn, vi.Id, vi.ReadOnly || t.isQuarantined(dn, vi.Id))
+			t.quarantineLock.Unlock()
+		}
+		vl.UpdateOversizedState(&vi, dn)
+		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
 		}
+		vl.EnsureCorrectWritables(&vi)
 	}
 	return newVolumes
 }
@@ -803,4 +1453,216 @@ func (t *Topology) SetTopologyId(topologyId string) {
 	if t.topologyId != topologyId {
 		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
 	}
+}
+
+func (t *Topology) SetGrowthFreezeConfig(freezeOnMismatch bool, recoveryWait time.Duration) {
+	t.freezeOnMismatch.Store(freezeOnMismatch)
+	t.stateLossRecoveryWait.Store(int64(recoveryWait))
+}
+
+// CheckReportedTopologyId freezes growth when a volume server reports a
+// topology id different from this cluster's: the topology id survives raft
+// state cleanup, so a mismatch means the master's state was rebuilt (or a
+// foreign disk was cloned in).
+func (t *Topology) CheckReportedTopologyId(reported string) {
+	if reported == "" || !t.freezeOnMismatch.Load() {
+		return
+	}
+	own := t.GetTopologyId()
+	if own == "" {
+		// The local topology id is still being minted. Keep the report so a
+		// later heartbeat echo cannot erase the mismatch on the server side
+		// before the freeze check ever ran.
+		t.reportedTopologyIdsLock.Lock()
+		if t.pendingReportedTopologyIds == nil {
+			t.pendingReportedTopologyIds = make(map[string]struct{})
+		}
+		t.pendingReportedTopologyIds[reported] = struct{}{}
+		t.reportedTopologyIdsLock.Unlock()
+		return
+	}
+	if reported == own {
+		return
+	}
+	t.growthFrozenAt.Store(time.Now().UnixNano())
+	if t.growthFrozen.CompareAndSwap(false, true) {
+		stats.MasterVolumeGrowthFrozen.Set(1)
+		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
+		t.applyGrowthFreeze(true)
+	}
+}
+
+func (t *Topology) IsGrowthFrozen() bool {
+	if !t.growthFrozen.Load() {
+		return false
+	}
+	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
+		if time.Duration(time.Now().UnixNano()-t.growthFrozenAt.Load()) > time.Duration(wait) {
+			if t.growthFrozen.CompareAndSwap(true, false) {
+				stats.MasterVolumeGrowthFrozen.Set(0)
+				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (t *Topology) ResumeVolumeGrowth() bool {
+	if !t.growthFrozen.CompareAndSwap(true, false) {
+		return false
+	}
+	stats.MasterVolumeGrowthFrozen.Set(0)
+	glog.V(0).Infof("volume growth resumed by operator")
+	t.applyGrowthFreeze(false)
+	return true
+}
+
+// SetGrowthFrozen applies a replicated freeze state on every master. The
+// timestamp lands before the flag so a reader can never see frozen with a
+// zero time and misjudge the auto-resume window.
+func (t *Topology) SetGrowthFrozen(frozen bool) {
+	if frozen {
+		t.growthFrozenAt.Store(time.Now().UnixNano())
+		if t.growthFrozen.CompareAndSwap(false, true) {
+			stats.MasterVolumeGrowthFrozen.Set(1)
+			glog.V(0).Infof("volume growth freeze applied from raft")
+		}
+		return
+	}
+	if t.growthFrozen.CompareAndSwap(true, false) {
+		stats.MasterVolumeGrowthFrozen.Set(0)
+	}
+}
+
+// applyGrowthFreeze replicates the freeze flag so followers keep it across a
+// leader change. No raft server (single-master test topologies) just sets it.
+func (t *Topology) applyGrowthFreeze(frozen bool) {
+	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
+	cmd.GrowthFrozen = &frozen
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+	if t.RaftServer != nil {
+		if _, err := t.RaftServer.Do(cmd); err != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, err)
+		}
+	} else if t.HashicorpRaft != nil {
+		if b, err := json.Marshal(cmd); err != nil {
+			glog.Warningf("marshal growth freeze %v: %v", frozen, err)
+		} else if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, future.Error())
+		}
+	} else {
+		t.SetGrowthFrozen(frozen)
+	}
+}
+
+// SetTopologyInitPending gates allocation while a topology id is being
+// minted, so growth cannot slip in before the warmup window is installed.
+func (t *Topology) SetTopologyInitPending(pending bool) {
+	t.topologyInitPending.Store(pending)
+	if pending {
+		return
+	}
+	t.reportedTopologyIdsLock.Lock()
+	reported := t.pendingReportedTopologyIds
+	t.pendingReportedTopologyIds = nil
+	t.reportedTopologyIdsLock.Unlock()
+	for id := range reported {
+		t.CheckReportedTopologyId(id)
+	}
+}
+
+// DeferAllocation holds off new id allocation for d. Called when the leader
+// mints a fresh topology id: on a rebuilt master that window gives veteran
+// servers a pulse to raise the bound or trip the freeze.
+func (t *Topology) DeferAllocation(d time.Duration) {
+	t.allocationNotBefore.Store(time.Now().Add(d).UnixNano())
+}
+
+func (t *Topology) allocationDelay() time.Duration {
+	return time.Until(time.Unix(0, t.allocationNotBefore.Load()))
+}
+
+// SetMaxVolumeIdFile mirrors the allocation bound to a file outside raft, so
+// a master whose raft state is gone still restores a safe boundary. An
+// existing file seeds both the bound and the topology id.
+func (t *Topology) SetMaxVolumeIdFile(file string) {
+	t.maxVolumeIdFile = file
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return
+	}
+	cmd := &MaxVolumeIdCommand{}
+	if err := json.Unmarshal(data, cmd); err != nil {
+		glog.Warningf("corrupt max volume id file %s: %v", file, err)
+		return
+	}
+	t.lastPersistedMaxVolumeId.Store(uint32(cmd.MaxVolumeId))
+	t.lastPersistedTopologyId.Store(cmd.TopologyId)
+	t.UpAdjustMaxVolumeId(cmd.MaxVolumeId)
+	if cmd.TopologyId != "" {
+		t.SetTopologyId(cmd.TopologyId)
+	}
+	if cmd.GrowthFrozen != nil {
+		t.lastPersistedGrowthFrozen.Store(*cmd.GrowthFrozen)
+		t.SetGrowthFrozen(*cmd.GrowthFrozen)
+	}
+}
+
+// PersistMaxVolumeId writes the bound to the mirror file. Called by the
+// leader before a raft apply and by both raft implementations on apply and
+// recovery, so follower mirrors stay current too.
+func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
+	topoId := t.GetTopologyId()
+	frozen := t.IsGrowthFrozen()
+	mirrored := func() bool {
+		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId && t.lastPersistedGrowthFrozen.Load() == frozen
+	}
+	if mirrored() {
+		return nil
+	}
+	t.maxVolumeIdFileLock.Lock()
+	defer t.maxVolumeIdFileLock.Unlock()
+	if mirrored() {
+		return nil
+	}
+	if t.maxVolumeIdFile == "" {
+		t.lastPersistedMaxVolumeId.Store(uint32(vid))
+		t.lastPersistedTopologyId.Store(topoId)
+		t.lastPersistedGrowthFrozen.Store(frozen)
+		return nil
+	}
+	cmd := NewMaxVolumeIdCommand(vid, topoId)
+	cmd.GrowthFrozen = &frozen
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	tmp := t.maxVolumeIdFile + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, t.maxVolumeIdFile); err != nil {
+		return err
+	}
+	if err := util.FsyncDir(filepath.Dir(t.maxVolumeIdFile)); err != nil {
+		return err
+	}
+	t.lastPersistedMaxVolumeId.Store(uint32(vid))
+	t.lastPersistedTopologyId.Store(topoId)
+	t.lastPersistedGrowthFrozen.Store(frozen)
+	return nil
 }

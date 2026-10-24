@@ -39,6 +39,9 @@ func (n *Needle) DiskSize(version Version) int64 {
 
 func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, version Version) (dataSlice []byte, err error) {
 
+	if size.IsDeleted() {
+		return nil, fmt.Errorf("invalid needle size %d: %w", size, ErrorSizeInvalid)
+	}
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, int(dataSize))
 
@@ -224,8 +227,14 @@ func (n *Needle) ReadNeedleBody(r backend.BackendStorageFile, version Version, o
 
 func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err error) {
 
-	if len(needleBody) <= 0 {
-		return nil
+	// n.Size comes from the on-disk header, so a corrupted header can carry a
+	// negative size or one the body cannot hold along with its tail. Deriving
+	// the tail from the version's own layout keeps the bound exact for every
+	// on-disk format.
+	tailSize := NeedleBodyLength(n.Size, version) - int64(n.Size) - int64(PaddingLength(n.Size, version))
+	if n.Size < 0 || int64(n.Size)+tailSize > int64(len(needleBody)) {
+		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
+		return fmt.Errorf("needle %v size %d out of range for body length %d: %w", n.Id, n.Size, len(needleBody), ErrorCorrupted)
 	}
 	switch version {
 	case Version1:

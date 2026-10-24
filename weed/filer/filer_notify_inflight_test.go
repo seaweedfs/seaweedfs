@@ -1,0 +1,134 @@
+package filer
+
+import (
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+)
+
+// TestMetaLogInflightFloor pins the in-flight stamp bookkeeping backing
+// Filer.LocalFlushedThroughTsNs: the floor is the oldest outstanding stamp,
+// duplicate stamps are reference-counted, and a cleared registry reports zero.
+func TestMetaLogInflightFloor(t *testing.T) {
+	var inflight metaLogInflight
+	if got := inflight.minTsNs(); got != 0 {
+		t.Fatalf("empty registry: floor=%d want 0", got)
+	}
+	ts1 := inflight.stamp()
+	ts2 := inflight.stamp()
+	if ts2 < ts1 {
+		t.Fatalf("stamps not monotonic: %d then %d", ts1, ts2)
+	}
+	if got := inflight.minTsNs(); got != ts1 {
+		t.Fatalf("floor=%d want oldest stamp %d", got, ts1)
+	}
+	inflight.done(ts1)
+	if got := inflight.minTsNs(); got != ts2 {
+		t.Fatalf("after done(ts1): floor=%d want %d", got, ts2)
+	}
+	inflight.done(ts2)
+	if got := inflight.minTsNs(); got != 0 {
+		t.Fatalf("cleared registry: floor=%d want 0", got)
+	}
+}
+
+// TestLocalFlushedThroughTsNsBoundsInflight pins the flush-watermark claim: a
+// drained buffer claims "now", but an event stamped and not yet appended caps
+// the claim just below its timestamp - a peer bounding disk reads by the
+// claim must not advance past an event still on its way into the buffer.
+func TestLocalFlushedThroughTsNsBoundsInflight(t *testing.T) {
+	f := &Filer{
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer("inflight-test", time.Minute, nil, nil, nil),
+	}
+	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+
+	now := time.Now().UnixNano()
+	if got := f.LocalFlushedThroughTsNs(now); got != now {
+		t.Fatalf("drained, nothing in flight: claim=%d want now=%d", got, now)
+	}
+
+	ts := f.metaLogInflight.stamp()
+	if got := f.LocalFlushedThroughTsNs(time.Now().UnixNano()); got != ts-1 {
+		t.Fatalf("with in-flight stamp %d: claim=%d want %d", ts, got, ts-1)
+	}
+
+	f.metaLogInflight.done(ts)
+	now = time.Now().UnixNano()
+	if got := f.LocalFlushedThroughTsNs(now); got != now {
+		t.Fatalf("stamp cleared: claim=%d want now=%d", got, now)
+	}
+}
+
+// TestLocalDeliveredThroughTsNsBoundsInflight pins the delivery-freshness
+// cap: an idle heartbeat must not claim delivery-completeness past an event
+// that is stamped but not yet appended - the peer aggregator turns that claim
+// into its delivery low-watermark.
+func TestLocalDeliveredThroughTsNsBoundsInflight(t *testing.T) {
+	f := &Filer{
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer("delivered-test", time.Minute, nil, nil, nil),
+	}
+	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("nothing in flight: claim=%d want now=%d", got, now)
+	}
+	ts := f.metaLogInflight.stamp()
+	if got := f.LocalDeliveredThroughTsNs(time.Now().UnixNano()); got != ts-1 {
+		t.Fatalf("with in-flight stamp %d: claim=%d want %d", ts, got, ts-1)
+	}
+	f.metaLogInflight.done(ts)
+}
+
+// TestClaimFencesFutureStamps pins the claim fence: once a claim is issued, a
+// wall-clock step backwards must not let a later stamp land at or below it -
+// the peer has already advanced its watermark to the claim.
+func TestClaimFencesFutureStamps(t *testing.T) {
+	f := &Filer{
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer("claim-fence-test", time.Minute, nil, nil, nil),
+	}
+	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+
+	// Claim with a sampled clock one hour ahead: to a stamp taken at the real
+	// wall clock this is exactly a backward step after the claim was issued.
+	aheadNs := time.Now().Add(time.Hour).UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(aheadNs); got != aheadNs {
+		t.Fatalf("nothing in flight: claim=%d want %d", got, aheadNs)
+	}
+	ts := f.metaLogInflight.stamp()
+	if ts <= aheadNs {
+		t.Fatalf("stamp %d not fenced above issued delivery claim %d", ts, aheadNs)
+	}
+	f.metaLogInflight.done(ts)
+
+	// The flush claim fences the same way.
+	aheadNs += int64(time.Hour)
+	if got := f.LocalFlushedThroughTsNs(aheadNs); got != aheadNs {
+		t.Fatalf("drained buffer: claim=%d want %d", got, aheadNs)
+	}
+	ts = f.metaLogInflight.stamp()
+	if ts <= aheadNs {
+		t.Fatalf("stamp %d not fenced above issued flush claim %d", ts, aheadNs)
+	}
+	f.metaLogInflight.done(ts)
+}
+
+// TestMetaLogInflightStampMonotonic pins the registry-local monotonicity: a
+// wall clock stepping backwards must not let a new stamp slip under an
+// already-sampled floor.
+func TestMetaLogInflightStampMonotonic(t *testing.T) {
+	var inflight metaLogInflight
+	ts1 := inflight.stamp()
+	// Simulate a wall-clock step backwards: force the registry's history
+	// ahead of the clock; the next stamp must still move forward.
+	inflight.Lock()
+	inflight.lastStampNs = ts1 + int64(time.Hour)
+	inflight.Unlock()
+	ts2 := inflight.stamp()
+	if ts2 <= ts1+int64(time.Hour) {
+		t.Fatalf("stamp regressed: %d after forcing history to %d", ts2, ts1+int64(time.Hour))
+	}
+	inflight.done(ts1)
+	inflight.done(ts2)
+}

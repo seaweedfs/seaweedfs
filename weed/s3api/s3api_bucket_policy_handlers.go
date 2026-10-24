@@ -1,22 +1,26 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// Bucket policy metadata key for storing policies in filer
+// Bucket policy metadata key for storing policies in filer.
+// Also consumed directly by weed/admin/dash for the admin UI's bucket
+// policy management, so keep it exported and don't change its value
+// without updating that package too.
 const BUCKET_POLICY_METADATA_KEY = "s3-bucket-policy"
 
 // Sentinel errors for bucket policy operations
@@ -73,13 +77,18 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	glog.V(3).Infof("PutBucketPolicyHandler: bucket=%s", bucket)
 
 	// Read policy document from request body
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, policy_engine.MaxBucketPolicySize+1))
 	if err != nil {
 		glog.Errorf("Failed to read bucket policy request body: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
 		return
 	}
 	defer r.Body.Close()
+
+	if len(body) > policy_engine.MaxBucketPolicySize {
+		s3err.WriteErrorResponse(w, r, s3err.ErrPolicyTooLarge)
+		return
+	}
 
 	// Parse and validate policy document
 	var policyDoc policy_engine.PolicyDocument
@@ -97,7 +106,7 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Additional bucket policy specific validation
-	if err := s3a.validateBucketPolicy(&policyDoc, bucket); err != nil {
+	if err := policy_engine.ValidateBucketPolicy(&policyDoc, bucket); err != nil {
 		glog.Errorf("Bucket policy validation failed: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
 		return
@@ -293,111 +302,159 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 	})
 }
 
-// validateBucketPolicy performs bucket-specific policy validation
-func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocument, bucket string) error {
-	if policyDoc.Version != "2012-10-17" {
-		return fmt.Errorf("unsupported policy version: %s (must be 2012-10-17)", policyDoc.Version)
-	}
-
-	if len(policyDoc.Statement) == 0 {
-		return fmt.Errorf("policy document must contain at least one statement")
-	}
-
-	for i, statement := range policyDoc.Statement {
-		// Bucket policies must have Principal
-		if statement.Principal == nil {
-			return fmt.Errorf("statement %d: bucket policies must specify a Principal", i)
-		}
-
-		// Validate resources refer to this bucket
-		for _, resource := range statement.Resource.Strings() {
-			if !s3a.validateResourceForBucket(resource, bucket) {
-				return fmt.Errorf("statement %d: resource %s does not match bucket %s", i, resource, bucket)
-			}
-		}
-
-		// Validate NotResources refer to this bucket
-		if statement.NotResource != nil {
-			for _, notResource := range statement.NotResource.Strings() {
-				if !s3a.validateResourceForBucket(notResource, bucket) {
-					return fmt.Errorf("statement %d: NotResource %s does not match bucket %s", i, notResource, bucket)
-				}
-			}
-		}
-
-		// Validate actions are S3 actions
-		for _, action := range statement.Action.Strings() {
-			if !strings.HasPrefix(action, "s3:") {
-				return fmt.Errorf("statement %d: bucket policies only support S3 actions, got %s", i, action)
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateResourceForBucket checks if a resource ARN is valid for the given bucket
-func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
-	// Accepted formats for S3 bucket policies:
-	// AWS-style ARNs (standard):
-	//   arn:aws:s3:::bucket-name
-	//   arn:aws:s3:::bucket-name/*
-	//   arn:aws:s3:::bucket-name/path/to/object
-	// Simplified formats (for convenience):
-	//   bucket-name
-	//   bucket-name/*
-	//   bucket-name/path/to/object
-
-	var resourcePath string
-	const awsPrefix = "arn:aws:s3:::"
-
-	// Strip the optional ARN prefix to get the resource path
-	if path, ok := strings.CutPrefix(resource, awsPrefix); ok {
-		resourcePath = path
-	} else {
-		resourcePath = resource
-	}
-
-	// After stripping the optional ARN prefix, the resource path must
-	// either match the bucket name exactly, or be a path within the bucket.
-	return resourcePath == bucket ||
-		resourcePath == bucket+"/*" ||
-		strings.HasPrefix(resourcePath, bucket+"/")
-}
-
 // IAM integration functions
 
 // updateBucketPolicyInIAM updates the IAM system with the new bucket policy
 func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) error {
-	// Update IAM integration with new bucket policy
-	if s3a.iam.iamIntegration != nil {
-		// Type assert to access the concrete implementation which has access to iamManager
-		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
-			if s3Integration.iamManager != nil {
-				glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
-
-				policyJSON, err := json.Marshal(policyDoc)
-				if err != nil {
-					return fmt.Errorf("failed to marshal policy: %w", err)
-				}
-
-				return s3Integration.iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
-			}
-		}
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return nil
 	}
 
-	return nil
+	policyJSON, err := json.Marshal(policyDoc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal policy: %w", err)
+	}
+
+	glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
+	return iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
+}
+
+// ensureBucketPolicyInIAM backfills the IAM mirror for a policy the
+// subscription never saw change (one that predates the IAM integration).
+// Called from the lazy bucket-config load; a present mirror is left alone.
+func (s3a *S3ApiServer) ensureBucketPolicyInIAM(bucket string, policyJSON []byte) {
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return
+	}
+
+	wrote, err := iamManager.EnsureBucketPolicy(context.Background(), bucket, policyJSON)
+	if err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: %v", bucket, err)
+		return
+	}
+	if !wrote {
+		return
+	}
+
+	// The check-then-write above can race a concurrent policy change or
+	// delete: the event-driven mirror may have landed in between, and this
+	// write would then have re-stored bytes that are already stale - with
+	// no later event to heal it. Reconcile against a fresh entry read,
+	// which is authoritative; anything changing after this read fires its
+	// own event, and the mirror for it finds this write already present.
+	entry, err := s3a.getBucketEntry(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
+				glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+			}
+		}
+		return
+	}
+	current := entry.Extended[BUCKET_POLICY_METADATA_KEY]
+	if bytes.Equal(current, policyJSON) {
+		return
+	}
+	if len(current) == 0 {
+		if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
+			glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+		}
+		return
+	}
+	var policyDoc policy_engine.PolicyDocument
+	if err := json.Unmarshal(current, &policyDoc); err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: parse: %v", bucket, err)
+		return
+	}
+	if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: %v", bucket, err)
+	}
 }
 
 // removeBucketPolicyFromIAM removes the bucket policy from the IAM system
 func (s3a *S3ApiServer) removeBucketPolicyFromIAM(bucket string) error {
-	// This would remove the bucket policy from our advanced IAM system
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return nil
+	}
+
 	glog.V(2).Infof("Removed bucket policy for %s from IAM system", bucket)
+	return iamManager.RemoveBucketPolicy(context.Background(), bucket)
+}
 
-	// TODO: Integrate with IAM manager to remove resource-based policies
-	// s3a.iam.iamIntegration.iamManager.RemoveBucketPolicy(bucket)
-
+// bucketPolicyIAMManager returns the advanced-IAM manager the
+// "bucket-policy:<bucket>" mirror lives in, or nil when the integration is
+// not enabled.
+func (s3a *S3ApiServer) bucketPolicyIAMManager() *integration.IAMManager {
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return nil
+	}
+	if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
+		return s3Integration.iamManager
+	}
 	return nil
+}
+
+// mirrorBucketPolicyToIAM keeps the "bucket-policy:<bucket>" IAM mirror in
+// sync with the policy stored on a bucket's filer entry. Driven from the
+// metadata subscription so it covers every writer - this gateway's own
+// PutBucketPolicy, another gateway's, the admin UI, bucket deletion, and
+// rename - where the handlers' direct calls only ever covered the first.
+func (s3a *S3ApiServer) mirrorBucketPolicyToIAM(oldEntry, newEntry *filer_pb.Entry) {
+	if s3a.bucketPolicyIAMManager() == nil {
+		return
+	}
+	removeName, updateName, updatePolicy := bucketPolicyMirrorOps(oldEntry, newEntry)
+	if removeName != "" {
+		if err := s3a.removeBucketPolicyFromIAM(removeName); err != nil {
+			glog.Warningf("remove bucket policy for %s from IAM: %v", removeName, err)
+		}
+	}
+	if updateName == "" {
+		return
+	}
+	var policyDoc policy_engine.PolicyDocument
+	if err := json.Unmarshal(updatePolicy, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: parse: %v", updateName, err)
+		return
+	}
+	if err := s3a.updateBucketPolicyInIAM(updateName, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: %v", updateName, err)
+	}
+}
+
+// bucketPolicyMirrorOps computes what a bucket entry change means for the
+// IAM mirror: a name whose mirror must be removed, and a (name, policy) to
+// write. A rename delivers both entries under different names in one event,
+// and the old name's mirror has to move even when the policy bytes are
+// unchanged - equality only short-circuits same-name updates.
+func bucketPolicyMirrorOps(oldEntry, newEntry *filer_pb.Entry) (removeName, updateName string, updatePolicy []byte) {
+	var oldName, newName string
+	var oldPolicy, newPolicy []byte
+	if oldEntry != nil {
+		oldName = oldEntry.Name
+		oldPolicy = oldEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if newEntry != nil {
+		newName = newEntry.Name
+		newPolicy = newEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if oldName != "" && oldName != newName && len(oldPolicy) > 0 {
+		removeName = oldName
+		oldPolicy = nil
+	}
+	if newName == "" || bytes.Equal(oldPolicy, newPolicy) {
+		return
+	}
+	if len(newPolicy) == 0 {
+		removeName = newName
+		return
+	}
+	updateName = newName
+	updatePolicy = newPolicy
+	return
 }
 
 // GetPublicAccessBlockHandler Retrieves the PublicAccessBlock configuration for an S3 bucket

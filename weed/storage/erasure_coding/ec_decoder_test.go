@@ -217,7 +217,7 @@ func TestDecodeAtomicPublish(t *testing.T) {
 	// final .dat nor a partial .dat.tmp behind.
 	datBase := filepath.Join(dir, "bar_2")
 	missingShards := []string{filepath.Join(dir, "does_not_exist.ec00")}
-	if err := erasure_coding.WriteDatFile(datBase, 100, 100, missingShards); err == nil {
+	if err := erasure_coding.WriteDatFile(datBase, 100, 100, missingShards, erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize); err == nil {
 		t.Fatalf("expected WriteDatFile to fail on missing shard")
 	}
 	if _, err := os.Stat(datBase + ".dat"); !os.IsNotExist(err) {
@@ -542,13 +542,13 @@ func TestEcxFileDeletionWithSeparateHandles(t *testing.T) {
 // are journaled to .ecj and tracked in an in-memory set — so the
 // durability chain decode relies on is:
 //
-//   1. DeleteNeedleFromEcx appends the needle id to .ecj and fsyncs it.
-//   2. Runtime reads via FindNeedleFromEcx consult the in-memory set and
-//      return TombstoneFileSize even though the sealed .ecx record on
-//      disk still shows the original size.
-//   3. ec.decode later closes the EcVolume and calls RebuildEcxFile on
-//      the now-quiescent files, which walks .ecj and writes tombstones
-//      into .ecx. CopyFile then reads the rebuilt .ecx.
+//  1. DeleteNeedleFromEcx appends the needle id to .ecj and fsyncs it.
+//  2. Runtime reads via FindNeedleFromEcx consult the in-memory set and
+//     return TombstoneFileSize even though the sealed .ecx record on
+//     disk still shows the original size.
+//  3. ec.decode later closes the EcVolume and calls RebuildEcxFile on
+//     the now-quiescent files, which walks .ecj and writes tombstones
+//     into .ecx. CopyFile then reads the rebuilt .ecx.
 //
 // This test exercises the full chain on a tempdir fixture.
 func TestEcVolumeDeleteDurableToJournal(t *testing.T) {

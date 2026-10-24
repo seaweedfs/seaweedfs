@@ -23,12 +23,18 @@ import (
 // every other client would read the entry as owned by uid 4294967295.
 const ownedByMounter = ^uint32(0)
 
-// windowsAttrTimeoutSec bounds how long WinFsp may serve cached attributes.
-// Nothing invalidates that cache from this side, so it stays short rather than
-// borrowing an unrelated flag's value.
-const windowsAttrTimeoutSec = 1.0
+// windowsCacheTimeout bounds how long the adapter serves cached paths and
+// attributes and WinFsp serves cached directory listings, matching what the
+// kernel caches would be allowed on a unix mount. Metadata events purge
+// entries earlier; this is the backstop for anything an event misses.
+const windowsCacheTimeout = time.Second
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
+	if err := configureMountMemory(option); err != nil {
+		fmt.Println(err)
+		return false
+	}
+
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
 		fmt.Printf("Please specify a reasonable buffer size.\n")
@@ -92,6 +98,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		chunkSizeLimitMB: chunkSizeLimitMB,
 		cacheDirForRead:  cacheDirForRead,
 		cacheDirForWrite: cacheDirForWrite,
+		// WinFsp posts the cleanup and close that carry the flush after
+		// CloseHandle has already returned, so entry creation cannot wait
+		// for the flush the way it does when close(2) runs it synchronously.
+		eagerFilerCreate: true,
 	})
 
 	if !createMountRoot(seaweedFileSystem, mountRoot, bucketRootPath, filerAddresses) {
@@ -99,10 +109,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	host := winfsp.New(seaweedFileSystem, winfsp.Options{
-		VolumeName:   strings.ReplaceAll(*option.filer, ",", "+"),
+		VolumeName:   volumeName(*option.filer, *option.filerMountRootPath, dir, *option.volumeName),
 		Uid:          ownedByMounter,
 		Gid:          ownedByMounter,
-		AttrTimeout:  windowsAttrTimeoutSec,
+		CacheTimeout: windowsCacheTimeout,
 		ReadOnly:     *option.readOnly,
 		Debug:        *option.debugFuse,
 		ExtraOptions: option.extraOptions,
@@ -131,6 +141,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("mounting %s%s to %v", *option.filer, mountRoot, dir)
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 	glog.V(0).Infof("Windows mount is beta: hard links are unavailable and byte-range locks are not shared across mounts")
+	if prefix, _ := winfsp.VolumePrefix(dir); prefix != "" {
+		glog.V(0).Infof(`network mount: every session on this machine can open \%s or map a drive letter to it`, prefix)
+	}
 
 	if err := host.Serve(windowsMountPoint(dir)); err != nil {
 		glog.Errorf("%v", err)
@@ -151,6 +164,9 @@ func checkWindowsMountPoint(dir string) error {
 			return fmt.Errorf("drive %s is already in use", dir)
 		}
 		return nil
+	}
+	if prefix, err := winfsp.VolumePrefix(dir); err != nil || prefix != "" {
+		return err
 	}
 	if strings.HasPrefix(dir, `\\`) {
 		return nil

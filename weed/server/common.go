@@ -12,6 +12,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -107,7 +109,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 
 	if httpStatus >= 400 {
 		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and JSON:%s",
-			r.Method, r.URL.String(), httpStatus, string(bytes))
+			r.Method, redactedURL(r), httpStatus, string(bytes))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -117,10 +119,21 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 	return
 }
 
+func redactedURL(r *http.Request) string {
+	if _, ok := r.URL.Query()["jwt"]; !ok {
+		return r.URL.String()
+	}
+	u := *r.URL
+	q := u.Query()
+	q.Set("jwt", "[redacted]")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
 	if err := writeJson(w, r, httpStatus, obj); err != nil {
-		glog.V(0).Infof("error writing JSON status %s %d: %v", r.URL, httpStatus, err)
+		glog.V(0).Infof("error writing JSON status %s %d: %v", redactedURL(r), httpStatus, err)
 		glog.V(1).Infof("JSON content: %+v", obj)
 	}
 }
@@ -135,7 +148,7 @@ func debug(params ...interface{}) {
 	glog.V(4).Infoln(params...)
 }
 
-func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption) {
+func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileSizeLimitBytes int64) {
 	ctx := r.Context()
 	m := make(map[string]interface{})
 	if r.Method != http.MethodPost {
@@ -146,7 +159,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 	debug("parsing upload file...")
 	bytesBuffer := bufPool.Get().(*bytes.Buffer)
 	defer bufPool.Put(bytesBuffer)
-	pu, pe := needle.ParseUpload(r, 256*1024*1024, bytesBuffer)
+	pu, pe := needle.ParseUpload(r, fileSizeLimitBytes, bytesBuffer)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return
@@ -286,12 +299,32 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
+// responseBodyTracker records how many bytes have reached the ResponseWriter.
+// Bytes still sitting in the pooled bufio.Writer do not count: the status line
+// is not committed until the buffer flushes.
+type responseBodyTracker struct {
+	http.ResponseWriter
+	written int64
+}
+
+func (t *responseBodyTracker) Write(p []byte) (int, error) {
+	n, err := t.ResponseWriter.Write(p)
+	t.written += int64(n)
+	return n, err
+}
+
 func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, prepareWriteFn func(offset int64, size int64) (filer.DoStreamContent, error)) error {
 	rangeReq := r.Header.Get("Range")
+	sink := &responseBodyTracker{ResponseWriter: w}
 	bufferedWriter := writePool.Get().(*bufio.Writer)
-	bufferedWriter.Reset(w)
+	bufferedWriter.Reset(sink)
+	discardBuffered := false
 	defer func() {
-		bufferedWriter.Flush()
+		if discardBuffered {
+			bufferedWriter.Reset(io.Discard)
+		} else {
+			bufferedWriter.Flush()
+		}
 		writePool.Put(bufferedWriter)
 	}()
 
@@ -304,6 +337,13 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		}
 		if err = writeFn(bufferedWriter); err != nil {
 			glog.Errorf("ProcessRangeRequest: %v", err)
+			// Drop the unflushed tail: flushing it would finish a 200 whose
+			// Content-Length is already set, delivering corrupt bytes as a
+			// complete body.
+			discardBuffered = true
+			if sink.written > 0 {
+				panic(http.ErrAbortHandler)
+			}
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
@@ -316,6 +356,9 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	ranges, err := parseRange(rangeReq, totalSize)
 	if err != nil {
 		glog.Errorf("ProcessRangeRequest headers: %+v err: %v", w.Header(), err)
+		if err == errNoOverlap {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+		}
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
 		return fmt.Errorf("ProcessRangeRequest header: %w", err)
 	}
@@ -354,8 +397,10 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
-			// Cannot call http.Error() here because WriteHeader was already called
-			return fmt.Errorf("ProcessRangeRequest range[0]: %w", err)
+			// WriteHeader was already called: drop the unflushed tail and
+			// abort so the client does not read corrupt bytes as a full body.
+			discardBuffered = true
+			panic(http.ErrAbortHandler)
 		}
 		return nil
 	}
@@ -407,10 +452,54 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("ProcessRangeRequest err: %v", err)
-		// Cannot call http.Error() here because WriteHeader was already called
-		return fmt.Errorf("ProcessRangeRequest err: %w", err)
+		// WriteHeader was already called: drop the unflushed tail and abort.
+		discardBuffered = true
+		panic(http.ErrAbortHandler)
 	}
 	return nil
+}
+
+// CleanPathHandler serves a request whose path is not canonical ("//", "." or
+// ".." segments) at the cleaned path instead of letting http.ServeMux redirect
+// to it. ServeMux builds that redirect from the already percent-encoded path, so
+// the Location header is encoded twice (golang/go#79897): a client following it
+// re-sends "/负极全景" as "/%25E8%25B4%259F...", and the filer then stores a
+// directory literally named "%E8%B4%9F...". Cleaning here mirrors the path
+// ServeMux would have redirected to, so the decoded name reaches the handler.
+func CleanPathHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		if cleaned := cleanPath(escaped); cleaned != escaped {
+			if p, err := url.PathUnescape(cleaned); err == nil {
+				r2 := new(http.Request)
+				*r2 = *r
+				r2.URL = new(url.URL)
+				*r2.URL = *r.URL
+				r2.URL.Path, r2.URL.RawPath = p, cleaned
+				// PostHandler picks storage rules and the bucket from RequestURI, so
+				// keep it in step with the path the entry is written to.
+				r2.RequestURI = r2.URL.RequestURI()
+				r = r2
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// cleanPath is the canonical form http.ServeMux redirects to: path.Clean plus
+// the trailing slash, which the filer relies on to tell a directory from a file.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
 }
 
 func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {

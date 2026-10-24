@@ -3,9 +3,13 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,8 +23,8 @@ import (
 func TestParseConfig(t *testing.T) {
 	config := ParseConfig(nil)
 
-	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
-		t.Errorf("expected SnapshotRetentionHours=%d, got %d", defaultSnapshotRetentionHours, config.SnapshotRetentionHours)
+	if config.SnapshotRetentionMs != hoursToMs(defaultSnapshotRetentionHours) {
+		t.Errorf("expected SnapshotRetentionMs=%d, got %d", hoursToMs(defaultSnapshotRetentionHours), config.SnapshotRetentionMs)
 	}
 	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
 		t.Errorf("expected MaxSnapshotsToKeep=%d, got %d", defaultMaxSnapshotsToKeep, config.MaxSnapshotsToKeep)
@@ -115,11 +119,11 @@ func TestExtractMetadataVersion(t *testing.T) {
 
 func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24,
-		MaxSnapshotsToKeep:     2,
+		SnapshotRetentionMs: hoursToMs(24),
+		MaxSnapshotsToKeep:  2,
 	}
 
-	meta := buildTestMetadata(t, nil)
+	meta := buildTestMetadata(t, nil, nil, 0, nil, nil, nil)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table with no snapshots")
 	}
@@ -127,8 +131,8 @@ func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 
 func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     2,
+		SnapshotRetentionMs: hoursToMs(24),
+		MaxSnapshotsToKeep:  2,
 	}
 
 	now := time.Now().UnixMilli()
@@ -137,23 +141,65 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
+	meta := buildTestMetadata(t, snapshots, nil, 48*time.Hour, nil, nil, nil)
 	if !needsMaintenance(meta, config) {
 		t.Error("expected maintenance for table exceeding max snapshots")
 	}
 }
 
+// Expiry always requires a snapshot to be past the retention window, so a table
+// over the quota whose snapshots are all young has nothing to do.
+func TestNeedsMaintenanceExceedsMaxSnapshotsWithinRetention(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  2,
+	}
+
+	now := time.Now().UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+	}
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
+		t.Error("expected no maintenance while every snapshot is inside the retention window")
+	}
+}
+
+// Every expirable snapshot is pinned by a tag, so a job could only no-op.
+func TestNeedsMaintenanceSkipsRefPinnedSnapshots(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+	}
+	refs := map[string]table.SnapshotRef{
+		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+	}
+	if needsMaintenance(buildTestMetadata(t, snapshots, refs, 0, nil, nil, nil), config) {
+		t.Error("expected no maintenance when the only old snapshot is tagged")
+	}
+	if !needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
+		t.Error("expected maintenance for the same table without the tag")
+	}
+}
+
 func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     5,
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  5,
 	}
 
 	now := time.Now().UnixMilli()
 	snapshots := []table.Snapshot{
 		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table within limits")
 	}
@@ -162,18 +208,35 @@ func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 	// Use a retention of 0 hours so that any snapshot is considered "old"
 	config := Config{
-		SnapshotRetentionHours: 0, // instant expiry
-		MaxSnapshotsToKeep:     10,
+		SnapshotRetentionMs: hoursToMs(0), // instant expiry
+		MaxSnapshotsToKeep:  1,
 	}
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
 	snapshots := []table.Snapshot{
-		{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
-	// With 0 retention, any snapshot with timestamp < now should need maintenance
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 	if !needsMaintenance(meta, config) {
 		t.Error("expected maintenance for table with expired snapshot")
+	}
+}
+
+// The current snapshot is never expirable, so a single-snapshot table has no
+// work no matter how far past retention it is.
+func TestNeedsMaintenanceSingleSnapshot(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  10,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+	}
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
+		t.Error("expected no maintenance for a table with only the current snapshot")
 	}
 }
 
@@ -217,7 +280,7 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 		{SnapshotID: 1, TimestampMs: now},
 		{SnapshotID: 2, TimestampMs: now + 1},
 	}
-	meta := buildTestMetadata(t, snapshots)
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 
 	info := tableInfo{
 		BucketName: "my-bucket",
@@ -638,7 +701,7 @@ func TestBuildCompactionBins(t *testing.T) {
 		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
@@ -657,12 +720,48 @@ func TestBuildCompactionBinsFiltersLargeFiles(t *testing.T) {
 		{path: "data/large.parquet", size: 5000, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
 	if len(bins[0].Entries) != 2 {
 		t.Errorf("expected 2 entries (large excluded), got %d", len(bins[0].Entries))
+	}
+}
+
+// NewDataFileBuilder rejects lowercase formats, so wrap what the Avro reader passes through.
+type lowercaseFormatEntry struct {
+	iceberg.ManifestEntry
+}
+
+func (e lowercaseFormatEntry) DataFile() iceberg.DataFile {
+	return lowercaseFormatFile{e.ManifestEntry.DataFile()}
+}
+
+type lowercaseFormatFile struct {
+	iceberg.DataFile
+}
+
+func (f lowercaseFormatFile) FileFormat() iceberg.FileFormat { return "parquet" }
+
+func TestBuildCompactionBinsLowercaseParquetFormat(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/f3.avro", size: 2048, partition: map[int]any{}, format: iceberg.AvroFile},
+	})
+	entries[0] = lowercaseFormatEntry{entries[0]}
+	entries[1] = lowercaseFormatEntry{entries[1]}
+
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 2 {
+		t.Errorf("expected 2 entries (avro excluded), got %d", len(bins[0].Entries))
 	}
 }
 
@@ -675,7 +774,7 @@ func TestBuildCompactionBinsMinFilesThreshold(t *testing.T) {
 		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 0 {
 		t.Errorf("expected 0 bins (below min threshold), got %d", len(bins))
 	}
@@ -702,7 +801,7 @@ func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
 		{path: "data/b3.parquet", size: 4096, partition: partB, partitionSpec: &partitionSpec},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 2 {
 		t.Fatalf("expected 2 bins (one per partition), got %d", len(bins))
 	}
@@ -766,7 +865,8 @@ type testEntrySpec struct {
 	size          int64
 	partition     map[int]any
 	partitionSpec *iceberg.PartitionSpec
-	specID        int32 // partition spec ID; 0 uses UnpartitionedSpec
+	specID        int32              // partition spec ID; 0 uses UnpartitionedSpec
+	format        iceberg.FileFormat // empty uses ParquetFile
 }
 
 func buildTestDataFile(t *testing.T, spec testEntrySpec) iceberg.DataFile {
@@ -778,11 +878,15 @@ func buildTestDataFile(t *testing.T, spec testEntrySpec) iceberg.DataFile {
 	} else if len(spec.partition) > 0 {
 		t.Fatalf("partition spec is required for partitioned test entry %s", spec.path)
 	}
+	format := spec.format
+	if format == "" {
+		format = iceberg.ParquetFile
+	}
 	dfBuilder, err := iceberg.NewDataFileBuilder(
 		*partitionSpec,
 		iceberg.EntryContentData,
 		spec.path,
-		iceberg.ParquetFile,
+		format,
 		spec.partition,
 		nil, nil,
 		1, // recordCount (must be > 0)
@@ -873,7 +977,7 @@ func TestBuildCompactionBinsMultipleSpecs(t *testing.T) {
 		{path: "data/s1-f2.parquet", size: 2048, partition: map[int]any{}, specID: 1},
 	}, partSpecs)
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 2 {
 		t.Fatalf("expected 2 bins (one per spec), got %d", len(bins))
 	}
@@ -907,7 +1011,7 @@ func TestBuildCompactionBinsSingleSpec(t *testing.T) {
 		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}, specID: 0},
 	}, partSpecs)
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
@@ -964,8 +1068,8 @@ func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
 	if config.OrphanOlderThanHours != defaultOrphanOlderThanHours {
 		t.Fatalf("expected OrphanOlderThanHours default, got %d", config.OrphanOlderThanHours)
 	}
-	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
-		t.Fatalf("expected SnapshotRetentionHours default, got %d", config.SnapshotRetentionHours)
+	if config.SnapshotRetentionMs != hoursToMs(defaultSnapshotRetentionHours) {
+		t.Fatalf("expected SnapshotRetentionMs default, got %d", config.SnapshotRetentionMs)
 	}
 	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
 		t.Fatalf("expected MaxSnapshotsToKeep default, got %d", config.MaxSnapshotsToKeep)
@@ -1199,7 +1303,7 @@ func TestMergeParquetFilesWithPositionDeletes(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, posDeletes, nil, nil,
+		entries, posDeletes, nil, nil, 0, false,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
@@ -1315,7 +1419,7 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, eqGroups, schema,
+		entries, nil, eqGroups, schema, 0, false,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
@@ -1347,6 +1451,77 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 	}
 }
 
+// testdata/plain-dictionary.parquet was written by DuckDB, which labels its
+// dictionary pages with the deprecated PLAIN_DICTIONARY encoding. The merge
+// writer inherits that encoding from the input schema, and encoding those
+// pages as plain int32 indices instead of RLE collapses every row of the
+// column onto one dictionary entry.
+func TestMergeParquetFilesDictionaryEncodedInput(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	content, err := os.ReadFile(filepath.Join("testdata", "plain-dictionary.parquet"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	dataDir := "/buckets/test-bucket/ns/tbl/data"
+	spec := *iceberg.UnpartitionedSpec
+	var entries []iceberg.ManifestEntry
+	for _, name := range []string{"dict1.parquet", "dict2.parquet"} {
+		fs.putEntry(dataDir, name, &filer_pb.Entry{Name: name, Content: content})
+		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, "data/"+name, iceberg.ParquetFile, map[int]any{}, nil, nil, 200, int64(len(content)))
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		snapID := int64(1)
+		entries = append(entries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+	}
+
+	merged, count, err := mergeParquetFiles(
+		context.Background(), client, "test-bucket", "ns/tbl",
+		entries, nil, nil, nil, 0, false,
+	)
+	if err != nil {
+		t.Fatalf("mergeParquetFiles: %v", err)
+	}
+	if count != 400 {
+		t.Fatalf("expected 400 merged rows, got %d", count)
+	}
+
+	type dictRow struct {
+		ID   int64  `parquet:"id"`
+		Name string `parquet:"name"`
+	}
+	tally := func(data []byte, what string) map[dictRow]int {
+		counts := map[dictRow]int{}
+		reader := parquet.NewReader(bytes.NewReader(data))
+		defer reader.Close()
+		for {
+			var r dictRow
+			err := reader.Read(&r)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("read %s row: %v", what, err)
+			}
+			counts[r]++
+		}
+		return counts
+	}
+
+	source := tally(content, "fixture")
+	got := tally(merged, "merged")
+	if len(got) != len(source) {
+		t.Fatalf("expected %d distinct rows, got %d", len(source), len(got))
+	}
+	for row, n := range source {
+		if got[row] != 2*n {
+			t.Errorf("row %+v appears %d times, expected %d", row, got[row], 2*n)
+		}
+	}
+}
+
 func TestDetectNilRequest(t *testing.T) {
 	handler := NewHandler(nil)
 	err := handler.Detect(nil, nil, nil)
@@ -1367,13 +1542,23 @@ func TestExecuteNilRequest(t *testing.T) {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// buildTestMetadata creates a minimal Iceberg metadata for testing.
-// When snapshots is nil or empty, the metadata has no snapshots.
-func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata {
+// buildTestMetadata creates a minimal Iceberg metadata for testing. When
+// snapshots is nil or empty the metadata has no snapshots; refs adds branches
+// and tags on top of the main branch, which always points at the last snapshot.
+// A positive age backdates the result, letting a test describe snapshots that
+// are genuinely past a retention window - iceberg-go refuses to add a snapshot
+// stamped more than a minute before the metadata's last-updated time, so the
+// shift has to happen after the build.
+func buildTestMetadata(t *testing.T, snapshots []table.Snapshot, refs map[string]table.SnapshotRef, age time.Duration, properties iceberg.Properties, schema *iceberg.Schema, spec *iceberg.PartitionSpec) table.Metadata {
 	t.Helper()
 
-	schema := newTestSchema()
-	meta, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, "s3://test-bucket/test-table", nil)
+	if schema == nil {
+		schema = newTestSchema()
+	}
+	if spec == nil {
+		spec = iceberg.UnpartitionedSpec
+	}
+	meta, err := table.NewMetadata(schema, spec, table.UnsortedSortOrder, "s3://test-bucket/test-table", properties)
 	if err != nil {
 		t.Fatalf("failed to create test metadata: %v", err)
 	}
@@ -1400,11 +1585,80 @@ func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata 
 		t.Fatalf("failed to set snapshot ref: %v", err)
 	}
 
+	// The option type is unexported, so each combination is spelled out.
+	for name, ref := range refs {
+		var refErr error
+		switch {
+		case ref.MinSnapshotsToKeep != nil && ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep), table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		case ref.MinSnapshotsToKeep != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep))
+		case ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		default:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType)
+		}
+		if refErr != nil {
+			t.Fatalf("failed to set ref %s: %v", name, refErr)
+		}
+	}
+
 	result, err := builder.Build()
 	if err != nil {
 		t.Fatalf("failed to build metadata: %v", err)
 	}
-	return result
+	metadata := result
+	if age <= 0 {
+		return metadata
+	}
+
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+
+	shiftMs := age.Milliseconds()
+	shift := func(container map[string]any, key string) {
+		raw, ok := container[key].(json.Number)
+		if !ok {
+			return
+		}
+		value, err := raw.Int64()
+		if err != nil {
+			t.Fatalf("parse %s: %v", key, err)
+		}
+		container[key] = json.Number(strconv.FormatInt(value-shiftMs, 10))
+	}
+
+	shift(doc, "last-updated-ms")
+	for _, listKey := range []string{"snapshots", "snapshot-log", "metadata-log"} {
+		entries, _ := doc[listKey].([]any)
+		for _, entry := range entries {
+			if item, ok := entry.(map[string]any); ok {
+				shift(item, "timestamp-ms")
+			}
+		}
+	}
+
+	aged, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal aged metadata: %v", err)
+	}
+	parsed, err := table.ParseMetadataBytes(aged)
+	if err != nil {
+		t.Fatalf("parse aged metadata: %v", err)
+	}
+	return parsed
 }
 
 func newTestSchema() *iceberg.Schema {

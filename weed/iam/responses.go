@@ -532,3 +532,83 @@ type ListUserTagsResponse struct {
 	} `xml:"ListUserTagsResult"`
 	CommonResponse
 }
+
+// IAMRole is the Role element returned by the role actions.
+type IAMRole struct {
+	Path                     string `xml:"Path"`
+	RoleName                 string `xml:"RoleName"`
+	RoleId                   string `xml:"RoleId"`
+	Arn                      string `xml:"Arn"`
+	CreateDate               string `xml:"CreateDate,omitempty"`
+	AssumeRolePolicyDocument string `xml:"AssumeRolePolicyDocument,omitempty"`
+	Description              string `xml:"Description,omitempty"`
+	MaxSessionDuration       int64  `xml:"MaxSessionDuration,omitempty"`
+}
+
+// IAMAttachedPolicy is one element of ListAttachedRolePolicies.
+type IAMAttachedPolicy struct {
+	PolicyName string `xml:"PolicyName"`
+	PolicyArn  string `xml:"PolicyArn"`
+}
+
+// CreateRoleResponse is the response for CreateRole.
+type CreateRoleResponse struct {
+	XMLName          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateRoleResponse"`
+	CreateRoleResult struct {
+		Role IAMRole `xml:"Role"`
+	} `xml:"CreateRoleResult"`
+	CommonResponse
+}
+
+// GetRoleResponse is the response for GetRole.
+type GetRoleResponse struct {
+	XMLName       xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetRoleResponse"`
+	GetRoleResult struct {
+		Role IAMRole `xml:"Role"`
+	} `xml:"GetRoleResult"`
+	CommonResponse
+}
+
+// ListRolesResponse is the response for ListRoles.
+type ListRolesResponse struct {
+	XMLName         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListRolesResponse"`
+	ListRolesResult struct {
+		Roles       []*IAMRole `xml:"Roles>member"`
+		IsTruncated bool       `xml:"IsTruncated"`
+	} `xml:"ListRolesResult"`
+	CommonResponse
+}
+
+// DeleteRoleResponse is the response for DeleteRole.
+type DeleteRoleResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteRoleResponse"`
+	CommonResponse
+}
+
+// UpdateAssumeRolePolicyResponse is the response for UpdateAssumeRolePolicy.
+type UpdateAssumeRolePolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateAssumeRolePolicyResponse"`
+	CommonResponse
+}
+
+// AttachRolePolicyResponse is the response for AttachRolePolicy.
+type AttachRolePolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AttachRolePolicyResponse"`
+	CommonResponse
+}
+
+// DetachRolePolicyResponse is the response for DetachRolePolicy.
+type DetachRolePolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DetachRolePolicyResponse"`
+	CommonResponse
+}
+
+// ListAttachedRolePoliciesResponse is the response for ListAttachedRolePolicies.
+type ListAttachedRolePoliciesResponse struct {
+	XMLName                        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAttachedRolePoliciesResponse"`
+	ListAttachedRolePoliciesResult struct {
+		AttachedPolicies []*IAMAttachedPolicy `xml:"AttachedPolicies>member"`
+		IsTruncated      bool                 `xml:"IsTruncated"`
+	} `xml:"ListAttachedRolePoliciesResult"`
+	CommonResponse
+}

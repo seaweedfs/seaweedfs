@@ -73,12 +73,19 @@ func canStreamCopyChunk(chunk *filer_pb.FileChunk) bool {
 // Trusting a hint that disagrees with the wire bytes (e.g. caller says
 // "compressed" but the volume returned raw bytes for a partial range)
 // would label raw bytes as gzip and corrupt reads on the destination.
+//
+// digestWriter, when non-nil, receives the plaintext bytes as they are
+// forwarded so the caller can derive the destination chunk's ETag. It is
+// not fed when the wire bytes are gzip — only possible on the full-chunk
+// pass-through, whose logical content still matches the source chunk's
+// own ETag and needs no recomputation.
 func (s3a *S3ApiServer) streamCopyChunkRange(
 	ctx context.Context,
 	srcUrl, srcFileId string,
 	offset, size int64,
 	isFullChunk bool,
 	assignResult *filer_pb.AssignVolumeResponse,
+	digestWriter io.Writer,
 ) error {
 	// Range header takes int64, but mirror the int32 bound from
 	// downloadChunkData so the two paths reject the same inputs.
@@ -166,7 +173,11 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 			return
 		}
 
-		if _, err := io.Copy(fw, srcResp.Body); err != nil {
+		src := io.Reader(srcResp.Body)
+		if digestWriter != nil && !bodyIsGzipped {
+			src = io.TeeReader(srcResp.Body, digestWriter)
+		}
+		if _, err := io.Copy(fw, src); err != nil {
 			if shouldLogStreamError(err) {
 				glog.V(2).Infof("stream copy %s offset=%d size=%d: %v",
 					srcUrl, offset, size, err)

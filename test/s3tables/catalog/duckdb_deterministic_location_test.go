@@ -115,6 +115,9 @@ SELECT 'duckdb deterministic-location describe ok' AS marker;
 	t.Logf("DuckDB output:\n%s", outputStr)
 
 	if err != nil {
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", err)
+		}
 		// Tolerate environments where the Iceberg extension/version is too
 		// limited to exercise this code path. The intent is to gain
 		// coverage where it's available, not to require it everywhere.

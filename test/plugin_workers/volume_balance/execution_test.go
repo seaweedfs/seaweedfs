@@ -146,13 +146,14 @@ func TestVolumeBalanceBatchExecutionIntegration(t *testing.T) {
 		require.True(t, deletedVols[vid], "volume %d should have been deleted from source", vid)
 	}
 
-	// Each move reads source status once before copy and once inside the
-	// target's fake VolumeCopy implementation, then reads target status once
-	// before deleting the source.
+	// Each move reads source status once inside the target's fake VolumeCopy
+	// implementation and once for the pre-delete verification, and reads
+	// target status once probing for a pre-existing copy and once for the
+	// verification.
 	require.Equal(t, len(volumeIDs)*2, source.ReadFileStatusCount(),
-		"each move should read source volume status before copy and during target copy")
-	require.Equal(t, len(volumeIDs), target.ReadFileStatusCount(),
-		"each move should read target volume status before delete")
+		"each move should read source volume status during target copy and at verification")
+	require.Equal(t, len(volumeIDs)*2, target.ReadFileStatusCount(),
+		"each move should probe the target and read its status at verification")
 
 	// Target should have received copy and tail calls for all 3 volumes.
 	copyCalls, _, tailCalls := target.BalanceStats()

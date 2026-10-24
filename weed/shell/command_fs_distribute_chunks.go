@@ -6,9 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -86,7 +86,6 @@ type chunkMove struct {
 	fromNode   string
 	toNode     string
 }
-
 
 func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
@@ -192,7 +191,8 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	finalChunks := chunks
 	if hadManifest {
-		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), chunks)
+		// no chunk deleter here: a failed fold reports the blobs it saved
+		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), nil, chunks)
 		if manErr != nil {
 			fmt.Fprintf(writer, "WARNING: re-manifestize failed: %v. Writing flat chunk list.\n", manErr)
 		} else {
@@ -256,7 +256,7 @@ func resolveEntryDataChunks(commandEnv *CommandEnv, entry *filer_pb.Entry) (data
 	if !filer.HasChunkManifest(chunks) {
 		return chunks, false, nil
 	}
-	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64)
+	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64, nil)
 	if err != nil {
 		return nil, true, fmt.Errorf("resolve chunk manifest: %v", err)
 	}
@@ -692,6 +692,7 @@ func executeChunkMoves(
 			var resp *http.Response
 			var reader io.ReadCloser
 			var readErr error
+			readJwt := filer.JwtForVolumeServer(oldFidStr)
 			for _, serverURL := range downloadURLs {
 				var dlReq *http.Request
 				dlReq, readErr = http.NewRequestWithContext(dlCtx, http.MethodGet, fmt.Sprintf("http://%s/%s", serverURL, oldFidStr), nil)
@@ -699,6 +700,9 @@ func executeChunkMoves(
 					continue
 				}
 				dlReq.Header.Add("Accept-Encoding", "gzip")
+				if readJwt != "" {
+					dlReq.Header.Set("Authorization", security.BearerPrefix+readJwt)
+				}
 				resp, readErr = util_http.GetGlobalHttpClient().Do(dlReq)
 				if readErr == nil && resp.StatusCode >= 400 {
 					util_http.CloseResponse(resp)

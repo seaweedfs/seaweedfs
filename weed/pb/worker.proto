@@ -220,6 +220,7 @@ message BalanceTaskParams {
   int32 timeout_seconds = 2;              // Operation timeout
   int32 max_concurrent_moves = 3;         // Max concurrent moves in a batch job (0 = default 5)
   repeated BalanceMoveSpec moves = 4;     // Batch: multiple volume moves in one job
+  int64 io_byte_per_second = 5;           // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ReplicationTaskParams for adding replicas
@@ -323,7 +324,10 @@ message TaskLogEntry {
 
 // MaintenanceConfig holds configuration for the maintenance system
 message MaintenanceConfig {
-  bool enabled = 1;
+  // optional so a file that predates presence tracking (where an operator's
+  // explicit false and the field's absence are indistinguishable on the wire)
+  // can be told apart from one that explicitly persists the toggle
+  optional bool enabled = 1;
   int32 scan_interval_seconds = 2;    // How often to scan for maintenance needs
   int32 worker_timeout_seconds = 3;   // Worker heartbeat timeout
   int32 task_timeout_seconds = 4;     // Individual task timeout
@@ -376,12 +380,15 @@ message ErasureCodingTaskConfig {
   string collection_filter = 4;     // Only process volumes from specific collections
   repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
   string replica_placement = 6;     // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+  bool strict_placement = 7;        // fail planning instead of relaxing placement constraints
+  int32 free_slots_deadband = 8;    // Place free-volume-slot deadband; |ΔfreeSlots| ≤ M×dataShards ranks by liveShards; 0 = strict
 }
 
 // BalanceTaskConfig contains balance-specific configuration
 message BalanceTaskConfig {
   double imbalance_threshold = 1;   // Threshold for triggering rebalancing (0.0-1.0)
   int32 min_server_count = 2;       // Minimum number of servers required for balancing
+  int64 io_byte_per_second = 3;     // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ReplicationTaskConfig contains replication-specific configuration
@@ -395,6 +402,11 @@ message EcBalanceTaskParams {
   int32 max_parallelization = 2;           // Max parallel shard moves within a batch
   int32 timeout_seconds = 3;               // Operation timeout per move
   repeated EcShardMoveSpec moves = 4;      // Batch: multiple shard moves in one job
+  // For a dedup move, the node that keeps the shard. The worker confirms this
+  // node really holds it before deleting the copy, so a topology entry naming a
+  // location that holds nothing cannot cause the last copy to be removed.
+  string dedup_keep_node = 5;
+  int64 io_byte_per_second = 6;            // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 }
 
 // EcShardMoveSpec describes a single EC shard move within a batch
@@ -416,6 +428,7 @@ message EcBalanceTaskConfig {
   string disk_type = 4;                   // Disk type filter
   repeated string preferred_tags = 5;     // Preferred disk tags for placement
   string replica_placement = 6;           // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+  int64 io_byte_per_second = 7;           // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ========== Task Persistence Messages ==========

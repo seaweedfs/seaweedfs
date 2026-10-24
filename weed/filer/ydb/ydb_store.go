@@ -288,7 +288,7 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 			table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 			table.ValueParam("$directory", types.UTF8Value(*shortDir)),
 			table.ValueParam("$start_name", types.UTF8Value(startFileName)),
-			table.ValueParam("$prefix", types.UTF8Value(prefix+"%")),
+			table.ValueParam("$prefix", types.UTF8Value(abstract_sql.LikePattern(prefix))),
 			table.ValueParam("$limit", types.Uint64Value(uint64(chunkLimit))),
 		)
 

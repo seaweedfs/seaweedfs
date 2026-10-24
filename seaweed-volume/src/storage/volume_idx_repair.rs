@@ -9,10 +9,10 @@ use std::path::Path;
 use tracing::info;
 
 use crate::storage::idx;
-use crate::storage::needle::needle::needle_body_length;
 use crate::storage::needle::Needle;
+use crate::storage::needle::needle::needle_body_length;
 use crate::storage::types::*;
-use crate::storage::volume::{fsync_dir, Volume, VolumeError};
+use crate::storage::volume::{Volume, VolumeError, VolumeIo, fsync_dir};
 
 /// Needles found in the head of .dat, keyed by id, plus the ids in .dat order.
 type DatHeadNeedles = (HashMap<NeedleId, (Offset, Size)>, Vec<NeedleId>);
@@ -45,15 +45,15 @@ impl Volume {
     /// restores .idx to .dat append order, which several readers lean on: the
     /// fingerprint is gone so a later load stops after one row, and the last row
     /// is the .dat-tail needle again.
-    pub(crate) fn repair_idx_head_tombstones(&self) -> Result<usize, VolumeError> {
-        if !self.has_data_backend() {
+    pub(crate) fn repair_idx_head_tombstones(&self, io: &VolumeIo) -> Result<usize, VolumeError> {
+        if !self.has_data_backend_io(io) {
             return Ok(0);
         }
         let version = self.version();
         if !version.is_supported() {
             return Ok(0);
         }
-        let first_needle_offset = self.super_block.block_size() as i64;
+        let first_needle_offset = self.super_block().block_size() as i64;
         let idx_path = self.file_name(".idx");
 
         let clobbered = idx_head_tombstone_count(&idx_path)?;
@@ -68,7 +68,7 @@ impl Volume {
             "idx starts with offset-0 tombstones, recovering the rows they overwrote from .dat"
         );
 
-        let (mut lost, order) = self.scan_dat_head(version, first_needle_offset, clobbered)?;
+        let (mut lost, order) = self.scan_dat_head(io, version, first_needle_offset, clobbered)?;
         drop_indexed_keys(&idx_path, &mut lost)?;
         if lost.is_empty() {
             return Ok(0);
@@ -93,6 +93,7 @@ impl Volume {
     /// being resurrected.
     fn scan_dat_head(
         &self,
+        io: &VolumeIo,
         version: Version,
         first_needle_offset: i64,
         limit: usize,
@@ -103,7 +104,7 @@ impl Volume {
 
         for _ in 0..limit {
             let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header, offset as u64) {
+            match self.read_exact_at_backend(io, &mut header, offset as u64) {
                 Ok(()) => {}
                 Err(VolumeError::Io(ref e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
                 Err(e) => return Err(e),
@@ -122,7 +123,19 @@ impl Volume {
             } else {
                 found.remove(&id);
             }
-            offset += NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version);
+            let record_size = NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version);
+            // A corrupt header can make the record length zero or negative;
+            // the scan cannot advance past it.
+            if record_size <= 0 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt needle header at offset {offset}: size {}, record length {record_size}",
+                        size.0
+                    ),
+                )));
+            }
+            offset += record_size;
         }
 
         Ok((found, order))
@@ -215,26 +228,25 @@ mod tests {
     use super::*;
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
-    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use crate::storage::volume::VolumeSpec;
+    use std::io::{Seek, SeekFrom};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn open_volume(dir: &str) -> Volume {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap()
     }
 
     fn write_test_volume(dir: &str, needle_count: u64) -> Vec<Vec<u8>> {
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         let mut written = Vec::new();
         for i in 1..=needle_count {
             let data = format!("needle-{}-payload", i).into_bytes();
@@ -246,7 +258,7 @@ mod tests {
                 data: data.clone(),
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             written.push(data);
         }
         written
@@ -256,7 +268,7 @@ mod tests {
     /// writes (key, offset 0, tombstone) rows over the front of .idx instead of
     /// appending them.
     fn clobber_idx_head(idx_path: &str, keys: &[u64]) {
-        let file = OpenOptions::new().write(true).open(idx_path).unwrap();
+        let mut file = OpenOptions::new().write(true).open(idx_path).unwrap();
         for (i, key) in keys.iter().enumerate() {
             let mut row = Vec::new();
             idx::write_index_entry(
@@ -266,8 +278,13 @@ mod tests {
                 TOMBSTONE_FILE_SIZE,
             )
             .unwrap();
-            file.write_at(&row, (i * NEEDLE_MAP_ENTRY_SIZE) as u64)
+            // Positional write without Unix-only `FileExt::write_at`, so this
+            // helper (and the tests using it) also builds on Windows.
+            // Single-threaded test helper: no concurrent reader can move the
+            // offset between seek and write.
+            file.seek(SeekFrom::Start((i * NEEDLE_MAP_ENTRY_SIZE) as u64))
                 .unwrap();
+            file.write_all(&row).unwrap();
         }
     }
 
@@ -305,6 +322,7 @@ mod tests {
         let size_before = idx_size(&idx_path);
 
         // The rewrite replaces .idx wholesale, so it must not widen the mode.
+        #[cfg(unix)]
         fs::set_permissions(&idx_path, fs::Permissions::from_mode(0o600)).unwrap();
 
         // Deletes against needles 9..12 land on the front of .idx and take the
@@ -324,18 +342,21 @@ mod tests {
         let want = size_before + 4 * NEEDLE_MAP_ENTRY_SIZE as u64;
         assert_eq!(idx_size(&idx_path), want, "idx size after recovery");
 
-        assert_eq!(
-            fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "idx mode after recovery"
-        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "idx mode after recovery"
+            );
+        }
 
         // The recovered rows go back in front, so .idx is in .dat append order
         // again: the fingerprint is gone and the last row is still the .dat tail.
         let rows = idx_rows(&idx_path);
         assert_eq!(
             rows[0].1,
-            v.super_block.block_size() as i64,
+            v.super_block().block_size() as i64,
             "first row does not index the first needle in .dat"
         );
         for i in 1..4 {
@@ -360,7 +381,7 @@ mod tests {
         let idx_path = format!("{}/1.idx", dir);
 
         write_test_volume(dir, 6);
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         v.delete_needle(&mut Needle {
             id: NeedleId(3),
             ..Needle::default()
@@ -395,7 +416,7 @@ mod tests {
         let idx_path = format!("{}/1.idx", dir);
 
         write_test_volume(dir, 8);
-        let mut v = open_volume(dir);
+        let v = open_volume(dir);
         v.delete_needle(&mut Needle {
             id: NeedleId(2),
             ..Needle::default()
@@ -416,6 +437,33 @@ mod tests {
         assert!(
             read_needle_data(&v, 1).is_ok(),
             "needle 1 should have been recovered"
+        );
+    }
+
+    #[test]
+    fn test_scan_dat_head_fails_at_a_header_it_cannot_advance_past() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_test_volume(dir, 2);
+
+        let mut dat = OpenOptions::new()
+            .append(true)
+            .open(format!("{}/1.dat", dir))
+            .unwrap();
+        let mut corrupt = [0u8; NEEDLE_HEADER_SIZE];
+        NeedleId(99).to_bytes(&mut corrupt[4..12]);
+        Size(-100).to_bytes(&mut corrupt[12..16]);
+        dat.write_all(&corrupt).unwrap();
+        drop(dat);
+
+        let v = open_volume(dir);
+        let first = v.super_block().block_size() as i64;
+        let err = v
+            .scan_dat_head(&v.io_read_for_test(), v.version(), first, 10)
+            .unwrap_err();
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
+            "expected a corrupt-data error, got {err:?}"
         );
     }
 }

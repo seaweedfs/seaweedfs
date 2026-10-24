@@ -26,13 +26,26 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
+	// A bucket is a catalog, and a catalog serves one protocol. Saying which one
+	// at creation is what lets everything downstream - the endpoint the UI
+	// shows, the tables the bucket accepts - be answered without opening a table.
+	bucketFormat := FormatIceberg
+	if req.Format != "" {
+		normalized, ok := NormalizeFormat(req.Format)
+		if !ok {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, fmt.Sprintf("unsupported format %q", req.Format))
+			return fmt.Errorf("invalid format")
+		}
+		bucketFormat = normalized
+	}
+
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
 	useIAM := h.shouldUseIAM(r, identityActions, identityPolicyNames)
 	useLegacy := !useIAM
 	if useIAM {
-		allowed, err := h.authorizeIAMAction(r, identityPolicyNames, "CreateTableBucket", h.generateTableBucketARN(principal, req.Name), fmt.Sprintf("arn:aws:s3:::%s", req.Name))
+		allowed, err := h.authorizeIAMAction(r, identityPolicyNames, "CreateTableBucket", h.generateTableBucketARN(principal, req.Name), h.generateS3BucketARN(req.Name))
 		if err != nil {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
@@ -52,8 +65,10 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			owner = DefaultAccountID
 		}
 		if !CheckPermissionWithContext("CreateTableBucket", principal, owner, "", "", &PolicyContext{
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
@@ -115,6 +130,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		Name:           req.Name,
 		CreatedAt:      now,
 		OwnerAccountID: principal,
+		Format:         bucketFormat,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -124,6 +140,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
+	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Ensure root tables directory exists
 		if !h.entryExists(r.Context(), client, TablesPath) {
@@ -132,35 +149,35 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			}
 		}
 
-		// Create bucket directory
-		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
-			return err
+		extended := map[string][]byte{
+			ExtendedKeyTableBucket: []byte("true"),
+			ExtendedKeyMetadata:    metadataBytes,
 		}
-
-		// Mark as a table bucket
-		if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyTableBucket, []byte("true")); err != nil {
-			return err
-		}
-
-		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-
-		// Set tags if provided
 		if len(req.Tags) > 0 {
 			tagsBytes, err := json.Marshal(req.Tags)
 			if err != nil {
 				return fmt.Errorf("failed to marshal tags: %w", err)
 			}
-			if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyTags, tagsBytes); err != nil {
-				return err
+			extended[ExtendedKeyTags] = tagsBytes
+		}
+		if err := h.createDirectoryExclusive(r.Context(), client, bucketPath, extended); err != nil {
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				taken = err // an answer, not a filer failure
+				return nil
 			}
+			return err
 		}
 
 		return nil
 	})
+	if err == nil && taken != nil {
+		err = taken
+	}
 
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
+		return err
+	}
 	if err != nil {
 		glog.Errorf("S3Tables: failed to create table bucket %s: %v", req.Name, err)
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create table bucket")

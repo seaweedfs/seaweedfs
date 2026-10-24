@@ -11,10 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -88,83 +87,11 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	var dirCount, fileCount uint64
-	lastLogTime := time.Now()
 
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		sizeBuf := make([]byte, 4)
-		waitChan := make(chan struct{}, *concurrency)
-		defer close(waitChan)
-		var wg sync.WaitGroup
-
-		for {
-			if _, err := io.ReadFull(dst, sizeBuf); err != nil {
-				if err == io.EOF {
-					return nil
-				}
-				return err
-			}
-
-			size := util.BytesToUint32(sizeBuf)
-
-			data := make([]byte, int(size))
-
-			if _, err := io.ReadFull(dst, data); err != nil {
-				return err
-			}
-
-			fullEntry := &filer_pb.FullEntry{}
-			if err = proto.Unmarshal(data, fullEntry); err != nil {
-				return err
-			}
-
-			// check collection name pattern
-			entryFullName := string(util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
-			if *c.dirPrefix != "" {
-				if !strings.HasPrefix(fullEntry.Dir, *c.dirPrefix) {
-					if *verbose {
-						fmt.Fprintf(writer, "not match dir prefix %s\n", entryFullName)
-					}
-					continue
-				}
-			}
-
-			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
-				if !*verbose {
-					lastLogTime = time.Now()
-				}
-				fmt.Fprintf(writer, "load %s\n", entryFullName)
-			}
-
-			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
-			if fullEntry.Entry.IsDirectory {
-				wg.Wait()
-				if errEntry := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
-					Directory: fullEntry.Dir,
-					Entry:     fullEntry.Entry,
-				}); errEntry != nil {
-					return errEntry
-				}
-				dirCount++
-			} else {
-				wg.Add(1)
-				waitChan <- struct{}{}
-				go func(entry *filer_pb.FullEntry) {
-					if errEntry := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
-						Directory: entry.Dir,
-						Entry:     entry.Entry,
-					}); errEntry != nil {
-						err = errEntry
-					}
-					defer wg.Done()
-					<-waitChan
-				}(fullEntry)
-				if err != nil {
-					return err
-				}
-				fileCount++
-			}
-		}
+		var loadErr error
+		dirCount, fileCount, loadErr = c.loadEntries(dst, client, *c.dirPrefix, *concurrency, *verbose, writer)
+		return loadErr
 	})
 
 	if err == nil {
@@ -173,4 +100,112 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	return err
+}
+
+func (c *commandFsMetaLoad) loadEntries(dst io.Reader, client filer_pb.SeaweedFilerClient, dirPrefix string, concurrency int, verbose bool, writer io.Writer) (dirCount, fileCount uint64, err error) {
+
+	lastLogTime := time.Now()
+	sizeBuf := make([]byte, 4)
+	waitChan := make(chan struct{}, concurrency)
+	defer close(waitChan)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var loadErr error
+	getErr := func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		return loadErr
+	}
+	setErr := func(e error) {
+		mu.Lock()
+		if loadErr == nil {
+			loadErr = e
+		}
+		mu.Unlock()
+	}
+
+	for {
+		if _, err := io.ReadFull(dst, sizeBuf); err != nil {
+			wg.Wait()
+			if loadErr := getErr(); loadErr != nil {
+				return dirCount, fileCount, loadErr
+			}
+			if err == io.EOF {
+				return dirCount, fileCount, nil
+			}
+			return dirCount, fileCount, err
+		}
+
+		size := util.BytesToUint32(sizeBuf)
+
+		data := make([]byte, int(size))
+
+		if _, err := io.ReadFull(dst, data); err != nil {
+			wg.Wait()
+			if loadErr := getErr(); loadErr != nil {
+				return dirCount, fileCount, loadErr
+			}
+			return dirCount, fileCount, err
+		}
+
+		fullEntry := &filer_pb.FullEntry{}
+		if err = proto.Unmarshal(data, fullEntry); err != nil {
+			wg.Wait()
+			if loadErr := getErr(); loadErr != nil {
+				return dirCount, fileCount, loadErr
+			}
+			return dirCount, fileCount, err
+		}
+
+		// check collection name pattern
+		entryFullName := string(util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+		if dirPrefix != "" {
+			if !strings.HasPrefix(fullEntry.Dir, dirPrefix) {
+				if verbose {
+					fmt.Fprintf(writer, "not match dir prefix %s\n", entryFullName)
+				}
+				continue
+			}
+		}
+
+		if verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
+			if !verbose {
+				lastLogTime = time.Now()
+			}
+			fmt.Fprintf(writer, "load %s\n", entryFullName)
+		}
+
+		fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
+		if fullEntry.Entry.IsDirectory {
+			wg.Wait()
+			if loadErr := getErr(); loadErr != nil {
+				return dirCount, fileCount, loadErr
+			}
+			if errEntry := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+				Directory: fullEntry.Dir,
+				Entry:     fullEntry.Entry,
+			}); errEntry != nil {
+				return dirCount, fileCount, errEntry
+			}
+			dirCount++
+		} else {
+			wg.Add(1)
+			waitChan <- struct{}{}
+			go func(entry *filer_pb.FullEntry) {
+				if errEntry := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+					Directory: entry.Dir,
+					Entry:     entry.Entry,
+				}); errEntry != nil {
+					setErr(errEntry)
+				}
+				defer wg.Done()
+				<-waitChan
+			}(fullEntry)
+			if loadErr := getErr(); loadErr != nil {
+				wg.Wait()
+				return dirCount, fileCount, loadErr
+			}
+			fileCount++
+		}
+	}
 }

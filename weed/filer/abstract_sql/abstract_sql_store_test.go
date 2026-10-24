@@ -51,3 +51,41 @@ func TestGetTxOrDBRealBucket(t *testing.T) {
 		t.Errorf("shortPath = %q, want /dir/file.txt", shortPath)
 	}
 }
+
+func TestLikePattern(t *testing.T) {
+	cases := []struct {
+		prefix, want string
+	}{
+		{"", "%"},
+		{"plain", "plain%"},
+		{"call_03_KNl", "call!_03!_KNl%"},
+		{"100%", "100!%%"},
+		{"a!b", "a!!b%"},
+		{`a\b`, `a\b%`},
+	}
+	for _, c := range cases {
+		if got := LikePattern(c.prefix); got != c.want {
+			t.Errorf("LikePattern(%q) = %q, want %q", c.prefix, got, c.want)
+		}
+	}
+}
+
+func TestSplitPoolForKv(t *testing.T) {
+	cases := []struct {
+		maxOpen, mainOpen, kvOpen int
+	}{
+		{0, 0, 0},   // unbounded: nothing waits, one pool is enough
+		{-1, -1, 0}, // same, however the operator spelled it
+		{50, 42, 8},
+		{16, 12, 4},
+		{4, 3, 1},
+		{2, 1, 1},
+		{1, 1, 1}, // a listing needs two, so a cap of 1 has to become 2
+	}
+	for _, c := range cases {
+		mainOpen, kvOpen := splitPoolForKv(c.maxOpen)
+		if mainOpen != c.mainOpen || kvOpen != c.kvOpen {
+			t.Errorf("splitPoolForKv(%d) = %d, %d, want %d, %d", c.maxOpen, mainOpen, kvOpen, c.mainOpen, c.kvOpen)
+		}
+	}
+}

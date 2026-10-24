@@ -41,7 +41,7 @@ const (
 	defaultS3Endpoint     = "http://localhost:8333"
 	defaultS3GrpcEndpoint = "localhost:18333"
 	defaultMasterEndpt    = "http://localhost:9333"
-	defaultAdminEndpoint  = "http://localhost:23646"
+	defaultAdminEndpoint  = "http://localhost:12535"
 	// Pinned off the FILER_PORT+10000 convention; see Makefile.
 	defaultFilerGRPC      = "localhost:18890"
 	bucketLifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"

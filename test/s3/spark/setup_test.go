@@ -94,7 +94,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Admin"})
 	env.masterPort = ports[0]
 	env.filerPort = ports[1]
 	env.s3Port = ports[2]
@@ -105,8 +105,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create IAM config: %v", err)
 	}
 
-	env.masterProcess = exec.Command(
-		env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-ip", bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -114,7 +113,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	)
+	}, testutil.MiniAdminArgs(ports[3])...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0", "-s3.port.iceberg=0")
+	env.masterProcess = exec.Command(env.weedBinary, miniArgs...)
 	weedLogPath := filepath.Join(env.seaweedfsDataDir, "weed-mini.log")
 	weedLogFile, err := os.Create(weedLogPath)
 	if err != nil {

@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 )
 
 // stubLookup returns a resolver func that maps the supplied hostnames to
@@ -167,6 +172,61 @@ func TestValidateRemoteEndpoint(t *testing.T) {
 			wantSub:  "CGNAT",
 		},
 		{
+			name:     "nat64 imds",
+			endpoint: "http://[64:ff9b::a9fe:a9fe]/",
+			wantErr:  true,
+			wantSub:  "metadata",
+		},
+		{
+			name:     "nat64 loopback",
+			endpoint: "http://[64:ff9b::7f00:1]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "6to4 private",
+			endpoint: "http://[2002:a00:1::]/",
+			wantErr:  true,
+			wantSub:  "private",
+		},
+		{
+			name:     "teredo loopback",
+			endpoint: "http://[2001:0:4136:e378:8000:63bf:80ff:fffe]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "ipv4-compatible loopback",
+			endpoint: "http://[::7f00:1]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "nat64 public passes",
+			endpoint: "http://[64:ff9b::808:808]/",
+			wantErr:  false,
+		},
+		{
+			name:     "6to4 public passes",
+			endpoint: "http://[2002:808:808::]/",
+			wantErr:  false,
+		},
+		{
+			name:     "teredo public passes",
+			endpoint: "http://[2001::f7f7:f7f7]/",
+			wantErr:  false,
+		},
+		{
+			name:     "ipv4-compatible public passes",
+			endpoint: "http://[::808:808]/",
+			wantErr:  false,
+		},
+		{
+			name:     "nat64 non-wellknown-prefix not decoded",
+			endpoint: "http://[64:ff9b:1::a9fe:a9fe]/",
+			wantErr:  false,
+		},
+		{
 			name:     "public s3",
 			endpoint: "https://s3.us-east-1.amazonaws.com/",
 			wantErr:  false,
@@ -248,6 +308,275 @@ func TestGuardedDialerRebind(t *testing.T) {
 	}
 }
 
+// TestRemoteEndpointGuardCoversS3CompatibleSiblings confirms the SSRF guard
+// reaches every S3-SDK-backed provider, not just type "s3". It replays the two
+// steps FetchAndWriteNeedle performs before building the client: resolve the
+// endpoint the type would dial, then validate it against the deny-list. A
+// sibling type pointed at an internal address must be rejected.
+func TestRemoteEndpointGuardCoversS3CompatibleSiblings(t *testing.T) {
+	cases := []struct {
+		conf    *remote_pb.RemoteConf
+		wantSub string
+	}{
+		{&remote_pb.RemoteConf{Type: "wasabi", WasabiEndpoint: "http://169.254.169.254/"}, "metadata"},
+		{&remote_pb.RemoteConf{Type: "b2", BackblazeEndpoint: "http://127.0.0.1/"}, "loopback"},
+		{&remote_pb.RemoteConf{Type: "aliyun", AliyunEndpoint: "http://192.168.0.1/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "tencent", TencentEndpoint: "http://100.64.0.1/"}, "CGNAT"},
+		{&remote_pb.RemoteConf{Type: "baidu", BaiduEndpoint: "http://169.254.169.254/"}, "metadata"},
+		{&remote_pb.RemoteConf{Type: "filebase", FilebaseEndpoint: "http://172.16.0.1/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "storj", StorjEndpoint: "http://10.0.0.5/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "contabo", ContaboEndpoint: "http://[::1]/"}, "loopback"},
+	}
+	for _, tc := range cases {
+		endpoint, ok := s3remote.S3CompatibleEndpoint(tc.conf)
+		if !ok {
+			t.Errorf("type %q: not recognized as S3-compatible, guard would be skipped", tc.conf.Type)
+			continue
+		}
+		err := validateRemoteEndpoint(context.Background(), endpoint)
+		if err == nil {
+			t.Errorf("type %q: expected endpoint %q to be rejected", tc.conf.Type, endpoint)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantSub) {
+			t.Errorf("type %q: error %q missing %q", tc.conf.Type, err, tc.wantSub)
+		}
+	}
+}
+
+// TestRemoteEndpointGuardCoversAzure confirms the SSRF guard reaches the azure
+// backend, which dials a caller-supplied AzureEndpoint. It replays the two
+// steps FetchAndWriteNeedle performs before building the client: resolve the
+// endpoint the type would dial via guardedRemoteClient, then validate it. An
+// azure conf pointed at an internal address must be rejected.
+func TestRemoteEndpointGuardCoversAzure(t *testing.T) {
+	cases := []struct {
+		name    string
+		conf    *remote_pb.RemoteConf
+		wantSub string
+	}{
+		{"imds", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://169.254.169.254/"}, "metadata"},
+		{"loopback", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://127.0.0.1/"}, "loopback"},
+		{"private", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://10.0.0.5/"}, "private"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint, _, ok := guardedRemoteClient(tc.conf)
+			if !ok {
+				t.Fatalf("azure endpoint %q not guarded, the SSRF check would be skipped", tc.conf.AzureEndpoint)
+			}
+			err := validateRemoteEndpoint(context.Background(), endpoint)
+			if err == nil {
+				t.Fatalf("expected endpoint %q to be rejected", endpoint)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q missing %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestValidateReplicaTarget covers the replica upload leg of
+// FetchAndWriteNeedle. Replica targets are peer volume servers, so unlike the
+// remote endpoint they may sit on a private network; the guard still rejects
+// loopback / link-local / unspecified hosts and any target that is not a bare
+// host:port, since a scheme, path or query would move the upload to a different
+// URL through the format string.
+func TestValidateReplicaTarget(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+
+	lookupIPAddrFunc = stubLookup(t, map[string][]net.IP{
+		"peer.example.com":      {net.ParseIP("10.0.0.7")},
+		"loop.example.com":      {net.ParseIP("127.0.0.1")},
+		"linklocal.example.com": {net.ParseIP("169.254.169.254")},
+	})
+
+	cases := []struct {
+		name    string
+		target  string
+		wantErr bool
+		wantSub string
+	}{
+		// A path plus a trailing "?a=" would otherwise swallow ?type=replicate.
+		{"embedded path and query", "127.0.0.1:7000/status/x/?a=", true, "bare host:port"},
+		{"loopback literal", "127.0.0.1:8080", true, "loopback"},
+		{"ipv6 loopback", "[::1]:8080", true, "loopback"},
+		{"metadata literal", "169.254.169.254:80", true, "metadata"},
+		{"unspecified", "0.0.0.0:8080", true, "unspecified"},
+		{"metadata hostname", "metadata:80", true, "metadata"},
+		{"scheme rejected", "http://10.0.0.7:8080", true, "bare host:port"},
+		{"path rejected", "10.0.0.7:8080/x", true, "bare host:port"},
+		{"query rejected", "10.0.0.7:8080?a=b", true, "bare host:port"},
+		{"userinfo rejected", "user@10.0.0.7:8080", true, "bare host:port"},
+		{"missing port literal", "10.0.0.7", true, "bare host:port"},
+		{"missing port hostname", "peer.example.com", true, "bare host:port"},
+		{"empty", "", true, "empty"},
+		{"resolves to loopback", "loop.example.com:8080", true, "loopback"},
+		{"resolves to link-local", "linklocal.example.com:8080", true, "metadata"},
+		// Legitimate peer volume servers on private networks must pass.
+		{"private peer literal", "10.0.0.7:8080", false, ""},
+		{"private 192 peer", "192.168.1.5:8080", false, ""},
+		{"private peer hostname", "peer.example.com:8080", false, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateReplicaTarget(context.Background(), tc.target)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tc.target)
+				}
+				if tc.wantSub != "" && !strings.Contains(err.Error(), tc.wantSub) {
+					t.Fatalf("expected error to contain %q, got %v", tc.wantSub, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.target, err)
+			}
+		})
+	}
+}
+
+// TestGuardedRemoteClientSkipsFixedHostBackends confirms backends that only
+// reach a fixed provider host bypass the endpoint guard: azure with no explicit
+// endpoint (public cloud, host derived from the account) and unrelated types.
+func TestGuardedRemoteClientSkipsFixedHostBackends(t *testing.T) {
+	for _, conf := range []*remote_pb.RemoteConf{
+		{Type: "azure", AzureAccountName: "acct"},
+		{Type: "gcs"},
+		nil,
+	} {
+		if _, _, ok := guardedRemoteClient(conf); ok {
+			t.Errorf("conf %+v should not be guarded", conf)
+		}
+	}
+}
+
+// TestGuardedRemoteClientAzureBuildsGuardedClient exercises the whole azure
+// path: a public endpoint passes validation and the constructor builds a client
+// through the guarded HTTP transport.
+func TestGuardedRemoteClientAzureBuildsGuardedClient(t *testing.T) {
+	conf := &remote_pb.RemoteConf{
+		Type:             "azure",
+		AzureAccountName: "testaccount",
+		AzureAccountKey:  "aW52YWxpZGtleQ==",
+		AzureEndpoint:    "https://testaccount.blob.core.usgovcloudapi.net/",
+	}
+	endpoint, makeClient, ok := guardedRemoteClient(conf)
+	if !ok {
+		t.Fatal("azure with an endpoint should be guarded")
+	}
+	client, err := makeClient(newGuardedHTTPClient(endpoint))
+	if err != nil {
+		t.Fatalf("build guarded azure client: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected a client")
+	}
+}
+
+// TestGcsCredentialsArePath confirms a caller-supplied gcs credentials value is
+// only accepted as inline JSON. A filesystem path would otherwise be read from
+// disk by the SDK when handling the request.
+func TestGcsCredentialsArePath(t *testing.T) {
+	paths := []string{
+		"/etc/hostname",
+		"/etc/shadow",
+		"/nope/nothere",
+		"~/creds.json",
+		"relative/creds.json",
+	}
+	for _, p := range paths {
+		if !gcsCredentialsArePath(p) {
+			t.Errorf("expected %q to be treated as a path", p)
+		}
+	}
+	inlineOrEmpty := []string{
+		"",
+		`{"type":"service_account"}`,
+		`{}`,
+	}
+	for _, c := range inlineOrEmpty {
+		if gcsCredentialsArePath(c) {
+			t.Errorf("expected %q to be accepted (inline or empty)", c)
+		}
+	}
+}
+
+// TestGuardedRemoteClientGuardsGcsTokenURL confirms the token endpoint named by
+// inline gcs credentials is the endpoint the guard validates, so a loopback
+// token_uri is refused while the Google default passes.
+func TestGuardedRemoteClientGuardsGcsTokenURL(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+	lookupIPAddrFunc = stubLookup(t, map[string][]net.IP{
+		"oauth2.googleapis.com": {net.ParseIP("142.250.72.10")},
+	})
+
+	endpoint, makeClient, ok := guardedRemoteClient(&remote_pb.RemoteConf{
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: `{"type":"service_account","token_uri":"http://127.0.0.1:9/token"}`,
+	})
+	if !ok {
+		t.Fatal("gcs conf with inline credentials should be guarded")
+	}
+	if endpoint != "http://127.0.0.1:9/token" {
+		t.Errorf("endpoint = %q, want the credential token_uri", endpoint)
+	}
+	if err := validateRemoteEndpoint(context.Background(), endpoint); err == nil {
+		t.Error("expected the loopback token endpoint to be rejected")
+	}
+	if makeClient == nil {
+		t.Error("expected a constructor")
+	}
+
+	endpoint, _, ok = guardedRemoteClient(&remote_pb.RemoteConf{
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: `{"type":"service_account"}`,
+	})
+	if !ok {
+		t.Fatal("gcs conf with inline credentials should be guarded")
+	}
+	if err := validateRemoteEndpoint(context.Background(), endpoint); err != nil {
+		t.Errorf("default token endpoint %q should pass: %v", endpoint, err)
+	}
+}
+
+// TestCheckGcsCredentials confirms only inline credentials that carry their own
+// key material are accepted. The federated types name a url, file or executable
+// that the SDK reads the token from, none of which the endpoint guard sees.
+func TestCheckGcsCredentials(t *testing.T) {
+	rejected := []string{
+		"/etc/hostname",
+		"~/creds.json",
+		`{`,
+		`{}`,
+		`{"type":"external_account","token_url":"http://127.0.0.1:9/v1/token","credential_source":{"url":"http://169.254.169.254/latest/meta-data/"}}`,
+		`{"type":"external_account","token_url":"http://127.0.0.1:9/v1/token","credential_source":{"file":"/etc/shadow"}}`,
+		`{"type":"external_account","credential_source":{"executable":{"command":"/bin/sh"}}}`,
+		`{"type":"external_account_authorized_user","token_url":"http://127.0.0.1:9/v1/token"}`,
+		`{"type":"impersonated_service_account","service_account_impersonation_url":"http://127.0.0.1:9/x"}`,
+	}
+	for _, creds := range rejected {
+		if err := checkGcsCredentials(creds); err == nil {
+			t.Errorf("expected %q to be rejected", creds)
+		}
+	}
+	accepted := []string{
+		"",
+		`{"type":"service_account","client_email":"a@b.com","private_key":"k"}`,
+		`{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token"}`,
+		`{"type":"authorized_user","refresh_token":"r"}`,
+	}
+	for _, creds := range accepted {
+		if err := checkGcsCredentials(creds); err != nil {
+			t.Errorf("expected %q to be accepted, got %v", creds, err)
+		}
+	}
+}
+
 // TestGuardedDialerLiteralBlocked confirms that a literal blocked IP target
 // is refused without any DNS lookup.
 func TestGuardedDialerLiteralBlocked(t *testing.T) {
@@ -266,5 +595,187 @@ func TestGuardedDialerLiteralBlocked(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "private") {
 		t.Fatalf("guarded dialer should fail with private-address error, got %v", err)
+	}
+}
+
+// TestGuardedReplicaDialerRebind confirms the replica upload's dial-time guard
+// refuses a hostname that rebinds to loopback after validateReplicaTarget, yet
+// keeps letting private peers through (allowPrivate).
+func TestGuardedReplicaDialerRebind(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+
+	const host = "replica.example.com"
+	var calls atomic.Int32
+	lookupIPAddrFunc = func(_ context.Context, name string) ([]net.IPAddr, error) {
+		if name != host {
+			return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+		}
+		if calls.Add(1) == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("52.216.10.10")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+
+	// Up-front validation sees the public answer and accepts the target.
+	if err := validateReplicaTarget(context.Background(), host+":8080"); err != nil {
+		t.Fatalf("public replica target should validate, got %v", err)
+	}
+	// The dial then re-resolves to loopback and must refuse it.
+	dial := guardedDialerPolicy(host+":8080", true)
+	conn, err := dial(context.Background(), "tcp", host+":8080")
+	if conn != nil {
+		conn.Close()
+		t.Fatalf("guarded replica dialer must refuse loopback rebind, got conn")
+	}
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("expected loopback refusal, got %v", err)
+	}
+
+	// A private literal peer is allowed through: the dial is attempted (and here
+	// fails on the already-cancelled context) rather than blocked as private.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, perr := guardedDialerPolicy("10.0.0.5:80", true)(ctx, "tcp", "10.0.0.5:80"); perr != nil && strings.Contains(perr.Error(), "private") {
+		t.Fatalf("private peer must be allowed by the replica dialer, got %v", perr)
+	}
+}
+
+// TestBuildGuardedRemoteStorageClient confirms the shared builder refuses a
+// caller-influenced endpoint that resolves to a blocked address, and a gcs
+// credentials path, while allowUntrusted falls back to the plain builder.
+func TestBuildGuardedRemoteStorageClient(t *testing.T) {
+	loopbackS3 := &remote_pb.RemoteConf{
+		Name:        "poc",
+		Type:        "s3",
+		S3Endpoint:  "http://127.0.0.1:8000",
+		S3AccessKey: "k",
+		S3SecretKey: "s",
+		S3Region:    "us-east-1",
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), loopbackS3, false); err == nil {
+		t.Error("expected a loopback s3 endpoint to be rejected")
+	} else if !strings.Contains(err.Error(), "reject remote endpoint") {
+		t.Errorf("error = %v, want reject remote endpoint", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), loopbackS3, true); err != nil {
+		t.Errorf("allowUntrusted should build the client: %v", err)
+	}
+
+	gcsPathCreds := &remote_pb.RemoteConf{
+		Name:                            "poc",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: "/etc/hostname",
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsPathCreds, false); err == nil {
+		t.Error("expected a non-credentials file path to be rejected")
+	} else if !strings.Contains(err.Error(), "reject remote credentials") {
+		t.Errorf("error = %v, want reject remote credentials", err)
+	} else if strings.Contains(err.Error(), "/etc/hostname") {
+		t.Errorf("error must not leak the file path: %v", err)
+	}
+
+	// A file path that points to valid GCS credentials should be accepted.
+	credsFile := filepath.Join(t.TempDir(), "service-account.json")
+	validCreds := `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","client_email":"sa@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nMIIBVwIBADANBgkqhkiG9w0BAQEFAASCAUEwggE9AgEAAkEAxY\n-----END PRIVATE KEY-----\n","private_key_id":"key1"}`
+	if err := os.WriteFile(credsFile, []byte(validCreds), 0600); err != nil {
+		t.Fatalf("write creds file: %v", err)
+	}
+	gcsFileCreds := &remote_pb.RemoteConf{
+		Name:                            "good",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: credsFile,
+	}
+	if err := checkGcsCredentials(credsFile); err != nil {
+		t.Errorf("valid gcs credentials file should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsFileCreds, false); err != nil {
+		t.Errorf("valid gcs credentials file should build: %v", err)
+	}
+
+	// A nonexistent path must be rejected without leaking the path in the error.
+	gcsMissingCreds := &remote_pb.RemoteConf{
+		Name:                            "missing",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: filepath.Join(t.TempDir(), "does-not-exist.json"),
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsMissingCreds, false); err == nil {
+		t.Error("expected a nonexistent credentials file to be rejected")
+	} else if strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error must not leak the file path: %v", err)
+	}
+}
+
+// TestValidateRemoteConfForLoad confirms the load-time validator (injected into
+// the filer's FilerRemoteStorage) rejects a RemoteConf whose endpoint resolves
+// to a blocked address, while allowUntrusted skips the check. A conf whose type
+// dials a fixed provider host (no caller-supplied endpoint) passes.
+func TestValidateRemoteConfForLoad(t *testing.T) {
+	loopbackS3 := &remote_pb.RemoteConf{
+		Name:       "poc",
+		Type:       "s3",
+		S3Endpoint: "http://127.0.0.1:8000",
+		S3Region:   "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), loopbackS3, false); err == nil {
+		t.Error("expected a loopback s3 endpoint to be rejected at load")
+	} else if !strings.Contains(err.Error(), "reject remote endpoint") {
+		t.Errorf("error = %v, want reject remote endpoint", err)
+	}
+	// allowUntrusted mirrors the volume server opt-out.
+	if err := ValidateRemoteConfForLoad(context.Background(), loopbackS3, true); err != nil {
+		t.Errorf("allowUntrusted should accept the conf: %v", err)
+	}
+	// A non-S3-compatible type with no caller-supplied endpoint dials a fixed
+	// provider host, so there is nothing caller-influenced to deny.
+	fixedHost := &remote_pb.RemoteConf{Name: "fixed", Type: "gcs"}
+	if err := ValidateRemoteConfForLoad(context.Background(), fixedHost, false); err != nil {
+		t.Errorf("fixed-host provider should pass: %v", err)
+	}
+	// nil conf is a no-op.
+	if err := ValidateRemoteConfForLoad(context.Background(), nil, false); err != nil {
+		t.Errorf("nil conf should be a no-op: %v", err)
+	}
+	// A hostname endpoint is not resolved at load time (DNS is left to the
+	// build-time guard at dial), so it must pass even if it would resolve to a
+	// blocked address. This prevents transient DNS failures from disabling
+	// working mounts during /etc/remote reload.
+	hostnameS3 := &remote_pb.RemoteConf{
+		Name:       "host",
+		Type:       "s3",
+		S3Endpoint: "http://internal.example.com",
+		S3Region:   "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), hostnameS3, false); err != nil {
+		t.Errorf("hostname endpoint should pass at load (DNS deferred to dial): %v", err)
+	}
+	// A standard AWS S3 config with no custom endpoint (empty S3Endpoint) has
+	// no caller-supplied endpoint to guard — the AWS SDK derives the regional
+	// endpoint. Both the load-time validator and the build-time guard must
+	// accept it so standard AWS S3 mounts keep working.
+	standardS3 := &remote_pb.RemoteConf{
+		Name:     "aws",
+		Type:     "s3",
+		S3Region: "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should build: %v", err)
+	}
+	// A non-s3 S3-compatible type with an empty endpoint is a misconfiguration
+	// (the AWS SDK would derive an AWS endpoint). The guard must reject it
+	// rather than fall through to the unguarded cache.
+	aliyunNoEndpoint := &remote_pb.RemoteConf{
+		Name:         "aliyun",
+		Type:         "aliyun",
+		AliyunRegion: "cn-hangzhou",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected at load")
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected by the guard")
 	}
 }

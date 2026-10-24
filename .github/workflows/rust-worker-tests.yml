@@ -1,0 +1,107 @@
+name: "Rust Plugin Worker Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-worker-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-worker-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+permissions:
+  contents: read
+
+jobs:
+  rust-worker-build:
+    name: Rust Plugin Worker Build and Unit Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-worker/target/release
+          key: rust-worker-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-worker/Cargo.lock', 'seaweed-common/Cargo.lock') }}
+          restore-keys: |
+            rust-worker-${{ steps.toolchain.outputs.fingerprint }}-
+
+      # lance's build scripts compile their own protos and look for a protoc.
+      # Point them at the one protoc-bin-vendored ships, which seaweed-worker's
+      # own build already uses, so no job depends on a system package and every
+      # build sees the same version.
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-worker
+          cargo fetch
+          # The version from the lock, not whatever else a restored cache holds.
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
+
+      # The release profile is what ships, and it is where the release and the
+      # container builds would otherwise discover a break for the first time.
+      - name: Build the plugin workers
+        run: cd seaweed-worker && cargo build --release
+
+      # The workspace is warning-free under clippy as of the sweep that added
+      # this step. Uncomment to make that a gate; `[workspace.lints.clippy]`
+      # in seaweed-worker/Cargo.toml is where crate-wide exceptions live.
+      # - name: Clippy
+      #   run: cd seaweed-worker && cargo clippy --workspace --all-targets -- -D warnings
+
+      # The workspace is rustfmt-clean as of the PR that added this step.
+      # Uncomment to keep it that way.
+      # - name: Check formatting
+      #   run: cd seaweed-worker && cargo fmt --all --check
+
+      # seaweed-common is a path dependency of core and lance, not a member of
+      # this workspace, so `--workspace` below does not reach its own tests.
+      # Release and this job's cached target directory, and the cache key above
+      # covers the shared crate's lock. That lock pins the same rustls and
+      # aws-lc-sys this workspace resolves, so the release build above has
+      # already paid for them.
+      - name: Run shared-crate unit tests
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-worker/target
+        run: cd seaweed-common && cargo test --release
+
+      # The tests that need a live gateway skip themselves without one, the way
+      # the Go integration tests skip without Docker; the lifecycle suite in
+      # test/s3tables/lifecycle is what runs them against a real cluster.
+      # Release, so this reuses the build above rather than compiling lance,
+      # arrow and datafusion a second time in another profile.
+      - name: Run unit tests
+        run: cd seaweed-worker && cargo test --release --workspace

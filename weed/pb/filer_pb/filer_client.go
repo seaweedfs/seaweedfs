@@ -67,6 +67,16 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 // consumers would mistake for an entry.
 const ListSnapshotTsNsTrailerKey = "sw-list-snapshot-ts-ns"
 
+// TraverseModeHeaderKey is gRPC metadata on a TraverseBfsMetadata stream. As
+// request metadata, TraverseModeSnapshot asks for the entries from one store
+// snapshot (any order, entry_ts_ns left 0) instead of a breadth-first walk; as
+// a response header it says what the filer did. An older filer sends none.
+const (
+	TraverseModeHeaderKey = "sw-traverse-mode"
+	TraverseModeSnapshot  = "snapshot"
+	TraverseModeBfs       = "bfs"
+)
+
 type EachEntryFunction func(entry *Entry, isLast bool) error
 
 func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction) (err error) {
@@ -91,8 +101,14 @@ func ReadDirAllEntriesWithSnapshot(ctx context.Context, filerClient FilerClient,
 
 	for counter == paginationLimit {
 		counter = 0
+		lastStartFrom := startFrom
 		if _, err = doListWithSnapshot(ctx, filerClient, fullDirPath, prefix, counterFunc, startFrom, false, paginationLimit, snapshotTsNs); err != nil {
 			return snapshotTsNs, err
+		}
+		// A full page that ends on the name it started from would loop forever;
+		// a store whose ordering does not advance past the cursor causes this.
+		if counter == paginationLimit && startFrom == lastStartFrom {
+			return snapshotTsNs, fmt.Errorf("list %s: pagination stuck at %q", fullDirPath, startFrom)
 		}
 	}
 
@@ -155,7 +171,9 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 	defer cancel()
 	stream, err := client.ListEntries(ctx, request)
 	if err != nil {
-		return actualSnapshotTsNs, fmt.Errorf("list %s: %v", fullDirPath, err)
+		// fullDirPath is the caller's bucket and prefix; keep the status the filer
+		// sent so a retry is decided on that rather than on this message
+		return actualSnapshotTsNs, fmt.Errorf("list %s: %w", fullDirPath, err)
 	}
 
 	var prevEntry *Entry
@@ -194,7 +212,7 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		}
 		prevEntry = resp.Entry
 		count++
-		if count > int(limit) && limit != 0 {
+		if limit != 0 && uint64(count) > uint64(limit) {
 			prevEntry = nil
 		}
 	}
@@ -236,7 +254,31 @@ func Mkdir(ctx context.Context, filerClient FilerClient, parentDirectoryPath str
 	})
 }
 
+// MkdirExclusive is Mkdir that never replaces an entry already at the path:
+// the create is O_EXCL and a taken name answers ErrEntryAlreadyExists. The
+// taken name leaves the callback as a result, not an error: failover counts a
+// callback error against the filer and retries on the next one.
+func MkdirExclusive(ctx context.Context, filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	var taken error
+	err := filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
+		err := doMkdir(ctx, client, parentDirectoryPath, dirName, true, fn)
+		if errors.Is(err, ErrEntryAlreadyExists) {
+			taken = err
+			return nil
+		}
+		return err
+	})
+	if err == nil {
+		err = taken
+	}
+	return err
+}
+
 func DoMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	return doMkdir(ctx, client, parentDirectoryPath, dirName, false, fn)
+}
+
+func doMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, dirName string, exclusive bool, fn func(entry *Entry)) error {
 	entry := &Entry{
 		Name:        dirName,
 		IsDirectory: true,
@@ -256,12 +298,13 @@ func DoMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath
 	request := &CreateEntryRequest{
 		Directory: parentDirectoryPath,
 		Entry:     entry,
+		OExcl:     exclusive,
 	}
 
 	glog.V(1).InfofCtx(ctx, "mkdir: %v", request)
 	if err := CreateEntry(ctx, client, request); err != nil {
 		glog.V(0).InfofCtx(ctx, "mkdir %v: %v", request, err)
-		return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
+		return fmt.Errorf("mkdir %s/%s: %w", parentDirectoryPath, dirName, err)
 	}
 
 	return nil
@@ -295,7 +338,7 @@ func MkFile(ctx context.Context, filerClient FilerClient, parentDirectoryPath st
 		glog.V(1).InfofCtx(ctx, "create file: %s/%s", parentDirectoryPath, fileName)
 		if err := CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).InfofCtx(ctx, "create file %v:%v", request, err)
-			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
+			return fmt.Errorf("create file %s/%s: %w", parentDirectoryPath, fileName, err)
 		}
 
 		return nil
@@ -332,6 +375,10 @@ func DoRemoveWithResponse(ctx context.Context, client SeaweedFilerClient, parent
 		IsFromOtherCluster:   isFromOtherCluster,
 		Signatures:           signatures,
 	}
+	return DoRemoveRequest(ctx, client, deleteEntryRequest)
+}
+
+func DoRemoveRequest(ctx context.Context, client SeaweedFilerClient, deleteEntryRequest *DeleteEntryRequest) (*DeleteEntryResponse, error) {
 	if resp, err := client.DeleteEntry(ctx, deleteEntryRequest); err != nil {
 		if strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, nil

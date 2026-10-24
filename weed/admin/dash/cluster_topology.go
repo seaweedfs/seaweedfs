@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -116,7 +117,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 
 	// Get cluster status from master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			currentMaster := s.masterClient.GetMaster(context.Background())
 			glog.Errorf("Failed to get volume list from master %s: %v", currentMaster, err)
@@ -124,6 +125,12 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 		}
 
 		if resp.TopologyInfo != nil {
+			// Get volume size limit from response, default to 30GB if not set
+			volumeSizeLimitMb := resp.VolumeSizeLimitMb
+			if volumeSizeLimitMb == 0 {
+				volumeSizeLimitMb = 30000
+			}
+
 			// Process gRPC response
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				dataCenter := DataCenter{
@@ -142,6 +149,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						var totalVolumes int64
 						var totalMaxVolumes int64
 						var totalSize int64
+						var remoteSize int64
 						// Prefer the real physical disk capacity the volume server
 						// reports per disk; the slot-based estimate overstates capacity
 						// when maxVolumeCount is configured higher than the disk holds.
@@ -153,12 +161,18 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							if diskInfo.DiskTotalBytes > 0 {
 								diskCapacity += int64(diskInfo.DiskTotalBytes)
 							} else {
-								diskCapacity += diskInfo.MaxVolumeCount * int64(resp.VolumeSizeLimitMb) * 1024 * 1024
+								diskCapacity += diskInfo.MaxVolumeCount * int64(volumeSizeLimitMb) * 1024 * 1024
 							}
 
-							// Sum up individual volume information
+							// A remote-tiered volume reports its cloud object's
+							// size; keep those bytes out of the local disk usage
+							// that is compared against diskCapacity.
 							for _, volInfo := range diskInfo.VolumeInfos {
-								totalSize += int64(volInfo.Size)
+								if volInfo.RemoteStorageName != "" {
+									remoteSize += int64(volInfo.Size)
+								} else {
+									totalSize += int64(volInfo.Size)
+								}
 							}
 
 							// ShardSizes is local to this node, so summing
@@ -192,12 +206,15 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							DiskUsage:     totalSize,
 							DiskCapacity:  diskCapacity,
 							LastHeartbeat: time.Now(),
+							RemoteSize:    remoteSize,
 						}
 
 						rackObj.Nodes = append(rackObj.Nodes, vs)
 						topology.VolumeServers = append(topology.VolumeServers, vs)
 						topology.TotalVolumes += vs.Volumes
-						topology.TotalSize += totalSize
+						// TotalSize is the logical data size, wherever the
+						// bytes live, so remote-tiered volumes still count.
+						topology.TotalSize += totalSize + remoteSize
 					}
 
 					dataCenter.Racks = append(dataCenter.Racks, rackObj)
@@ -210,6 +227,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 			// nets out tombstones and counts a chunk once no matter how many
 			// volume replicas or EC shard holders report it.
 			topology.TotalChunks = totalCollectionFileCount(resp.TopologyInfo)
+
+			topology.TierStats = CollectTierStats(resp.TopologyInfo, volumeSizeLimitMb)
 		}
 
 		return nil

@@ -31,7 +31,7 @@ struct CompactEntry {
 }
 
 impl CompactEntry {
-    fn to_needle_value(&self) -> NeedleValue {
+    fn to_needle_value(self) -> NeedleValue {
         NeedleValue {
             offset: Offset::from_bytes(&self.offset),
             size: self.size,

@@ -144,9 +144,14 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 
 // Policy helper functions (since we can't add methods to type aliases)
 
-// GetTaskPolicy returns the policy for a specific task type
+// GetTaskPolicy returns the policy for a specific task type, or nil when the maintenance
+// policy has no entry for it.
+//
+// A nil maintenance policy is a legitimate state, not a programming error:
+// MaintenanceConfig.Policy is unset until something builds one, and UpdateConfig accepts a
+// config that carries none. Dereferencing it here panicked the whole admin process.
 func GetTaskPolicy(mp *MaintenancePolicy, taskType MaintenanceTaskType) *TaskPolicy {
-	if mp.TaskPolicies == nil {
+	if mp == nil || mp.TaskPolicies == nil {
 		return nil
 	}
 	return mp.TaskPolicies[string(taskType)]
@@ -174,6 +179,9 @@ func GetMaxConcurrent(mp *MaintenancePolicy, taskType MaintenanceTaskType) int {
 func GetRepeatInterval(mp *MaintenancePolicy, taskType MaintenanceTaskType) int {
 	policy := GetTaskPolicy(mp, taskType)
 	if policy == nil {
+		if mp == nil {
+			return 0
+		}
 		return int(mp.DefaultRepeatIntervalSeconds)
 	}
 	return int(policy.RepeatIntervalSeconds)
@@ -194,6 +202,13 @@ type MaintenanceWorker struct {
 	CurrentLoad   int                   `json:"current_load"`
 }
 
+// WorkerSlots is a point-in-time snapshot of one worker's task slot usage,
+// taken under the queue lock so callers never read live worker fields.
+type WorkerSlots struct {
+	Used int `json:"used"`
+	Max  int `json:"max"`
+}
+
 // MaintenanceQueue manages the task queue and worker coordination
 type MaintenanceQueue struct {
 	tasks        map[string]*MaintenanceTask
@@ -203,6 +218,10 @@ type MaintenanceQueue struct {
 	policy       *MaintenancePolicy
 	integration  *MaintenanceIntegration
 	persistence  TaskPersistence // Interface for task persistence
+	// persistMu serializes the check+write in saveTaskState against the
+	// deletes in the cancel paths, so a stale pending save cannot land on
+	// disk after the task's file was removed.
+	persistMu sync.Mutex
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks

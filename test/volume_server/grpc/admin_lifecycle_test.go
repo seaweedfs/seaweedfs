@@ -179,7 +179,9 @@ func TestAllocateDuplicateAndMountUnmountMissingVariants(t *testing.T) {
 	}
 }
 
-func TestMaintenanceModeRejectsVolumeDelete(t *testing.T) {
+// Evacuating a server in maintenance mode ends each move by deleting the source
+// volume, so VolumeDelete must stay available in that mode (issue #11066).
+func TestMaintenanceModeAllowsVolumeDelete(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -194,22 +196,14 @@ func TestMaintenanceModeRejectsVolumeDelete(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stateResp, err := client.GetState(ctx, &volume_server_pb.GetStateRequest{})
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	_, err = client.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{Maintenance: true, Version: stateResp.GetState().GetVersion()},
-	})
-	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
+	framework.EnableMaintenanceMode(t, ctx, client)
+
+	if _, err := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{VolumeId: volumeID, OnlyEmpty: true}); err != nil {
+		t.Fatalf("VolumeDelete should succeed in maintenance mode, got: %v", err)
 	}
 
-	_, err = client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{VolumeId: volumeID, OnlyEmpty: true})
+	_, err := client.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
 	if err == nil {
-		t.Fatalf("VolumeDelete should fail when maintenance mode is enabled")
-	}
-	if !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("expected maintenance mode error, got: %v", err)
+		t.Fatalf("VolumeStatus should fail once the volume is deleted")
 	}
 }

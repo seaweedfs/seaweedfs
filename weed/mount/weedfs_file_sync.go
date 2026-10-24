@@ -210,6 +210,14 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	// Re-check under the lock: Unlink sets the flag under it, so a flush that
+	// was already past the earlier check cannot write the entry back after
+	// the delete removed it.
+	if fh.isDeleted {
+		glog.V(3).Infof("flushMetadataToFiler %s fh %d: file was unlinked, skipping", fileFullPath, fh.fh)
+		return nil
+	}
+
 	entry := fh.GetEntry()
 	entry.Name = name // this flush may be just after a rename operation
 
@@ -230,7 +238,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
-	chunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	chunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	if err != nil {
+		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
+	}
 
 	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)
@@ -239,7 +250,8 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		manifestChunks = nil
 	}
 
-	chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
+	// no chunk deleter here: a failed fold reports the blobs it saved
+	chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, chunks)
 	if manifestErr != nil {
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)

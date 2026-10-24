@@ -84,7 +84,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 }
 
 func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*remote_pb.RemoteStorageMapping, string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteConf, error) {
-	return filer.DetectMountInfo(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, dir)
+	return filer.DetectMountInfo(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir)
 }
 
 /*
@@ -326,12 +326,7 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 }
 
 func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, name string) error {
-	_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-		Directory:    string(localDir),
-		Name:         name,
-		IsDeleteData: true,
-	})
-	return err
+	return filer_pb.DoRemove(ctx, client, string(localDir), name, true, false, false, false, nil)
 }
 
 func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (bool, error) {

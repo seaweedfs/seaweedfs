@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -88,6 +89,16 @@ type PolicyContext struct {
 	KMSKeyArn       string
 	StorageClass    string
 	DefaultAllow    bool
+	// TrustedIssuers lists the OIDC issuers the deployment is configured to
+	// trust, used to re-anchor owners/principals written before issuer-scoped
+	// account IDs. A bare subject is only resolvable when exactly one issuer
+	// is configured; more than one leaves it ambiguous, so it must not match.
+	TrustedIssuers []string
+	// IsLocalAccountID reports whether an account ID belongs to a configured
+	// local identity. Such owner strings were never OIDC subjects and must not
+	// be re-anchored; a nil predicate exempts nothing beyond the built-in
+	// reserved, ARN, and scoped-id checks.
+	IsLocalAccountID func(string) bool
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -107,10 +118,74 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
 }
 
+// CheckTableOrBucketPermission combines a table or namespace policy with its
+// table bucket's policy into one decision: a matching Deny on either policy
+// vetoes the request even when the other policy would allow it.
+func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, bucketOwner, bucketPolicy, bucketARN string, ctx *PolicyContext) bool {
+	if principal == "" {
+		return false
+	}
+	if principal == s3_constants.AccountAdminId {
+		return true
+	}
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
+		matchesDenyStatement(operation, principal, bucketPolicy, bucketARN, ctx) {
+		return false
+	}
+	// Each side fails closed when its owner is unknown, matching
+	// CheckPermissionWithContext; an ownerless side contributes nothing.
+	resourceOK := resourceOwner != "" &&
+		checkPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx)
+	bucketOK := bucketOwner != "" &&
+		checkPermission(operation, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
+	return resourceOK || bucketOK
+}
+
+// deniedByPolicy reports whether another applicable resource policy vetoes the
+// request. The admin account is exempt, matching CheckPermissionWithContext.
+func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	return principal != s3_constants.AccountAdminId &&
+		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
+}
+
+// matchesDenyStatement reports whether the JSON policy carries a statement
+// matching this request with Effect Deny. Malformed policies return false;
+// the caller's normal evaluation still denies them.
+func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	if resourcePolicy == "" {
+		return false
+	}
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+	var policy PolicyDocument
+	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
+		return false
+	}
+	for _, stmt := range policy.Statement {
+		if stmt.Effect != "Deny" ||
+			!matchesCaller(stmt.Principal, principal, ctx) ||
+			!matchesAction(stmt.Action, fullAction) ||
+			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
+			!matchesConditions(stmt.Condition, ctx) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 
-	// Owner always has permission
-	if principal == owner {
+	// An explicit Deny in the resource policy vetoes owner and identity
+	// grants as well as allows within the same document.
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) {
+		return false
+	}
+
+	// Owner always has permission.
+	if principal == owner || matchesLegacySubject(owner, principal, ctx) {
 		return true
 	}
 
@@ -145,7 +220,7 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 
 	for _, stmt := range policy.Statement {
 		// Check if principal matches
-		if !matchesPrincipal(stmt.Principal, principal) {
+		if !matchesCaller(stmt.Principal, principal, ctx) {
 			continue
 		}
 
@@ -223,6 +298,54 @@ func hasAdminAction(actions []string) bool {
 		}
 	}
 	return false
+}
+
+// matchesCaller matches a statement's Principal against the caller's scoped
+// principal or, for policies written before issuer scoping, a bare subject
+// that resolves to it under the deployment's single trusted issuer.
+func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	if matchesPrincipal(principalSpec, principal) {
+		return true
+	}
+	switch p := principalSpec.(type) {
+	case string:
+		return matchesLegacySubject(p, principal, ctx)
+	case []interface{}:
+		for _, item := range p {
+			if str, ok := item.(string); ok && matchesLegacySubject(str, principal, ctx) {
+				return true
+			}
+		}
+	case map[string]interface{}:
+		if aws, ok := p["AWS"]; ok {
+			return matchesCaller(aws, principal, ctx)
+		}
+	}
+	return false
+}
+
+// matchesLegacySubject reports whether a bare subject stored before issuer
+// scoping belongs to the caller. Re-anchoring is only sound when exactly one
+// OIDC issuer is configured: the stored subject is hashed under that issuer
+// and compared to the caller's scoped principal. With multiple issuers a bare
+// subject is ambiguous — matching it under the caller's own issuer would let
+// a same-sub identity from any configured issuer claim it.
+func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
+		return false
+	}
+	// The reserved accounts, ARN values, and already issuer-scoped ids are never
+	// OIDC subjects — or, for strings that could be either a legacy subject or a
+	// scoped id, resolving to scoped fails closed. A configured local account
+	// id is excluded the same way once the caller supplies the predicate. Any
+	// of them could otherwise be claimed by a token asserting that string as
+	// sub — including the admin account or a victim's scoped id.
+	if legacy == s3_constants.AccountAdminId || legacy == s3_constants.AccountAnonymousId ||
+		strings.HasPrefix(legacy, "arn:") || sts.IsParentUserID(legacy) ||
+		(ctx.IsLocalAccountID != nil && ctx.IsLocalAccountID(legacy)) {
+		return false
+	}
+	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal

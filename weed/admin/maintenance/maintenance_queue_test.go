@@ -618,7 +618,7 @@ func TestMaintenanceQueue_StaleWorkerCapacityRelease(t *testing.T) {
 func TestMaintenanceManager_CancelTaskCapacityRelease(t *testing.T) {
 	// Setup Manager
 	config := DefaultMaintenanceConfig()
-	mm := NewMaintenanceManager(nil, config)
+	mm := NewMaintenanceManager(nil, config, nil)
 	integration := mm.scanner.integration
 	mq := mm.queue
 	at := integration.GetActiveTopology()

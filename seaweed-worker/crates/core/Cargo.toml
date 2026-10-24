@@ -1,0 +1,39 @@
+[package]
+name = "seaweed-worker-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "SeaweedFS plugin.proto worker contract"
+
+[lib]
+name = "seaweed_worker_core"
+
+[dependencies]
+# Helpers the Rust volume server needs as well. A path dependency because
+# the two trees are separate cargo workspaces with no common root manifest.
+seaweed-common = { path = "../../../seaweed-common" }
+# Already in the graph through tonic's `tls-aws-lc` feature; named here so the
+# admin token can sign with the same HMAC the Go worker uses.
+aws-lc-rs = "1"
+base64 = "0.22"
+anyhow.workspace = true
+async-trait.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+axum.workspace = true
+prometheus.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+# Ships protoc with the build so neither CI nor a developer needs a system
+# install, and so the version is pinned rather than whatever the platform's
+# package manager happens to carry. The same crate seaweed-volume uses.
+protoc-bin-vendored = "3"
+
+[lints]
+workspace = true

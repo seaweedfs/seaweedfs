@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestIsTransientError(t *testing.T) {
@@ -22,6 +25,10 @@ func TestIsTransientError(t *testing.T) {
 		fmt.Errorf("send: %w", syscall.ETIMEDOUT),
 		&net.DNSError{Err: "operation timed out", IsTimeout: true},
 		io.ErrUnexpectedEOF,
+		// transport teardown the peer reports as Canceled, not the caller's
+		// own context cancel; also reachable through a caller's %w wrap
+		status.Error(codes.Canceled, "grpc: the client connection is closing"),
+		fmt.Errorf("create entry /x: %w", status.Error(codes.Canceled, "grpc: the client connection is closing")),
 	}
 	for _, err := range transient {
 		if !IsTransientError(err) {
@@ -34,7 +41,38 @@ func TestIsTransientError(t *testing.T) {
 		errors.New("AccessDenied: Access Denied"),
 		errors.New("NoSuchBucket: The specified bucket does not exist"),
 		context.Canceled,
+		status.Error(codes.Canceled, context.Canceled.Error()),
+		fmt.Errorf("send: %w", status.Error(codes.Canceled, context.Canceled.Error())),
 		fmt.Errorf("write: %w", context.DeadlineExceeded),
+	}
+	for _, err := range permanent {
+		if IsTransientError(err) {
+			t.Errorf("expected permanent: %v", err)
+		}
+	}
+}
+
+// A caller that formats a path into its wrapper must not be able to hand the
+// substring matcher a word the client chose: once the chain carries the status
+// the server sent, that status is what gets classified.
+func TestIsTransientErrorPrefersServerStatus(t *testing.T) {
+	transient := []error{
+		fmt.Errorf("list %s: %w", "/buckets/b/logs", status.Error(codes.Unavailable, "filer is restarting")),
+		fmt.Errorf("list %s: %w", "/buckets/b/filer: no entry is found in filer store", status.Error(codes.Unavailable, "filer is restarting")),
+		status.Error(codes.ResourceExhausted, "too many requests"),
+		// the server's own text still counts when the code does not name the condition
+		status.Error(codes.Internal, "connection reset by peer"),
+	}
+	for _, err := range transient {
+		if !IsTransientError(err) {
+			t.Errorf("expected transient: %v", err)
+		}
+	}
+
+	permanent := []error{
+		fmt.Errorf("list %s: %w", "/buckets/transport/unavailable", status.Error(codes.PermissionDenied, "not allowed")),
+		fmt.Errorf("all filers failed, last error: %w",
+			fmt.Errorf("list %s: %w", "/buckets/slowdown/throttling", status.Error(codes.InvalidArgument, "bad prefix"))),
 	}
 	for _, err := range permanent {
 		if IsTransientError(err) {
@@ -51,6 +89,10 @@ func TestIsTransientErrorMessage(t *testing.T) {
 		"Connection reset by peer",
 		"dial tcp 10.0.0.1:8888: connect: no route to host",
 		"rpc error: code = Unavailable desc = the connection is unavailable",
+		// GCS per-object mutation limit on a hot file; the next attempt after a
+		// one-second backoff is under it
+		"googleapi: Error 429: The object bucket/samples.json exceeded the rate limit for object mutation operations (create, update, and delete). Please reduce your request rate. See https://cloud.google.com/storage/docs/gcs429., rateLimitExceeded",
+		"429 Too Many Requests",
 	}
 	for _, msg := range transient {
 		if !IsTransientErrorMessage(msg) {

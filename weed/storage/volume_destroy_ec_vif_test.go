@@ -22,7 +22,7 @@ func TestDestroyKeepsVifWhenEcCoexists(t *testing.T) {
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	require.NoError(t, err)
 	v.location = newTestDiskLocation(dir)
-	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false, false)
 	require.NoError(t, err)
 
 	base := VolumeFileName(dir, "", 1)
@@ -32,7 +32,7 @@ func TestDestroyKeepsVifWhenEcCoexists(t *testing.T) {
 	ecxPath := erasure_coding.EcShardFileName("", dir, 1) + ".ecx"
 	require.NoError(t, os.WriteFile(ecxPath, []byte("ec-index"), 0o644))
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	assertFileExist(t, false, base+".dat")
 	assertFileExist(t, false, base+".idx")
@@ -47,14 +47,14 @@ func TestDestroyRemovesVifWhenNoEc(t *testing.T) {
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	require.NoError(t, err)
 	v.location = newTestDiskLocation(dir)
-	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false, false)
 	require.NoError(t, err)
 
 	base := VolumeFileName(dir, "", 1)
 	vifPath := base + ".vif"
 	require.NoError(t, os.WriteFile(vifPath, []byte("regular-volume-info"), 0o644))
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	assertFileExist(t, false, base+".dat")
 	assertFileExist(t, false, base+".idx")

@@ -25,6 +25,11 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
 
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD, "PutObjectLegalHoldHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Parse legal hold configuration from request body
 	legalHold, err := parseObjectLegalHold(r)
 	if err != nil {
@@ -80,6 +85,11 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
+
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD, "GetObjectLegalHoldHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Get legal hold configuration for the object
 	legalHold, err := s3a.getObjectLegalHold(bucket, object, versionId)

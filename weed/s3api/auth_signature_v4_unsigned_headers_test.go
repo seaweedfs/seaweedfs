@@ -142,6 +142,50 @@ func TestVerifySignedHeadersCoverage_Unit(t *testing.T) {
 			signedHeaders: []string{"HOST", "X-Amz-Tagging"},
 			want:          s3err.ErrNone,
 		},
+		{
+			name: "presigned exempts unsigned SSE-C key headers",
+			headers: map[string]string{
+				"X-Amz-Server-Side-Encryption-Customer-Algorithm": "AES256",
+				"X-Amz-Server-Side-Encryption-Customer-Key":       "key",
+				"X-Amz-Server-Side-Encryption-Customer-Key-MD5":   "md5",
+			},
+			signedHeaders: []string{"host", "x-amz-server-side-encryption-customer-algorithm"},
+			isPresigned:   true,
+			want:          s3err.ErrNone,
+		},
+		{
+			name: "presigned exempts unsigned SSE-C copy-source key headers",
+			headers: map[string]string{
+				"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm": "AES256",
+				"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key":       "key",
+				"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key-MD5":   "md5",
+			},
+			signedHeaders: []string{"host", "x-amz-copy-source-server-side-encryption-customer-algorithm"},
+			isPresigned:   true,
+			want:          s3err.ErrNone,
+		},
+		{
+			name: "presigned still requires SSE-C algorithm to be signed",
+			headers: map[string]string{
+				"X-Amz-Server-Side-Encryption-Customer-Algorithm": "AES256",
+				"X-Amz-Server-Side-Encryption-Customer-Key":       "key",
+				"X-Amz-Server-Side-Encryption-Customer-Key-MD5":   "md5",
+			},
+			signedHeaders: []string{"host"},
+			isPresigned:   true,
+			want:          s3err.ErrSignatureDoesNotMatch,
+		},
+		{
+			name: "header-based does NOT exempt unsigned SSE-C key headers",
+			headers: map[string]string{
+				"X-Amz-Server-Side-Encryption-Customer-Algorithm": "AES256",
+				"X-Amz-Server-Side-Encryption-Customer-Key":       "key",
+				"X-Amz-Server-Side-Encryption-Customer-Key-MD5":   "md5",
+			},
+			signedHeaders: []string{"host", "x-amz-server-side-encryption-customer-algorithm"},
+			isPresigned:   false,
+			want:          s3err.ErrSignatureDoesNotMatch,
+		},
 	}
 
 	for _, tt := range tests {
@@ -200,6 +244,29 @@ func TestPresignedPutAcceptsSignedTagging(t *testing.T) {
 	_, errCode := iam.reqSignatureV4Verify(req)
 	if errCode != s3err.ErrNone {
 		t.Fatalf("expected ErrNone for signed x-amz-tagging, got %v", errCode)
+	}
+}
+
+// TestPresignedGetAcceptsUnsignedSSECKeyHeaders mirrors the AWS SDK presign
+// flow for SSE-C objects: only the algorithm header is signed while the key
+// and key-MD5 headers are attached to the request unsigned.
+func TestPresignedGetAcceptsUnsignedSSECKeyHeaders(t *testing.T) {
+	iam := newTestIAM()
+
+	req, err := newTestRequest(http.MethodGet, "http://127.0.0.1:9000/bucket/key", 0, nil)
+	if err != nil {
+		t.Fatalf("newTestRequest: %v", err)
+	}
+	req.Header.Set("X-Amz-Server-Side-Encryption-Customer-Algorithm", "AES256")
+	if err := preSignV4WithHeaders(iam, req, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 600, []string{"host", "x-amz-server-side-encryption-customer-algorithm"}); err != nil {
+		t.Fatalf("preSignV4WithHeaders: %v", err)
+	}
+	req.Header.Set("X-Amz-Server-Side-Encryption-Customer-Key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
+	req.Header.Set("X-Amz-Server-Side-Encryption-Customer-Key-MD5", "md5")
+
+	_, errCode := iam.reqSignatureV4Verify(req)
+	if errCode != s3err.ErrNone {
+		t.Fatalf("expected ErrNone for presigned SSE-C with unsigned key headers, got %v", errCode)
 	}
 }
 
@@ -289,6 +356,32 @@ func TestPresignedPutRejectsUnsignedMetadataHeaders(t *testing.T) {
 			_, errCode := iam.reqSignatureV4Verify(req)
 			if errCode != s3err.ErrSignatureDoesNotMatch {
 				t.Fatalf("expected rejection for unsigned %s, got %v", c.header, errCode)
+			}
+		})
+	}
+}
+
+// TestParseSignV4MissingFields exercises how a truncated Authorization header
+// maps to the AWS error code for the absent field.
+func TestParseSignV4MissingFields(t *testing.T) {
+	valid := "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=0123456789abcdef"
+
+	tests := []struct {
+		name string
+		auth string
+		want s3err.ErrorCode
+	}{
+		{"valid", valid, s3err.ErrNone},
+		{"no signature field", "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date", s3err.ErrAuthorizationHeaderMalformed},
+		{"empty signature field", "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, ", s3err.ErrAuthorizationHeaderMalformed},
+		{"no credential field", "AWS4-HMAC-SHA256 SignedHeaders=host;x-amz-date, Signature=0123456789abcdef", s3err.ErrInvalidArgument},
+		{"leading comma after dropping credential", "AWS4-HMAC-SHA256 , SignedHeaders=host;x-amz-date, Signature=0123456789abcdef", s3err.ErrInvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, got := parseSignV4(tt.auth)
+			if got != tt.want {
+				t.Fatalf("parseSignV4() = %v, want %v", got, tt.want)
 			}
 		})
 	}

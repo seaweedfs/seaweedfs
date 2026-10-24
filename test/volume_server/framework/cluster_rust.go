@@ -14,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // RustCluster wraps a Go master + Rust volume server for integration testing.
@@ -200,6 +201,7 @@ func rustVolumeArgs(
 		"--dir", dataDir,
 		"--max", "16",
 		"--master", "127.0.0.1:" + strconv.Itoa(masterPort),
+		"--volume.allowUntrustedRemoteEndpoints",
 		"--securityFile", filepath.Join(configDir, "security.toml"),
 		"--readMode", profile.ReadMode,
 		"--concurrentUploadLimitMB", strconv.Itoa(profile.ConcurrentUploadLimitMB),
@@ -267,8 +269,15 @@ func FindOrBuildRustBinary() (string, error) {
 
 		releaseBin := filepath.Join(rustCrateDir, "target", "release", "weed-volume")
 
-		// Always rebuild once per test process so the harness uses current source and features.
-		cmd := exec.Command("cargo", "build", "--release")
+		// Always rebuild once per test process so the harness uses current source
+		// and features. The crate defaults to 5bytes, so a test binary built
+		// without 5BytesOffset has to turn it off or the Rust server refuses the
+		// .vif the Go server just wrote.
+		args := []string{"build", "--release"}
+		if types.OffsetSize != 5 {
+			args = append(args, "--no-default-features")
+		}
+		cmd := exec.Command("cargo", args...)
 		cmd.Dir = rustCrateDir
 		var out bytes.Buffer
 		cmd.Stdout = &out

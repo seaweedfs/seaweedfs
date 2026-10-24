@@ -15,6 +15,10 @@ import (
 func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 	K := 5
 
+	// callers hand in user-typed paths, and every entry is reported relative
+	// to this one, so a trailing slash must not reach the callback
+	parentPath = util.NormalizePath(string(parentPath))
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -26,10 +30,20 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 	var once sync.Once
 	var firstErr error
 
+	// A directory delivered twice (a page-boundary race with concurrent
+	// renames, or a store whose listing order misbehaves) must not be walked
+	// twice: the second walk re-lists the same subtree and can keep the
+	// traversal from ever terminating.
+	var visited sync.Map
+	visited.Store(string(parentPath), struct{}{})
+
 	enqueue := func(p util.FullPath) bool {
 		// Stop expanding traversal once canceled (e.g. first error encountered).
 		if ctx.Err() != nil {
 			return false
+		}
+		if _, seen := visited.LoadOrStore(string(p), struct{}{}); seen {
+			return true
 		}
 		pending.Add(1)
 		queue.Enqueue(p)
@@ -92,11 +106,7 @@ func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPat
 		}
 
 		if entry.IsDirectory {
-			subDir := fmt.Sprintf("%s/%s", parentPath, entry.Name)
-			if parentPath == "/" {
-				subDir = "/" + entry.Name
-			}
-			if !enqueue(util.FullPath(subDir)) {
+			if !enqueue(parentPath.Child(entry.Name)) {
 				return ctx.Err()
 			}
 		}
@@ -105,9 +115,9 @@ func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPat
 
 }
 
-func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
+func StreamBfs(ctx context.Context, client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry, entryTsNs int64) error) (err error) {
 	glog.V(0).Infof("TraverseBfsMetadata %v if before %v", dir, time.Unix(0, olderThanTsNs))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stream, err := client.TraverseBfsMetadata(ctx, &TraverseBfsMetadataRequest{
 		Directory: string(dir),
@@ -123,7 +133,7 @@ func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64
 			}
 			return fmt.Errorf("traverse bfs metadata: %w", err)
 		}
-		if err := fn(util.FullPath(resp.Directory), resp.Entry); err != nil {
+		if err := fn(util.FullPath(resp.Directory), resp.Entry, resp.EntryTsNs); err != nil {
 			return err
 		}
 	}

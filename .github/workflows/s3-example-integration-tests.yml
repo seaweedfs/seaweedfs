@@ -13,8 +13,8 @@ on:
       - '.github/workflows/s3-example-integration-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-integration-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -33,6 +33,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Build SeaweedFS
@@ -63,6 +64,14 @@ jobs:
           set -x
           echo "=== Running S3 Empty Directory Marker Tests ==="
           go test -v -timeout=180s -run TestS3ListObjectsEmptyDirectoryMarkers ./...
+
+      - name: Run S3 Prefix Object Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running S3 Prefix Object Tests ==="
+          go test -v -timeout=180s -run TestS3PrefixObjectKeys ./...
 
       - name: Run IAM Integration Tests
         timeout-minutes: 15

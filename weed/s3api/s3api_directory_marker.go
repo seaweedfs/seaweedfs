@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -25,7 +26,9 @@ import (
 
 // deleteDirectoryMarker removes the key "<dir>/". Callers hold the object write lock,
 // so the entry this decides about cannot change between the read and the delete.
-func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
+func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object string) s3err.ErrorCode {
+	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+
 	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 	dir, name := util.FullPath(markerDir).DirAndName()
 
@@ -45,12 +48,52 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.Error
 		return s3err.ErrNone
 	}
 
+	// The key is deleted the unversioned way, but Object Lock still covers it: the
+	// gateway lists it as an object and serves retention set on it. The lock that
+	// matters is the one on this entry, since that is what is removed -- looking the
+	// key up instead would answer with a version once the key has a history.
+	if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
+		glog.V(2).Infof("deleteDirectoryMarker: %s/%s is locked: %v", bucket, object, err)
+		return s3err.ErrAccessDenied
+	}
+
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
 	// leaving it behind keeps reporting the key in ListObjectVersions, so a history we
 	// cannot read or remove fails the delete rather than half finishing it.
 	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
 	case historyErr == nil:
-		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
+		// The removal below takes every entry under the key, so each has to be clear
+		// of a lock of its own.
+		versionsDir := markerDir + "/" + s3_constants.VersionsFolder
+		for startFrom := ""; ; {
+			entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, 1000)
+			if listErr != nil {
+				glog.Errorf("deleteDirectoryMarker: cannot list history of %s/%s: %v", bucket, object, listErr)
+				return s3err.ErrInternalError
+			}
+			for _, entry := range entries {
+				startFrom = entry.Name
+				versionId, named := entry.Extended[s3_constants.ExtVersionIdKey]
+				if !named {
+					// An entry an older build left without a version id is what this
+					// removal is here to clear, but one still under a lock cannot be
+					// named to check it, so judge it on what it carries itself.
+					if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
+						glog.V(2).Infof("deleteDirectoryMarker: unnamed history entry %s of %s/%s is locked: %v", entry.Name, bucket, object, err)
+						return s3err.ErrAccessDenied
+					}
+					continue
+				}
+				if err := s3a.enforceObjectLockProtections(r, bucket, object, string(versionId), governanceBypassAllowed); err != nil {
+					glog.V(2).Infof("deleteDirectoryMarker: version %s of %s/%s is locked: %v", versionId, bucket, object, err)
+					return s3err.ErrAccessDenied
+				}
+			}
+			if isLast || len(entries) == 0 {
+				break
+			}
+		}
+		if rmErr := s3a.rm(r.Context(), markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
 			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
 			return s3err.ErrInternalError
 		}
@@ -60,7 +103,7 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.Error
 	}
 
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
+		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 	}); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError

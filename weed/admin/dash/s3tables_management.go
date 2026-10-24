@@ -25,6 +25,7 @@ type S3TablesBucketsData struct {
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
 	IcebergPort  int                     `json:"iceberg_port"`
+	LancePort    int                     `json:"lance_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -33,29 +34,45 @@ type S3TablesBucketSummary struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// Format is empty for a bucket created before formats were declared. Such a
+	// bucket takes tables of either format, which is what it always did.
+	Format string `json:"format,omitempty"`
+	// PolicyStatementCount is the number of statements in the table bucket's
+	// resource policy, or 0 if it has none. Unrelated to the S3 bucket
+	// policy mechanism (policy_engine.PolicyDocument / s3-bucket-policy):
+	// S3 Tables stores its own s3tables.PolicyDocument under the
+	// s3tables.policy extended attribute.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3TablesNamespacesData struct {
 	Username        string                      `json:"username"`
 	BucketARN       string                      `json:"bucket_arn"`
+	BucketFormat    string                      `json:"bucket_format,omitempty"`
 	Namespaces      []s3tables.NamespaceSummary `json:"namespaces"`
 	TotalNamespaces int                         `json:"total_namespaces"`
 	LastUpdated     time.Time                   `json:"last_updated"`
 }
 
 type S3TablesTablesData struct {
-	Username    string                  `json:"username"`
-	BucketARN   string                  `json:"bucket_arn"`
-	Namespace   string                  `json:"namespace"`
-	Tables      []s3tables.TableSummary `json:"tables"`
-	TotalTables int                     `json:"total_tables"`
-	LastUpdated time.Time               `json:"last_updated"`
+	Username     string                  `json:"username"`
+	BucketARN    string                  `json:"bucket_arn"`
+	BucketFormat string                  `json:"bucket_format,omitempty"`
+	Namespace    string                  `json:"namespace"`
+	Tables       []s3tables.TableSummary `json:"tables"`
+	TotalTables  int                     `json:"total_tables"`
+	// ObservedRows holds what a worker last counted, by table name, for formats
+	// this server cannot read itself. A table nothing has looked at is absent
+	// rather than zero: those are different facts.
+	ObservedRows map[string]string `json:"observed_rows,omitempty"`
+	LastUpdated  time.Time         `json:"last_updated"`
 }
 
 type tableBucketMetadata struct {
 	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"createdAt"`
 	OwnerAccountID string    `json:"ownerAccountId"`
+	Format         string    `json:"format,omitempty"`
 }
 
 // S3Tables manager helpers
@@ -133,10 +150,12 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 				continue
 			}
 			buckets = append(buckets, S3TablesBucketSummary{
-				ARN:            arn,
-				Name:           entry.Entry.Name,
-				OwnerAccountID: metadata.OwnerAccountID,
-				CreatedAt:      metadata.CreatedAt,
+				ARN:                  arn,
+				Name:                 entry.Entry.Name,
+				OwnerAccountID:       metadata.OwnerAccountID,
+				CreatedAt:            metadata.CreatedAt,
+				Format:               metadata.Format,
+				PolicyStatementCount: extractS3TablesPolicyStatementCountFromEntry(entry.Entry),
 			})
 		}
 		return nil
@@ -148,8 +167,75 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
 		IcebergPort:  s.icebergPort,
+		LancePort:    s.lancePort,
 		LastUpdated:  time.Now(),
 	}, nil
+}
+
+// extractS3TablesPolicyStatementCountFromEntry returns the number of
+// statements in the table bucket's resource policy, or 0 if it has none or
+// the stored JSON can't be parsed. Forgiving on parse failure, matching
+// extractPolicyStatementCountFromEntry (the S3 bucket policy equivalent in
+// admin_server.go, which is a different, unrelated policy mechanism).
+func extractS3TablesPolicyStatementCountFromEntry(entry *filer_pb.Entry) int {
+	policyJSON := entry.Extended[s3tables.ExtendedKeyPolicy]
+	if len(policyJSON) == 0 {
+		return 0
+	}
+	var doc s3tables.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &doc); err != nil {
+		return 0
+	}
+	return len(doc.Statement)
+}
+
+// observedRowCounts collects what workers last reported for these tables. For a
+// format admin cannot read, this is the only row count that exists.
+func (s *AdminServer) observedRowCounts(bucketArn string, namespaceParts []string, tables []s3tables.TableSummary) map[string]string {
+	plugin := s.GetPlugin()
+	if plugin == nil || len(tables) == 0 {
+		return nil
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return nil
+	}
+	counts := make(map[string]string)
+	for _, table := range tables {
+		objectID := append(append([]string{bucketName}, namespaceParts...), table.Name)
+		if observed, ok := plugin.Observations().GetFormat(objectID, table.Format); ok {
+			if rows := observed.AttributeString("rows"); rows != "" {
+				counts[table.Name] = rows
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+// catalogPortForFormat is the port serving a format, or 0 when this cluster
+// does not run that catalog.
+func (s *AdminServer) catalogPortForFormat(format string) int {
+	if strings.EqualFold(format, s3tables.FormatLance) {
+		return s.lancePort
+	}
+	return s.icebergPort
+}
+
+// tableBucketFormat reports what the bucket says it holds, or "" for one made
+// before the declaration existed. A page inside a bucket asks so it can label
+// itself and constrain what can be created; failing to read it is not worth
+// failing the page over, so it degrades to undeclared.
+func (s *AdminServer) tableBucketFormat(ctx context.Context, bucketArn string) string {
+	var resp s3tables.GetTableBucketResponse
+	req := &s3tables.GetTableBucketRequest{TableBucketARN: bucketArn}
+	if err := s.executeS3TablesOperation(ctx, "GetTableBucket", req, &resp); err != nil {
+		glog.V(1).Infof("S3Tables: failed to read format of %s: %v", bucketArn, err)
+		return ""
+	}
+	return resp.Format
 }
 
 func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn string) (S3TablesNamespacesData, error) {
@@ -160,6 +246,7 @@ func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn s
 	}
 	return S3TablesNamespacesData{
 		BucketARN:       bucketArn,
+		BucketFormat:    s.tableBucketFormat(ctx, bucketArn),
 		Namespaces:      resp.Namespaces,
 		TotalNamespaces: len(resp.Namespaces),
 		LastUpdated:     time.Now(),
@@ -180,13 +267,16 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 	if err := s.executeS3TablesOperation(ctx, "ListTables", req, &resp); err != nil {
 		return S3TablesTablesData{}, err
 	}
-	return S3TablesTablesData{
-		BucketARN:   bucketArn,
-		Namespace:   namespace,
-		Tables:      resp.Tables,
-		TotalTables: len(resp.Tables),
-		LastUpdated: time.Now(),
-	}, nil
+	data := S3TablesTablesData{
+		BucketARN:    bucketArn,
+		BucketFormat: s.tableBucketFormat(ctx, bucketArn),
+		Namespace:    namespace,
+		Tables:       resp.Tables,
+		TotalTables:  len(resp.Tables),
+		LastUpdated:  time.Now(),
+	}
+	data.ObservedRows = s.observedRowCounts(bucketArn, ns, resp.Tables)
+	return data, nil
 }
 
 // Iceberg Catalog data providers
@@ -299,7 +389,73 @@ func (s *AdminServer) GetIcebergTableDetailsData(ctx context.Context, catalogNam
 	}
 
 	applyIcebergMetadata(resp.Metadata, &details)
+	s.applyWorkerObservation(&details, bucketArn, namespaceParts, resp.Name)
 	return details, nil
+}
+
+// applyWorkerObservation fills in what a plugin worker last reported about a
+// table this server cannot read itself. Only the catalog knows a Lance table
+// exists; only a worker with the format's runtime can say what is in it, so
+// without this the page has nothing to show but a location.
+//
+// The observation is cached, not live, which is why the page carries the time
+// and the worker that took it.
+func (s *AdminServer) applyWorkerObservation(details *IcebergTableDetailsData, bucketArn string, namespaceParts []string, tableName string) {
+	if len(details.SchemaFields) > 0 {
+		return
+	}
+	plugin := s.GetPlugin()
+	if plugin == nil {
+		return
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return
+	}
+	objectID := append(append([]string{bucketName}, namespaceParts...), tableName)
+	observed, ok := plugin.Observations().GetFormat(objectID, details.Format)
+	if !ok {
+		return
+	}
+
+	details.ObservedBy = observed.WorkerID
+	details.ObservedAt = observed.ObservedAt
+	details.SchemaFields = observationSchemaFields(observed.AttributeString("schema"))
+	for _, name := range []string{"rows", "fragments", "versions"} {
+		if value := observed.AttributeString(name); value != "" {
+			details.Properties = append(details.Properties, IcebergPropertyInfo{Key: name, Value: value})
+		}
+	}
+}
+
+// observationSchemaFields parses the schema a worker reported. A schema it
+// could not render is not worth failing the page over.
+func observationSchemaFields(schema string) []IcebergSchemaFieldInfo {
+	if schema == "" {
+		return nil
+	}
+	var reported []struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Nullable bool   `json:"nullable"`
+	}
+	if err := json.Unmarshal([]byte(schema), &reported); err != nil {
+		return nil
+	}
+	fields := make([]IcebergSchemaFieldInfo, 0, len(reported))
+	for i, field := range reported {
+		encoded, err := json.Marshal(field.Type)
+		if err != nil {
+			continue
+		}
+		fields = append(fields, IcebergSchemaFieldInfo{
+			ID:       i + 1,
+			Name:     field.Name,
+			Type:     encoded,
+			Required: !field.Nullable,
+		})
+	}
+	return fields
 }
 
 type icebergFullMetadata struct {
@@ -582,9 +738,10 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name  string            `json:"name"`
-		Tags  map[string]string `json:"tags"`
-		Owner string            `json:"owner"`
+		Name   string            `json:"name"`
+		Tags   map[string]string `json:"tags"`
+		Owner  string            `json:"owner"`
+		Format string            `json:"format"`
 	}
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
@@ -605,7 +762,24 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags}
+	format := s3tables.FormatIceberg
+	if req.Format != "" {
+		normalized, ok := s3tables.NormalizeFormat(req.Format)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported format %q", req.Format))
+			return
+		}
+		format = normalized
+	}
+	// A bucket of a format this cluster does not serve is a bucket no client can
+	// reach. The picker disables the option; refuse it here too, since the API
+	// is reachable without the page.
+	if port := s.catalogPortForFormat(format); port == 0 {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("No %s endpoint is configured, so a %s bucket would be unreachable", format, format))
+		return
+	}
+	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags, Format: format}
 	var resp s3tables.CreateTableBucketResponse
 	if err := s.executeS3TablesOperation(r.Context(), "CreateTableBucket", createReq, &resp); err != nil {
 		writeS3TablesError(w, err)
@@ -869,8 +1043,11 @@ func (s *AdminServer) GetS3TablesBucketPolicy(w http.ResponseWriter, r *http.Req
 	getReq := &s3tables.GetTableBucketPolicyRequest{TableBucketARN: bucketArn}
 	var resp s3tables.GetTableBucketPolicyResponse
 	if err := s.executeS3TablesOperation(r.Context(), "GetTableBucketPolicy", getReq, &resp); err != nil {
-		writeS3TablesError(w, err)
-		return
+		// No policy is a normal state for the UI (empty editor), not an error.
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
@@ -937,8 +1114,10 @@ func (s *AdminServer) GetS3TablesTablePolicy(w http.ResponseWriter, r *http.Requ
 	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
 	var resp s3tables.GetTablePolicyResponse
 	if err := s.executeS3TablesOperation(r.Context(), "GetTablePolicy", getReq, &resp); err != nil {
-		writeS3TablesError(w, err)
-		return
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
@@ -1049,6 +1228,11 @@ func parseS3TablesErrorMessage(err error) string {
 
 func writeS3TablesError(w http.ResponseWriter, err error) {
 	writeJSONError(w, s3TablesErrorStatus(err), parseS3TablesErrorMessage(err))
+}
+
+func isS3TablesNoSuchPolicy(err error) bool {
+	var s3Err *s3tables.S3TablesError
+	return errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeNoSuchPolicy
 }
 
 func s3TablesErrorStatus(err error) int {

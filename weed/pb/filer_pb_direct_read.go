@@ -19,11 +19,16 @@ import (
 type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
 
 // logEntryChannelSize bounds decoded entries in flight per filer stream.
-const logEntryChannelSize = 512
+const logEntryChannelSize = 4096
 
 // maxLogEntrySize guards the per-entry allocation against a corrupt size
 // prefix, mirroring the filer package's unexported constant.
 const maxLogEntrySize = 1 << 30
+
+// ErrLogFileRead marks a failure to read persisted log chunks from volume
+// servers. It surfaces as the metadata stream's error, but says nothing about
+// the filer connection that carried the stream.
+var ErrLogFileRead = errors.New("read log file refs")
 
 // errReaderStopped signals that the entry consumer asked to stop (the merge
 // loop aborted or the caller hit a processing error). It is not a read failure.

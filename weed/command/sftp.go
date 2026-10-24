@@ -3,8 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"net"
-	"os"
 	"runtime"
 	"time"
 
@@ -180,22 +178,18 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	// Set up Unix socket if on non-Windows platforms
 	if runtime.GOOS != "windows" {
 		localSocket := *sftpOpt.localSocket
-		if localSocket == "" {
+		explicit := localSocket != ""
+		if !explicit {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-sftp-%d.sock", *sftpOpt.port)
 		}
-		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+		if sftpSocketListener := pb.ListenOnLocalSocket(localSocket); sftpSocketListener != nil {
+			go func() {
+				// start on local unix socket
+				if err := service.Serve(sftpSocketListener); err != nil {
+					glog.Fatalf("Failed to serve SFTP on socket %s: %v", localSocket, err)
+				}
+			}()
 		}
-		go func() {
-			// start on local unix socket
-			sftpSocketListener, err := net.Listen("unix", localSocket)
-			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			if err := service.Serve(sftpSocketListener); err != nil {
-				glog.Fatalf("Failed to serve SFTP on socket %s: %v", localSocket, err)
-			}
-		}()
 	}
 
 	// Start the SFTP service on TCP

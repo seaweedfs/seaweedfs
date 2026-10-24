@@ -17,7 +17,8 @@ type Config struct {
 	CollectionFilter   string   `json:"collection_filter"`
 	DiskType           string   `json:"disk_type"`
 	PreferredTags      []string `json:"preferred_tags"`
-	ReplicaPlacement   string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
+	ReplicaPlacement   string   `json:"replica_placement"`  // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
+	IoBytePerSecond    int64    `json:"io_byte_per_second"` // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 	DataCenterFilter   string   `json:"-"`                  // per-detection-run, not persisted
 }
 
@@ -124,9 +125,9 @@ func GetConfigSpec() base.ConfigSpec {
 				DefaultValue: "",
 				Required:     false,
 				DisplayName:  "Collection Filter",
-				Description:  "Only balance EC shards from specific collections",
-				HelpText:     "Leave empty to balance all collections, or specify collection name/wildcard",
-				Placeholder:  "my_collection",
+				Description:  "Only balance EC shards from specific collections (comma-separated names, wildcards, or regex patterns)",
+				HelpText:     "Leave empty to balance all collections, or list the collections to balance",
+				Placeholder:  "pictures,videos",
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
@@ -169,6 +170,21 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "io_byte_per_second",
+				JSONName:     "io_byte_per_second",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				Required:     false,
+				DisplayName:  "Shard Copy IO Limit (bytes/sec)",
+				Description:  "Limit each EC shard copy's rate",
+				HelpText:     "0 falls back to each volume server's own maintenance rate (-maintenanceBytePerSecond)",
+				Placeholder:  "0 (server maintenance rate)",
+				Unit:         config.UnitNone,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -189,6 +205,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				DiskType:           c.DiskType,
 				PreferredTags:      preferredTagsCopy,
 				ReplicaPlacement:   c.ReplicaPlacement,
+				IoBytePerSecond:    c.IoBytePerSecond,
 			},
 		},
 	}
@@ -211,6 +228,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.DiskType = ecbConfig.DiskType
 		c.PreferredTags = append([]string(nil), ecbConfig.PreferredTags...)
 		c.ReplicaPlacement = ecbConfig.ReplicaPlacement
+		c.IoBytePerSecond = ecbConfig.IoBytePerSecond
 	}
 
 	return nil
@@ -223,12 +241,25 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadEcBalanceTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadEcBalanceTaskPolicy(); err == nil && policy != nil {
-			if err := cfg.FromTaskPolicy(policy); err == nil {
+		policy, err := persistence.LoadEcBalanceTaskPolicy()
+		switch {
+		case err != nil:
+			glog.Warningf("Could not read the persisted EC balance configuration, falling back to defaults: %v", err)
+		case policy == nil:
+			glog.V(1).Infof("No EC balance configuration persisted yet, using defaults")
+		default:
+			if err := cfg.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Could not apply the persisted EC balance configuration, falling back to defaults: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded EC balance configuration from persistence")
 				return cfg
 			}
 		}
+	} else if configPersistence != nil {
+		// A store was handed in but does not expose the accessor, so the persisted
+		// settings are silently ignored - always a wiring bug, never a normal state.
+		glog.Warningf("%T cannot provide the persisted EC balance configuration: it has no LoadEcBalanceTaskPolicy() method, "+
+			"so the compiled-in defaults are used and any saved EC balance settings are ignored", configPersistence)
 	}
 
 	glog.V(1).Infof("Using default EC balance configuration")

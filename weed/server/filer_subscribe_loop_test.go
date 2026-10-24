@@ -524,6 +524,31 @@ func TestSubscribeLoop_BoundedSubscriptionTerminates(t *testing.T) {
 	}
 }
 
+// A bounded subscription against a filer whose meta-log buffer has never taken
+// a write - fresh restart, zero metadata traffic since - must still terminate.
+// The empty ring makes every memory read return ResumeFromDiskError, and with
+// no gap to resolve the loop used to park inside LoopProcessLogData forever,
+// its idle heartbeats keeping the stream looking healthy to the client.
+func TestSubscribeLoop_BoundedEmptyFilerTerminates(t *testing.T) {
+	h := newSubscribeHarness(t)
+
+	r := h.subscribe(h.base, func(req *filer_pb.SubscribeMetadataRequest) {
+		req.UntilNs = time.Now().UnixNano()
+	})
+
+	select {
+	case err := <-r.done:
+		if err != nil {
+			t.Fatalf("bounded subscription failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bounded subscription on an idle filer did not terminate")
+	}
+	if got := eventTimestamps(r.stream.snapshot()); len(got) > 0 {
+		t.Fatalf("delivered %v from an empty filer", got)
+	}
+}
+
 // Vacuumed logs: the flush watermark proves a gap empty even though the files
 // are gone - the resolver must skip to the retained ring and deliver its
 // earliest window intact, including a single-entry window whose start and stop

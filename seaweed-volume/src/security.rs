@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -192,6 +192,13 @@ impl Guard {
         self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
     }
 
+    /// Whether any write-side control is configured: a non-empty whitelist or a
+    /// signing key. Mirrors Go's non-nil `guard` -- when this is false, every
+    /// caller is allowed and admin RPCs need not carry peer info.
+    pub fn is_write_active(&self) -> bool {
+        self.is_write_active
+    }
+
     /// Check if a remote IP is in the whitelist.
     /// Returns true if write security is inactive (no whitelist and no signing key),
     /// if the whitelist is empty, or if the IP matches.
@@ -290,10 +297,10 @@ impl Guard {
 /// Extract host from "host:port" or "[::1]:port" format.
 fn extract_host(addr: &str) -> String {
     // Handle IPv6 with brackets
-    if addr.starts_with('[') {
-        if let Some(end) = addr.find(']') {
-            return addr[1..end].to_string();
-        }
+    if addr.starts_with('[')
+        && let Some(end) = addr.find(']')
+    {
+        return addr[1..end].to_string();
     }
     // Handle host:port
     if let Some(pos) = addr.rfind(':') {
@@ -474,9 +481,11 @@ mod tests {
         let token = gen_jwt(&key, 3600, "3,01637037d6").unwrap();
 
         // Correct file ID
-        assert!(guard
-            .check_jwt_for_file(Some(&token), "3,01637037d6", true)
-            .is_ok());
+        assert!(
+            guard
+                .check_jwt_for_file(Some(&token), "3,01637037d6", true)
+                .is_ok()
+        );
 
         // Wrong file ID
         let err = guard.check_jwt_for_file(Some(&token), "4,deadbeef", true);

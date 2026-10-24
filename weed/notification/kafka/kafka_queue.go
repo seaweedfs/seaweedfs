@@ -15,8 +15,9 @@ func init() {
 }
 
 type KafkaQueue struct {
-	topic    string
-	producer sarama.AsyncProducer
+	topic      string
+	producer   sarama.AsyncProducer
+	eventTypes map[string]struct{}
 }
 
 func (k *KafkaQueue) GetName() string {
@@ -26,6 +27,9 @@ func (k *KafkaQueue) GetName() string {
 func (k *KafkaQueue) Initialize(configuration util.Configuration, prefix string) (err error) {
 	glog.V(0).Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
 	glog.V(0).Infof("filer.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
+	eventTypes := configuration.GetStringSlice(prefix + "event_types")
+	glog.V(0).Infof("filer.notification.kafka.event_types: %v\n", eventTypes)
+	k.setEventTypes(eventTypes)
 	return k.initialize(
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"topic"),
@@ -63,6 +67,10 @@ func (k *KafkaQueue) initialize(hosts []string, topic string, saslTLS SASLTLSCon
 }
 
 func (k *KafkaQueue) SendMessage(key string, message proto.Message) (err error) {
+	if !k.allowsEvent(key, message) {
+		return nil
+	}
+
 	bytes, err := proto.Marshal(message)
 	if err != nil {
 		return

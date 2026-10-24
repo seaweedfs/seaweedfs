@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -101,7 +102,8 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*types.VolumeHealthMet
 	glog.V(1).Infof("Collecting volume health metrics from master")
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
 
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		// Streamed, so the master never builds the whole listing to send it.
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}

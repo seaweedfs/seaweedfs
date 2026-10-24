@@ -11,6 +11,16 @@
 # Each value can also be set via environment variable, e.g.
 #    export WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
 
+[s3]
+# The address clients reach the S3 gateway at, including the scheme.
+# The file browser uses it to offer copyable object URLs; without it,
+# the copy action is hidden.
+# public_endpoint = "https://s3.example.com"
+
+[maintenance]
+# toggle the entire maintenance system (task detection and execution)
+# enabled = true
+
 [maintenance.vacuum]
 # enabled = true
 # vacuum volumes with more deleted content than this ratio
@@ -47,12 +57,18 @@
 # scan_interval_seconds = 3600
 # max_concurrent = 1
 # min_size_mb = 30
-# only process volumes from this collection ("" = all collections)
+# only process volumes from these collections, comma separated, "*" and "?" wildcards
+# and regex patterns allowed ("" = all collections)
 # collection_filter = ""
 # disk tags preferred for shard placement
 # preferred_tags = ["fast", "ssd"]
 # EC shard placement constraint, e.g. "020"; empty uses the master default replication
 # replica_placement = ""
+# fail planning when the placement constraints cannot be met instead of relaxing them
+# strict_placement = false
+# volume-slot deadband for shard placement: nodes whose free volume slots differ by at
+# most this much tie and fewer live shards wins; applied times data shards (0 = strict)
+# free_slots_deadband = 0
 # max retry attempts for a failed erasure coding job
 # retry_limit = 1
 # seconds to wait between retry attempts

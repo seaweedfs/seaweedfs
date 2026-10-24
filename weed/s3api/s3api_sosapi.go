@@ -156,9 +156,13 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 		masterMap[string(master)] = master
 	}
 
+	// Cluster capacity below is read from disk counters, which a filtered
+	// listing still reports in full.
+	collectionName := s3a.getCollectionName(bucket)
+
 	// Connect to any available master and get volume list (topology)
 	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{Collection: collectionName})
 		if vErr != nil {
 			return vErr
 		}
@@ -168,7 +172,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 		}
 
 		// Calculate used size for the bucket by summing up volumes in the collection
-		used = collectBucketUsageFromTopology(resp.TopologyInfo, s3a.getCollectionName(bucket))
+		used = collectBucketUsageFromTopology(resp.TopologyInfo, collectionName)
 
 		// Calculate cluster capacity if no quota
 		if quota > 0 {

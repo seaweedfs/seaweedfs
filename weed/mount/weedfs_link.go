@@ -46,7 +46,20 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 	oldParentPath, _ := oldEntryPath.DirAndName()
 
-	oldEntry, _, status := wfs.maybeLoadEntry(oldEntryPath)
+	// The new link has to be reported with the node id the kernel already holds
+	// for the source, which is what makes the two names share one file.
+	// oldEntry.Attributes.Inode is not a substitute. It is a mount-runtime
+	// number that only entries created through a mount carry: entries written
+	// by the S3 API, WebDAV or a direct filer call persist inode 0, and the
+	// kernel rejects a LINK reply with NodeId 0 as EIO (invalid_nodeid). It is
+	// also the wrong key for inodeToPath, which is keyed by the numbers handed
+	// to the kernel rather than by the persisted attribute; Lookup's collision
+	// probe can move the two apart even for an entry that does carry one.
+	sourceInode := in.Oldnodeid
+
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldEntryPath)
 	if status != fuse.OK {
 		return status
 	}
@@ -78,7 +91,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		// Do not fall back to the pre-lock snapshot: if every alias
 		// was deleted while we waited, abort instead of deriving the
 		// next counter from a stale entry.
-		fresh, _, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
+		fresh, _, freshStatus := wfs.maybeLoadEntry(ctx, oldEntryPath)
 		if freshStatus != fuse.OK {
 			return freshStatus
 		}
@@ -126,21 +139,20 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	ctx := context.Background()
-	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
+	updateResp, err := wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
 	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
 		}
-		if applyErr := wfs.applyLocalMetadataEvent(ctx, updateEvent); applyErr != nil {
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 	}
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
-		createResp, err = wfs.streamCreateEntry(ctx, request)
+		createResp, err = wfs.streamCreateEntry(context.Background(), request)
 		if err != nil {
 			// Rollback: restore original HardLinkId/Counter on the source entry
 			oldEntry.HardLinkId = origHardLinkId
@@ -150,7 +162,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				Entry:      oldEntry,
 				Signatures: []int32{wfs.signature},
 			}
-			if _, rollbackErr := wfs.streamUpdateEntry(ctx, rollbackReq); rollbackErr != nil {
+			if _, rollbackErr := wfs.streamUpdateEntry(context.Background(), rollbackReq); rollbackErr != nil {
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
 		} else {
@@ -158,7 +170,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
 			}
-			if applyErr := wfs.applyLocalMetadataEvent(ctx, createEvent); applyErr != nil {
+			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
 				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
 			}
@@ -176,16 +188,16 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EIO
 	}
 
-	wfs.inodeToPath.AddPath(oldEntry.Attributes.Inode, newEntryPath)
+	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
 
 	// Propagate the new HardLinkCounter to sibling cache entries and
 	// invalidate the kernel's inode attr cache. Without this, `stat` on any
 	// existing sibling link (other than the source we just wrote) returns
 	// the old nlink from the local metacache — pjdfstest link/00.t catches
 	// this after `link n1 n2` when it stats n0.
-	wfs.syncHardLinkSiblings(oldEntry.Attributes.Inode, oldEntry, oldEntryPath, newEntryPath)
+	wfs.syncHardLinkSiblings(sourceInode, oldEntry, oldEntryPath, newEntryPath)
 
-	wfs.outputPbEntry(out, oldEntry.Attributes.Inode, request.Entry)
+	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
 }

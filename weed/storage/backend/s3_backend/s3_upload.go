@@ -12,7 +12,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string, storageClass string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
+func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string, storageClass string, fn func(progressed int64, percentage float32) error, concurrency int) (fileSize int64, err error) {
+	if concurrency <= 0 {
+		concurrency = defaultUploadConcurrency
+	}
 
 	//open the file
 	f, err := os.Open(filename)
@@ -36,7 +39,7 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(sess, func(u *s3manager.Uploader) {
 		u.PartSize = partSize
-		u.Concurrency = 5
+		u.Concurrency = concurrency
 	})
 
 	fileReader := &s3UploadProgressedReader{

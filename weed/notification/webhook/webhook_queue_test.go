@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -170,6 +171,29 @@ func TestWebhookMessageSerialization(t *testing.T) {
 	}
 }
 
+func newQueueForTest(t *testing.T, cfg *config) *Queue {
+	t.Helper()
+	tgt, err := newTarget("", cfg)
+	if err != nil {
+		t.Fatalf("newTarget() error = %v", err)
+	}
+	q := &Queue{}
+	if err := q.initialize([]*target{tgt}); err != nil {
+		t.Fatalf("initialize() error = %v", err)
+	}
+	return q
+}
+
+func closeQueueForTest(q *Queue) {
+	if q.cancel != nil {
+		q.cancel()
+	}
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range q.routers {
+		r.Close()
+	}
+}
+
 func TestQueueInitialize(t *testing.T) {
 	cfg := &config{
 		endpoint:          "https://example.com/webhook",
@@ -182,32 +206,19 @@ func TestQueueInitialize(t *testing.T) {
 		bufferSize:        100,
 	}
 
-	q := &Queue{}
-	err := q.initialize(cfg)
-	if err != nil {
-		t.Errorf("Initialize() error = %v", err)
-	}
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
 
-	defer func() {
-		if q.cancel != nil {
-			q.cancel()
-		}
-		time.Sleep(100 * time.Millisecond)
-		if q.router != nil {
-			q.router.Close()
-		}
-	}()
-
-	if q.router == nil {
+	if len(q.routers) != 1 {
 		t.Error("Expected router to be initialized")
 	}
 	if q.queueChannel == nil {
 		t.Error("Expected queueChannel to be initialized")
 	}
-	if q.client == nil {
+	if q.targets[0].client == nil {
 		t.Error("Expected client to be initialized")
 	}
-	if q.config == nil {
+	if q.targets[0].config == nil {
 		t.Error("Expected config to be initialized")
 	}
 }
@@ -225,21 +236,8 @@ func TestQueueSendMessage(t *testing.T) {
 		bufferSize:        10,
 	}
 
-	q := &Queue{}
-	err := q.initialize(cfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize queue: %v", err)
-	}
-
-	defer func() {
-		if q.cancel != nil {
-			q.cancel()
-		}
-		time.Sleep(100 * time.Millisecond)
-		if q.router != nil {
-			q.router.Close()
-		}
-	}()
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
 
 	msg := &filer_pb.EventNotification{
 		NewEntry: &filer_pb.Entry{
@@ -247,8 +245,7 @@ func TestQueueSendMessage(t *testing.T) {
 		},
 	}
 
-	err = q.SendMessage("/test/path", msg)
-	if err != nil {
+	if err := q.SendMessage("/test/path", msg); err != nil {
 		t.Errorf("SendMessage() error = %v", err)
 	}
 }
@@ -271,7 +268,7 @@ func TestQueueHandleWebhook(t *testing.T) {
 	}
 
 	client, _ := newHTTPClient(cfg)
-	q := &Queue{
+	tgt := &target{
 		client: client,
 		sem:    make(chan struct{}, cfg.nWorkers),
 	}
@@ -287,8 +284,7 @@ func TestQueueHandleWebhook(t *testing.T) {
 		t.Fatalf("Failed to create watermill message: %v", err)
 	}
 
-	err = q.handleWebhook(wmMsg)
-	if err != nil {
+	if err := tgt.handleWebhook(wmMsg); err != nil {
 		t.Errorf("handleWebhook() error = %v", err)
 	}
 }
@@ -307,21 +303,8 @@ func TestQueueEndToEnd(t *testing.T) {
 		bufferSize:        10,
 	}
 
-	q := &Queue{}
-	err := q.initialize(cfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize queue: %v", err)
-	}
-
-	defer func() {
-		if q.cancel != nil {
-			q.cancel()
-		}
-		time.Sleep(100 * time.Millisecond)
-		if q.router != nil {
-			q.router.Close()
-		}
-	}()
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
 
 	msg := &filer_pb.EventNotification{
 		NewEntry: &filer_pb.Entry{
@@ -329,8 +312,7 @@ func TestQueueEndToEnd(t *testing.T) {
 		},
 	}
 
-	err = q.SendMessage("/test/path", msg)
-	if err != nil {
+	if err := q.SendMessage("/test/path", msg); err != nil {
 		t.Errorf("SendMessage() error = %v", err)
 	}
 }
@@ -347,33 +329,20 @@ func TestQueueRetryMechanism(t *testing.T) {
 		bufferSize:        10,
 	}
 
-	q := &Queue{}
-	err := q.initialize(cfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize queue: %v", err)
-	}
-
-	defer func() {
-		if q.cancel != nil {
-			q.cancel()
-		}
-		time.Sleep(100 * time.Millisecond)
-		if q.router != nil {
-			q.router.Close()
-		}
-	}()
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
 
 	// Verify that the queue is properly configured for retries
-	if q.config.maxRetries != 3 {
-		t.Errorf("Expected maxRetries=3, got %d", q.config.maxRetries)
+	if q.targets[0].config.maxRetries != 3 {
+		t.Errorf("Expected maxRetries=3, got %d", q.targets[0].config.maxRetries)
 	}
 
-	if q.config.backoffSeconds != 2 {
-		t.Errorf("Expected backoffSeconds=2, got %d", q.config.backoffSeconds)
+	if q.targets[0].config.backoffSeconds != 2 {
+		t.Errorf("Expected backoffSeconds=2, got %d", q.targets[0].config.backoffSeconds)
 	}
 
-	if q.config.maxBackoffSeconds != 10 {
-		t.Errorf("Expected maxBackoffSeconds=10, got %d", q.config.maxBackoffSeconds)
+	if q.targets[0].config.maxBackoffSeconds != 10 {
+		t.Errorf("Expected maxBackoffSeconds=10, got %d", q.targets[0].config.maxBackoffSeconds)
 	}
 
 	// Test that we can send a message (retry behavior is handled by Watermill middleware)
@@ -381,8 +350,7 @@ func TestQueueRetryMechanism(t *testing.T) {
 		NewEntry: &filer_pb.Entry{Name: "test.txt"},
 	}
 
-	err = q.SendMessage("/test/retry", msg)
-	if err != nil {
+	if err := q.SendMessage("/test/retry", msg); err != nil {
 		t.Errorf("SendMessage() error = %v", err)
 	}
 }
@@ -419,21 +387,8 @@ func TestQueueNoDuplicateWebhooks(t *testing.T) {
 				bufferSize:        10,
 			}
 
-			q := &Queue{}
-			err := q.initialize(cfg)
-			if err != nil {
-				t.Fatalf("Failed to initialize queue: %v", err)
-			}
-
-			defer func() {
-				if q.cancel != nil {
-					q.cancel()
-				}
-				time.Sleep(100 * time.Millisecond)
-				if q.router != nil {
-					q.router.Close()
-				}
-			}()
+			q := newQueueForTest(t, cfg)
+			defer closeQueueForTest(q)
 
 			// Wait for router and subscriber to be fully ready
 			time.Sleep(200 * time.Millisecond)
@@ -444,8 +399,7 @@ func TestQueueNoDuplicateWebhooks(t *testing.T) {
 				},
 			}
 
-			err = q.SendMessage("/test/path", msg)
-			if err != nil {
+			if err := q.SendMessage("/test/path", msg); err != nil {
 				t.Errorf("SendMessage() error = %v", err)
 			}
 
@@ -605,5 +559,300 @@ func TestQueueSendMessageWithFilter(t *testing.T) {
 				t.Errorf("Expected shouldPublish=%v, got %v", tt.shouldPublish, shouldPublish)
 			}
 		})
+	}
+}
+
+type mapConfig struct {
+	values map[string]interface{}
+}
+
+func (m *mapConfig) GetString(key string) string {
+	v, _ := m.values[key].(string)
+	return v
+}
+
+func (m *mapConfig) GetBool(key string) bool {
+	v, _ := m.values[key].(bool)
+	return v
+}
+
+func (m *mapConfig) GetInt(key string) int {
+	v, _ := m.values[key].(int)
+	return v
+}
+
+func (m *mapConfig) GetStringSlice(key string) []string {
+	v, _ := m.values[key].([]string)
+	return v
+}
+
+func (m *mapConfig) SetDefault(key string, value interface{}) {}
+
+func (m *mapConfig) GetStringMap(key string) map[string]interface{} {
+	v, _ := m.values[key].(map[string]interface{})
+	return v
+}
+
+func TestNamedTargets(t *testing.T) {
+	var hitsA, hitsB atomic.Int32
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	cfg := &mapConfig{values: map[string]interface{}{
+		"notification.webhook": map[string]interface{}{
+			"file_ingress": map[string]interface{}{
+				"enabled":       true,
+				"endpoint":      serverA.URL,
+				"path_prefixes": []string{"/data/"},
+			},
+			"metadata_extractor": map[string]interface{}{
+				"enabled":       true,
+				"endpoint":      serverB.URL,
+				"path_prefixes": []string{"/repository/"},
+			},
+			"disabled_one": map[string]interface{}{
+				"enabled":  false,
+				"endpoint": "https://example.com/never",
+			},
+		},
+		"notification.webhook.file_ingress.enabled":             true,
+		"notification.webhook.file_ingress.endpoint":            serverA.URL,
+		"notification.webhook.file_ingress.path_prefixes":       []string{"/data/"},
+		"notification.webhook.metadata_extractor.enabled":       true,
+		"notification.webhook.metadata_extractor.endpoint":      serverB.URL,
+		"notification.webhook.metadata_extractor.path_prefixes": []string{"/repository/"},
+	}}
+
+	q := &Queue{}
+	if !q.HasEnabledSubconfig(cfg, "notification.webhook.") {
+		t.Fatal("expected named subconfig to be detected as enabled")
+	}
+
+	targets, err := buildTargets(cfg, "notification.webhook.")
+	if err != nil {
+		t.Fatalf("buildTargets() error = %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+	if targets[0].name != "file_ingress" || targets[1].name != "metadata_extractor" {
+		t.Fatalf("unexpected target names: %s, %s", targets[0].name, targets[1].name)
+	}
+
+	if err := q.initialize(targets); err != nil {
+		t.Fatalf("initialize() error = %v", err)
+	}
+	defer closeQueueForTest(q)
+
+	time.Sleep(200 * time.Millisecond)
+
+	msg := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{Name: "f.txt"},
+	}
+	for _, key := range []string{"/data/f.txt", "/repository/f.txt", "/elsewhere/f.txt"} {
+		if err := q.SendMessage(key, msg); err != nil {
+			t.Errorf("SendMessage(%q) error = %v", key, err)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && (hitsA.Load() == 0 || hitsB.Load() == 0) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if got := hitsA.Load(); got != 1 {
+		t.Errorf("expected file_ingress to receive 1 event, got %d", got)
+	}
+	if got := hitsB.Load(); got != 1 {
+		t.Errorf("expected metadata_extractor to receive 1 event, got %d", got)
+	}
+}
+
+func TestQueueBurstKeepsPendingEvents(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config{
+		endpoint:          server.URL,
+		timeoutSeconds:    5,
+		maxRetries:        0,
+		backoffSeconds:    1,
+		maxBackoffSeconds: 1,
+		nWorkers:          1,
+		bufferSize:        2,
+	}
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
+
+	const total = 6
+	msg := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}}
+	for i := 0; i < total; i++ {
+		if err := q.SendMessage("/test/path", msg); err != nil {
+			t.Fatalf("SendMessage() error = %v", err)
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && hits.Load() < total {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := hits.Load(); got != total {
+		t.Errorf("expected %d deliveries, got %d", total, got)
+	}
+}
+
+// A saturated target still applies backpressure to the sender, but it must
+// not starve the targets after it: the event reaches a healthy endpoint
+// while the slow one is still out of pending slots.
+func TestSaturatedTargetDoesNotStarveOthers(t *testing.T) {
+	var hitsA, hitsB atomic.Int32
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	newTestTarget := func(name, endpoint string) *target {
+		tgt, err := newTarget(name, &config{
+			endpoint:          endpoint,
+			timeoutSeconds:    5,
+			maxRetries:        0,
+			backoffSeconds:    1,
+			maxBackoffSeconds: 1,
+			nWorkers:          1,
+			bufferSize:        2,
+		})
+		if err != nil {
+			t.Fatalf("newTarget() error = %v", err)
+		}
+		return tgt
+	}
+	slow := newTestTarget("slow", serverA.URL)
+	fast := newTestTarget("fast", serverB.URL)
+
+	q := &Queue{}
+	if err := q.initialize([]*target{slow, fast}); err != nil {
+		t.Fatalf("initialize() error = %v", err)
+	}
+	defer closeQueueForTest(q)
+
+	for i := 0; i < cap(slow.pending); i++ {
+		slow.pending <- struct{}{}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- q.SendMessage("/test/path", &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}})
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && hitsB.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := hitsB.Load(); got != 1 {
+		t.Fatalf("expected fast target to receive the event while slow is saturated, got %d", got)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("SendMessage() returned %v while the saturated target had no free slot", err)
+	default:
+	}
+
+	<-slow.pending
+	if err := <-done; err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && hitsA.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := hitsA.Load(); got != 1 {
+		t.Errorf("expected the saturated target to deliver once a slot freed, got %d", got)
+	}
+}
+
+// A disabled flat section keeps no target even when an endpoint is set —
+// the scaffold ships exactly that combination, and a named target must not
+// reactivate it.
+func TestBuildTargetsDisabledFlat(t *testing.T) {
+	cfg := &mapConfig{values: map[string]interface{}{
+		"notification.webhook": map[string]interface{}{
+			"enabled":  false,
+			"endpoint": "https://your-server.com/webhook",
+			"named": map[string]interface{}{
+				"enabled":  true,
+				"endpoint": "https://example.com/hook",
+			},
+		},
+		"notification.webhook.enabled":        false,
+		"notification.webhook.endpoint":       "https://your-server.com/webhook",
+		"notification.webhook.named.enabled":  true,
+		"notification.webhook.named.endpoint": "https://example.com/hook",
+	}}
+
+	targets, err := buildTargets(cfg, "notification.webhook.")
+	if err != nil {
+		t.Fatalf("buildTargets() error = %v", err)
+	}
+	if len(targets) != 1 || targets[0].name != "named" {
+		t.Fatalf("expected only the named target, got %v", targets)
+	}
+}
+
+// A failing endpoint must be retried maxRetries times before the event is
+// dead-lettered — the poison middleware has to sit outside the retry chain
+// or it swallows the first error and retries never run.
+func TestQueueRetriesBeforeDeadLetter(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := &config{
+		endpoint:          server.URL,
+		timeoutSeconds:    5,
+		maxRetries:        2,
+		backoffSeconds:    1,
+		maxBackoffSeconds: 1,
+		nWorkers:          1,
+		bufferSize:        10,
+	}
+	q := newQueueForTest(t, cfg)
+	defer closeQueueForTest(q)
+
+	msg := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}}
+	if err := q.SendMessage("/test/path", msg); err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+
+	want := int32(cfg.maxRetries + 1)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) && hits.Load() < want {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := hits.Load(); got != want {
+		t.Errorf("expected %d delivery attempts (1 + %d retries), got %d", want, cfg.maxRetries, got)
 	}
 }

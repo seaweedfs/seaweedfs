@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -56,6 +57,9 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
+	// Clear the stamp after the buffer append below - deliberately also on
+	// append failure (see the metaLogInflight comment).
+	defer f.metaLogInflight.done(event.TsNs)
 	eventNotification := event.EventNotification
 
 	if notification.Queue != nil {
@@ -67,6 +71,10 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	f.logMetaEvent(ctx, event)
+	// Record the commit timestamp so a peer replay ordered by the entry lock
+	// this mutation may still be under sees the local change, including as a
+	// tombstone after the entry itself is gone.
+	f.noteCommittedEvent(event)
 	if sink := metadataEventSinkFromContext(ctx); sink != nil {
 		sink.Record(event)
 	}
@@ -74,6 +82,119 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	f.onMetadataChangeEvent(event)
 
 	return event
+}
+
+// metaLogInflight tracks events stamped but not yet appended to the local
+// log buffer - the two are separated by notification work that can block,
+// and a claim ignoring that window would assert durability or delivery for
+// timestamps still on their way in. Stamping shares the reader's lock, so an
+// event is always visible here or (bumped monotonically) in the buffer.
+//
+// An event whose append fails also clears its stamp: it is dropped from the
+// change stream entirely (loudly logged there), and a watermark waiting for
+// it would pin this filer's claims forever.
+type metaLogInflight struct {
+	sync.Mutex
+	stamped     map[int64]int
+	lastStampNs int64
+	lastClaimNs int64
+}
+
+// stamp assigns the event timestamp and registers it as in flight. Stamps
+// are monotonic against the registry's own history and every issued claim,
+// so a wall-clock step backwards cannot slip a new stamp under a floor or
+// watermark already handed out.
+func (t *metaLogInflight) stamp() int64 {
+	t.Lock()
+	defer t.Unlock()
+	floor := t.lastStampNs
+	if t.lastClaimNs > floor {
+		floor = t.lastClaimNs
+	}
+	tsNs := time.Now().UnixNano()
+	if tsNs <= floor {
+		tsNs = floor + 1
+	}
+	t.lastStampNs = tsNs
+	if t.stamped == nil {
+		t.stamped = make(map[int64]int)
+	}
+	t.stamped[tsNs]++
+	return tsNs
+}
+
+// done removes a stamp once the event has been appended to the buffer.
+func (t *metaLogInflight) done(tsNs int64) {
+	t.Lock()
+	defer t.Unlock()
+	if t.stamped[tsNs] <= 1 {
+		delete(t.stamped, tsNs)
+	} else {
+		t.stamped[tsNs]--
+	}
+}
+
+// minTsNs returns the oldest in-flight stamp, or 0 when nothing is in flight.
+func (t *metaLogInflight) minTsNs() int64 {
+	t.Lock()
+	defer t.Unlock()
+	var min int64
+	for tsNs := range t.stamped {
+		if min == 0 || tsNs < min {
+			min = tsNs
+		}
+	}
+	return min
+}
+
+// claimThrough caps a completeness claim by the oldest in-flight stamp and
+// fences it: later stamps always land above the returned claim, so a wall
+// clock stepping backwards cannot slide a new event under a watermark a
+// peer has already advanced to.
+func (t *metaLogInflight) claimThrough(nowNs int64) int64 {
+	t.Lock()
+	defer t.Unlock()
+	claim := nowNs
+	for tsNs := range t.stamped {
+		if tsNs-1 < claim {
+			claim = tsNs - 1
+		}
+	}
+	if claim > t.lastClaimNs {
+		t.lastClaimNs = claim
+	}
+	return claim
+}
+
+// LocalFlushedThroughTsNs reports the timestamp through which the local meta
+// log is durably on disk: everything at or below it is appended and flushed,
+// and nothing can land at or below it later. The registry is consulted before
+// the buffer: an event already appended is visible to the buffer claim, one
+// still in flight caps the claim, and one stamped later is fenced above it.
+func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
+	claim := f.metaLogInflight.claimThrough(nowNs)
+	if buffered := f.LocalMetaLogBuffer.FlushedThroughTsNs(nowNs); buffered < claim {
+		claim = buffered
+	}
+	return claim
+}
+
+// LocalDeliveredThroughTsNs caps a delivery-freshness claim (an idle
+// heartbeat's timestamp) by the oldest in-flight stamp: a stamped-but-
+// unappended event has not been streamed to anyone, and a peer aggregator
+// turns the claim into its delivery low-watermark.
+func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
+	return f.metaLogInflight.claimThrough(nowNs)
+}
+
+// StampMetaLogInflightForTest and DoneMetaLogInflightForTest let tests in
+// other packages exercise the claim caps. Not for production use.
+func (f *Filer) StampMetaLogInflightForTest() int64 {
+	return f.metaLogInflight.stamp()
+}
+
+func (f *Filer) DoneMetaLogInflightForTest(tsNs int64) {
+	f.metaLogInflight.done(tsNs)
 }
 
 func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
@@ -102,7 +223,8 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 			IsFromOtherCluster: isFromOtherCluster,
 			Signatures:         signatures,
 		},
-		TsNs: time.Now().UnixNano(),
+		// In flight until appended to the local log buffer (see metaLogInflight).
+		TsNs: f.metaLogInflight.stamp(),
 	}
 }
 
@@ -128,6 +250,11 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 // under any configuration that works at all; a cluster running below it says so
 // in the rejection and volumeFileSizeLimit picks the real limit up from there.
 const metadataLogUploadLimit = log_buffer.BufferSize
+
+// shutdownMetadataLogFlushBudget bounds how long metadata-log flushes may keep
+// retrying once the filer is shutting down; Shutdown cancels the shared flush
+// context when it expires.
+const shutdownMetadataLogFlushBudget = 15 * time.Second
 
 var fileSizeLimitPattern = regexp.MustCompile(`file over the limited (\d+) bytes`)
 
@@ -160,17 +287,30 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 
 	// One piece at a time, each retried on its own so a partial success is not
 	// replayed, and the piece size follows the limit the volume servers report.
+	// While the filer keeps running the retry is unbounded so no metadata is
+	// dropped; once Shutdown arms the flush deadline the shared context cancels
+	// and the flush drops what is left instead of holding shutdown open.
 	limit := metadataLogUploadLimit
+	ctx := f.flushCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for len(buf) > 0 {
 		piece := nextLogPiece(buf, limit)
-		if err := f.appendToFile(targetFile, piece); err != nil {
+		if err := f.appendToFile(ctx, targetFile, piece); err != nil {
 			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			if reported := volumeFileSizeLimit(err); reported > 0 && reported < limit {
 				glog.V(0).Infof("metadata log upload limit lowered to %d bytes", reported)
 				limit = reported
 				continue
 			}
-			time.Sleep(737 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				logBuffer.NoteFlushDropped(len(buf))
+				glog.V(0).Infof("metadata log flush abandoned during shutdown, %d bytes left for %s: %v", len(buf), targetFile, ctx.Err())
+				return
+			case <-time.After(737 * time.Millisecond):
+			}
 			continue
 		}
 		buf = buf[len(piece):]
@@ -257,7 +397,7 @@ func (f *Filer) ReadPersistedLogBuffer(ctx context.Context, startPosition log_bu
 
 	// Readahead: run the visitor in a background goroutine so volume server I/O
 	// for the next log file overlaps with event processing and gRPC delivery.
-	const readaheadSize = 1024
+	const readaheadSize = 8192
 	type entryOrErr struct {
 		entry *filer_pb.LogEntry
 		err   error

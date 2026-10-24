@@ -19,6 +19,9 @@ type ClusterTopology struct {
 	TotalChunks int64     `json:"total_chunks"`
 	TotalSize   int64     `json:"total_size"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 type MasterNode struct {
@@ -52,6 +55,11 @@ type VolumeServer struct {
 	EcVolumes      int                  `json:"ec_volumes"`       // Number of EC volumes this server has shards for
 	EcShards       int                  `json:"ec_shards"`        // Total number of EC shards on this server
 	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
+
+	// RemoteSize is the bytes this server's remote-tiered volumes hold in
+	// cloud storage. Those bytes are excluded from DiskUsage, which only
+	// counts what occupies local disks.
+	RemoteSize int64 `json:"remote_size"`
 }
 
 func (vs *VolumeServer) GetDisplayAddress() string {
@@ -90,6 +98,12 @@ type S3Bucket struct {
 
 	LifecycleRuleCount    int `json:"lifecycle_rule_count"`
 	LifecycleEnabledCount int `json:"lifecycle_enabled_count"`
+
+	// PolicyStatementCount is the number of statements in the bucket policy,
+	// or 0 if the bucket has none. A policy document can't have zero
+	// statements (see policy_engine.ValidatePolicy), so >0 is a faithful
+	// "has a policy" flag.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3Object struct {
@@ -770,4 +784,8 @@ type IcebergTableDetailsData struct {
 	TotalSizeBytes   int64                       `json:"total_size_bytes"`
 	HasTotalSize     bool                        `json:"has_total_size"`
 	MetadataError    string                      `json:"metadata_error,omitempty"`
+	// Set when the details came from a plugin worker rather than from metadata
+	// this server can read, so the page can say whose account it is and when.
+	ObservedBy string    `json:"observed_by,omitempty"`
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }

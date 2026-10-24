@@ -26,7 +26,9 @@ func init() {
 		Category: pluginworker.CategoryHeavy,
 		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
 		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
-			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
+			h := NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir)
+			h.workerAddress = strings.TrimSpace(opts.WorkerAddress)
+			return h, nil
 		},
 	})
 }
@@ -39,6 +41,7 @@ type erasureCodingWorkerConfig struct {
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
 	workingDir     string
+	workerAddress  string
 }
 
 func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
@@ -78,7 +81,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only detect erasure coding opportunities in this collection when set.",
+							Description: "Only erasure code volumes in matching collections. Comma-separated list of names, wildcards, or regex patterns.",
 							Placeholder: "all collections",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -95,7 +98,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "erasure-coding-worker",
 			Title:       "Erasure Coding Worker Config",
-			Description: "Worker-side detection thresholds.",
+			Description: "Worker-side detection and shard placement.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "thresholds",
@@ -130,6 +133,13 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
+					},
+				},
+				{
+					SectionId:   "placement",
+					Title:       "Shard Placement",
+					Description: "Where EC shards go: disk tags, replica-placement caps, Place ranking.",
+					Fields: []*plugin_pb.ConfigField{
 						{
 							Name:        "preferred_tags",
 							Label:       "Preferred Tags",
@@ -145,6 +155,22 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Placeholder: "020",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "free_slots_deadband",
+							Label:       "Free Volume Deadband (M)",
+							Description: "Nodes whose free volume slots differ by at most M are a tie; then fewer live shards wins. Applied as M × data shards (10+4 → ×10). 0 = always pick more free slots.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 100000}},
+						},
+						{
+							Name:        "strict_placement",
+							Label:       "Strict Placement",
+							Description: "Fail EC planning when the placement constraints cannot be met instead of relaxing them.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
 						},
 					},
 				},
@@ -164,6 +190,12 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"replica_placement": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"strict_placement": {
+					Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
+				},
+				"free_slots_deadband": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 				},
 			},
 		},
@@ -191,6 +223,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"preferred_tags": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+			},
+			"free_slots_deadband": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 			},
 		},
 	}
@@ -296,7 +331,10 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := wildcard.CompileWildcardMatchers(taskConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(taskConfig.CollectionFilter)
+	if err != nil {
+		return err
+	}
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -334,7 +372,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			skippedTooSmall++
 			continue
 		}
-		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
+		if !allowedCollections.Matches(metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}
@@ -506,6 +544,7 @@ func (h *ErasureCodingHandler) Execute(
 		params.Collection,
 		h.grpcDialOption,
 	)
+	task.workerAddress = h.workerAddress
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
@@ -621,6 +660,16 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 
 	taskConfig.ReplicaPlacement = strings.TrimSpace(pluginworker.ReadStringConfig(values, "replica_placement", taskConfig.ReplicaPlacement))
 
+	taskConfig.StrictPlacement = pluginworker.ReadBoolConfig(values, "strict_placement", taskConfig.StrictPlacement)
+
+	deadband := pluginworker.ReadIntConfig(values, "free_slots_deadband", taskConfig.FreeSlotsDeadband)
+	if deadband < 0 {
+		deadband = 0
+	} else if deadband > 100000 {
+		deadband = 100000
+	}
+	taskConfig.FreeSlotsDeadband = deadband
+
 	return &erasureCodingWorkerConfig{
 		TaskConfig: taskConfig,
 	}
@@ -655,8 +704,15 @@ func buildErasureCodingProposal(
 	}
 
 	sourceNode := ""
-	if len(params.Sources) > 0 {
-		sourceNode = strings.TrimSpace(params.Sources[0].Node)
+	var replicaServers []string
+	for _, s := range params.Sources {
+		if s == nil || strings.TrimSpace(s.Node) == "" || len(s.ShardIds) > 0 {
+			continue
+		}
+		replicaServers = append(replicaServers, s.Node)
+		if sourceNode == "" {
+			sourceNode = strings.TrimSpace(s.Node)
+		}
 	}
 
 	summary := fmt.Sprintf("Erasure code volume %d", result.VolumeID)
@@ -686,6 +742,9 @@ func buildErasureCodingProposal(
 			},
 			"source_server": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: sourceNode},
+			},
+			"replica_servers": {
+				Kind: &plugin_pb.ConfigValue_StringList{StringList: &plugin_pb.StringList{Values: replicaServers}},
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},

@@ -27,24 +27,27 @@ func TestEcMaintenanceModeRejections(t *testing.T) {
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Encode a volume before entering maintenance mode so the shard delete
+	// below has real shards to remove.
+	const ecVolumeID = uint32(1)
+	framework.AllocateVolume(t, grpcClient, ecVolumeID, "")
+	httpClient := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(ecVolumeID, 990001, 0x11223344), []byte("ec-maintenance-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{
-			Maintenance: true,
-			Version:     stateResp.GetState().GetVersion(),
-		},
-	})
-	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
+	if _, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: ecVolumeID, Collection: ""}); err != nil {
+		t.Fatalf("VolumeEcShardsGenerate before maintenance failed: %v", err)
 	}
 
-	_, err = grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: 1, Collection: ""})
+	framework.EnableMaintenanceMode(t, ctx, grpcClient)
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: 1, Collection: ""})
 	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
 		t.Fatalf("VolumeEcShardsGenerate maintenance error mismatch: %v", err)
 	}
@@ -59,13 +62,23 @@ func TestEcMaintenanceModeRejections(t *testing.T) {
 		t.Fatalf("VolumeEcShardsCopy maintenance error mismatch: %v", err)
 	}
 
+	// Deleting shards removes data rather than adding it, and is how evacuating
+	// EC shards off a server in maintenance mode finishes (issue #11066).
 	_, err = grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-		VolumeId:   1,
+		VolumeId:   ecVolumeID,
 		Collection: "",
 		ShardIds:   []uint32{0},
 	})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeEcShardsDelete maintenance error mismatch: %v", err)
+	if err != nil {
+		t.Fatalf("VolumeEcShardsDelete should succeed in maintenance mode, got: %v", err)
+	}
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   ecVolumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err == nil {
+		t.Fatalf("VolumeEcShardsMount should fail once shard 0 has been deleted")
 	}
 
 	_, err = grpcClient.VolumeEcBlobDelete(ctx, &volume_server_pb.VolumeEcBlobDeleteRequest{

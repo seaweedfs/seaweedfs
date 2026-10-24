@@ -105,10 +105,13 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 					var locations []Location
 					for _, masterLoc := range vidLoc.Locations {
 						loc := Location{
-							Url:        masterLoc.Url,
-							PublicUrl:  masterLoc.PublicUrl,
-							GrpcPort:   int(masterLoc.GrpcPort),
-							DataCenter: masterLoc.DataCenter,
+							Url:               masterLoc.Url,
+							PublicUrl:         masterLoc.PublicUrl,
+							GrpcPort:          int(masterLoc.GrpcPort),
+							DataCenter:        masterLoc.DataCenter,
+							DataInRemote:      masterLoc.DataInRemote,
+							ReadOnly:          masterLoc.ReadOnly,
+							ReadOnlyCanDelete: masterLoc.ReadOnlyCanDelete,
 						}
 						// Update cache with the location
 						p.masterClient.addLocation(uint32(vid), loc)
@@ -142,19 +145,81 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 type MasterClient struct {
 	*vidMapClient // Embedded cache with shared logic
 
-	FilerGroup           string
-	clientType           string
-	clientHost           pb.ServerAddress
-	rack                 string
-	currentMaster        pb.ServerAddress
-	currentMasterLock    sync.RWMutex
-	masters              pb.ServerDiscovery
+	FilerGroup        string
+	clientType        string
+	clientHost        pb.ServerAddress
+	rack              string
+	currentMaster     pb.ServerAddress
+	lastServedMaster  pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	masters           pb.ServerDiscovery
+	mastersLock       sync.Mutex
+	// refreshLock serializes SRV refreshes so an older lookup finishing
+	// second cannot overwrite a newer saved list.
+	refreshLock          sync.Mutex
 	grpcDialOption       grpc.DialOption
 	grpcTimeout          time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock     sync.RWMutex
 	OnLockRingUpdate     func(update *master_pb.LockRingUpdate)
 	OnLockRingUpdateLock sync.RWMutex
+	OnMasterChange       func(previous, current pb.ServerAddress)
+	OnMasterChangeLock   sync.RWMutex
+
+	// streamLock publishes the stream only after its registration send, so a
+	// leave sent afterwards never races that send.
+	streamLock      sync.Mutex
+	stream          master_pb.Seaweed_KeepConnectedClient
+	leavingLockRing bool
+
+	// announceCh, when non-nil, gates the registration send that adds this
+	// client to the master's list, so a server can connect and query masters
+	// before it is ready to be routed to.
+	announceCh chan struct{}
+}
+
+// SetAnnounceCh sets a channel that must be closed before this client
+// registers itself on the master.
+func (mc *MasterClient) SetAnnounceCh(ch chan struct{}) {
+	mc.announceCh = ch
+}
+
+// ListMasters returns the configured master addresses without waiting for a
+// connection, for callers that run before KeepConnectedToMaster is connected.
+func (mc *MasterClient) ListMasters() []pb.ServerAddress {
+	mc.refreshMasters()
+	return mc.masterInstances()
+}
+
+// ListCachedMasters returns the most recently resolved master addresses
+// without a fresh SRV lookup, for callers on a deadline that cannot wait for
+// DNS.
+func (mc *MasterClient) ListCachedMasters() []pb.ServerAddress {
+	return mc.masterInstances()
+}
+
+// refreshMasters resolves the SRV record outside mastersLock so a slow DNS
+// lookup does not stall masterInstances readers; the lock only covers saving
+// the resolved list. refreshLock is held across lookup and save so
+// overlapping refreshes keep resolution order.
+func (mc *MasterClient) refreshMasters() {
+	mc.refreshLock.Lock()
+	defer mc.refreshLock.Unlock()
+	newList := mc.masters.LookupSrvInstances()
+	if newList == nil {
+		return
+	}
+	mc.mastersLock.Lock()
+	defer mc.mastersLock.Unlock()
+	mc.masters.SetInstances(newList)
+}
+
+// masterInstances returns a consistent copy of the configured masters,
+// serialized against SRV refreshes.
+func (mc *MasterClient) masterInstances() []pb.ServerAddress {
+	mc.mastersLock.Lock()
+	defer mc.mastersLock.Unlock()
+	return mc.masters.GetInstances()
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -189,11 +254,18 @@ func (mc *MasterClient) SetOnLockRingUpdateFn(fn func(update *master_pb.LockRing
 	mc.OnLockRingUpdateLock.Unlock()
 }
 
+func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerAddress)) {
+	mc.OnMasterChangeLock.Lock()
+	mc.OnMasterChange = fn
+	mc.OnMasterChangeLock.Unlock()
+}
+
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 	var nextHintedLeader pb.ServerAddress
 	failedMasters := make(map[pb.ServerAddress]struct{})
-	mc.masters.RefreshBySrvIfAvailable()
-	for _, master := range mc.masters.GetInstances() {
+	mc.refreshMasters()
+	masterAddrs := mc.masterInstances()
+	for _, master := range masterAddrs {
 		if _, failed := failedMasters[master]; failed {
 			continue
 		}
@@ -216,7 +288,12 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 				}
 			}
 		}
-		mc.setCurrentMaster("")
+		// After a canceled disconnect the last master still answers unary
+		// queries (e.g. the metadata-log flush during filer shutdown), so
+		// only clear the serving address on an unintended disconnect.
+		if ctx.Err() == nil {
+			mc.setCurrentMaster("")
+		}
 	}
 }
 
@@ -236,18 +313,45 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		}
 		glog.V(1).Infof("%s.%s masterClient gRPC stream established to %s in %v", mc.FilerGroup, mc.clientType, master, time.Since(connectStartTime))
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{
+		// The stream is usable for queries before registration, so callers
+		// blocked in GetMaster (e.g. loading a chunked filer.conf during
+		// startup) proceed while the announce gate still holds.
+		mc.setCurrentMaster(master)
+
+		if mc.announceCh != nil {
+			select {
+			case <-mc.announceCh:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		mc.streamLock.Lock()
+		err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
 			DataCenter:    mc.GetDataCenter(),
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
 			Version:       version.Version(),
-		}); err != nil {
+			LeaveLockRing: mc.leavingLockRing,
+		})
+		if err == nil {
+			mc.stream = stream
+		}
+		mc.streamLock.Unlock()
+		if err != nil {
 			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()
 			return err
 		}
+		defer func() {
+			mc.streamLock.Lock()
+			if mc.stream == stream {
+				mc.stream = nil
+			}
+			mc.streamLock.Unlock()
+		}()
 		glog.V(1).Infof("%s.%s masterClient Connected to %v", mc.FilerGroup, mc.clientType, master)
 
 		resp, err := stream.Recv()
@@ -277,7 +381,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			// Still need to reset cache to ensure we don't use stale data from previous master
 			mc.resetVidMap()
 		}
-		mc.setCurrentMaster(master)
+		if previous := mc.markServingMaster(master); previous != "" {
+			mc.OnMasterChangeLock.RLock()
+			if mc.OnMasterChange != nil {
+				glog.V(0).Infof("%s.%s masterClient master changed %s -> %s", mc.FilerGroup, mc.clientType, previous, master)
+				mc.OnMasterChange(previous, master)
+			}
+			mc.OnMasterChangeLock.RUnlock()
+		}
 
 		for {
 			resp, err := stream.Recv()
@@ -351,6 +462,19 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 	return nextHintedLeader
 }
 
+// LeaveLockRing asks the master to drop this client from the lock ring while it
+// stays connected, and keeps it out of the ring on any later reconnect.
+func (mc *MasterClient) LeaveLockRing() error {
+	mc.streamLock.Lock()
+	mc.leavingLockRing = true
+	stream := mc.stream
+	mc.streamLock.Unlock()
+	if stream == nil {
+		return nil
+	}
+	return stream.Send(&master_pb.KeepConnectedRequest{LeaveLockRing: true})
+}
+
 // addedVids indexes added ids that are also being removed. A volume moved
 // between a server's disks is reported both ways in one message, and the server
 // still has it -- acting on the removal would drop a good location, whichever
@@ -367,6 +491,12 @@ func addedVids(added, removed []uint32) map[uint32]struct{} {
 	return index
 }
 
+// updateVidMap applies a KeepConnectedResponse volume-location message to the
+// local vidMap. NewVids adds the entries; RemoteVids names the subset of them
+// backed by remote storage, which is added with DataInRemote so read paths can
+// prefer the cheap local replica. DeletedVids drops the named entry unless the
+// same message also added it back (volume moved between this server's disks).
+// EC vid changes go through the parallel addEcLocation / deleteEcLocation pair.
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	if resp.VolumeLocation.IsEmptyUrl() {
 		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
@@ -380,9 +510,54 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
 	stillOnServer := addedVids(resp.VolumeLocation.NewVids, resp.VolumeLocation.DeletedVids)
+	// RemoteVids repeats ids NewVids already carries, so the tier is settled
+	// before anything is written rather than adding each one twice.
+	var remoteVids map[uint32]struct{}
+	if len(resp.VolumeLocation.RemoteVids) > 0 {
+		remoteVids = make(map[uint32]struct{}, len(resp.VolumeLocation.RemoteVids))
+		for _, vid := range resp.VolumeLocation.RemoteVids {
+			remoteVids[vid] = struct{}{}
+		}
+	}
+	var readOnlyVids map[uint32]struct{}
+	if len(resp.VolumeLocation.ReadOnlyVids) > 0 {
+		readOnlyVids = make(map[uint32]struct{}, len(resp.VolumeLocation.ReadOnlyVids))
+		for _, vid := range resp.VolumeLocation.ReadOnlyVids {
+			readOnlyVids[vid] = struct{}{}
+		}
+	}
+	var readOnlyCanDeleteVids map[uint32]struct{}
+	if len(resp.VolumeLocation.ReadOnlyCanDeleteVids) > 0 {
+		readOnlyCanDeleteVids = make(map[uint32]struct{}, len(resp.VolumeLocation.ReadOnlyCanDeleteVids))
+		for _, vid := range resp.VolumeLocation.ReadOnlyCanDeleteVids {
+			readOnlyCanDeleteVids[vid] = struct{}{}
+		}
+	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
-		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
-		mc.addLocation(newVid, loc)
+		if _, isRemote := remoteVids[newVid]; isRemote {
+			continue
+		}
+		newLoc := loc
+		if _, isReadOnly := readOnlyVids[newVid]; isReadOnly {
+			newLoc.ReadOnly = true
+		}
+		if _, canDelete := readOnlyCanDeleteVids[newVid]; canDelete {
+			newLoc.ReadOnlyCanDelete = true
+		}
+		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, newLoc.Url, newVid)
+		mc.addLocation(newVid, newLoc)
+	}
+	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
+		remoteLoc := loc
+		remoteLoc.DataInRemote = true
+		if _, isReadOnly := readOnlyVids[remoteVid]; isReadOnly {
+			remoteLoc.ReadOnly = true
+		}
+		if _, canDelete := readOnlyCanDeleteVids[remoteVid]; canDelete {
+			remoteLoc.ReadOnlyCanDelete = true
+		}
+		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
+		mc.addLocation(remoteVid, remoteLoc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		if _, moved := stillOnServer[deletedVid]; moved {
@@ -403,22 +578,32 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
-		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
-		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
+		len(resp.VolumeLocation.NewVids)-len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.DeletedVids), len(resp.VolumeLocation.NewEcVids),
+		len(resp.VolumeLocation.DeletedEcVids))
 }
 
-func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	getMasterF := func() pb.ServerAddress {
-		return mc.GetMaster(context.Background())
+		return mc.GetMaster(ctx)
 	}
-	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
+	return mc.WithClientCustomGetMaster(ctx, getMasterF, streamingMode, fn)
 }
 
-func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
-	return util.Retry("master grpc", func() error {
-		return pb.WithMasterClient(context.Background(), streamingMode, getMasterF(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+// WithClientCustomGetMaster bounds the wait for a master leader by ctx, so a
+// caller with a deadline is not parked for the length of an election. The dial
+// still gets context.Background(): fn brings its own RPC context, so nothing
+// here can attribute a cancellation to the shared connection.
+func (mc *MasterClient) WithClientCustomGetMaster(ctx context.Context, getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+	return util.RetryWithBackoff(ctx, "master grpc", util.RetryWaitTime, util.IsTransientError, func() error {
+		master := getMasterF()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return pb.WithMasterClient(context.Background(), streamingMode, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			return fn(client)
 		})
 	})
@@ -434,6 +619,21 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 	mc.currentMasterLock.Lock()
 	mc.currentMaster = master
 	mc.currentMasterLock.Unlock()
+}
+
+// markServingMaster records the master now serving this client and returns
+// the previously served one when it differs. Unlike currentMaster,
+// lastServedMaster survives the disconnected gap between reconnect attempts,
+// so a leader change is still detected.
+func (mc *MasterClient) markServingMaster(master pb.ServerAddress) (previous pb.ServerAddress) {
+	mc.currentMasterLock.Lock()
+	defer mc.currentMasterLock.Unlock()
+	if mc.lastServedMaster != "" && !mc.lastServedMaster.Equals(master) {
+		previous = mc.lastServedMaster
+	}
+	mc.currentMaster = master
+	mc.lastServedMaster = master
+	return
 }
 
 // GetMaster returns the current master address, blocking until connected.
@@ -460,14 +660,14 @@ func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
 // See GetMaster() for important initialization contract details.
 func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 	mc.WaitUntilConnected(ctx)
-	return mc.masters.GetInstances()
+	return mc.masterInstances()
 }
 
 // ListMasterSet returns a set of configured master addresses keyed by their
 // canonical http form. Unlike GetMasters this does not wait for a connection,
 // so it is safe to call from admission paths that must stay non-blocking.
 func (mc *MasterClient) ListMasterSet() map[string]struct{} {
-	addrs := mc.masters.GetInstances()
+	addrs := mc.masterInstances()
 	set := make(map[string]struct{}, len(addrs))
 	for _, a := range addrs {
 		set[a.ToHttpAddress()] = struct{}{}
@@ -531,7 +731,7 @@ func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
 }
 
 func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddress) (leader string) {
-	for _, master := range mc.masters.GetInstances() {
+	for _, master := range mc.masterInstances() {
 		if master == myMasterAddress {
 			continue
 		}

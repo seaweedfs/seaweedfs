@@ -14,6 +14,9 @@ import (
 
 const oidcProvidersDir = filer.IamConfigDirectory + "/oidc-providers"
 
+// rolesDir is the filer role store's default base path (sts.DefaultRoleBasePath).
+const rolesDir = filer.IamConfigDirectory + "/roles"
+
 func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, prefix string, directoriesToWatch []string) {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -33,6 +36,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onOIDCProviderChange(dir, message.OldEntry, message.NewEntry)
+		s3a.onRoleChange(dir)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		// For moves across directories, replay a delete event for the source directory
@@ -40,6 +44,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onOIDCProviderChange(resp.Directory, message.OldEntry, nil)
+			s3a.onRoleChange(resp.Directory)
 			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
 		}
 
@@ -84,44 +89,27 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 		return nil
 	}
 
-	reloadIamConfig := func(reason string) error {
-		glog.V(1).Infof("IAM change detected in %s, reloading configuration", reason)
-		if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
-			// the event stream moves on; retry state-based until a reload succeeds
-			glog.Errorf("failed to reload IAM configuration after change in %s: %v", reason, err)
-			s3a.iam.scheduleReload()
-			return err
-		}
-		return nil
-	}
+	// Coalesce bursts through the reload queue instead of one full synchronous
+	// reload per event: independently-refreshing credentials can rewrite several
+	// files within the same second.
 
 	// 1. Handle traditional single identity.json file
 	if dir == filer.IamConfigDirectory {
-		// Handle create/update/delete events on legacy identity.json.
-		// During migration this file is renamed, which emits a delete event.
-		// Always reload from the credential manager so we keep the migrated identities.
 		if (oldEntry != nil && oldEntry.Name == filer.IamIdentityFile) ||
 			(newEntry != nil && newEntry.Name == filer.IamIdentityFile) {
-			if err := reloadIamConfig(dir + "/" + filer.IamIdentityFile); err != nil {
-				return err
-			}
+			s3a.iam.scheduleReload(dir + "/" + filer.IamIdentityFile)
 		}
 		return nil
 	}
 
-	// 2. Handle multiple-file identities and policies
-	// Watch /etc/iam/{identities,policies,service_accounts}
+	// 2. Handle multiple-file identities, policies, service accounts and groups
 	isIdentityDir := dir == filer.IamConfigDirectory+"/identities" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/identities/")
 	isPolicyDir := dir == filer.IamConfigDirectory+"/policies" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/policies/")
 	isServiceAccountDir := dir == filer.IamConfigDirectory+"/service_accounts" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/service_accounts/")
 	isGroupDir := dir == filer.IamConfigDirectory+"/groups" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/groups/")
 
 	if isIdentityDir || isPolicyDir || isServiceAccountDir || isGroupDir {
-		// For multiple-file mode, any change in these directories should trigger a full reload
-		// from the credential manager (which handles the details of loading from multiple files).
-		if err := reloadIamConfig(dir); err != nil {
-			return err
-		}
+		s3a.iam.scheduleReload(dir)
 	}
 
 	return nil
@@ -154,6 +142,40 @@ func (s3a *S3ApiServer) onOIDCProviderChange(dir string, oldEntry *filer_pb.Entr
 	return nil
 }
 
+// roleStoreDir is the directory the persisted role store keeps roles in: its
+// configured basePath, else the default. The metadata subscription watches it.
+func (s3a *S3ApiServer) roleStoreDir() string {
+	if s3a.iam != nil {
+		if provider, ok := s3a.iam.iamIntegration.(IAMManagerProvider); ok {
+			if mgr := provider.GetIAMManager(); mgr != nil {
+				if dir := mgr.RoleStoreDirectory(); dir != "" {
+					return dir
+				}
+			}
+		}
+	}
+	return rolesDir
+}
+
+// onRoleChange drops the cached role definitions when the persisted role
+// store's directory changes, so a role created, changed or deleted on a peer
+// takes effect here on the next lookup instead of after the cache TTL.
+func (s3a *S3ApiServer) onRoleChange(dir string) {
+	base := s3a.roleStoreDir()
+	if dir != base && !strings.HasPrefix(dir, base+"/") {
+		return
+	}
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return
+	}
+	s3iam, ok := s3a.iam.iamIntegration.(*S3IAMIntegration)
+	if !ok || s3iam.iamManager == nil {
+		return
+	}
+	s3iam.iamManager.InvalidateRoleCache()
+	glog.V(2).Infof("Invalidated cached roles after %s change", dir)
+}
+
 // onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)
 func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
 	if dir != s3_constants.CircuitBreakerConfigDir {
@@ -184,6 +206,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer
 func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
 	if dir == s3a.option.BucketsPath {
 		s3a.maintainBucketOwnerIndex(oldEntry, newEntry)
+		s3a.mirrorBucketPolicyToIAM(oldEntry, newEntry)
 		if newEntry != nil {
 			// Update bucket registry (existing functionality)
 			s3a.bucketRegistry.LoadBucketMetadata(newEntry)

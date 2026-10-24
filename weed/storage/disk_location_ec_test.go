@@ -3,12 +3,17 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"time"
 )
 
 // closeEcVolumes closes all EC volumes in the given DiskLocation to release file handles.
@@ -718,22 +723,7 @@ func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
 				t.Fatalf("write .ecx: %v", err)
 			}
 
-			entries, err := os.ReadDir(dataDir)
-			if err != nil {
-				t.Fatalf("read dir: %v", err)
-			}
-			var vifEntry os.DirEntry
-			for _, e := range entries {
-				if filepath.Ext(e.Name()) == ".vif" {
-					vifEntry = e
-					break
-				}
-			}
-			if vifEntry == nil {
-				t.Fatalf(".vif entry missing from dir listing")
-			}
-
-			loaded := diskLocation.loadExistingVolume(vifEntry, NeedleMapInMemory, false, 0, 0)
+			loaded := diskLocation.loadExistingVolume(filepath.Base(vifPath), NeedleMapInMemory, false, 0, 0)
 			if loaded {
 				t.Fatalf("loadExistingVolume should refuse to load a .vif-only entry when .ecx is present (volume %d)", vid)
 			}
@@ -745,5 +735,257 @@ func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
 				t.Fatalf("guard must not create a placeholder .dat for volume %d", vid)
 			}
 		})
+	}
+}
+
+// TestLoadAllEcShardsDeletesStaleZeroSizedShards: zero-sized shard files that
+// are old enough to be failed-operation residue (issue 10730) are deleted by
+// the scan; a fresh zero-sized file (possibly an in-flight copy's just-created
+// file) is left alone.
+func TestLoadAllEcShardsDeletesStaleZeroSizedShards(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+
+	stale := filepath.Join(dir, "123.ec00")
+	fresh := filepath.Join(dir, "123.ec01")
+	for _, p := range []string{stale, fresh} {
+		if f, err := os.Create(p); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		} else {
+			f.Close()
+		}
+	}
+	oldTime := time.Now().Add(-2 * staleZeroShardAge)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if err := diskLocation.loadAllEcShards(nil); err != nil {
+		t.Fatalf("loadAllEcShards: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale zero-sized shard %s not deleted (err=%v)", stale, err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
+	}
+}
+
+// TestLoadEcShardRefusesEmptyShardFile: the startup scan skips 0-byte shard
+// files, but the mount RPC path (MountEcShards -> LoadEcShard) opens the file
+// directly. A 0-byte shard beside an index WITH entries is residue of a
+// failed copy — registering it would advertise a size-0 claim that serves
+// nothing and, with placement pinned to the owning disk, would keep
+// attracting re-copies to a file that was never valid. AddEcVolumeShard must
+// refuse it and the loader must leave nothing registered. (A 0-byte shard
+// beside a 0-byte index is the legitimate empty-volume layout and keeps
+// mounting — TestMountEcShards_EmptyEcxMountsSuccessfully.)
+func TestLoadEcShardRefusesEmptyShardFile(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close() // also stops NewDiskLocation's background goroutine
+
+	// A usable .ecx sits alongside, so without the size gate the load would
+	// succeed and register the empty shard — the .ecx must not mask the gate.
+	empty := filepath.Join(dir, "123.ec00")
+	if f, err := os.Create(empty); err != nil {
+		t.Fatalf("create %s: %v", empty, err)
+	} else {
+		f.Close()
+	}
+	if err := os.WriteFile(filepath.Join(dir, "123.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	_, err := diskLocation.LoadEcShard("", needle.VolumeId(123), erasure_coding.ShardId(0))
+	if err == nil {
+		t.Fatalf("loading a 0-byte shard file must fail")
+	}
+	if !strings.Contains(err.Error(), "empty (0 bytes)") {
+		t.Fatalf("a 0-byte shard should be refused as empty, got: %v", err)
+	}
+	if _, found := diskLocation.FindEcShard(needle.VolumeId(123), erasure_coding.ShardId(0)); found {
+		t.Errorf("a 0-byte shard file must not register a shard claim")
+	}
+	if _, found := diskLocation.FindEcVolume(needle.VolumeId(123)); found {
+		t.Errorf("a refused shard load must not leave an empty EcVolume registered")
+	}
+}
+
+// TestLoadEcShardDuplicateReleasesTheNewShard: a mount retry re-loads a shard
+// this disk already registered. AddEcVolumeShard keeps the existing shard and
+// reports added=false — the loader must then release the duplicate it just
+// opened (fd + mount gauge), or every retry leaks both.
+func TestLoadEcShardDuplicateReleasesTheNewShard(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close() // also stops NewDiskLocation's background goroutine
+
+	if err := os.WriteFile(filepath.Join(dir, "124.ec00"), []byte("shard bytes"), 0o644); err != nil {
+		t.Fatalf("seed .ec00: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "124.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	gauge := stats.VolumeServerVolumeGauge.WithLabelValues("", "ec_shards")
+	before := testutil.ToFloat64(gauge)
+
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(124), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("first LoadEcShard: %v", err)
+	}
+	ecVolume, err := diskLocation.LoadEcShard("", needle.VolumeId(124), erasure_coding.ShardId(0))
+	if err != nil {
+		t.Fatalf("duplicate LoadEcShard must succeed as a no-op: %v", err)
+	}
+	if len(ecVolume.Shards) != 1 {
+		t.Errorf("duplicate load registered %d shards; want 1", len(ecVolume.Shards))
+	}
+	if after := testutil.ToFloat64(gauge); after != before+1 {
+		t.Errorf("mount gauge at %v after a duplicate load; want %v (the duplicate's Mount must be released)", after, before+1)
+	}
+}
+
+// TestLoadEcShardWaitsForPendingDestroy: DestroyEcVolume deletes the map entry
+// and destroys files outside ecVolumesLock, so a remount could otherwise open
+// shard files mid-unlink. The ecVolumesDestroying tombstone must hold the mount
+// until the destroy closes it, and the mount must then proceed and clear it.
+func TestLoadEcShardWaitsForPendingDestroy(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "125.ec00"), []byte("shard bytes"), 0o644); err != nil {
+		t.Fatalf("seed .ec00: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "125.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	done := make(chan struct{})
+	diskLocation.ecVolumesLock.Lock()
+	diskLocation.ecVolumesDestroying[needle.VolumeId(125)] = done
+	diskLocation.ecVolumesLock.Unlock()
+
+	mounted := make(chan error, 1)
+	go func() {
+		_, err := diskLocation.LoadEcShard("", needle.VolumeId(125), erasure_coding.ShardId(0))
+		mounted <- err
+	}()
+
+	select {
+	case <-mounted:
+		t.Fatal("LoadEcShard returned while a destroy generation was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(done)
+	select {
+	case err := <-mounted:
+		if err != nil {
+			t.Fatalf("LoadEcShard after destroy completion: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadEcShard did not proceed after the destroy finished")
+	}
+
+	if _, found := diskLocation.FindEcShard(needle.VolumeId(125), erasure_coding.ShardId(0)); !found {
+		t.Fatal("shard must be registered once the pending destroy is over")
+	}
+	diskLocation.ecVolumesLock.RLock()
+	_, tombstoneLeft := diskLocation.ecVolumesDestroying[needle.VolumeId(125)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if tombstoneLeft {
+		t.Error("a successful remount must clear the vid's destroy tombstone")
+	}
+}
+
+// TestDestroyEcVolumeClosesTombstone: once DestroyEcVolume returns, the
+// tombstone is closed so waits unblock, and a fresh remount re-opens the
+// regenerated files rather than anything the destroy unlinked.
+func TestDestroyEcVolumeClosesTombstone(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close()
+
+	seedShard := func() {
+		if err := os.WriteFile(filepath.Join(dir, "126.ec00"), []byte("shard bytes"), 0o644); err != nil {
+			t.Fatalf("seed .ec00: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "126.ecx"), make([]byte, 16), 0o644); err != nil {
+			t.Fatalf("seed .ecx: %v", err)
+		}
+	}
+	seedShard()
+
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(126), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("initial LoadEcShard: %v", err)
+	}
+	diskLocation.DestroyEcVolume(needle.VolumeId(126))
+
+	if _, found := diskLocation.FindEcVolume(needle.VolumeId(126)); found {
+		t.Fatal("destroyed volume must not stay in ecVolumes")
+	}
+	diskLocation.ecVolumesLock.RLock()
+	done, ok := diskLocation.ecVolumesDestroying[needle.VolumeId(126)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if !ok {
+		t.Fatal("destroy must leave a tombstone behind for remounts to compare against")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tombstone must be closed once DestroyEcVolume returns")
+	}
+	if util.FileExists(filepath.Join(dir, "126.ec00")) {
+		t.Fatal("destroy must have removed the shard file")
+	}
+
+	seedShard()
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(126), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("remount after destroy: %v", err)
+	}
+	diskLocation.ecVolumesLock.RLock()
+	_, tombstoneLeft := diskLocation.ecVolumesDestroying[needle.VolumeId(126)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if tombstoneLeft {
+		t.Error("remount must clear the stale destroy tombstone")
+	}
+}
+
+// TestLoadAllEcShardsSplitDirZeroSizedCleanup: the scan merges Directory and
+// IdxDirectory listings, so a stale zero-sized file in one directory and a
+// fresh same-named file in the other are different files behind one entry
+// name. Each candidate's own age must decide: the stale one is deleted, the
+// fresh one (possibly an in-flight copy's just-created file) survives.
+func TestLoadAllEcShardsSplitDirZeroSizedCleanup(t *testing.T) {
+	dataDir := t.TempDir()
+	idxDir := t.TempDir()
+	diskLocation := NewDiskLocation(dataDir, 10, util.MinFreeSpace{}, idxDir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+
+	fresh := filepath.Join(dataDir, "124.ec00")
+	stale := filepath.Join(idxDir, "124.ec00")
+	for _, p := range []string{fresh, stale} {
+		if f, err := os.Create(p); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		} else {
+			f.Close()
+		}
+	}
+	oldTime := time.Now().Add(-2 * staleZeroShardAge)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if err := diskLocation.loadAllEcShards(nil); err != nil {
+		t.Fatalf("loadAllEcShards: %v", err)
+	}
+
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale zero-sized shard %s not deleted (err=%v)", stale, err)
 	}
 }

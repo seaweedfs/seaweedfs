@@ -47,10 +47,11 @@ type WorkerGrpcServer struct {
 	logRequestsMutex   sync.RWMutex
 
 	// gRPC server
-	grpcServer *grpc.Server
-	listener   net.Listener
-	running    bool
-	stopChan   chan struct{}
+	grpcServer  *grpc.Server
+	listener    net.Listener
+	running     bool
+	stopChan    chan struct{}
+	mtlsEnabled bool
 }
 
 // LogRequestContext tracks pending log requests
@@ -83,20 +84,26 @@ func NewWorkerGrpcServer(adminServer *AdminServer) *WorkerGrpcServer {
 	}
 }
 
-// StartWithTLS starts the gRPC server on the specified port with optional TLS
-func (s *WorkerGrpcServer) StartWithTLS(port int) error {
+// StartWithTLS starts the gRPC server on the specified port with optional TLS.
+// A caller that already holds the port passes its listener instead. When no
+// listener is supplied the server binds to bindIp to honor the operator's -ip.
+func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Listener) error {
 	if s.running {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
-	// Create listener
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %v", port, err)
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", util.JoinHostPort(bindIp, port))
+		if err != nil {
+			return fmt.Errorf("failed to listen on port %d: %v", port, err)
+		}
 	}
 
 	// Create gRPC server with optional TLS
-	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
+	tlsOption, _ := security.LoadServerTLS(util.GetViper(), "grpc.admin")
+	s.mtlsEnabled = tlsOption != nil
+	grpcServer := pb.NewGrpcServer(tlsOption)
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
 	if plugin := s.adminServer.GetPlugin(); plugin != nil {
@@ -124,6 +131,17 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	}()
 
 	return nil
+}
+
+// ServeOn serves the worker gRPC API on an additional already-bound listener,
+// e.g. a legacy compat port kept alongside the primary one. grpc.Server tracks
+// every listener passed to Serve, so Stop closes it together with the primary.
+func (s *WorkerGrpcServer) ServeOn(listener net.Listener) {
+	go func() {
+		if err := s.grpcServer.Serve(listener); err != nil && s.running {
+			glog.Warningf("Worker gRPC compat listener on %s stopped: %v", listener.Addr(), err)
+		}
+	}()
 }
 
 // ListenPort returns the currently bound worker gRPC listen port.
@@ -180,6 +198,10 @@ func (s *WorkerGrpcServer) Stop() error {
 // WorkerStream handles bidirectional communication with workers
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
+
+	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
 
 	// get client address
 	address := findClientAddress(ctx)

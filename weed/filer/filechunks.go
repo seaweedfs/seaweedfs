@@ -63,9 +63,15 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	return finalETag
 }
 
-func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
+// CompactFileChunks splits chunks into those still visible and those fully
+// covered by newer writes. It fails if the chunk manifests cannot be resolved,
+// including when ctx is cancelled.
+func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk, err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	compacted, garbage = SeparateGarbageChunks(visibles, chunks)
 
@@ -73,6 +79,9 @@ func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileId
 }
 
 func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
+	if visibles == nil {
+		return chunks, nil
+	}
 	fileIds := make(map[string]bool)
 	for x := visibles.Front(); x != nil; x = x.Next {
 		interval := x.Value
@@ -100,13 +109,13 @@ func FindGarbageChunks(visibles *IntervalList[*VisibleInterval], start int64, st
 	return
 }
 
-func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk, err error) {
+func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk, invalidator CacheInvalidator) (delta []*filer_pb.FileChunk, err error) {
 
-	aData, aMeta, aErr := ResolveChunkManifest(ctx, lookupFileIdFn, as, 0, math.MaxInt64)
+	aData, aMeta, aErr := ResolveChunkManifest(ctx, lookupFileIdFn, as, 0, math.MaxInt64, invalidator)
 	if aErr != nil {
 		return nil, aErr
 	}
-	bData, bMeta, bErr := ResolveChunkManifest(ctx, lookupFileIdFn, bs, 0, math.MaxInt64)
+	bData, bMeta, bErr := ResolveChunkManifest(ctx, lookupFileIdFn, bs, 0, math.MaxInt64, invalidator)
 	if bErr != nil {
 		return nil, bErr
 	}
@@ -185,11 +194,26 @@ func (cv *ChunkView) IsFullChunk() bool {
 	return cv.OffsetInChunk == 0 && cv.ViewSize == cv.ChunkSize
 }
 
-func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
+// CanRangeFetch reports whether fetching just the view's byte range avoids
+// reading more than the view needs. Ciphered and compressed chunks are
+// stored and served whole — a range on either still costs a full read plus
+// decrypt or decompress on the volume server — so partial views of them
+// take the shared whole-chunk path instead.
+func (cv *ChunkView) CanRangeFetch() bool {
+	return cv.CipherKey == nil && !cv.IsGzipped
+}
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+// ViewFromChunks returns the views of chunks that cover [offset, offset+size).
+// It fails if the chunk manifests cannot be resolved, including when ctx is
+// cancelled.
+func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView], err error) {
 
-	return ViewFromVisibleIntervals(visibles, offset, size)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
+
+	return ViewFromVisibleIntervals(visibles, offset, size), nil
 
 }
 
@@ -204,6 +228,9 @@ func ViewFromVisibleIntervals(visibles *IntervalList[*VisibleInterval], offset i
 	}
 
 	chunkViews = NewIntervalList[*ChunkView]()
+	if visibles == nil {
+		return chunkViews
+	}
 	for x := visibles.Front(); x != nil; x = x.Next {
 		chunk := x.Value
 
@@ -271,7 +298,7 @@ func MergeIntoChunkViews(chunkViews *IntervalList[*ChunkView], start int64, stop
 // If the file chunk content is a chunk manifest
 func NonOverlappingVisibleIntervals(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval], err error) {
 
-	chunks, _, err = ResolveChunkManifest(ctx, lookupFileIdFn, chunks, startOffset, stopOffset)
+	chunks, _, err = ResolveChunkManifest(ctx, lookupFileIdFn, chunks, startOffset, stopOffset, nil)
 	if err != nil {
 		return
 	}

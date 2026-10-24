@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 )
 
 // persistedState is the on-disk snapshot of the in-memory instance map.
@@ -16,7 +18,8 @@ type persistedState struct {
 // LoadState restores the instance map and Prometheus gauges from a state file
 // written by SaveStateIfDirty. A missing file is not an error. Original
 // ReceivedAt timestamps are preserved so cleanup and the active-cluster
-// windows stay correct across restarts.
+// windows stay correct across restarts. Clusters under proto.MinDiskBytes are
+// dropped, so state written before the floor sheds them on the first restart.
 func (s *PrometheusStorage) LoadState(path string) (int, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -37,6 +40,10 @@ func (s *PrometheusStorage) LoadState(path string) (int, error) {
 	loaded := 0
 	for id, instance := range state.Instances {
 		if instance == nil || instance.TelemetryData == nil || instance.TelemetryData.TopologyId == "" {
+			continue
+		}
+		if instance.TelemetryData.TotalDiskBytes < proto.MinDiskBytes {
+			s.dirty = true // so the next save sheds it
 			continue
 		}
 		s.instances[id] = instance

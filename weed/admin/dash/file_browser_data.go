@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ type FileBrowserData struct {
 	BucketName        string    `json:"bucket_name"`
 	IsTableBucketPath bool      `json:"is_table_bucket_path"`
 	TableBucketName   string    `json:"table_bucket_name"`
+	S3Endpoint        string    `json:"s3_endpoint,omitempty"`
 	// Pagination fields
 	PageSize            int    `json:"page_size"`
 	HasNextPage         bool   `json:"has_next_page"`
@@ -53,8 +55,11 @@ type FileBrowserData struct {
 	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
 }
 
-// GetFileBrowser retrieves file browser data for a given path with cursor-based pagination
-func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize int) (*FileBrowserData, error) {
+// GetFileBrowser retrieves file browser data for a given path with cursor-based
+// pagination. A non-empty prefix limits the listing to entries whose name starts
+// with it, so callers that only want part of a large directory don't have to page
+// through all of it.
+func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName string, pageSize int) (*FileBrowserData, error) {
 	if dir == "" {
 		dir = "/"
 	}
@@ -76,7 +81,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		// Fetch entries starting from the cursor (lastFileName)
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory:          dir,
-			Prefix:             "",
+			Prefix:             prefix,
 			Limit:              uint32(fetchLimit),
 			StartFromFileName:  lastFileName,
 			InclusiveStartFrom: false, // Don't include the cursor file itself
@@ -185,6 +190,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	bucketName := ""
 	isTableBucketPath := false
 	tableBucketName := ""
+	isRegularBucket := false
 	if strings.HasPrefix(dir, "/buckets/") {
 		isBucketPath = true
 		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
@@ -202,12 +208,19 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 				if s3tables.IsTableBucketEntry(resp.Entry) {
 					isTableBucketPath = true
 					tableBucketName = bucketName
+				} else {
+					isRegularBucket = true
 				}
 				return nil
 			}); err != nil {
 				glog.V(1).Infof("file browser table bucket lookup failed for %s: %v", bucketName, err)
 			}
 		}
+	}
+
+	s3Endpoint := ""
+	if isRegularBucket {
+		s3Endpoint = s.GetS3Endpoint()
 	}
 
 	return &FileBrowserData{
@@ -221,6 +234,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		BucketName:        bucketName,
 		IsTableBucketPath: isTableBucketPath,
 		TableBucketName:   tableBucketName,
+		S3Endpoint:        s3Endpoint,
 		// Pagination metadata
 		PageSize:            pageSize,
 		HasNextPage:         hasNextPage,
@@ -268,4 +282,53 @@ func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 	}
 
 	return breadcrumbs
+}
+
+// S3ObjectURL builds the path-style S3 URL for a filer path under /buckets/,
+// percent-encoding each path segment. Returns "" for other paths.
+func S3ObjectURL(endpoint, fullPath string) string {
+	rel, ok := strings.CutPrefix(fullPath, "/buckets/")
+	if !ok || rel == "" || endpoint == "" {
+		return ""
+	}
+	segments := strings.Split(rel, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.TrimRight(endpoint, "/") + "/" + strings.Join(segments, "/")
+}
+
+// GetS3ObjectURL returns the S3 URL an object under a regular bucket is served
+// at, or "" when the path is not a bucket object, the bucket is an S3 Tables
+// bucket, or no S3 endpoint is known.
+func (s *AdminServer) GetS3ObjectURL(fullPath string) string {
+	rel, ok := strings.CutPrefix(fullPath, "/buckets/")
+	if !ok {
+		return ""
+	}
+	bucketName, key, found := strings.Cut(rel, "/")
+	if !found || key == "" {
+		return ""
+	}
+	endpoint := s.GetS3Endpoint()
+	if endpoint == "" {
+		return ""
+	}
+	if err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return err
+		}
+		if s3tables.IsTableBucketEntry(resp.Entry) {
+			endpoint = ""
+		}
+		return nil
+	}); err != nil {
+		glog.V(1).Infof("object url bucket lookup failed for %s: %v", bucketName, err)
+		return ""
+	}
+	return S3ObjectURL(endpoint, fullPath)
 }

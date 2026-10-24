@@ -14,6 +14,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/parquet-go/parquet-go"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -27,6 +28,10 @@ const (
 	icebergPreviewMaxListed    = 500
 	icebergPreviewMaxCellChars = 200
 	icebergPreviewMaxMetaBytes = 64 << 20
+
+	// workerPreviewTimeout bounds one round trip to a worker. A page waiting on
+	// a worker that has gone quiet should say so rather than hang.
+	workerPreviewTimeout = 15 * time.Second
 )
 
 type IcebergDataFileInfo struct {
@@ -60,6 +65,10 @@ type IcebergDataPreviewData struct {
 	PreviewNotes      []string              `json:"preview_notes,omitempty"`
 	PreviewError      string                `json:"preview_error,omitempty"`
 	LastUpdated       time.Time             `json:"last_updated"`
+	// Format is what the catalog recorded. Anything but ICEBERG means the rows
+	// below, if any, came from a worker rather than from metadata this server read.
+	Format      string `json:"format,omitempty"`
+	PreviewedBy string `json:"previewed_by,omitempty"`
 }
 
 // GetIcebergTableDataPreview walks the selected snapshot's manifests and reads
@@ -91,6 +100,11 @@ func (s *AdminServer) GetIcebergTableDataPreview(ctx context.Context, catalogNam
 	req := &s3tables.GetTableRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: tableName}
 	if err := s.executeS3TablesOperation(ctx, "GetTable", req, &resp); err != nil {
 		return data, err
+	}
+	data.Format = resp.Format
+	if !strings.EqualFold(resp.Format, s3tables.FormatIceberg) && resp.Format != "" {
+		s.applyWorkerPreview(ctx, &data, bucketArn, namespaceParts, tableName, rowLimit)
+		return data, nil
 	}
 	if resp.Metadata == nil || len(resp.Metadata.FullMetadata) == 0 {
 		data.PreviewError = "Table has no Iceberg metadata."
@@ -466,4 +480,57 @@ func (w *sliceWriter) Write(p []byte) (int, error) {
 	c := copy(w.dst[w.n:], p)
 	w.n += c
 	return c, nil
+}
+
+// applyWorkerPreview asks the worker that last described this table for sample
+// rows. Admin has no reader for a format it does not implement, so this is the
+// only way the page shows anything but a location.
+//
+// The rows are fetched, never cached: they are the table's data rather than a
+// description of it, and a stale copy sitting in admin would be worse than
+// asking.
+func (s *AdminServer) applyWorkerPreview(ctx context.Context, data *IcebergDataPreviewData, bucketArn string, namespaceParts []string, tableName string, rowLimit int) {
+	plugin := s.GetPlugin()
+	if plugin == nil {
+		data.PreviewError = fmt.Sprintf("Reading a %s table needs a plugin worker, and none is configured.", data.Format)
+		return
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		data.PreviewError = err.Error()
+		return
+	}
+
+	objectID := append(append([]string{bucketName}, namespaceParts...), tableName)
+	requestCtx, cancel := context.WithTimeout(ctx, workerPreviewTimeout)
+	defer cancel()
+
+	response, err := plugin.RequestObjectPreview(requestCtx, objectID, data.Format, rowLimit)
+	if err != nil {
+		data.PreviewError = fmt.Sprintf("Could not read this %s table: %v", data.Format, err)
+		return
+	}
+
+	data.Columns = response.Columns
+	data.Rows = make([][]string, 0, len(response.Rows))
+	for _, row := range response.Rows {
+		cells := make([]string, len(row.Values))
+		for i, value := range row.Values {
+			cells[i] = truncateCell(value)
+		}
+		data.Rows = append(data.Rows, cells)
+	}
+	data.TotalRecords = response.TotalRows
+	data.PreviewedBy = pluginWorkerForObject(plugin, objectID, data.Format)
+	if int64(len(data.Rows)) < response.TotalRows {
+		data.PreviewNotes = append(data.PreviewNotes, fmt.Sprintf("Showing %d of %d rows.", len(data.Rows), response.TotalRows))
+	}
+}
+
+// pluginWorkerForObject names the worker that answered, for the page to show.
+func pluginWorkerForObject(p *plugin.Plugin, objectID []string, format string) string {
+	if observed, ok := p.Observations().GetFormat(objectID, format); ok {
+		return observed.WorkerID
+	}
+	return ""
 }

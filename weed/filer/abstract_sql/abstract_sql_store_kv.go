@@ -12,12 +12,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// Key-value reads run outside the listing pool: a listing calls KvGet from
+// inside its own callback, still holding the connection its rows are on.
+func (store *AbstractSqlStore) kvDB(ctx context.Context) TxOrDB {
+	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
+		return tx
+	}
+	if store.KvDB != nil {
+		return store.KvDB
+	}
+	return store.DB
+}
+
 func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
-	if err != nil {
-		return fmt.Errorf("findDB: %w", err)
-	}
+	db := store.kvDB(ctx)
 
 	dirStr, dirHash, name := GenDirAndName(key)
 
@@ -49,10 +58,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
-	if err != nil {
-		return nil, fmt.Errorf("findDB: %w", err)
-	}
+	db := store.kvDB(ctx)
 
 	dirStr, dirHash, name := GenDirAndName(key)
 	row := db.QueryRowContext(ctx, store.GetSqlFind(DEFAULT_TABLE), dirHash, name, dirStr)
@@ -72,10 +78,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 
 func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
-	if err != nil {
-		return fmt.Errorf("findDB: %w", err)
-	}
+	db := store.kvDB(ctx)
 
 	dirStr, dirHash, name := GenDirAndName(key)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -46,6 +47,7 @@ func streamChunksPrefetched(
 	prefetchAhead int,
 ) error {
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
+	invalidator, _ := masterClient.(CacheInvalidator)
 
 	// Create a local cancellable context so the consumer can stop the producer
 	// and all in-flight fetch goroutines on error (e.g., client disconnect).
@@ -98,14 +100,14 @@ func streamChunksPrefetched(
 			}
 
 			// Launch fetch goroutine
-			go func(cv *ChunkView, urls []string, jwt string, pw *io.PipeWriter, res *chunkPipeResult) {
+			go func(cv *ChunkView, urls []string, jwt string, pw *io.PipeWriter, res *chunkPipeResult, refresh util_http.RefreshUrlsFunc) {
 				defer func() { <-sem }() // release semaphore
 				defer close(res.done)
 
 				written, err := retriedStreamFetchChunkData(
 					localCtx, pw, urls, jwt,
 					cv.CipherKey, cv.IsGzipped, cv.IsFullChunk(),
-					cv.OffsetInChunk, int(cv.ViewSize),
+					cv.OffsetInChunk, int(cv.ViewSize), refresh,
 				)
 				res.written = written
 				res.fetchErr = err
@@ -115,7 +117,7 @@ func streamChunksPrefetched(
 				} else {
 					pw.Close()
 				}
-			}(chunkView, urlStrings, jwt, pw, result)
+			}(chunkView, urlStrings, jwt, pw, result, refreshUrls(localCtx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId))
 
 			// Send result to consumer (blocks if channel full, back-pressuring producer)
 			select {
@@ -247,7 +249,7 @@ func retryWithCacheInvalidation(
 		_, err := retriedStreamFetchChunkData(
 			ctx, writer, newUrls, jwt,
 			chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(),
-			chunkView.OffsetInChunk, int(chunkView.ViewSize),
+			chunkView.OffsetInChunk, int(chunkView.ViewSize), nil,
 		)
 		return err
 	})

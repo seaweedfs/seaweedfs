@@ -12,12 +12,13 @@ use tower::ServiceExt; // for `oneshot`
 
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::volume_server::{
-    build_admin_router, build_admin_router_with_ui, build_metrics_router, build_public_router,
-    VolumeServerState,
+    VolumeServerState, build_admin_router, build_admin_router_with_ui, build_metrics_router,
+    build_public_router,
 };
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
-use seaweed_volume::storage::types::{DiskType, Version, VolumeId};
+use seaweed_volume::storage::types::{DiskType, VolumeId};
+use seaweed_volume::storage::volume::VolumeSpec;
 
 use tempfile::TempDir;
 
@@ -73,12 +74,11 @@ fn build_test_state(
     store
         .add_volume(
             VolumeId(1),
-            "",
-            replica_placement,
-            None,
-            0,
             DiskType::HardDrive,
-            Version::current(),
+            &VolumeSpec {
+                replica_placement,
+                ..Default::default()
+            },
         )
         .expect("failed to create volume");
 
@@ -107,14 +107,16 @@ fn build_test_state(
         rack: String::new(),
         file_size_limit_bytes: 0,
         maintenance_byte_per_second: 0,
+        vacuum_commit_slots: None,
+        vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
+        ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail_notify: tokio::sync::Notify::new(),
         has_master: false,
         pre_stop_seconds: 0,
         volume_state_notify: tokio::sync::Notify::new(),
         write_queue: std::sync::OnceLock::new(),
-        s3_tier_registry: std::sync::RwLock::new(
-            seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
-        ),
         read_mode: seaweed_volume::config::ReadMode::Local,
         allow_untrusted_remote_endpoints: false,
         master_url,
@@ -385,6 +387,46 @@ async fn write_then_read_needle() {
     assert_eq!(body, payload, "GET body should match written data");
 }
 
+// A durable upload takes the same route through the handler; the flush is not
+// observable from here, but a broken wiring would show up as a failed write.
+#[tokio::test]
+async fn write_with_fsync_then_read_needle() {
+    let (state, _tmp) = test_state();
+
+    let uri = "/1,01637037d6?fsync=true";
+    let payload = b"durable through the handler";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "a durable POST should return 201 Created"
+    );
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
 // ============================================================================
 // 5. DELETE deletes a needle, subsequent GET returns 404
 // ============================================================================
@@ -438,6 +480,74 @@ async fn delete_then_get_returns_404() {
         StatusCode::NOT_FOUND,
         "GET after DELETE should return 404"
     );
+}
+
+// Go answers both with 500 and an error containing "volume N is read only"
+// (the write behind "failed to write to local disk: ").
+#[tokio::test]
+async fn write_and_delete_on_read_only_volume_say_is_read_only() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6";
+
+    let request = |method: &str, body: &[u8]| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::from(body.to_vec()))
+            .unwrap()
+    };
+    let error_of = |body: Vec<u8>| -> String {
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        json["error"].as_str().unwrap_or_default().to_string()
+    };
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("POST", b"written before read-only"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    state
+        .store
+        .write()
+        .unwrap()
+        .find_volume(VolumeId(1))
+        .unwrap()
+        .1
+        .set_no_write_or_delete(true);
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("POST", b"refused"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let error = error_of(body_bytes(response).await);
+    assert!(error.contains("volume 1 is read only"), "{error}");
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("DELETE", b""))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        error_of(body_bytes(response).await),
+        "Deletion Failed: volume 1 is read only"
+    );
+
+    // The needle is still there to delete once the volume is writable again.
+    state
+        .store
+        .write()
+        .unwrap()
+        .find_volume(VolumeId(1))
+        .unwrap()
+        .1
+        .set_no_write_or_delete(false);
+    let response = build_admin_router(state.clone())
+        .oneshot(request("DELETE", b""))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
 }
 
 // ============================================================================
@@ -739,6 +849,76 @@ async fn replicate_write_raw_body_is_stored() {
     assert_eq!(body_bytes(response).await, payload);
 }
 
+/// Go reads fsync through r.FormValue, which decodes the query, so a
+/// percent-encoded value has to reach the write path here too.
+#[tokio::test]
+async fn write_with_percent_encoded_fsync_is_accepted() {
+    let (state, _tmp) = test_state();
+    let payload = b"encoded durable payload";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?fsync=%74rue")
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// The fan-out query a Go primary sends for a durable write: `fsync=true` rides
+/// along with `type=replicate`, and the replica has to honor it rather than ack
+/// out of the page cache.
+#[tokio::test]
+async fn replicate_write_with_fsync_is_stored() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6?fsync=true&type=replicate";
+    let payload = b"durable replica bytes";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
 /// Multipart `type=replicate` write (the shape the Go gateway uploader sends)
 /// is stored and reads back.
 #[tokio::test]
@@ -847,9 +1027,10 @@ async fn replicate_write_does_not_re_replicate() {
 #[tokio::test]
 async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::erasure_coding::ec_shard::ShardId;
     use seaweed_volume::storage::needle::needle::{FileId, Needle};
     use seaweed_volume::storage::types::{Cookie, NeedleId};
-    use seaweed_volume::storage::volume::Volume;
+    use seaweed_volume::storage::volume::{Volume, VolumeSpec};
 
     let (state, tmp) = test_state();
     let dir = tmp.path().to_str().unwrap();
@@ -863,16 +1044,12 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     // Build regular volume 2 holding the chunk, then EC-encode it and mount all
     // 14 shards locally so reconstruct-on-read is a pure local read.
     {
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(2),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let mut n = Needle {
@@ -882,7 +1059,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
             data_size: chunk_data.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
         v.close();
     }
@@ -892,7 +1069,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     // after ec.encode retired the regular volume.
     {
         let mut store = state.store.write().unwrap();
-        let shard_ids: Vec<u32> = (0..14).collect();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
         store.mount_ec_shards(VolumeId(2), "", &shard_ids).unwrap();
     }
 
@@ -907,7 +1084,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     let manifest_nid = NeedleId(0x7);
     let manifest_cookie = Cookie(0x55667788);
     {
-        let mut store = state.store.write().unwrap();
+        let store = state.store.read().unwrap();
         let mut n = Needle {
             id: manifest_nid,
             cookie: manifest_cookie,
@@ -916,7 +1093,9 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
         };
         n.data_size = n.data.len() as u32;
         n.set_is_chunk_manifest();
-        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+        store
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
     }
 
     // GET the manifest object; expect the reconstructed chunk bytes.
@@ -933,4 +1112,318 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_bytes(response).await, chunk_data);
+}
+
+// ============================================================================
+// HTTP DELETE on an EC volume whose shards are not all mounted locally
+//
+// The delete handler used to validate the cookie with the local-only
+// `EcVolume::read_ec_shard_needle`, which errors "ec shard N not available
+// locally" for any interval held by a peer. Every such error was mapped to 500
+// and no `.ecj` tombstone was written, so on a standard 10+4 spread across 14
+// servers no HTTP delete of an EC needle could ever succeed.
+//
+// A single node can exercise that path without peers: mount 13 of the 14
+// shards, leaving out the one holding the needle's interval. The distributed
+// reader seeds its Reed-Solomon buffers from locally mounted siblings (Phase 0
+// in `store_ec.rs`), so with >= 10 survivors it reconstructs without any peer
+// fan-out — while the local-only read still fails outright.
+// ============================================================================
+
+#[tokio::test]
+async fn delete_on_ec_volume_succeeds_when_the_needles_shard_is_not_mounted() {
+    use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::erasure_coding::ec_shard::ShardId;
+    use seaweed_volume::storage::needle::needle::{FileId, Needle};
+    use seaweed_volume::storage::types::{Cookie, NeedleId};
+    use seaweed_volume::storage::volume::{Volume, VolumeSpec};
+
+    let (state, tmp) = test_state();
+    let dir = tmp.path().to_str().unwrap();
+
+    let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let nid = NeedleId(0x5c);
+    let cookie = Cookie(0x0badc0de);
+
+    // Build regular volume 4, then EC-encode it. The volume is standalone and
+    // never registered in the store, so afterwards it exists only as shards.
+    {
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(4),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: nid,
+            cookie,
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+    }
+    write_ec_files(dir, dir, "", VolumeId(4), 10, 4).unwrap();
+
+    // Mount shards 1..=13 only. A needle at .dat offset 0 lives in shard 0's
+    // first small block, so the interval this delete needs is deliberately the
+    // one shard that is absent.
+    {
+        let mut store = state.store.write().unwrap();
+        let shard_ids: Vec<ShardId> = (1..14).collect();
+        store.mount_ec_shards(VolumeId(4), "", &shard_ids).unwrap();
+    }
+
+    let fid = FileId::new(VolumeId(4), nid, cookie).to_string();
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/{}", fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "DELETE of an EC needle must reconstruct through the distributed \
+         reader instead of failing 500 on a non-local shard"
+    );
+
+    // The tombstone must actually have landed: a later GET is a 404.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "the delete must have been journalled, not just answered 202"
+    );
+}
+
+// ============================================================================
+// Hostile response-header override params must not panic the handler
+//
+// The `response-*` query params are attacker-controlled and were inserted with
+// `parse().unwrap()`. `%0A` decodes to a newline, `HeaderValue::from_str`
+// rejects it, and the unwrap panicked the connection task — unauthenticated.
+// The override must simply be skipped.
+// ============================================================================
+
+#[tokio::test]
+async fn hostile_response_header_overrides_are_skipped_not_panicked() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(b"payload".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // One request per override param, each carrying a raw newline.
+    for param in [
+        "response-cache-control",
+        "response-content-encoding",
+        "response-expires",
+        "response-content-language",
+        "response-content-disposition",
+        "response-content-type",
+    ] {
+        let app = build_admin_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{}?{}=%0Aevil", uri, param))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{} with a newline must be ignored, not panic",
+            param
+        );
+        assert_eq!(body_bytes(response).await, b"payload".to_vec());
+    }
+}
+
+// ============================================================================
+// Non-ASCII in the fid and in ?ttl= must be rejected, not panic
+//
+// `parse_needle_id_cookie` split the hex by BYTE offset and `TTL::read` took
+// the unit as the last BYTE, so a multi-byte character split inside itself.
+// Both are reachable unauthenticated from the request line / query string.
+// ============================================================================
+
+#[tokio::test]
+async fn non_ascii_fid_and_ttl_are_rejected_not_panicked() {
+    let (state, _tmp) = test_state();
+
+    // A fid whose hex part is multi-byte UTF-8.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,%C3%A9%C3%A9%C3%A9%C3%A9a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "non-ASCII fid must produce an error status, got {}",
+        response.status()
+    );
+
+    // A TTL whose unit character is multi-byte. The upload path does
+    // `TTL::read(..).ok()`, so *any* unparseable TTL is simply dropped and the
+    // write succeeds — the point here is that a non-ASCII one now takes that
+    // same road instead of panicking. Assert it matches an ASCII-invalid TTL
+    // rather than inventing a stricter contract than the handler has.
+    let mut statuses = Vec::new();
+    // Distinct needle ids: reusing one id with a different cookie is a
+    // cookie-mismatch overwrite, which would mask what this test measures.
+    for (fid, ttl) in [("/1,03637037d7", "5%C3%A9"), ("/1,04637037d8", "5z")] {
+        let app = build_admin_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("{}?ttl={}", fid, ttl))
+                    .body(Body::from(b"x".to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        statuses.push(response.status());
+    }
+    assert_eq!(
+        statuses[0], statuses[1],
+        "a non-ASCII ttl must behave like any other invalid ttl, not panic"
+    );
+}
+
+// ============================================================================
+// The write queue answers an upload with the needle's real ETag
+//
+// The queue worker computes the CRC on the needle it was handed, so the handler
+// has to know the checksum before it submits. Without that every queued upload
+// came back as "00000000". The direct path is the reference: same payload, same
+// ETag, for a plain body and for one the handler gzips before storing.
+// ============================================================================
+
+#[tokio::test]
+async fn write_queue_upload_returns_same_etag_as_direct_write() {
+    use seaweed_volume::server::write_queue::{SyncBatchOption, WriteQueue};
+
+    let (direct_state, _direct_tmp) = test_state();
+    let (queued_state, _queued_tmp) = test_state();
+    let wq = WriteQueue::new(queued_state.clone(), 128, SyncBatchOption::default());
+    let _ = queued_state.write_queue.set(wq);
+
+    let compressible = "seaweedfs ".repeat(200).into_bytes();
+    let uploads: [(&str, &[u8]); 2] = [
+        ("/1,01637037d6", b"hello, seaweedfs!"),
+        ("/1/02637037d6/notes.txt", &compressible),
+    ];
+
+    for (uri, payload) in uploads {
+        let mut etags = Vec::new();
+        for state in [&direct_state, &queued_state] {
+            let app = build_admin_router(state.clone());
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .body(Body::from(payload.to_vec()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+
+            let header = response
+                .headers()
+                .get("ETag")
+                .expect("upload response has no ETag")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let body = body_bytes(response).await;
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("POST response is not valid JSON");
+            let etag = json["eTag"].as_str().unwrap().to_string();
+            assert_eq!(header, format!("\"{}\"", etag));
+            etags.push(etag);
+        }
+        assert_ne!(etags[0], "00000000", "{}: direct ETag is the zero CRC", uri);
+        assert_eq!(
+            etags[1], etags[0],
+            "{}: queued upload must return the direct path's ETag",
+            uri
+        );
+    }
+
+    // The second upload really was stored gzipped, so its ETag is the CRC of
+    // the compressed bytes on both paths.
+    let app = build_admin_router(queued_state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(uploads[1].0)
+                .header("Accept-Encoding", "gzip")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["Content-Encoding"], "gzip");
+
+    // Re-uploading the same bytes is the unchanged path: 204 with the same ETag.
+    let (uri, payload) = uploads[0];
+    let mut etags = Vec::new();
+    for state in [&direct_state, &queued_state] {
+        let app = build_admin_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::from(payload.to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        etags.push(response.headers()["ETag"].to_str().unwrap().to_string());
+    }
+    assert_eq!(etags[1], etags[0], "unchanged upload ETag differs");
 }

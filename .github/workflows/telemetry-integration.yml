@@ -14,6 +14,10 @@ on:
       - 'weed/telemetry/**'
       - '.github/workflows/telemetry-integration.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 permissions:
   contents: read
 
@@ -30,6 +34,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Build telemetry server
       run: cd telemetry/server && go build -o telemetry-server .

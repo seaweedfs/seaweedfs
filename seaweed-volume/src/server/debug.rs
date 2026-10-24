@@ -1,9 +1,9 @@
+use axum::Router;
 use axum::body::Body;
 use axum::extract::Query;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
-use axum::Router;
 use pprof::protos::Message;
 use serde::Deserialize;
 

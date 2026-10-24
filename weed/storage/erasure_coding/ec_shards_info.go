@@ -104,6 +104,13 @@ func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 	return ShardBits(vi.EcIndexBits).Count()
 }
 
+// VolumeSlots converts an EC shard count to the number of volume slots those
+// shards occupy: every DataShardsCount shards hold one volume's worth of data,
+// rounded up.
+func VolumeSlots(ecShardCount int64) int64 {
+	return (ecShardCount + DataShardsCount - 1) / DataShardsCount
+}
+
 // EcShardsTotalSize returns the sum of all shard sizes (data + parity) in
 // the message. Walks vi.ShardSizes directly rather than materializing a
 // ShardsInfo, which is significantly cheaper for callers that only need the

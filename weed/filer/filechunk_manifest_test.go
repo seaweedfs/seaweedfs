@@ -6,12 +6,19 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func TestDoMaybeManifestize(t *testing.T) {
@@ -79,9 +86,9 @@ func TestDoMaybeManifestize(t *testing.T) {
 	}
 }
 
-// A mid-run merge failure must still return every chunk that exists: the
-// manifests already written plus the chunks not yet wrapped, so callers can
-// delete or keep a complete set.
+// A mid-run merge failure returns the caller's list untouched: never a
+// half-folded list, which would drop manifests the caller came in with. The
+// MaybeManifestize wrapper deletes the manifest blobs already saved.
 func TestDoMaybeManifestizePartialFailure(t *testing.T) {
 	inputs := []*filer_pb.FileChunk{
 		{FileId: "0", IsChunkManifest: true},
@@ -102,13 +109,7 @@ func TestDoMaybeManifestizePartialFailure(t *testing.T) {
 	if err == nil {
 		t.Fatalf("doMaybeManifestize() expected an error")
 	}
-	expected := []*filer_pb.FileChunk{
-		{FileId: "0", IsChunkManifest: true},
-		{FileId: "12", IsChunkManifest: true},
-		{FileId: "3", IsChunkManifest: false},
-		{FileId: "4", IsChunkManifest: false},
-	}
-	assertEqualChunks(t, expected, actual)
+	assertEqualChunks(t, inputs, actual)
 
 }
 
@@ -271,6 +272,47 @@ func TestManifestRoundTripPreservesChunks(t *testing.T) {
 	}
 }
 
+func TestMaybeManifestizePreservesSSEMetadata(t *testing.T) {
+	for _, sseType := range []filer_pb.SSEType{
+		filer_pb.SSEType_SSE_C,
+		filer_pb.SSEType_SSE_KMS,
+		filer_pb.SSEType_SSE_S3,
+	} {
+		t.Run(sseType.String(), func(t *testing.T) {
+			store := newTestManifestStore()
+			chunks := make([]*filer_pb.FileChunk, ManifestBatch+1)
+			for i := range chunks {
+				chunks[i] = testChunk(1, uint64(i+1), uint32(i+1), int64(i*8), 8, int64(i+1))
+				chunks[i].SseType = sseType
+				chunks[i].SseMetadata = []byte(fmt.Sprintf("metadata-%d", i))
+			}
+
+			packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifests, remainder := SeparateManifestChunks(packed)
+			if len(manifests) != 1 || len(remainder) != 1 {
+				t.Fatalf("got %d manifests and %d remaining chunks", len(manifests), len(remainder))
+			}
+
+			resolved, err := store.resolve(manifests[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, chunk := range resolved {
+				if chunk.GetSseType() != sseType {
+					t.Fatalf("chunk %d SSE type = %s, want %s", i, chunk.GetSseType(), sseType)
+				}
+				wantMetadata := fmt.Sprintf("metadata-%d", i)
+				if string(chunk.GetSseMetadata()) != wantMetadata {
+					t.Fatalf("chunk %d SSE metadata = %q, want %q", i, chunk.GetSseMetadata(), wantMetadata)
+				}
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Compact resolved overlapping manifests: older sub-chunks become garbage
 // ---------------------------------------------------------------------------
@@ -322,7 +364,10 @@ func TestCompactResolvedOverlappingManifests(t *testing.T) {
 	}
 
 	// CompactFileChunks on resolved sub-chunks (nil lookupFn is fine for non-manifest chunks)
-	compacted, garbage := CompactFileChunks(context.Background(), nil, dataChunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, dataChunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 3 {
 		t.Fatalf("expected 3 compacted chunks, got %d", len(compacted))
@@ -471,7 +516,10 @@ func TestCompactMultipleOverlappingManifestGenerations(t *testing.T) {
 	}
 
 	// Compact: only generation 5 (the newest 3 chunks) should survive
-	compacted, garbage := CompactFileChunks(context.Background(), nil, dataChunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, dataChunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(compacted) != 3 {
 		t.Errorf("expected 3 compacted (gen 5), got %d", len(compacted))
 	}
@@ -535,4 +583,253 @@ func TestManifestBloatDetection(t *testing.T) {
 			t.Errorf("n=%d: should NOT trigger merge at ratio %.1f", n, float64(totalStored)/float64(totalFile))
 		}
 	}
+}
+
+// countingInvalidator stands in for the vidMap cache a mount or filer hands to
+// manifest resolution, recording how often the locations were dropped.
+type countingInvalidator struct {
+	invalidations atomic.Int32
+}
+
+func (inv *countingInvalidator) InvalidateCache(fileId string) {
+	inv.invalidations.Add(1)
+}
+
+// stagedLookup returns staleUrls once and freshUrls afterwards, the way a
+// vidMapClient re-reads the master once InvalidateCache has dropped the entry.
+type stagedLookup struct {
+	staleUrls []string
+	freshUrls []string
+	calls     atomic.Int32
+}
+
+func (l *stagedLookup) lookup(ctx context.Context, fileId string) ([]string, error) {
+	if l.calls.Add(1) == 1 {
+		return l.staleUrls, nil
+	}
+	return l.freshUrls, nil
+}
+
+func manifestServer(t *testing.T, manifestBytes []byte) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
+		w.Write(manifestBytes)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func fetchManifestBuffer(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
+	bytesBuffer.Reset()
+	t.Cleanup(func() { bytesBufferPool.Put(bytesBuffer) })
+	return bytesBuffer
+}
+
+// TestFetchWholeChunkRetriesFreshLocations covers the mount reading a multipart
+// file whose manifest volume has moved: the cached location is dead, so the
+// fetch has to drop it and come back with what the master knows now. The stale
+// server streams a prefix before dying, which the retry must not keep.
+func TestFetchWholeChunkRetriesFreshLocations(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "100,abc", Offset: 0, Size: 8},
+			{FileId: "101,def", Offset: 8, Size: 8},
+		},
+	})
+	assert.NoError(t, err)
+
+	staleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)+64))
+		w.Write([]byte("garbage-from-stale-server"))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	defer staleSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{staleSrv.URL + "/5,stale"},
+		freshUrls: []string{manifestServer(t, manifestBytes).URL + "/5,stale"},
+	}
+	inv := &countingInvalidator{}
+	bytesBuffer := fetchManifestBuffer(t)
+
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,stale", nil, false, inv, nil))
+	assert.Equal(t, int32(1), inv.invalidations.Load())
+	assert.Equal(t, int32(2), lookup.calls.Load())
+
+	// the buffer must hold the fresh manifest alone, not the stale prefix ahead of it
+	decoded := &filer_pb.FileChunkManifest{}
+	assert.NoError(t, proto.Unmarshal(bytesBuffer.Bytes(), decoded))
+	assertEqualChunks(t, []*filer_pb.FileChunk{
+		{FileId: "100,abc", Offset: 0, Size: 8},
+		{FileId: "101,def", Offset: 8, Size: 8},
+	}, decoded.Chunks)
+}
+
+// TestFetchWholeChunkRefreshesLocationsAfterPartialFailure is the manifest read
+// whose cached list still names a dead replica ahead of a live one: the read
+// succeeds, and the cached entry must still be dropped and looked up again.
+func TestFetchWholeChunkRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}},
+	})
+	assert.NoError(t, err)
+
+	liveURL := manifestServer(t, manifestBytes).URL + "/5,abc"
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{deadURL + "/5,abc", liveURL},
+		freshUrls: []string{liveURL},
+	}
+	inv := &countingInvalidator{}
+	bytesBuffer := fetchManifestBuffer(t)
+
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,abc", nil, false, inv, nil))
+	assert.Equal(t, int32(1), inv.invalidations.Load())
+	assert.Equal(t, int32(2), lookup.calls.Load())
+	decoded := &filer_pb.FileChunkManifest{}
+	assert.NoError(t, proto.Unmarshal(bytesBuffer.Bytes(), decoded))
+	assertEqualChunks(t, []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}}, decoded.Chunks)
+}
+
+// TestFetchWholeChunkWithoutInvalidator keeps the old behavior for callers whose
+// lookup function has no cache to drop: the fetch error surfaces as it is.
+func TestFetchWholeChunkWithoutInvalidator(t *testing.T) {
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{failSrv.URL + "/5,abc"},
+		freshUrls: []string{"http://unused:8080/5,abc"},
+	}
+
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, nil, nil))
+	assert.Equal(t, int32(1), lookup.calls.Load())
+}
+
+// TestFetchWholeChunkUnchangedLocations guards against looping: when the master
+// still reports the servers that just failed, there is nothing new to try.
+func TestFetchWholeChunkUnchangedLocations(t *testing.T) {
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{failSrv.URL + "/5,abc"},
+		freshUrls: []string{failSrv.URL + "/5,abc"},
+	}
+	inv := &countingInvalidator{}
+
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv, nil))
+	assert.Equal(t, int32(2), lookup.calls.Load())
+	assert.Equal(t, int32(1), inv.invalidations.Load())
+}
+
+// TestFetchWholeChunkCancelledKeepsLocations checks that a caller walking away
+// mid-read does not cost every other reader a master round trip.
+func TestFetchWholeChunkCancelledKeepsLocations(t *testing.T) {
+	lookup := &stagedLookup{
+		staleUrls: []string{"http://unused:8080/5,abc"},
+		freshUrls: []string{"http://elsewhere:8080/5,abc"},
+	}
+	inv := &countingInvalidator{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := fetchWholeChunk(ctx, fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(0), inv.invalidations.Load())
+	assert.Equal(t, int32(1), lookup.calls.Load())
+
+	// the cancellation must survive the wrapping ResolveOneChunkManifest does,
+	// or callers cannot tell a dead volume server from their own abort
+	manifestChunk := &filer_pb.FileChunk{FileId: "5,abc", IsChunkManifest: true}
+	_, resolveErr := ResolveOneChunkManifest(ctx, lookup.lookup, manifestChunk, inv)
+	assert.ErrorIs(t, resolveErr, context.Canceled)
+
+	// volume.fsck resolves manifests with no invalidator and still has to tell
+	// its own abort from a corrupt manifest, so the nil path keeps the identity
+	noInvalidator := retryFetchWithFreshLocations(ctx, nil, lookup.lookup, "5,abc", nil, fmt.Errorf("stale server said no"), func([]string) error {
+		t.Fatal("refetch must not run on a cancelled read")
+		return nil
+	})
+	assert.ErrorIs(t, noInvalidator, context.Canceled)
+}
+
+// TestFetchWholeChunkUsesProvidedFilerJwt covers a replicating reader whose
+// source filer authenticates proxied downloads with its own read key: the
+// supplied provider's token must reach the server, not the process-wide one.
+func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}},
+	})
+	assert.NoError(t, err)
+
+	gotAuth := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case gotAuth <- r.Header.Get("Authorization"):
+		default:
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
+		w.Write(manifestBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	lookup := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{srv.URL + "/?" + util_http.ProxyChunkIdParam + "=" + fileId}, nil
+	}
+	jwtFn := func(isWrite bool) security.EncodedJwt {
+		assert.False(t, isWrite)
+		return "side-read-jwt"
+	}
+	bytesBuffer := fetchManifestBuffer(t)
+	require.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup, "5,abc", nil, false, nil, jwtFn))
+	select {
+	case auth := <-gotAuth:
+		assert.Equal(t, security.BearerPrefix+"side-read-jwt", auth)
+	default:
+		t.Fatal("the proxied fetch never reached the handler")
+	}
+
+	// non-proxy URLs keep the volume-server credential and never call the provider
+	volumeURL := manifestServer(t, manifestBytes).URL + "/5,abc"
+	volumeLookup := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{volumeURL}, nil
+	}
+	bytesBuffer.Reset()
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, volumeLookup, "5,abc", nil, false, nil, func(bool) security.EncodedJwt {
+		t.Fatal("provider must not be consulted for a volume url")
+		return ""
+	}))
+}
+
+// A completed fetch whose destination write failed is a failed copy, not a
+// short success: the caller must see the write error, or a temp disk filling
+// mid-copy would still upload the truncated file.
+func TestRetriedStreamFetchChunkDataReportsWriteError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0123456789"))
+	}))
+	t.Cleanup(srv.Close)
+
+	written, err := retriedStreamFetchChunkData(context.Background(), &failOnWrite{}, []string{srv.URL + "/5,abc"}, "", nil, false, true, 0, 0, nil)
+	assert.Error(t, err)
+	assert.Zero(t, written)
+}
+
+type failOnWrite struct{}
+
+func (w *failOnWrite) Write(p []byte) (int, error) {
+	return 0, fmt.Errorf("no space left")
 }

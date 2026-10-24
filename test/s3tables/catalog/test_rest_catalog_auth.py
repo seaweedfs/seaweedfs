@@ -173,6 +173,7 @@ def main():
                     "uri": args.catalog_url,
                     "warehouse": args.warehouse,
                     "prefix": args.prefix,
+                    "auth": {"type": "noop"},
                     "s3.access-key-id": args.access_key,
                     "s3.secret-access-key": args.secret_key,
                 }

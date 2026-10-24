@@ -18,54 +18,113 @@ type InodeToPath struct {
 	// dirStates holds directory-only readdir-cache state, keyed by inode. An
 	// inode is a directory iff it has an entry here, registered at creation.
 	dirStates map[uint64]*dirState
+	// dirPaths indexes the same states by path, so a directory lookup never
+	// goes through the map that holds one full path per inode.
+	dirPaths map[util.FullPath]*dirState
 }
 
 // InodeEntry exists per inode the kernel references. Directory cache state is
 // kept out in dirStates so a file entry stays in the 32-byte size class — the
-// dominant cost on a mount with millions of files.
+// dominant cost on a mount with millions of files. A hard link's extra paths
+// hang off a pointer for the same reason.
 type InodeEntry struct {
-	paths   []util.FullPath
-	nlookup uint64
+	path       util.FullPath
+	nlookup    uint64
+	extraPaths *[]util.FullPath
 }
 
 type dirState struct {
-	isChildrenCached  bool
-	readDirDirect     bool
-	cachedExpiresTime time.Time
-	lastAccess        time.Time
-	lastRefresh       time.Time
-	updateWindowStart time.Time
-	updateCount       int
-	subdirCount       int32 // tracked in-memory for POSIX directory nlink
+	path               util.FullPath
+	isChildrenCached   bool
+	readDirDirect      bool
+	cachedExpiresTime  time.Time
+	lastAccess         time.Time
+	lastRefresh        time.Time
+	lastRebuildAttempt time.Time
+	subdirCount        int32 // tracked in-memory for POSIX directory nlink
 }
 
 func (d *dirState) resetCacheState() {
 	d.isChildrenCached = false
 	d.readDirDirect = false
 	d.cachedExpiresTime = time.Time{}
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
+	d.lastRebuildAttempt = time.Time{}
 }
 
-func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
-	if len(ie.paths) == 0 {
-		return false
+// appendPaths appends every path the inode is reachable by, primary first.
+func (ie *InodeEntry) appendPaths(dst []util.FullPath) []util.FullPath {
+	if ie.path == "" {
+		return dst
 	}
-	idx := -1
-	for i, x := range ie.paths {
-		if x == p {
-			idx = i
-			break
+	dst = append(dst, ie.path)
+	if ie.extraPaths != nil {
+		dst = append(dst, *ie.extraPaths...)
+	}
+	return dst
+}
+
+func (ie *InodeEntry) addPath(p util.FullPath) {
+	if ie.path == "" {
+		ie.path = p
+		return
+	}
+	if ie.extraPaths == nil {
+		ie.extraPaths = &[]util.FullPath{p}
+		return
+	}
+	*ie.extraPaths = append(*ie.extraPaths, p)
+}
+
+func (ie *InodeEntry) replacePath(from, to util.FullPath) {
+	if ie.path == from {
+		ie.path = to
+	}
+	if ie.extraPaths == nil {
+		return
+	}
+	for i, p := range *ie.extraPaths {
+		if p == from {
+			(*ie.extraPaths)[i] = to
 		}
 	}
-	if idx < 0 {
+}
+
+func (ie *InodeEntry) setExtraPaths(extra []util.FullPath) {
+	if len(extra) == 0 {
+		ie.extraPaths = nil
+		return
+	}
+	ie.extraPaths = &extra
+}
+
+// removeOnePath promotes an extra path when the primary is the one going away,
+// so an entry that still has a path always has a primary one.
+func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
+	if ie.path == "" {
 		return false
 	}
-	for x := idx; x < len(ie.paths)-1; x++ {
-		ie.paths[x] = ie.paths[x+1]
+	if ie.path == p {
+		if ie.extraPaths == nil {
+			ie.path = ""
+			return true
+		}
+		extra := *ie.extraPaths
+		ie.path = extra[0]
+		ie.setExtraPaths(extra[1:])
+		return true
 	}
-	ie.paths = ie.paths[0 : len(ie.paths)-1]
-	return true
+	if ie.extraPaths == nil {
+		return false
+	}
+	extra := *ie.extraPaths
+	for i, x := range extra {
+		if x != p {
+			continue
+		}
+		ie.setExtraPaths(append(extra[:i], extra[i+1:]...))
+		return true
+	}
+	return false
 }
 
 func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
@@ -73,13 +132,14 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		inode2path:      make(map[uint64]*InodeEntry),
 		path2inode:      make(map[util.FullPath]uint64),
 		dirStates:       make(map[uint64]*dirState),
+		dirPaths:        make(map[util.FullPath]*dirState),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
 	t.inode2path[1] = &InodeEntry{
-		paths:   []util.FullPath{root},
+		path:    root,
 		nlookup: 1,
 	}
-	t.dirStates[1] = &dirState{lastAccess: time.Now()}
+	t.setDirState(1, &dirState{path: root, lastAccess: time.Now()})
 	t.path2inode[root] = 1
 
 	return t
@@ -126,11 +186,11 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 			nlookup = 1
 		}
 		i.inode2path[inode] = &InodeEntry{
-			paths:   []util.FullPath{path},
+			path:    path,
 			nlookup: nlookup,
 		}
 		if isDirectory {
-			i.dirStates[inode] = &dirState{}
+			i.setDirState(inode, &dirState{path: path})
 		}
 	}
 
@@ -197,10 +257,10 @@ func (i *InodeToPath) GetPath(inode uint64) (util.FullPath, fuse.Status) {
 	i.RLock()
 	defer i.RUnlock()
 	path, found := i.inode2path[inode]
-	if !found || len(path.paths) == 0 {
+	if !found || path.path == "" {
 		return "", fuse.ENOENT
 	}
-	return path.paths[0], fuse.OK
+	return path.path, fuse.OK
 }
 
 // GetAllPaths returns a copy of all paths associated with an inode. For a
@@ -210,12 +270,29 @@ func (i *InodeToPath) GetAllPaths(inode uint64) []util.FullPath {
 	i.RLock()
 	defer i.RUnlock()
 	ie, found := i.inode2path[inode]
-	if !found || len(ie.paths) == 0 {
+	if !found {
 		return nil
 	}
-	out := make([]util.FullPath, len(ie.paths))
-	copy(out, ie.paths)
-	return out
+	return ie.appendPaths(nil)
+}
+
+func (i *InodeToPath) setDirState(inode uint64, d *dirState) {
+	i.dirStates[inode] = d
+	i.dirPaths[d.path] = d
+}
+
+// dropDirPath drops the path index only; Forget releases the state itself. A
+// released directory's state keeps the path it had, so drop the index only
+// while it is still the one that path resolves to: a new directory may have
+// taken the name in the meantime.
+func (i *InodeToPath) dropDirPath(inode uint64) {
+	if d := i.dirStates[inode]; d != nil && i.dirPaths[d.path] == d {
+		delete(i.dirPaths, d.path)
+	}
+}
+
+func (i *InodeToPath) dirStateOf(fullpath util.FullPath) *dirState {
+	return i.dirPaths[fullpath]
 }
 
 func (i *InodeToPath) HasPath(path util.FullPath) bool {
@@ -228,16 +305,11 @@ func (i *InodeToPath) HasPath(path util.FullPath) bool {
 func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
+	d := i.dirStateOf(fullpath)
+	if d == nil {
 		// https://github.com/seaweedfs/seaweedfs/issues/4968
 		// glog.Fatalf("MarkChildrenCached not found inode %v", fullpath)
-		glog.Warningf("MarkChildrenCached not found inode %v", fullpath)
-		return
-	}
-	d, found := i.dirStates[inode]
-	if !found {
-		glog.Warningf("MarkChildrenCached inode %d not a tracked directory for %v", inode, fullpath)
+		glog.Warningf("MarkChildrenCached not a tracked directory: %v", fullpath)
 		return
 	}
 	d.isChildrenCached = true
@@ -245,8 +317,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	now := time.Now()
 	d.lastAccess = now
 	d.lastRefresh = now
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
+	d.lastRebuildAttempt = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
@@ -255,11 +326,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 	i.RLock()
 	defer i.RUnlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return false
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(fullpath)
 	if d == nil {
 		return false
 	}
@@ -267,6 +334,34 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 		return d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime)
 	}
 	return false
+}
+
+// ShouldRebuildExpiredDir reports whether a directory was fully cached, its
+// TTL has elapsed, and enough time has passed since the last failed rebuild
+// attempt to retry. Distinct from IsChildrenCached returning false for a
+// never-cached, invalidated, evicted, or read-through directory: those leave
+// isChildrenCached clear, while a plain TTL expiry keeps it set.
+func (i *InodeToPath) ShouldRebuildExpiredDir(fullpath util.FullPath, cooldown time.Duration) bool {
+	i.RLock()
+	defer i.RUnlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil || !d.isChildrenCached {
+		return false
+	}
+	if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+		return false
+	}
+	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
+}
+
+// MarkRebuildAttempt records that a rebuild was attempted at now, so
+// ShouldRebuildExpiredDir backs off for the cooldown before retrying.
+func (i *InodeToPath) MarkRebuildAttempt(fullpath util.FullPath, now time.Time) {
+	i.Lock()
+	defer i.Unlock()
+	if d := i.dirStateOf(fullpath); d != nil {
+		d.lastRebuildAttempt = now
+	}
 }
 
 func (i *InodeToPath) HasInode(inode uint64) bool {
@@ -292,11 +387,7 @@ func (i *InodeToPath) InvalidateAllChildrenCache() {
 func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return
-	}
-	if d := i.dirStates[inode]; d != nil {
+	if d := i.dirStateOf(fullpath); d != nil {
 		d.resetCacheState()
 	}
 }
@@ -306,11 +397,7 @@ func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
 func (i *InodeToPath) AdjustSubdirCount(dirPath util.FullPath, delta int32) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[dirPath]
-	if !found {
-		return
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(dirPath)
 	if d == nil {
 		return
 	}
@@ -324,11 +411,7 @@ func (i *InodeToPath) AdjustSubdirCount(dirPath util.FullPath, delta int32) {
 func (i *InodeToPath) GetSubdirCount(dirPath util.FullPath) int32 {
 	i.RLock()
 	defer i.RUnlock()
-	inode, found := i.path2inode[dirPath]
-	if !found {
-		return 0
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(dirPath)
 	if d == nil {
 		return 0
 	}
@@ -339,11 +422,7 @@ func (i *InodeToPath) GetSubdirCount(dirPath util.FullPath) int32 {
 func (i *InodeToPath) SetSubdirCount(dirPath util.FullPath, count int32) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[dirPath]
-	if !found {
-		return
-	}
-	if d := i.dirStates[inode]; d != nil {
+	if d := i.dirStateOf(dirPath); d != nil {
 		d.subdirCount = count
 	}
 }
@@ -351,11 +430,7 @@ func (i *InodeToPath) SetSubdirCount(dirPath util.FullPath, count int32) {
 func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return
-	}
-	if d := i.dirStates[inode]; d != nil {
+	if d := i.dirStateOf(fullpath); d != nil {
 		d.lastAccess = time.Now()
 	}
 }
@@ -363,11 +438,7 @@ func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
 func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.Time) bool {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return false
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(fullpath)
 	if d == nil {
 		return false
 	}
@@ -376,51 +447,13 @@ func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.
 	d.cachedExpiresTime = time.Time{}
 	d.lastAccess = now
 	d.lastRefresh = time.Time{}
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 	return true
-}
-
-func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Time, window time.Duration, threshold int) bool {
-	if threshold <= 0 || window <= 0 {
-		return false
-	}
-	i.Lock()
-	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return false
-	}
-	d := i.dirStates[inode]
-	if d == nil || !d.isChildrenCached {
-		return false
-	}
-	if d.updateWindowStart.IsZero() || now.Sub(d.updateWindowStart) > window {
-		d.updateWindowStart = now
-		d.updateCount = 0
-	}
-	d.updateCount++
-	if d.updateCount >= threshold {
-		d.isChildrenCached = false
-		d.readDirDirect = true
-		d.cachedExpiresTime = time.Time{}
-		d.lastAccess = now
-		d.lastRefresh = time.Time{}
-		d.updateCount = 0
-		d.updateWindowStart = time.Time{}
-		return true
-	}
-	return false
 }
 
 func (i *InodeToPath) ShouldReadDirectoryDirect(fullpath util.FullPath) bool {
 	i.RLock()
 	defer i.RUnlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return false
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(fullpath)
 	if d == nil {
 		return false
 	}
@@ -430,19 +463,13 @@ func (i *InodeToPath) ShouldReadDirectoryDirect(fullpath util.FullPath) bool {
 func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Time) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return
-	}
-	d := i.dirStates[inode]
+	d := i.dirStateOf(fullpath)
 	if d == nil {
 		return
 	}
 	d.lastRefresh = now
 	d.lastAccess = now
 	d.readDirDirect = false
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
@@ -464,7 +491,7 @@ func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []
 		}
 		d.resetCacheState()
 		if entry, ok := i.inode2path[inode]; ok {
-			dirs = append(dirs, entry.paths...)
+			dirs = entry.appendPaths(dirs)
 		}
 	}
 	return dirs
@@ -477,23 +504,32 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 
 	ie, found := i.inode2path[inode]
 	if found {
-		ie.paths = append(ie.paths, path)
+		ie.addPath(path)
 		ie.nlookup++
 	} else {
 		i.inode2path[inode] = &InodeEntry{
-			paths:   []util.FullPath{path},
+			path:    path,
 			nlookup: 1,
 		}
 	}
 }
 
-func (i *InodeToPath) RemovePath(path util.FullPath) {
+// RemovePath drops the name. onStillReferenced, if given, runs under the
+// table's lock when the kernel still holds lookup references to the inode:
+// such an inode keeps receiving requests until the final forget, and holding
+// the lock is what keeps that forget from racing whatever per-inode state the
+// callback installs — Forget releases under the same lock.
+func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inode uint64)) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if found {
 		delete(i.path2inode, path)
+		i.dropDirPath(inode)
 		i.removePathFromInode2Path(inode, path)
+		if ie := i.inode2path[inode]; ie != nil && ie.nlookup > 0 && onStillReferenced != nil {
+			onStillReferenced(inode)
+		}
 	}
 }
 
@@ -511,26 +547,27 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
+	if !sourceFound {
+		// Nothing of ours to move: the source was never visited here, or a
+		// redelivery already moved it. Whatever sits at the target is not ours
+		// to take apart on the strength of an absent source, and deciding that
+		// outside this lock would race a concurrent move to the same target.
+		return 0, 0
+	}
 	targetInode, targetFound := i.path2inode[targetPath]
 	if targetFound {
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
+		i.dropDirPath(targetInode)
 	}
-	if sourceFound {
-		delete(i.path2inode, sourcePath)
-		i.path2inode[targetPath] = sourceInode
-	} else {
-		// it is possible some source folder items has not been visited before
-		// so no need to worry about their source inodes
-		return
-	}
+	delete(i.path2inode, sourcePath)
+	i.path2inode[targetPath] = sourceInode
 	if entry, entryFound := i.inode2path[sourceInode]; entryFound {
-		for i, p := range entry.paths {
-			if p == sourcePath {
-				entry.paths[i] = targetPath
-			}
-		}
+		entry.replacePath(sourcePath, targetPath)
 		if d := i.dirStates[sourceInode]; d != nil {
+			i.dropDirPath(sourceInode)
+			d.path = targetPath
+			i.dirPaths[targetPath] = d
 			d.resetCacheState()
 		}
 	} else {
@@ -551,27 +588,31 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 	path, found := i.inode2path[inode]
 	if found {
 		if nlookup > path.nlookup {
-			glog.Errorf("kernel forget over-decrement: inode %d paths %v current %d forget %d", inode, path.paths, path.nlookup, nlookup)
+			glog.Errorf("kernel forget over-decrement: inode %d path %v current %d forget %d", inode, path.path, path.nlookup, nlookup)
 			path.nlookup = 0
 		} else {
 			path.nlookup -= nlookup
 		}
-		glog.V(4).Infof("kernel forget: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
+		glog.V(4).Infof("kernel forget: inode %d path %v nlookup %d", inode, path.path, path.nlookup)
 		if path.nlookup == 0 {
 			if onRelease != nil {
 				onRelease(inode)
 			}
 			if _, isDir := i.dirStates[inode]; isDir && onForgetDir != nil {
-				dirPaths = append([]util.FullPath(nil), path.paths...)
+				dirPaths = path.appendPaths(nil)
 				callOnForgetDir = true
 			}
-			for _, p := range path.paths {
-				delete(i.path2inode, p)
+			delete(i.path2inode, path.path)
+			if path.extraPaths != nil {
+				for _, p := range *path.extraPaths {
+					delete(i.path2inode, p)
+				}
 			}
 			delete(i.inode2path, inode)
+			i.dropDirPath(inode)
 			delete(i.dirStates, inode)
 		} else {
-			glog.V(4).Infof("kernel forget but nlookup not zero: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
+			glog.V(4).Infof("kernel forget but nlookup not zero: inode %d path %v nlookup %d", inode, path.path, path.nlookup)
 		}
 	} else {
 		glog.Warningf("kernel forget but inode not found: inode %d", inode)

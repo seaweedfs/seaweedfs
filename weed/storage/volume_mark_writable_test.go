@@ -21,13 +21,15 @@ func TestMarkVolumeWritable_ReopensPersistedReadOnly(t *testing.T) {
 		t.Fatalf("create volume: %v", err)
 	}
 
-	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
 		t.Fatalf("initial write: %v", err)
 	}
 
 	// Persist read-only state into .vif, then simulate a server restart by
 	// closing and re-opening the volume from the same directory.
-	v.PersistReadOnly(true)
+	if err := v.PersistReadOnly(true, false); err != nil {
+		t.Fatalf("persist read-only: %v", err)
+	}
 	v.Close()
 
 	v2, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -47,7 +49,7 @@ func TestMarkVolumeWritable_ReopensPersistedReadOnly(t *testing.T) {
 	// once noWriteOrDelete is cleared. Confirm the failure mode the issue
 	// describes — flipping only the flag is not enough.
 	v2.noWriteOrDelete = false
-	_, _, _, writeErr := v2.writeNeedle2(newRandomNeedle(2), true, false)
+	_, _, _, writeErr := v2.writeNeedle2(newRandomNeedle(2), true, false, false)
 	if !errors.Is(writeErr, os.ErrInvalid) {
 		t.Fatalf("expected write through SortedFileNeedleMap to fail with os.ErrInvalid, got %v", writeErr)
 	}
@@ -61,8 +63,35 @@ func TestMarkVolumeWritable_ReopensPersistedReadOnly(t *testing.T) {
 	}
 
 	v2.noWriteOrDelete = false
-	if _, _, _, err := v2.writeNeedle2(newRandomNeedle(3), true, false); err != nil {
+	if _, _, _, err := v2.writeNeedle2(newRandomNeedle(3), true, false, false); err != nil {
 		t.Fatalf("write after reopen: %v", err)
+	}
+}
+
+// A remote-tiered volume marked writable keeps the delete-only mode load()
+// derives — the remote .dat cannot take appends, so "writable" resolves to
+// can-delete even when the mark left noWriteOrDelete without noWriteCanDelete.
+func TestMarkVolumeWritableOnATieredVolumeKeepsDeletesOnly(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	v, _ := tierUpVolumeLive(t, t.TempDir(), 86, b)
+	defer v.Close()
+	// the upload-time mark as a refused MarkTieredDeletable leaves it
+	v.noWriteOrDelete = true
+	v.noWriteCanDelete = false
+
+	location := newTestLocation(10, false, 0)
+	location.SetVolume(86, v)
+	s := &Store{Locations: []*DiskLocation{location}}
+	if err := s.MarkVolumeWritable(86); err != nil {
+		t.Fatalf("mark writable: %v", err)
+	}
+
+	readOnly, orDelete, canDelete, _ := v.ReadOnlyReasons()
+	if orDelete || !canDelete || !readOnly {
+		t.Fatalf("a tiered volume resolves writable to delete-only, got readOnly=%v orDelete=%v canDelete=%v",
+			readOnly, orDelete, canDelete)
 	}
 }
 

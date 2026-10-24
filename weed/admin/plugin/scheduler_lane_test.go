@@ -5,10 +5,16 @@ import (
 )
 
 func TestJobTypeLaneMapCoversKnownTypes(t *testing.T) {
-	// Every job type in the map must resolve to a valid lane.
+	// Every job type in the map must resolve to a lane the scheduler runs.
+	// Checked against AllLanes rather than a list spelled out here, so adding a
+	// lane does not silently leave its job types unscheduled.
+	known := make(map[SchedulerLane]bool, len(AllLanes()))
+	for _, lane := range AllLanes() {
+		known[lane] = true
+	}
 	for jobType, lane := range jobTypeLaneMap {
-		if lane != LaneDefault && lane != LaneIceberg && lane != LaneLifecycle {
-			t.Errorf("jobTypeLaneMap[%q] = %q, want a known lane", jobType, lane)
+		if !known[lane] {
+			t.Errorf("jobTypeLaneMap[%q] = %q, want a lane from AllLanes()", jobType, lane)
 		}
 	}
 }

@@ -145,6 +145,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 			PublicUrl: assignResp.Location.PublicUrl,
 			Count:     uint64(count),
 			Auth:      security.EncodedJwt(assignResp.Auth),
+			Fsync:     assignResp.Fsync,
 		}, nil
 	}
 
@@ -152,6 +153,9 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 		ChunkSize:  adminUploadChunkSize,
 		MimeType:   mimeType,
 		AssignFunc: assignFunc,
+		LookupJwtFunc: func(lookupCtx context.Context, fileId string) security.EncodedJwt {
+			return operation.LookupJwt(lookupCtx, h.adminServer.GetMasterClient().GetMaster(lookupCtx), h.adminServer.GetGrpcDialOption(), fileId)
+		},
 	})
 	if err != nil {
 		// Partial chunks come back even on error so we can clean them up rather

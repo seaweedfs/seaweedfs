@@ -10,7 +10,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <div>
             <h1 class="h2">
-                <i class="fas fa-th-large me-2"></i>EC Volume Details
+                <i class="bi bi-grid me-2"></i>EC Volume Details
             </h1>
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
@@ -23,10 +23,10 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="history.back()">
-                    <i class="fas fa-arrow-left me-1"></i>Back
+                    <i class="bi bi-arrow-left me-1"></i>Back
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
-                    <i class="fas fa-refresh me-1"></i>Refresh
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                 </button>
             </div>
         </div>
@@ -38,7 +38,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="fas fa-info-circle me-2"></i>Volume Information
+                        <i class="bi bi-info-circle me-2"></i>Volume Information
                     </h5>
                 </div>
                 <div class="card-body">
@@ -62,11 +62,11 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             <td>
                                 if data.IsComplete {
                                     <span class="badge bg-success">
-                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
+                                        <i class="bi bi-check me-1"></i>Complete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 } else {
                                     <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 }
                             </td>
@@ -116,7 +116,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="fas fa-chart-pie me-2"></i>Shard Distribution
+                        <i class="bi bi-pie-chart me-2"></i>Shard Distribution
                     </h5>
                 </div>
                 <div class="card-body">
@@ -172,7 +172,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
     <div class="card">
         <div class="card-header">
             <h5 class="card-title mb-0">
-                <i class="fas fa-list me-2"></i>Shard Details
+                <i class="bi bi-list me-2"></i>Shard Details
             </h5>
         </div>
         <div class="card-body">
@@ -186,12 +186,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Shard ID
                                         if data.SortBy == "shard_id" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -200,12 +200,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Server
                                         if data.SortBy == "server" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -214,12 +214,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Data Center
                                         if data.SortBy == "data_center" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -228,12 +228,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Rack
                                         if data.SortBy == "rack" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -267,7 +267,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         </td>
                                         <td>
                                             <a href={ templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
-                                                <i class="fas fa-external-link-alt me-1"></i>Volume Server
+                                                <i class="bi bi-box-arrow-up-right me-1"></i>Volume Server
                                             </a>
                                         </td>
                                     </tr>
@@ -277,7 +277,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                 </div>
             } else {
                 <div class="text-center py-4">
-                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <i class="bi bi-exclamation-triangle icon-3x text-warning mb-3"></i>
                     <h5>No EC shards found</h5>
                     <p class="text-muted">This volume may not be EC encoded yet.</p>
                 </div>

@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -26,7 +27,9 @@ var (
 	OS_UID = uint32(os.Getuid())
 	OS_GID = uint32(os.Getgid())
 
-	ErrReadOnly = errors.New("read only")
+	// ErrReadOnly is filer_pb.ErrReadOnly so errors.Is matches on either side
+	// of the gRPC boundary.
+	ErrReadOnly = filer_pb.ErrReadOnly
 )
 
 type FilerPostResult struct {
@@ -80,7 +83,10 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
 	ctx := r.Context()
 
-	destination := r.RequestURI
+	// Match storage rules on the decoded path the entry is written to. The raw
+	// request-target is percent-encoded on the wire, so a rule on "/只读/" would
+	// never see "/%E5%8F%AA%E8%AF%BB/".
+	destination := r.URL.Path
 	headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader)
 	if headerDestination != "" {
 		destination = headerDestination
@@ -117,6 +123,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
+	if so.Fsync {
+		ctx = filer.WithSyncWrite(ctx)
+	}
+
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
 		glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ": ", "entry name too long")
 		w.WriteHeader(http.StatusRequestURITooLong)
@@ -144,6 +154,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		fs.formatIngest(ctx, w, r, so)
 	} else if query.Get(formatRepackParam) != "" {
 		fs.formatRepack(ctx, w, r, so)
+	} else if isExtractZip(r) {
+		fs.extractZipArchive(ctx, w, r)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}
@@ -258,7 +270,15 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
+	// The delete and the commit record it emits must serialize with peer
+	// replay of this path, same as the gRPC DeleteEntry handler.
+	fullPath := util.FullPath(objectPath)
+	if fs.entryLockTable != nil {
+		pathLock := fs.entryLockTable.AcquireLock("DeleteHandler", fullPath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+	}
+
+	err = fs.filer.DeleteEntryMetaAndData(context.Background(), fullPath, isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -277,8 +297,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
 		prefix := rule.LocationPrefix
 		if prefix == "" {
-			// requestURI may carry a query string on the HTTP path; keep only the path.
-			prefix, _, _ = strings.Cut(requestURI, "?")
+			prefix = requestURI
 		}
 		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}
@@ -326,9 +345,14 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, overlayDisk, rule.DiskType),
-		Fsync:             rule.Fsync,
+		Fsync:             rule.GetFsync(),
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 		MaxFileNameLength: maxFileNameLength,
+		// A location that survives from a request parameter, a placement
+		// overlay, or the path rule is a contract; only a bare filer default
+		// is a preference that may still be widened.
+		EnforceLocation: dataCenter != "" || overlayDataCenter != "" || rule.DataCenter != "" ||
+			rack != "" || rule.Rack != "" || dataNode != "" || rule.DataNode != "",
 	}, nil
 }
 

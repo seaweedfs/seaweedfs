@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -144,9 +145,12 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages   *DiskUsages
-	id           NodeId
-	parent       Node
+	diskUsages *DiskUsages
+	id         NodeId
+	// parent is an atomic pointer because unlinking runs under the rack's
+	// lock while readers (vacuum sweeps, usage propagation, String) reach
+	// it with no shared lock.
+	parent       atomic.Pointer[Node]
 	sync.RWMutex // lock children
 	children     map[NodeId]Node
 	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
@@ -291,8 +295,8 @@ func (n *NodeImpl) IsLocked() (isTryLock bool) {
 }
 
 func (n *NodeImpl) String() string {
-	if n.parent != nil {
-		return n.parent.String() + ":" + string(n.id)
+	if parent := n.Parent(); parent != nil {
+		return parent.String() + ":" + string(n.id)
 	}
 	return string(n.id)
 }
@@ -305,26 +309,67 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 	return n.diskUsages.getOrCreateDisk(diskType)
 }
 
+// inMaintenanceMode is true for a data node whose volume server is in
+// maintenance mode. Racks and data centers never are: their rolled-up counters
+// still include such a node, so their free-slot totals may exceed what their
+// children will actually hand out; see reserveOneVolumeInternal.
+func (n *NodeImpl) inMaintenanceMode() bool {
+	dn, ok := n.value.(*DataNode)
+	return ok && dn.InMaintenanceMode()
+}
+
+// AvailableSpaceFor is the free volume slots on this node for the option's disk
+// type. A data node in maintenance mode reports none: it is being drained, so
+// it is neither a volume-growth candidate nor reservable.
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
-	t := n.getOrCreateDisk(option.DiskType)
+	if n.inMaintenanceMode() {
+		return 0
+	}
+	t := n.diskUsages.getDisk(option.DiskType)
+	if t == nil {
+		return 0
+	}
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
-	freeVolumeSlotCount -= ecShardSlots(atomic.LoadInt64(&t.ecShardCount))
+	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
 	return freeVolumeSlotCount
+}
+
+// CapacityFor is the total registered volume slots for the option's disk type;
+// zero means no volume server has reported capacity for it yet.
+func (n *NodeImpl) CapacityFor(option *VolumeGrowOption) int64 {
+	t := n.diskUsages.getDisk(option.DiskType)
+	if t == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
+}
+
+// CapacityForAnyDisk is the total registered volume slots across every disk
+// type. CapacityFor answers zero both while a cluster is still starting and
+// when it never serves the option's medium; this tells the two apart.
+func (n *NodeImpl) CapacityForAnyDisk() (total int64) {
+	n.diskUsages.RLock()
+	defer n.diskUsages.RUnlock()
+	for _, t := range n.diskUsages.usages {
+		total += atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
+	}
+	return
 }
 
 // AvailableSpaceForReservation returns available space considering existing reservations
 func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
+	// Expire here as well: a node whose reservations fill it is filtered out
+	// before TryReserveCapacity could clean them, stranding the capacity.
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 	baseAvailable := n.AvailableSpaceFor(option)
 	reservedCount := n.capacityReservations.getReservedCount(option.DiskType)
 	return baseAvailable - reservedCount
 }
 
-// TryReserveCapacity attempts to atomically reserve capacity for volume creation
+// TryReserveCapacity attempts to atomically reserve capacity for volume creation using the configured timeout
 func (n *NodeImpl) TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool) {
-	const reservationTimeout = 5 * time.Minute // TODO: make this configurable
-
 	// Clean up any expired reservations first
-	n.capacityReservations.cleanExpiredReservations(reservationTimeout)
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 
 	// Atomically check and reserve space
 	option := &VolumeGrowOption{DiskType: diskType}
@@ -348,7 +393,11 @@ func (n *NodeImpl) ReleaseReservedCapacity(reservationId string) {
 	}
 }
 func (n *NodeImpl) SetParent(node Node) {
-	n.parent = node
+	if node == nil {
+		n.parent.Store(nil)
+		return
+	}
+	n.parent.Store(&node)
 }
 
 func (n *NodeImpl) Children() (ret []Node) {
@@ -361,7 +410,10 @@ func (n *NodeImpl) Children() (ret []Node) {
 }
 
 func (n *NodeImpl) Parent() Node {
-	return n.parent
+	if parent := n.parent.Load(); parent != nil {
+		return *parent
+	}
+	return nil
 }
 
 func (n *NodeImpl) GetValue() interface{} {
@@ -380,13 +432,29 @@ func (n *NodeImpl) ReserveOneVolumeForReservation(r int64, option *VolumeGrowOpt
 func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, useReservations bool) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
-	for _, node := range n.children {
-		var freeSpace int64
+	freeSpaceOf := func(node Node) int64 {
 		if useReservations {
-			freeSpace = node.AvailableSpaceForReservation(option)
-		} else {
-			freeSpace = node.AvailableSpaceFor(option)
+			return node.AvailableSpaceForReservation(option)
 		}
+		return node.AvailableSpaceFor(option)
+	}
+	// The caller draws r from this node's rolled-up free slots, which still
+	// count children the walk below skips: a data node in maintenance mode
+	// reports no space, and an over-committed one reports less than zero. Fold
+	// r into the space that is actually on offer so it cannot walk off the end
+	// and fail with slots still free.
+	var eligible int64
+	for _, node := range n.children {
+		if freeSpace := freeSpaceOf(node); freeSpace > 0 {
+			eligible += freeSpace
+		}
+	}
+	if eligible <= 0 {
+		return nil, errors.New("No free volume slot found!")
+	}
+	r %= eligible
+	for _, node := range n.children {
+		freeSpace := freeSpaceOf(node)
 		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
@@ -424,8 +492,8 @@ func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, u
 func (n *NodeImpl) UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts) { //can be negative
 	existingDisk := n.getOrCreateDisk(diskType)
 	existingDisk.addDiskUsageCounts(diskUsage)
-	if n.parent != nil {
-		n.parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
+	if parent := n.Parent(); parent != nil {
+		parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
 	}
 }
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
@@ -439,8 +507,8 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
 			break
 		}
 	}
-	if n.parent != nil {
-		n.parent.UpAdjustMaxVolumeId(vid)
+	if parent := n.Parent(); parent != nil {
+		parent.UpAdjustMaxVolumeId(vid)
 	}
 }
 func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {

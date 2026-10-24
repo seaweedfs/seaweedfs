@@ -80,7 +80,7 @@ func copyChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSourc
 
 		var writeErr error
 		var shouldRetry bool
-		jwt := filer.JwtForVolumeServer(chunk.FileId)
+		jwt := filer.ChunkReadJwt(fileUrls, chunk.FileId)
 
 		for _, fileUrl := range fileUrls {
 			shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), fileUrl, jwt, chunk.CipherKey, chunk.IsGzipped, chunk.IsFullChunk(), chunk.OffsetInChunk, int(chunk.ViewSize), func(data []byte) {

@@ -54,6 +54,7 @@ type CompiledAction struct {
 	Delay              time.Duration
 	PredicateSensitive bool
 	Mode               RuleMode
+	bootstrapComplete  bool
 	engineState        atomic.Uint32
 }
 
@@ -117,6 +118,30 @@ func (s *Snapshot) BucketVersioned(bucket string) bool {
 		return bi.versioned
 	}
 	return false
+}
+
+// BucketPrefixes returns the distinct rule prefixes of the bucket's
+// active actions in this view. An empty result means no active action
+// can match any entry in the bucket; a "" element means some rule
+// matches every key.
+func (s *Snapshot) BucketPrefixes(bucket string) []string {
+	bi := s.buckets[bucket]
+	if bi == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range bi.actionKeys {
+		a := s.actions[k]
+		if a == nil || !a.IsActive() || a.Mode == ModeDisabled || a.Rule == nil {
+			continue
+		}
+		if !seen[a.Rule.Prefix] {
+			seen[a.Rule.Prefix] = true
+			out = append(out, a.Rule.Prefix)
+		}
+	}
+	return out
 }
 
 // BucketActionKeys returns a defensive copy of the action keys for bucket,

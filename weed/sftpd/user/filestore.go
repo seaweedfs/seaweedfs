@@ -154,6 +154,11 @@ func (s *FileStore) ValidatePassword(username string, password []byte) bool {
 		return false
 	}
 
+	// An empty stored or supplied password is never a match: a public-key-only
+	// user has no password, and equal-length zero slices would otherwise compare equal.
+	if len(user.Password) == 0 || len(password) == 0 {
+		return false
+	}
 	// Compare plaintext password using constant time comparison for security
 	return subtle.ConstantTimeCompare([]byte(user.Password), password) == 1
 }

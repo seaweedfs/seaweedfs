@@ -61,6 +61,9 @@ spec:
       {{- if .Values.sftp.priorityClassName }}
       priorityClassName: {{ .Values.sftp.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.sftp.schedulerName }}
+      schedulerName: {{ .Values.sftp.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.sftp.serviceAccountName }}
       serviceAccountName: {{ .Values.sftp.serviceAccountName | quote }}
@@ -167,6 +170,7 @@ spec:
               -userStoreFile=/etc/sw/seaweedfs_sftp_config \
               -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.sftp.containerSecurityContext (tpl (.Values.sftp.extraVolumeMounts | default "") .) (tpl (.Values.sftp.extraVolumes | default "") .)) | nindent 12 }}
             {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
@@ -246,6 +250,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.sftp.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.sftp.containerSecurityContext (tpl (.Values.sftp.extraVolumeMounts | default "") .) (tpl (.Values.sftp.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if .Values.sftp.enableAuth }}
         - name: config-users
           secret:

@@ -12,12 +12,14 @@ import (
 // Config extends BaseConfig with erasure coding specific settings
 type Config struct {
 	base.BaseConfig
-	QuietForSeconds  int      `json:"quiet_for_seconds"`
-	FullnessRatio    float64  `json:"fullness_ratio"`
-	CollectionFilter string   `json:"collection_filter"`
-	MinSizeMB        int      `json:"min_size_mb"`
-	PreferredTags    []string `json:"preferred_tags"`
-	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
+	QuietForSeconds   int      `json:"quiet_for_seconds"`
+	FullnessRatio     float64  `json:"fullness_ratio"`
+	CollectionFilter  string   `json:"collection_filter"`
+	MinSizeMB         int      `json:"min_size_mb"`
+	PreferredTags     []string `json:"preferred_tags"`
+	ReplicaPlacement  string   `json:"replica_placement"`   // e.g. "020"; empty falls back to the master default replication
+	StrictPlacement   bool     `json:"strict_placement"`    // fail planning instead of relaxing placement constraints
+	FreeSlotsDeadband int      `json:"free_slots_deadband"` // Place volume-slot M; |ΔfreeSlots| ≤ M×dataShards is a tie, then liveShards; 0 = strict
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -123,9 +125,9 @@ func GetConfigSpec() base.ConfigSpec {
 				DefaultValue: "",
 				Required:     false,
 				DisplayName:  "Collection Filter",
-				Description:  "Only process volumes from specific collections",
-				HelpText:     "Leave empty to process all collections, or specify collection name",
-				Placeholder:  "my_collection",
+				Description:  "Only process volumes from specific collections (comma-separated names, wildcards, or regex patterns)",
+				HelpText:     "Leave empty to process all collections, or list the collections to process",
+				Placeholder:  "pictures,videos",
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
@@ -171,6 +173,34 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "strict_placement",
+				JSONName:     "strict_placement",
+				Type:         config.FieldTypeBool,
+				DefaultValue: false,
+				Required:     false,
+				DisplayName:  "Strict Placement",
+				Description:  "Refuse to encode a volume when the placement constraints can't be satisfied",
+				HelpText:     "When enabled, a volume is only encoded if every shard can be placed within the per-disk, anti-affinity, replica-placement and per-rack caps, so the configured resilience is preserved. When disabled (default), unsatisfiable constraints are relaxed and noted in the log",
+				InputType:    "checkbox",
+				CSSClasses:   "form-check-input",
+			},
+			{
+				Name:         "free_slots_deadband",
+				JSONName:     "free_slots_deadband",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				MaxValue:     100000,
+				Required:     false,
+				DisplayName:  "Free Volume Deadband (M)",
+				Description:  "Treat |Δfree volume slots| ≤ M as a Place tie and rank by liveShards instead",
+				HelpText:     "0 (default) keeps strict freeSlots ranking. A positive M is volume slots; Place applies M × data shards (10+4 → ×10).",
+				Placeholder:  "0",
+				Unit:         config.UnitCount,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -186,12 +216,14 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
 		TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
 			ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-				FullnessRatio:    float64(c.FullnessRatio),
-				QuietForSeconds:  int32(c.QuietForSeconds),
-				MinVolumeSizeMb:  int32(c.MinSizeMB),
-				CollectionFilter: c.CollectionFilter,
-				PreferredTags:    preferredTagsCopy,
-				ReplicaPlacement: c.ReplicaPlacement,
+				FullnessRatio:     float64(c.FullnessRatio),
+				QuietForSeconds:   int32(c.QuietForSeconds),
+				MinVolumeSizeMb:   int32(c.MinSizeMB),
+				CollectionFilter:  c.CollectionFilter,
+				PreferredTags:     preferredTagsCopy,
+				ReplicaPlacement:  c.ReplicaPlacement,
+				StrictPlacement:   c.StrictPlacement,
+				FreeSlotsDeadband: int32(c.FreeSlotsDeadband),
 			},
 		},
 	}
@@ -216,6 +248,8 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.CollectionFilter = ecConfig.CollectionFilter
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 		c.ReplicaPlacement = ecConfig.ReplicaPlacement
+		c.StrictPlacement = ecConfig.StrictPlacement
+		c.FreeSlotsDeadband = int(ecConfig.FreeSlotsDeadband)
 	}
 
 	return nil
@@ -229,12 +263,25 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadErasureCodingTaskPolicy(); err == nil && policy != nil {
-			if err := config.FromTaskPolicy(policy); err == nil {
+		policy, err := persistence.LoadErasureCodingTaskPolicy()
+		switch {
+		case err != nil:
+			glog.Warningf("Could not read the persisted erasure coding configuration, falling back to defaults: %v", err)
+		case policy == nil:
+			glog.V(1).Infof("No erasure coding configuration persisted yet, using defaults")
+		default:
+			if err := config.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Could not apply the persisted erasure coding configuration, falling back to defaults: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded erasure coding configuration from persistence")
 				return config
 			}
 		}
+	} else if configPersistence != nil {
+		// A store was handed in but does not expose the accessor, so the persisted
+		// settings are silently ignored - always a wiring bug, never a normal state.
+		glog.Warningf("%T cannot provide the persisted erasure coding configuration: it has no LoadErasureCodingTaskPolicy() method, "+
+			"so the compiled-in defaults are used and any saved erasure coding settings are ignored", configPersistence)
 	}
 
 	glog.V(1).Infof("Using default erasure coding configuration")

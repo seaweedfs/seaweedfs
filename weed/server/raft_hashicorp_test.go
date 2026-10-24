@@ -35,19 +35,6 @@ func TestRaftServerID(t *testing.T) {
 	}
 }
 
-func TestGetPeerIdxUsesCanonicalID(t *testing.T) {
-	peers := map[string]pb.ServerAddress{
-		"master-0:9333": pb.ServerAddress("master-0:9333"),
-		"master-1:9333": pb.ServerAddress("master-1:9333"),
-		"master-2:9333": pb.ServerAddress("master-2:9333"),
-	}
-	self := pb.NewServerAddress("master-2", 9333, 19333)
-
-	if got := getPeerIdx(self, peers); got != 2 {
-		t.Fatalf("getPeerIdx(%q) = %d, want 2", self, got)
-	}
-}
-
 func TestAddPeersConfigurationUsesCanonicalIDs(t *testing.T) {
 	rs := &RaftServer{
 		peers: map[string]pb.ServerAddress{

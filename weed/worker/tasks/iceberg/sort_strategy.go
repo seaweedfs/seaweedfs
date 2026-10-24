@@ -13,6 +13,9 @@ import (
 type compactionRewritePlan struct {
 	strategy   string
 	sortFields []compactionSortField
+	// Carried on the plan so the merge does not need the whole Config.
+	bufferRows int64
+	spillDir   string
 }
 
 type compactionSortField struct {
@@ -29,6 +32,16 @@ func resolveCompactionRewritePlan(config Config, meta table.Metadata) (*compacti
 	if strategy == defaultRewriteStrategy {
 		return &compactionRewritePlan{strategy: defaultRewriteStrategy}, nil
 	}
+	// "auto" sorts tables that declare a usable sort order and bin-packs the
+	// rest, so an unsorted table is not an error the way an explicit "sort" is.
+	if strategy == rewriteStrategyAuto {
+		sortFields, err := resolveCompactionSortFields(meta)
+		if err != nil {
+			glog.V(2).Infof("iceberg compact: auto strategy falling back to binpack: %v", err)
+			return &compactionRewritePlan{strategy: defaultRewriteStrategy}, nil
+		}
+		return newSortPlan(config, sortFields), nil
+	}
 	if strategy != "sort" {
 		return nil, fmt.Errorf("unsupported rewrite strategy %q", config.RewriteStrategy)
 	}
@@ -42,10 +55,18 @@ func resolveCompactionRewritePlan(config Config, meta table.Metadata) (*compacti
 		return nil, err
 	}
 
+	return newSortPlan(config, sortFields), nil
+}
+
+// newSortPlan pairs the resolved sort fields with the settings the sorted
+// merge needs while writing.
+func newSortPlan(config Config, sortFields []compactionSortField) *compactionRewritePlan {
 	return &compactionRewritePlan{
-		strategy:   strategy,
+		strategy:   "sort",
 		sortFields: sortFields,
-	}, nil
+		bufferRows: config.SortBufferRows,
+		spillDir:   config.SortSpillDir,
+	}
 }
 
 var errUnsupportedTableSortOrder = fmt.Errorf("unsupported table sort order")

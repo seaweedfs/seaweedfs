@@ -4,14 +4,18 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
 )
 
 const (
-	bucketLifecycleConfigurationXMLKey               = "s3-bucket-lifecycle-configuration-xml"
-	bucketLifecycleTransitionMinimumObjectSizeKey    = "s3-bucket-lifecycle-transition-default-minimum-object-size"
+	// The stored form is defined in the scheduler package, which callers
+	// outside the gateway also read; these are local shorthands for it.
+	bucketLifecycleConfigurationXMLKey            = scheduler.BucketLifecycleConfigurationXMLKey
+	bucketLifecycleTransitionMinimumObjectSizeKey = scheduler.BucketLifecycleTransitionMinimumObjectSizeKey
+	maxBucketLifecycleConfigurationSize           = scheduler.MaxBucketLifecycleConfigurationSize
+
 	bucketLifecycleTransitionMinimumObjectSizeHeader = "X-Amz-Transition-Default-Minimum-Object-Size"
 	defaultLifecycleTransitionMinimumObjectSize      = "all_storage_classes_128K"
-	maxBucketLifecycleConfigurationSize              = 1 << 20
 )
 
 func normalizeBucketLifecycleTransitionMinimumObjectSize(value string) string {

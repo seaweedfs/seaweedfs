@@ -7,7 +7,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
@@ -32,7 +34,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 
 	// Get detailed volume information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -121,7 +123,11 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	diskTypeMap := make(map[string]bool)
 	collectionMap := make(map[string]bool)
 	versionMap := make(map[string]bool)
+	hasRemoteVolumes := false
 	for _, volume := range volumes {
+		if volume.RemoteStorageName != "" {
+			hasRemoteVolumes = true
+		}
 		if volume.DataCenter != "" {
 			dataCenterMap[volume.DataCenter] = true
 		}
@@ -189,7 +195,9 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	// Determine conditional display flags and extract single values
 	showDataCenterColumn := dataCenterCount > 1
 	showRackColumn := rackCount > 1
-	showDiskTypeColumn := diskTypeCount > 1
+	// Remote-tiered volumes surface in the disk type column, so show it
+	// whenever any volume lives on a remote tier.
+	showDiskTypeColumn := diskTypeCount > 1 || hasRemoteVolumes
 	showCollectionColumn := collectionCount > 1 && collection == "" // Hide column when filtering by collection
 	showVersionColumn := versionCount > 1
 
@@ -309,7 +317,7 @@ func (s *AdminServer) sortVolumes(volumes []VolumeWithTopology, sortBy string, s
 }
 
 // GetVolumeDetails retrieves detailed information about a specific volume
-func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDetailsData, error) {
+func (s *AdminServer) GetVolumeDetails(volumeID uint32, server string) (*VolumeDetailsData, error) {
 	var primaryVolume VolumeWithTopology
 	var replicas []VolumeWithTopology
 	var volumeSizeLimit uint64
@@ -317,7 +325,7 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 
 	// Find the volume and all its replicas in the cluster
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
 		if err != nil {
 			return err
 		}
@@ -328,7 +336,8 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
 							for _, volInfo := range diskInfo.VolumeInfos {
-								if int(volInfo.Id) == volumeID {
+								// An older master ignores the filter.
+								if volInfo.Id == volumeID {
 									diskType := volInfo.DiskType
 									if diskType == "" {
 										diskType = "hdd"
@@ -391,6 +400,57 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 	}, nil
 }
 
+// SetVolumeReadOnly changes the access mode of a single volume replica.
+func (s *AdminServer) SetVolumeReadOnly(ctx context.Context, volumeID uint32, server string, readOnly bool) error {
+	var address pb.ServerAddress
+	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
+		if err != nil {
+			return err
+		}
+		address, err = volumeReplicaAddress(resp.GetTopologyInfo(), volumeID, server)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.WithVolumeServerClient(address, func(client volume_server_pb.VolumeServerClient) error {
+		if readOnly {
+			_, err := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
+				VolumeId: volumeID,
+				Persist:  true,
+			})
+			return err
+		}
+		_, err := client.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: volumeID})
+		return err
+	})
+}
+
+// Resolve the selected replica through the master rather than dialing a
+// user-supplied address. Node IDs can differ from their network addresses.
+func volumeReplicaAddress(topology *master_pb.TopologyInfo, volumeID uint32, server string) (pb.ServerAddress, error) {
+	for _, dc := range topology.GetDataCenterInfos() {
+		for _, rack := range dc.GetRackInfos() {
+			for _, node := range rack.GetDataNodeInfos() {
+				if node.GetId() != server {
+					continue
+				}
+				for _, disk := range node.GetDiskInfos() {
+					for _, volume := range disk.GetVolumeInfos() {
+						// Older masters may ignore the volume ID filter.
+						if volume.GetId() == volumeID {
+							return pb.NewServerAddressFromDataNode(node), nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("volume %d not found on server %s", volumeID, server)
+}
+
 // VacuumVolume performs a vacuum operation on a specific volume
 func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 	// Validate volumeID range before converting to uint32
@@ -418,7 +478,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -480,10 +540,17 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024
 							}
 
-							// Count regular volumes and calculate disk usage
+							// Count regular volumes and calculate disk usage.
+							// A remote-tiered volume reports its cloud object's
+							// size; keep those bytes out of the local disk usage
+							// that is compared against DiskCapacity.
 							for _, volInfo := range diskInfo.VolumeInfos {
 								vs.Volumes++
-								vs.DiskUsage += int64(volInfo.Size)
+								if volInfo.RemoteStorageName != "" {
+									vs.RemoteSize += int64(volInfo.Size)
+								} else {
+									vs.DiskUsage += int64(volInfo.Size)
+								}
 							}
 
 							// Accumulate EC shard information across all disks for this volume server

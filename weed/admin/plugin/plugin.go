@@ -14,6 +14,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -96,6 +98,11 @@ type Plugin struct {
 
 	pendingExecutionMu sync.Mutex
 	pendingExecution   map[string]chan *plugin_pb.JobCompleted
+
+	pendingPreviewMu sync.Mutex
+	pendingPreview   map[string]chan *plugin_pb.ObjectPreviewResponse
+
+	observations *ObservationStore
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
@@ -180,6 +187,8 @@ func New(options Options) (*Plugin, error) {
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
 		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
+		pendingPreview:            make(map[string]chan *plugin_pb.ObjectPreviewResponse),
+		observations:              NewObservationStore(),
 		nextDetectionAt:           make(map[string]time.Time),
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
@@ -235,6 +244,13 @@ func (r *Plugin) Shutdown() {
 	}
 	r.pendingSchemaMu.Unlock()
 
+	r.pendingPreviewMu.Lock()
+	for requestID, ch := range r.pendingPreview {
+		close(ch)
+		delete(r.pendingPreview, requestID)
+	}
+	r.pendingPreviewMu.Unlock()
+
 	r.pendingDetectionMu.Lock()
 	for requestID, state := range r.pendingDetection {
 		close(state.complete)
@@ -253,6 +269,10 @@ func (r *Plugin) Shutdown() {
 }
 
 func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
+	if err := security.CheckGrpcAdminPeer(stream.Context(), security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
+
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -595,7 +615,7 @@ func (r *Plugin) ExecuteJob(
 	releaseGate := r.acquireDetectionExecutionGate(jobType, true)
 	defer releaseGate()
 
-	executor, err := r.registry.PickExecutor(jobType)
+	executor, err := r.registry.PickExecutor(jobType, JobReplicaHosts(job)...)
 	if err != nil {
 		return nil, err
 	}
@@ -978,6 +998,10 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 		r.handleJobProgressUpdate(workerID, body.JobProgressUpdate)
 	case *plugin_pb.WorkerToAdminMessage_JobCompleted:
 		r.handleJobCompleted(body.JobCompleted)
+	case *plugin_pb.WorkerToAdminMessage_Observations:
+		r.observations.Record(workerID, body.Observations)
+	case *plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse:
+		r.handleObjectPreviewResponse(body.ObjectPreviewResponse)
 	case *plugin_pb.WorkerToAdminMessage_Acknowledge:
 		if !body.Acknowledge.Accepted {
 			glog.Warningf("Plugin worker %s rejected request %s: %s", workerID, body.Acknowledge.RequestId, body.Acknowledge.Message)

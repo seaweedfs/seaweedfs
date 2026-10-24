@@ -56,6 +56,8 @@ const (
 	ErrNoSuchBucketPolicy
 	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
+	ErrNoSuchWebsiteConfiguration
+	ErrReplicationConfigurationNotFound
 	ErrNoSuchKey
 	ErrNoSuchVersion
 	ErrNoSuchUpload
@@ -71,6 +73,7 @@ const (
 	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidPartNumber
 	ErrInvalidPartOrder
 	ErrInvalidRange
 	ErrInternalError
@@ -93,8 +96,10 @@ const (
 	ErrMalformedCredentialDate
 	ErrMalformedPolicy
 	ErrInvalidPolicyDocument
+	ErrPolicyTooLarge
 	ErrMissingSignHeadersTag
 	ErrMissingSignTag
+	ErrAuthorizationHeaderMalformed
 	ErrUnsignedHeaders
 	ErrInvalidQueryParams
 	ErrInvalidQuerySignatureAlgo
@@ -110,6 +115,7 @@ const (
 	ErrRequestTimeTooSkewed
 	ErrMissingDateHeader
 	ErrInvalidRequest
+	ErrInvalidArgument
 	ErrAuthNotSetup
 	ErrNotImplemented
 	ErrPreconditionFailed
@@ -137,6 +143,8 @@ const (
 	ErrSSECustomerKeyMissing
 	ErrSSECustomerKeyNotNeeded
 	ErrSSEEncryptionTypeMismatch
+	ErrInvalidEncryptionMethod
+	ErrIncompatibleEncryptionMethod
 
 	// SSE-KMS related errors
 	ErrKMSKeyNotFound
@@ -166,10 +174,15 @@ const (
 
 	ErrInvalidRenameSource
 	ErrRenameDestinationSameAsSource
+	ErrIdempotentParameterMismatch
+	ErrAccessControlListNotSupported
+	// The request's snapshot changed during a conditional write; clients can retry.
+	ErrConditionalRequestConflict
 )
 
 // Error message constants for checksum validation
 const (
+	ErrMsgContentSha256Mismatch     = "the provided 'x-amz-content-sha256' header does not match what was computed"
 	ErrMsgPayloadChecksumMismatch   = "payload checksum does not match"
 	ErrMsgChunkSignatureMismatch    = "chunk signature does not match"
 	ErrMsgChecksumAlgorithmMismatch = "checksum algorithm mismatch"
@@ -298,6 +311,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "The lifecycle configuration does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
+	ErrNoSuchWebsiteConfiguration: {
+		Code:           "NoSuchWebsiteConfiguration",
+		Description:    "The specified bucket does not have a website configuration",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrReplicationConfigurationNotFound: {
+		Code:           "ReplicationConfigurationNotFoundError",
+		Description:    "The replication configuration was not found",
+		HTTPStatusCode: http.StatusNotFound,
+	},
 	ErrNoSuchKey: {
 		Code:           "NoSuchKey",
 		Description:    "The specified key does not exist.",
@@ -336,6 +359,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidPartNumber: {
+		Code:           "InvalidPartNumber",
+		Description:    "The requested partnumber is not satisfiable.",
+		HTTPStatusCode: http.StatusRequestedRangeNotSatisfiable,
+	},
 	ErrInvalidPartOrder: {
 		Code:           "InvalidPartOrder",
 		Description:    "The list of parts was not in ascending order. The parts list must be specified in order by part number.",
@@ -362,6 +390,13 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "This rename request is illegal because it is trying to rename an object to itself.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrIdempotentParameterMismatch: {
+		Code:        "IdempotentParameterMismatch",
+		Description: "The request uses the same client token as a previous, but non-identical request.",
+		// 400 Bad Request, matching the AWS S3 RenameObject API documentation
+		// for IdempotencyParameterMismatch.
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrInvalidTag: {
 		Code:           "InvalidTag",
 		Description:    "The Tag value you have provided is invalid",
@@ -375,6 +410,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMalformedPolicy: {
 		Code:           "MalformedPolicy",
 		Description:    "Policy has invalid resource.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrPolicyTooLarge: {
+		Code:           "PolicyTooLarge",
+		Description:    "Policy exceeds the maximum allowed document size.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidPolicyDocument: {
@@ -448,8 +488,13 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrMissingSignTag: {
-		Code:           "AccessDenied",
+		Code:           "AuthorizationHeaderMalformed",
 		Description:    "Signature header missing Signature field.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrAuthorizationHeaderMalformed: {
+		Code:           "AuthorizationHeaderMalformed",
+		Description:    "The authorization header is malformed.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 
@@ -526,11 +571,21 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMissingDateHeader: {
 		Code:           "AccessDenied",
 		Description:    "AWS authentication requires a valid Date or x-amz-date header",
-		HTTPStatusCode: http.StatusBadRequest,
+		HTTPStatusCode: http.StatusForbidden,
 	},
 	ErrInvalidRequest: {
 		Code:           "InvalidRequest",
 		Description:    "Invalid Request",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidArgument: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid Argument",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrAccessControlListNotSupported: {
+		Code:           "AccessControlListNotSupported",
+		Description:    "The bucket does not allow ACLs",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidRange: {
@@ -553,6 +608,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "At least one of the pre-conditions you specified did not hold",
 		HTTPStatusCode: http.StatusPreconditionFailed,
 	},
+	ErrConditionalRequestConflict: {
+		Code:           "ConditionalRequestConflict",
+		Description:    "A conflicting conditional operation is currently in progress against this resource. Please try again.",
+		HTTPStatusCode: http.StatusConflict,
+	},
 	ErrNotModified: {
 		Code:           "NotModified",
 		Description:    "The object was not modified since the specified time",
@@ -569,12 +629,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrTooManyRequest: {
-		Code:           "ErrTooManyRequest",
+		Code:           "SlowDown",
 		Description:    "Too many simultaneous request count",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 	ErrRequestBytesExceed: {
-		Code:           "ErrRequestBytesExceed",
+		Code:           "SlowDown",
 		Description:    "Simultaneous request bytes exceed limitations",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
@@ -629,6 +689,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrSSEEncryptionTypeMismatch: {
 		Code:           "InvalidRequest",
 		Description:    "The encryption method specified in the request does not match the encryption method used to encrypt the object.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidEncryptionMethod: {
+		Code:           "InvalidArgument",
+		Description:    "The encryption method specified is not supported",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrIncompatibleEncryptionMethod: {
+		Code:           "InvalidArgument",
+		Description:    "Server Side Encryption with Customer provided key is incompatible with the encryption method specified",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

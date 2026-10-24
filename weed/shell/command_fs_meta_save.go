@@ -20,6 +20,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -72,7 +75,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	if fileName == "" {
 		t := time.Now()
 		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta.gz",
-			commandEnv.option.FilerAddress.ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+			commandEnv.FilerAddress().ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	var dst io.Writer
@@ -140,7 +143,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	})
 
 	if err == nil {
-		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
+		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.FilerAddress().ToHttpAddress(), path, fileName)
 	}
 
 	return err
@@ -152,6 +155,133 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 // log; volume.fsck and fs.verify must leave it false so the live log-file
 // chunks are accounted for — otherwise fsck reports them as orphans and could
 // delete referenced needles.
+// doTraverseAndSaving feeds every entry at and below path through genFn and
+// saveFn: from one snapshot of the filer store when the filer can provide it
+// (so a file renamed during the traversal is not missed), by walking otherwise.
+func doTraverseAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, skipSystemLog bool, genFn func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{}) error) error {
+	if used, err := doTraverseSnapshotAndSaving(filerClient, writer, path, verbose, skipSystemLog, genFn, saveFn); used || err != nil {
+		return err
+	}
+	return doTraverseBfsAndSaving(filerClient, writer, path, verbose, skipSystemLog, genFn, saveFn)
+}
+
+// doTraverseSnapshotAndSaving asks the filer to traverse path itself and
+// consumes the stream only when the filer serves it from a store snapshot
+// (filer_pb.TraverseModeHeaderKey). Otherwise it returns used=false having
+// read nothing, and the caller walks as before.
+func doTraverseSnapshotAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, skipSystemLog bool, genFn func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{}) error) (used bool, err error) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var excludedPrefixes []string
+	if skipSystemLog {
+		excludedPrefixes = append(excludedPrefixes, filer.SystemLogDir)
+	}
+
+	// The walk tolerates a path that does not exist (it saves nothing); the
+	// filer-side traversal reports it as an error, so let the walk have it.
+	// Any other failure must stop here: a walk that could then reach the filer
+	// reads renamed-away entries as absent, and fsck would purge their chunks.
+	if _, _, _, getErr := filer_pb.GetEntry(ctx, filerClient, util.FullPath(path)); getErr != nil {
+		if errors.Is(getErr, filer_pb.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("traverse %s: %w", path, getErr)
+	}
+
+	err = filerClient.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
+		ctx := metadata.AppendToOutgoingContext(ctx, filer_pb.TraverseModeHeaderKey, filer_pb.TraverseModeSnapshot)
+		stream, err := client.TraverseBfsMetadata(ctx, &filer_pb.TraverseBfsMetadataRequest{
+			Directory:        path,
+			ExcludedPrefixes: excludedPrefixes,
+		})
+		if err != nil {
+			return err
+		}
+		header, err := stream.Header()
+		if err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				return nil // a filer without the RPC at all: walk
+			}
+			return fmt.Errorf("traverse %s: %w", path, err)
+		}
+		if modes := header.Get(filer_pb.TraverseModeHeaderKey); len(modes) == 0 || modes[0] != filer_pb.TraverseModeSnapshot {
+			// An older filer (no header), a store that cannot scan ("bfs"), or
+			// a stream that failed before any header, which Header() reports
+			// as no header and nil: only Recv tells, and a failure is no
+			// licence to walk instead.
+			if _, recvErr := stream.Recv(); recvErr != nil && !errors.Is(recvErr, io.EOF) && status.Code(recvErr) != codes.Unimplemented {
+				return fmt.Errorf("traverse %s: %w", path, recvErr)
+			}
+			return nil
+		}
+		used = true
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		outputChan := make(chan interface{}, 1024)
+		saveErrChan := make(chan error, 1)
+		go func() {
+			saveErr := saveFn(outputChan)
+			saveErrChan <- saveErr
+			if saveErr != nil {
+				cancel()
+			}
+			wg.Done()
+		}()
+
+		var dirCount, fileCount uint64
+		var recvErr error
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					recvErr = fmt.Errorf("traverse %s: %w", path, err)
+				}
+				break
+			}
+			if resp.Entry == nil {
+				continue
+			}
+			protoMessage := &filer_pb.FullEntry{
+				Dir:   resp.Directory,
+				Entry: resp.Entry,
+			}
+			if genErr := genFn(ctx, protoMessage, outputChan); genErr != nil {
+				recvErr = genErr
+				cancel()
+				break
+			}
+			if resp.Entry.IsDirectory {
+				dirCount++
+			} else {
+				fileCount++
+			}
+			if verbose {
+				println(util.NewFullPath(resp.Directory, resp.Entry.Name))
+			}
+		}
+
+		close(outputChan)
+		wg.Wait()
+		saveErr := <-saveErrChan
+
+		if recvErr != nil {
+			return recvErr
+		}
+		if saveErr != nil {
+			return saveErr
+		}
+		if writer != nil {
+			fmt.Fprintf(writer, "collected filer entries from a consistent store snapshot\n")
+			fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
+		}
+		return nil
+	})
+	return used, err
+}
+
 func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, skipSystemLog bool, genFn func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{}) error) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,6 +323,9 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 				firstErr = genErr
 				hasErr.Store(true)
 			})
+			close(outputChan)
+			wg.Wait()
+			<-saveErrChan
 			return genErr
 		} else {
 			if e.IsDirectory {

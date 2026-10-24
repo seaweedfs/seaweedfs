@@ -5,6 +5,15 @@ function basePath(path) {
     return (window.__BASE_PATH__ || '') + path;
 }
 
+// Current-location checks against app paths, ignoring the URL prefix
+function isCurrentPath(path) {
+    return window.location.pathname === basePath(path);
+}
+
+function currentPathStartsWith(path) {
+    return window.location.pathname.startsWith(basePath(path));
+}
+
 // Global variables
 let bucketToDelete = '';
 
@@ -16,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFileManagerEventHandlers();
 
     // Initialize delete button visibility on file browser page
-    if (window.location.pathname === basePath('/files')) {
+    if (isCurrentPath('/files')) {
         updateDeleteSelectedButton();
     }
 });
@@ -71,7 +80,7 @@ function initializeTooltips() {
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
     setInterval(function () {
-        if (window.location.pathname === basePath('/dashboard')) {
+        if (isCurrentPath('/dashboard')) {
             htmx.trigger('#dashboard-content', 'refresh');
         }
     }, 30000);
@@ -88,9 +97,9 @@ function setActiveNavigation() {
 
         if (href === currentPath) {
             isActive = true;
-        } else if (currentPath === '/' && href === '/admin') {
+        } else if (isCurrentPath('/') && href === basePath('/admin')) {
             isActive = true;
-        } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
+        } else if (currentPathStartsWith('/s3/') && href === basePath('/s3/buckets')) {
             isActive = true;
         }
         // Note: Removed the problematic cluster condition that was highlighting all submenu items
@@ -105,10 +114,8 @@ function setActiveNavigation() {
 
 // Set up submenu behavior
 function setupSubmenuBehavior() {
-    const currentPath = window.location.pathname;
-
     // If we're on a cluster page, expand the cluster submenu
-    if (currentPath.startsWith('/cluster/')) {
+    if (currentPathStartsWith('/cluster/')) {
         const clusterSubmenu = document.getElementById('clusterSubmenu');
         if (clusterSubmenu) {
             clusterSubmenu.classList.add('show');
@@ -123,7 +130,7 @@ function setupSubmenuBehavior() {
     }
 
     // If we're on an object store page, expand the object store submenu
-    if (currentPath.startsWith('/object-store/')) {
+    if (currentPathStartsWith('/object-store/')) {
         const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
         if (objectStoreSubmenu) {
             objectStoreSubmenu.classList.add('show');
@@ -272,7 +279,7 @@ function showErrorMessage(message) {
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
-                <i class="fas fa-exclamation-triangle me-2"></i>
+                <i class="bi bi-exclamation-triangle me-2"></i>
                 ${message}
             </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
@@ -312,7 +319,7 @@ function showSuccessMessage(message) {
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
-                <i class="fas fa-check-circle me-2"></i>
+                <i class="bi bi-check-circle me-2"></i>
                 ${message}
             </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
@@ -389,11 +396,7 @@ window.Dashboard = {
 // Initialize event handlers
 function initializeEventHandlers() {
     // S3 Bucket Management
-    const createBucketForm = document.getElementById('createBucketForm');
-    if (createBucketForm) {
-        createBucketForm.addEventListener('submit', handleCreateBucket);
-    }
-
+   
     // Delete bucket buttons
     document.addEventListener('click', function (e) {
         if (e.target.closest('.delete-bucket-btn')) {
@@ -627,7 +630,7 @@ function formatDate(date) {
 function adminCopyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-            showAlert('Copied to clipboard!', 'success');
+            showToast('Copied to clipboard!');
         }).catch(err => {
             console.error('Failed to copy text: ', err);
             fallbackCopyText(text);
@@ -653,7 +656,7 @@ function fallbackCopyText(text) {
     try {
         const successful = document.execCommand('copy');
         if (successful) {
-            showAlert('Copied to clipboard!', 'success');
+            showToast('Copied to clipboard!');
         } else {
             showAlert('Failed to copy to clipboard', 'danger');
         }
@@ -970,7 +973,7 @@ function updateDeleteSelectedButton() {
     if (deleteBtn) {
         if (checkboxes.length > 0) {
             deleteBtn.style.display = 'inline-block';
-            deleteBtn.innerHTML = `<i class="fas fa-trash me-1"></i>Delete Selected (${checkboxes.length})`;
+            deleteBtn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected (${checkboxes.length})`;
         } else {
             deleteBtn.style.display = 'none';
         }
@@ -1037,7 +1040,7 @@ async function deleteSelectedFiles(filePaths) {
     const deleteBtn = document.getElementById('deleteSelectedBtn');
     const originalText = deleteBtn.innerHTML;
     deleteBtn.disabled = true;
-    deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
+    deleteBtn.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Deleting...';
 
     try {
         const response = await fetch(basePath('/api/files/delete-multiple'), {
@@ -1125,7 +1128,7 @@ async function submitCreateFolder() {
     const submitButton = document.querySelector('#createFolderModal .btn-primary');
     const originalText = submitButton.innerHTML;
     submitButton.disabled = true;
-    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
+    submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Creating...';
 
     try {
         const response = await fetch(basePath('/api/files/create-folder'), {
@@ -1205,7 +1208,7 @@ async function submitUploadFile() {
     progressBar.textContent = '0%';
     uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
     submitButton.disabled = true;
-    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
+    submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Uploading...';
 
     try {
         const xhr = new XMLHttpRequest();
@@ -1506,7 +1509,7 @@ function setupDragAndDrop() {
             overlay.className = 'drag-overlay';
             overlay.innerHTML = `
                 <div class="text-center p-5">
-                    <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                    <i class="bi bi-cloud-upload icon-3x text-primary mb-3"></i>
                     <h5>Drop files here to upload</h5>
                     <p class="text-muted">Release to upload files to this directory</p>
                 </div>
@@ -1586,7 +1589,7 @@ function updateFileListPreview() {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
             <div class="d-flex align-items-center">
-                <i class="fas ${fileIcon} me-2 text-muted"></i>
+                <i class="bi ${fileIcon} me-2 text-muted"></i>
                 <span class="text-truncate" style="max-width: 200px;" title="${file.name}">${file.name}</span>
             </div>
             <small class="text-muted">${formatBytes(file.size)}</small>
@@ -1608,47 +1611,47 @@ function getFileIconByName(fileName) {
         case 'gif':
         case 'bmp':
         case 'svg':
-            return 'fa-image';
+            return 'bi-image';
         case 'mp4':
         case 'avi':
         case 'mov':
         case 'wmv':
         case 'flv':
-            return 'fa-video';
+            return 'bi-camera-video';
         case 'mp3':
         case 'wav':
         case 'flac':
         case 'aac':
-            return 'fa-music';
+            return 'bi-music-note';
         case 'pdf':
-            return 'fa-file-pdf';
+            return 'bi-file-earmark-pdf';
         case 'doc':
         case 'docx':
-            return 'fa-file-word';
+            return 'bi-file-earmark-word';
         case 'xls':
         case 'xlsx':
-            return 'fa-file-excel';
+            return 'bi-file-earmark-excel';
         case 'ppt':
         case 'pptx':
-            return 'fa-file-powerpoint';
+            return 'bi-file-earmark-slides';
         case 'txt':
         case 'md':
-            return 'fa-file-text';
+            return 'bi-file-earmark-text';
         case 'zip':
         case 'rar':
         case '7z':
         case 'tar':
         case 'gz':
-            return 'fa-file-archive';
+            return 'bi-file-earmark-zip';
         case 'js':
         case 'ts':
         case 'html':
         case 'css':
         case 'json':
         case 'xml':
-            return 'fa-file-code';
+            return 'bi-file-earmark-code';
         default:
-            return 'fa-file';
+            return 'bi-file-earmark';
     }
 }
 
@@ -1758,7 +1761,7 @@ function showFileViewer(data) {
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="fileViewerModalLabel">
-                            <i class="fas fa-eye me-2"></i>File Viewer: ${file.name}
+                            <i class="bi bi-eye me-2"></i>File Viewer: ${file.name}
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -1767,7 +1770,7 @@ function showFileViewer(data) {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-primary" onclick="downloadFile('${file.full_path}')">
-                            <i class="fas fa-download me-1"></i>Download
+                            <i class="bi bi-download me-1"></i>Download
                         </button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     </div>
@@ -1809,7 +1812,7 @@ function createFileViewerContent(file, content) {
         return `
             <div class="mb-3">
                 <small class="text-muted">
-                    <i class="fas fa-info-circle me-1"></i>
+                    <i class="bi bi-info-circle me-1"></i>
                     Size: ${formatBytes(file.size)} | Type: ${file.mime}
                 </small>
             </div>
@@ -1831,7 +1834,7 @@ function createFileViewerContent(file, content) {
 function createNonViewableContent(reason) {
     return `
         <div class="text-center py-5">
-            <i class="fas fa-file fa-3x text-muted mb-3"></i>
+            <i class="bi bi-file-earmark icon-3x text-muted mb-3"></i>
             <h5 class="text-muted">Cannot preview file</h5>
             <p class="text-muted">${reason}</p>
         </div>
@@ -1909,7 +1912,7 @@ function showPropertiesModal(properties) {
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="propertiesModalLabel">
-                            <i class="fas fa-info me-2"></i>Properties: ${properties.name}
+                            <i class="bi bi-info me-2"></i>Properties: ${properties.name}
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -1948,7 +1951,7 @@ function createPropertiesContent(properties) {
     let html = `
         <div class="row">
             <div class="col-md-6">
-                <h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>
+                <h6 class="text-primary"><i class="bi bi-file-earmark me-1"></i>Basic Information</h6>
                 <table class="table table-sm">
                     <tr><td><strong>Name:</strong></td><td>${properties.name}</td></tr>
                     <tr><td><strong>Full Path:</strong></td><td><code>${properties.full_path}</code></td></tr>
@@ -1966,7 +1969,7 @@ function createPropertiesContent(properties) {
                 </table>
             </div>
             <div class="col-md-6">
-                <h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>
+                <h6 class="text-primary"><i class="bi bi-clock me-1"></i>Timestamps</h6>
                 <table class="table table-sm">
     `;
 
@@ -1980,7 +1983,7 @@ function createPropertiesContent(properties) {
     html += `
                 </table>
                 
-                <h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>
+                <h6 class="text-primary"><i class="bi bi-shield me-1"></i>Permissions</h6>
                 <table class="table table-sm">
                     <tr><td><strong>Mode:</strong></td><td><code>${properties.file_mode_formatted || properties.file_mode}</code></td></tr>
                     <tr><td><strong>UID:</strong></td><td>${properties.uid || 'N/A'}</td></tr>
@@ -1995,7 +1998,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-hourglass-half me-1"></i>TTL (Time To Live)</h6>
+                    <h6 class="text-primary"><i class="bi bi-hourglass-split me-1"></i>TTL (Time To Live)</h6>
                     <table class="table table-sm">
                         <tr><td><strong>TTL:</strong></td><td>${properties.ttl_formatted || properties.ttl_seconds + ' seconds'}</td></tr>
                     </table>
@@ -2009,7 +2012,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunks (${properties.chunk_count})</h6>
+                    <h6 class="text-primary"><i class="bi bi-puzzle me-1"></i>Chunks (${properties.chunk_count})</h6>
                     <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
                         <table class="table table-sm">
                             <thead>
@@ -2048,7 +2051,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>
+                    <h6 class="text-primary"><i class="bi bi-tags me-1"></i>Extended Attributes</h6>
                     <table class="table table-sm">
         `;
 
@@ -2169,7 +2172,7 @@ function showSecretKey(accessKey, secretKey) {
 
     const content = `
         <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
+            <i class="bi bi-info-circle me-2"></i>
             <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
         </div>
         <div class="mb-3">
@@ -2177,7 +2180,7 @@ function showSecretKey(accessKey, secretKey) {
             <div class="input-group">
                 <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2186,7 +2189,7 @@ function showSecretKey(accessKey, secretKey) {
             <div class="input-group">
                 <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2196,7 +2199,7 @@ function showSecretKey(accessKey, secretKey) {
                 <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
 export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2212,7 +2215,7 @@ function showNewAccessKeyModal(accessKeyData) {
 
     const content = `
         <div class="alert alert-success">
-            <i class="fas fa-check-circle me-2"></i>
+            <i class="bi bi-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
         </div>
         <div class="mb-3">
@@ -2220,7 +2223,7 @@ function showNewAccessKeyModal(accessKeyData) {
             <div class="input-group">
                 <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2229,7 +2232,7 @@ function showNewAccessKeyModal(accessKeyData) {
             <div class="input-group">
                 <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2239,7 +2242,7 @@ function showNewAccessKeyModal(accessKeyData) {
                 <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
 export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2258,11 +2261,11 @@ function copyFromInput(inputId) {
         try {
             const successful = document.execCommand('copy');
             if (successful) {
-                showAlert('Copied to clipboard!', 'success');
+                showToast('Copied to clipboard!');
             } else {
                 // Try modern clipboard API as fallback
                 navigator.clipboard.writeText(input.value).then(() => {
-                    showAlert('Copied to clipboard!', 'success');
+                    showToast('Copied to clipboard!');
                 }).catch(() => {
                     showAlert('Failed to copy', 'danger');
                 });
@@ -2270,7 +2273,7 @@ function copyFromInput(inputId) {
         } catch (err) {
             // Try modern clipboard API as fallback
             navigator.clipboard.writeText(input.value).then(() => {
-                showAlert('Copied to clipboard!', 'success');
+                showToast('Copied to clipboard!');
             }).catch(() => {
                 showAlert('Failed to copy', 'danger');
             });

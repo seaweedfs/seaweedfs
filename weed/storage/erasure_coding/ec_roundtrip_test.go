@@ -326,7 +326,7 @@ func testDecodeDat(t *testing.T, datSize int64) {
 		shardFileNames[i] = fmt.Sprintf("%s%s", baseFileName, ctx.ToExt(i))
 	}
 
-	err = WriteDatFile(decodedBase, datSize, datSize, shardFileNames)
+	err = WriteDatFile(decodedBase, datSize, datSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
 	require.NoError(t, err, "WriteDatFile")
 
 	// The atomic publish must rename the temp file away, never leaving it behind.

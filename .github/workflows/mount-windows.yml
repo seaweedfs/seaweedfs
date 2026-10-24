@@ -24,8 +24,8 @@ on:
       - '.github/workflows/mount-windows.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -49,6 +49,7 @@ jobs:
     - uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     # cgofuse loads winfsp-x64.dll at run time, so WinFsp is needed here but
     # not to build.
@@ -185,8 +186,19 @@ jobs:
         if (Test-Path S:\walk) { throw "directory survived recursive delete" }
         Write-Host "::endgroup::"
 
+        # Tear down everything we started so the runner's later steps (Logs,
+        # post-checkout) launch into a clean environment. A WinFsp mount left
+        # active and a weed.exe holding winfsp-x64.dll have been seen to make
+        # the next step's pwsh.exe fail with STATUS_DLL_INIT_FAILED
+        # (0xC0000142), which fails a job whose actual test step passed.
+        try { Stop-Mount } catch { Write-Host "no mount to stop at teardown: $_" }
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 3
+
     - name: Logs
       if: always()
+      continue-on-error: true
       shell: pwsh
       run: |
         foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-remount2.log','C:\seaweed-remount2.err.log','C:\seaweed-dirmount.log','C:\seaweed-dirmount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {

@@ -60,7 +60,7 @@ func newInvalidateTestWFS(t *testing.T) *WFS {
 		false,
 		func(path util.FullPath) { wfs.inodeToPath.MarkChildrenCached(path) },
 		func(path util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(path) },
-		wfs.invalidateOpenFileHandle,
+		wfs.onEntryInvalidation,
 		nil,
 	)
 	t.Cleanup(wfs.metaCache.Shutdown)
@@ -156,7 +156,7 @@ func (s *fakeFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateE
 }
 
 // startFakeFiler serves fake on a local port and points wfs at it.
-func startFakeFiler(t *testing.T, wfs *WFS, fake *fakeFilerServer) {
+func startFakeFiler(t *testing.T, wfs *WFS, fake filer_pb.SeaweedFilerServer) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -336,7 +336,7 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
@@ -499,7 +499,7 @@ func TestQueuedEventDoesNotRollBackHandleOpenedAfterEnqueue(t *testing.T) {
 	// Open now: the lookup reaches the filer, which serves the newer
 	// size-200 state versioned at log position 2000.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -563,7 +563,7 @@ func TestAbortedBuildEventDoesNotRollBackLaterOpen(t *testing.T) {
 	}
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -626,7 +626,7 @@ func TestEventDuringOpenLookupIsFenced(t *testing.T) {
 	}
 	opened := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		opened <- openResult{fh, status}
 	}()
 
@@ -672,7 +672,7 @@ func TestRemoteCacheResponseVersionFencesUndeliveredEvents(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	}, 0, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
@@ -755,7 +755,7 @@ func TestLocalAckDoesNotFenceUnrelatedDelayedEvents(t *testing.T) {
 	// Open the file: the cached-store read must not claim position 2000 —
 	// the local ack versioned only its own path.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -794,14 +794,14 @@ func TestSlowerConcurrentOpenDoesNotOverwriteNewerHandle(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
 	// The faster opener completes with newer state while the slow lookup is
 	// still in flight.
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -846,7 +846,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	}, 2000); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -925,12 +925,12 @@ func TestSlowerOpenRejectedWhenHandleDirtyOrLookupUnversioned(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -969,12 +969,12 @@ func TestUnversionedSlowerOpenDoesNotOverwrite(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -1131,7 +1131,7 @@ func TestAbsenceFloorBlocksGhostCreate(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -1281,7 +1281,7 @@ func TestNewerAbsenceFloorOverridesOlderTombstone(t *testing.T) {
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -1405,7 +1405,7 @@ func TestEmptyListingTrailerSnapshotSetsAbsenceFloor(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{listSnapshotTrailerTsNs: 4000})
 
 	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath("/dir"), 0); err != nil {
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 
@@ -1506,7 +1506,7 @@ func TestRemoteDownloadBaseMappedToLocal(t *testing.T) {
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
 	}, 0, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	// The base — and the live entry — must be in local uid form.
@@ -1617,7 +1617,7 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 	})
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1644,7 +1644,7 @@ func TestRemoteOnlyHandleTakesUnversionedDownload(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1801,7 +1801,7 @@ func TestUnversionedRemoteDownloadDoesNotOverwriteVersioned(t *testing.T) {
 	})
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1820,7 +1820,7 @@ func TestEventFromAnotherFilerIsNotFencedByForeignClock(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200, lookupLogTsNs: 5000, lookupSignature: 11})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -1931,7 +1931,7 @@ func TestRejectedDownloadDoesNotRollBackCache(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	// The download publishes asynchronously; a synchronous apply behind it
@@ -1966,7 +1966,7 @@ func TestRemoteOnlyHandleRefusesKnownOlderDownload(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 

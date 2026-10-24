@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type PrometheusStorage struct {
 	brokerCount       *prometheus.GaugeVec
 	clusterInfo       *prometheus.GaugeVec
 	telemetryReceived prometheus.Counter
+	reportsSkipped    prometheus.Counter
 
 	// In-memory storage for API endpoints (if needed)
 	mu        sync.RWMutex
@@ -53,7 +55,7 @@ func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
 		}),
 		confirmedClusters: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_confirmed_clusters",
-			Help: "Active clusters seen on at least 2 distinct days (last 7 days)",
+			Help: "Active clusters seen on at least 7 distinct days (last 7 days)",
 		}),
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
@@ -83,6 +85,10 @@ func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
 			Name: "seaweedfs_telemetry_reports_received_total",
 			Help: "Total number of telemetry reports received",
 		}),
+		reportsSkipped: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "seaweedfs_telemetry_reports_skipped_total",
+			Help: fmt.Sprintf("Reports not kept because the cluster stores less than %d GiB", proto.MinDiskBytes>>30),
+		}),
 		instances: make(map[string]*telemetryData),
 		histories: make(map[string][]HistorySample),
 		stats:     make(map[string]interface{}),
@@ -93,6 +99,12 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.telemetryReceived.Inc()
+	if data.TotalDiskBytes < proto.MinDiskBytes {
+		s.reportsSkipped.Inc()
+		return nil
+	}
+
 	// Drop the cluster_info series recorded under the previous label set when
 	// a cluster reports back with a different version or OS, so it is not
 	// counted under two versions at once.
@@ -101,8 +113,6 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 		s.clusterInfo.Delete(infoLabels(prev.TelemetryData))
 	}
 	s.setClusterMetrics(data)
-
-	s.telemetryReceived.Inc()
 
 	// Store in memory for API endpoints
 	receivedAt := time.Now().UTC()
@@ -207,6 +217,10 @@ func (s *PrometheusStorage) updateStats() {
 	totalInstances := 0
 	activeInstances := 0
 	confirmedInstances := 0
+	confirmedByDays := make(map[int]int, len(confirmThresholds))
+	for _, threshold := range confirmThresholds {
+		confirmedByDays[threshold] = 0
+	}
 	versionsAll := make(map[string]int)
 	osAll := make(map[string]int)
 	versionsConfirmed := make(map[string]int)
@@ -220,10 +234,16 @@ func (s *PrometheusStorage) updateStats() {
 			activeInstances++
 			versionsAll[instance.TelemetryData.Version]++
 			osAll[instance.TelemetryData.Os]++
-			// A cluster is confirmed once seen on >=2 distinct UTC days
-			// (histories hold one sample per day), so one-shot reports
-			// can't skew the distributions below.
-			if len(s.histories[instance.TelemetryData.TopologyId]) >= confirmDays {
+			// A cluster is confirmed once seen on confirmDays distinct UTC
+			// days (histories hold one sample per day), so short-lived
+			// clusters can't skew the distributions below.
+			daysSeen := len(s.histories[instance.TelemetryData.TopologyId])
+			for _, threshold := range confirmThresholds {
+				if daysSeen >= threshold {
+					confirmedByDays[threshold]++
+				}
+			}
+			if daysSeen >= confirmDays {
 				confirmedInstances++
 				versionsConfirmed[instance.TelemetryData.Version]++
 				osConfirmed[instance.TelemetryData.Os]++
@@ -231,7 +251,7 @@ func (s *PrometheusStorage) updateStats() {
 		}
 	}
 
-	// Before any cluster has two days of history (fresh server with no
+	// Before any cluster has a week of history (fresh server with no
 	// prior state), fall back to all active clusters so the dashboard
 	// distributions aren't empty.
 	versions, osDistribution := versionsConfirmed, osConfirmed
@@ -249,6 +269,7 @@ func (s *PrometheusStorage) updateStats() {
 		"total_instances":     totalInstances,
 		"active_instances":    activeInstances,
 		"confirmed_instances": confirmedInstances,
+		"confirmed_by_days":   confirmedByDays,
 		"versions":            versions,
 		"os_distribution":     osDistribution,
 	}

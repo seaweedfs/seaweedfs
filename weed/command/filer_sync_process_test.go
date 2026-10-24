@@ -57,6 +57,7 @@ func equalSyncStrings(a, b []string) bool {
 	return true
 }
 func (s *recordingSyncSink) GetSinkToDirectory() string         { return "/dest" }
+func (s *recordingSyncSink) GetDestinationIdentity() string     { return "/dest" }
 func (s *recordingSyncSink) SetSourceFiler(*source.FilerSource) {}
 func (s *recordingSyncSink) IsIncremental() bool                { return s.incremental }
 

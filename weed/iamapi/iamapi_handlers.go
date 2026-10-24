@@ -31,6 +31,7 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string,
 
 	errorResp := newErrorResponse(errCode, errMsg, reqID)
 	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+	internalErrorResponse.Error.Type = "Receiver"
 
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:

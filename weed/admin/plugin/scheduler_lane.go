@@ -22,11 +22,15 @@ const (
 	// LaneLifecycle handles S3 object store lifecycle management
 	// (expiration, transition, abort incomplete multipart uploads).
 	LaneLifecycle SchedulerLane = "lifecycle"
+
+	// LaneLance handles table-bucket Lance maintenance: fragment compaction,
+	// index optimization and version cleanup.
+	LaneLance SchedulerLane = "lance"
 )
 
 // AllLanes returns every defined scheduler lane in a stable order.
 func AllLanes() []SchedulerLane {
-	return []SchedulerLane{LaneDefault, LaneIceberg, LaneLifecycle}
+	return []SchedulerLane{LaneDefault, LaneIceberg, LaneLifecycle, LaneLance}
 }
 
 // laneIdleSleep maps each lane to its default idle sleep duration.
@@ -36,6 +40,7 @@ var laneIdleSleep = map[SchedulerLane]time.Duration{
 	LaneDefault:   61 * time.Second,
 	LaneIceberg:   61 * time.Second,
 	LaneLifecycle: 5 * time.Minute,
+	LaneLance:     61 * time.Second,
 }
 
 // laneRequiresLock maps each lane to whether its job types must be
@@ -48,6 +53,9 @@ var laneRequiresLock = map[SchedulerLane]bool{
 	LaneDefault:   true,
 	LaneIceberg:   false,
 	LaneLifecycle: false,
+	// Lance maintenance rewrites files inside one table and shares no global
+	// state, so it has no more need of the cluster admin lock than Iceberg does.
+	LaneLance: false,
 }
 
 // LaneRequiresLock returns true if the given lane serialises its job types
@@ -83,6 +91,13 @@ var jobTypeLaneMap = map[string]SchedulerLane{
 
 	// S3 lifecycle management
 	"s3_lifecycle": LaneLifecycle,
+
+	// Lance table maintenance. Without these the job types fall back to the
+	// default lane, which serialises everything under the cluster admin lock
+	// and would queue a compaction behind volume balancing.
+	"lance_compact":          LaneLance,
+	"lance_optimize_indices": LaneLance,
+	"lance_cleanup_versions": LaneLance,
 }
 
 // JobTypeLane returns the scheduler lane for the given job type.

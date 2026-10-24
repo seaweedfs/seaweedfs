@@ -24,6 +24,8 @@ import (
 
 type AzureSink struct {
 	client        *azblob.Client
+	accountName   string
+	endpoint      string
 	container     string
 	dir           string
 	filerSource   *source.FilerSource
@@ -40,6 +42,10 @@ func (g *AzureSink) GetName() string {
 
 func (g *AzureSink) GetSinkToDirectory() string {
 	return g.dir
+}
+
+func (g *AzureSink) GetDestinationIdentity() string {
+	return g.accountName + "\x00" + g.endpoint + "\x00" + g.container + "\x00" + g.dir
 }
 
 func (g *AzureSink) IsIncremental() bool {
@@ -63,10 +69,12 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, container, dir string) error {
+	g.accountName = accountName
+	g.endpoint = endpoint
 	g.container = container
 	g.dir = dir
 
-	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint)
+	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -122,7 +130,10 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
+	}
 
 	// Create append blob client
 	appendBlobClient := g.client.ServiceClient().NewContainerClient(g.container).NewAppendBlobClient(key)
@@ -130,7 +141,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	// Try to create the blob first (without access conditions for initial creation)
 	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	defer cancelCreate()
-	_, err := appendBlobClient.Create(ctxCreate, nil)
+	_, err = appendBlobClient.Create(ctxCreate, nil)
 
 	needsWrite := true
 	freshlyCreated := false

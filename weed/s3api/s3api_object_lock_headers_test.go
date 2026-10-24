@@ -410,7 +410,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req.Header.Set(s3_constants.AmzObjectLockMode, "COMPLIANCE")
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -420,7 +420,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req.Header.Set(s3_constants.AmzObjectLockMode, "GOVERNANCE")
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -428,7 +428,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set(s3_constants.AmzObjectLockLegalHold, "ON")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -436,7 +436,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set(s3_constants.AmzObjectLockLegalHold, "OFF")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -446,7 +446,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		retainUntilDate := time.Now().Add(24 * time.Hour)
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrInvalidObjectLockMode))
 	})
@@ -455,7 +455,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set(s3_constants.AmzObjectLockLegalHold, "INVALID_STATUS")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrInvalidLegalHoldStatus))
 	})
@@ -466,7 +466,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		retainUntilDate := time.Now().Add(24 * time.Hour)
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, false) // non-versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", false) // non-versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrObjectLockVersioningRequired))
 	})
@@ -476,7 +476,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req.Header.Set(s3_constants.AmzObjectLockMode, "COMPLIANCE")
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, "invalid-date-format")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrInvalidRetentionDateFormat))
 	})
@@ -487,7 +487,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		pastDate := time.Now().Add(-24 * time.Hour)
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, pastDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrRetentionDateMustBeFuture))
 	})
@@ -496,7 +496,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set(s3_constants.AmzObjectLockMode, "COMPLIANCE")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrObjectLockModeRequiresDate))
 	})
@@ -506,7 +506,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		retainUntilDate := time.Now().Add(24 * time.Hour)
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrRetentionDateRequiresMode))
 	})
@@ -515,7 +515,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set("x-amz-bypass-governance-retention", "true")
 
-		err := s3a.validateObjectLockHeaders(req, false) // non-versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", false) // non-versioned bucket
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrGovernanceBypassVersioningRequired))
 	})
@@ -524,7 +524,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set("x-amz-bypass-governance-retention", "true")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -532,7 +532,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		// No object lock headers set
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 
@@ -543,7 +543,7 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 		req.Header.Set(s3_constants.AmzObjectLockLegalHold, "ON")
 
-		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", true) // versioned bucket
 		assert.NoError(t, err)
 	})
 }

@@ -21,6 +21,7 @@ spec:
   {{- $nodePorts = .Values.s3.service.nodePorts | default dict }}
   {{- end }}
   type: {{ $serviceType }}
+  {{- include "seaweedfs.service.loadBalancerFields" .Values.s3.service }}
   internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
   {{- $td := .Values.s3.trafficDistribution | default .Values.filer.s3.trafficDistribution }}
   {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) $td }}
@@ -40,6 +41,15 @@ spec:
     targetPort: {{ .Values.s3.icebergPort }}
 {{- if $nodePorts.iceberg }}
     nodePort: {{ $nodePorts.iceberg }}
+{{- end }}
+    protocol: TCP
+{{- end }}
+{{- if and .Values.s3.enabled .Values.s3.lancePort }}
+  - name: "swfs-lance"
+    port: {{ .Values.s3.lancePort }}
+    targetPort: {{ .Values.s3.lancePort }}
+{{- if $nodePorts.lance }}
+    nodePort: {{ $nodePorts.lance }}
 {{- end }}
     protocol: TCP
 {{- end }}

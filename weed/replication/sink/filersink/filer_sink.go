@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -23,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // ChunkTransferSnapshot is a lock-free, copyable view of a chunk transfer's
@@ -61,6 +63,15 @@ type FilerSink struct {
 	signature         int32
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
+	jwtForFiler       security.FilerJwtProvider
+	// lastServedFileId is the most recent chunk the source did serve, the probe
+	// sourceStillServesChunks re-checks before writing an entry off.
+	lastServedFileId atomic.Pointer[string]
+	missingVolumes   sync.Map // source volume id -> time.Time first found unlocatable
+	// missingNeedles records when each file id first came back not-found from an
+	// answering volume: only that needle serving again resets it, so a live
+	// volume's other needles neither shorten nor restart the wait.
+	missingNeedles sync.Map // source file id -> time.Time first answered not-found
 }
 
 func init() {
@@ -73,6 +84,10 @@ func (fs *FilerSink) GetName() string {
 
 func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
+}
+
+func (fs *FilerSink) GetDestinationIdentity() string {
+	return fs.grpcAddress + "\x00" + fs.dir
 }
 
 func (fs *FilerSink) IsIncremental() bool {
@@ -105,6 +120,12 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 // start, since it writes fs.uploader without synchronization.
 func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 	fs.uploader = uploader
+}
+
+// SetFilerJwtProvider sets the filer API credential for proxied chunk writes.
+// Must be called during initialization, before any replication goroutines start.
+func (fs *FilerSink) SetFilerJwtProvider(provider security.FilerJwtProvider) {
+	fs.jwtForFiler = provider
 }
 
 func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
@@ -156,14 +177,34 @@ func (fs *FilerSink) ActiveTransfers() []ChunkTransferSnapshot {
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	return fs.deleteEntry(key, deleteIncludeChunks, false, signatures)
+}
+
+func (fs *FilerSink) DeleteEntryKeepingRemoteObject(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	return fs.deleteEntry(key, deleteIncludeChunks, true, signatures)
+}
+
+func (fs *FilerSink) deleteEntry(key string, deleteIncludeChunks, keepRemoteObject bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()
 
 	glog.V(4).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(context.Background(), fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.DoRemoveRequest(context.Background(), client, &filer_pb.DeleteEntryRequest{
+			Directory:            dir,
+			Name:                 name,
+			IsDeleteData:         deleteIncludeChunks,
+			IsRecursive:          true,
+			IgnoreRecursiveError: true,
+			IsFromOtherCluster:   true,
+			Signatures:           signatures,
+			KeepRemoteObject:     keepRemoteObject,
+		})
+		return err
+	})
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
-		return fmt.Errorf("delete entry %s: %v", key, err)
+		return fmt.Errorf("delete entry %s: %w", key, err)
 	}
 	return nil
 }
@@ -253,7 +294,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
 		}
 
-		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
 
 		if err != nil {
 			// don't swallow: committing mismatched bytes would propagate corruption
@@ -283,7 +324,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		glog.V(3).Infof("create: %v", request)
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
-			return fmt.Errorf("create entry %s: %v", key, err)
+			return fmt.Errorf("create entry %s: %w", key, err)
 		}
 
 		return nil
@@ -316,7 +357,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 	if err != nil {
-		return false, fmt.Errorf("lookup %s: %v", key, err)
+		return false, fmt.Errorf("lookup %s: %w", key, err)
 	}
 
 	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
@@ -333,7 +374,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	case updateRepair:
 		glog.Warningf("repair %s: destination diverged from source (dst %d chunks, src %d chunks); re-replicating full source content",
 			key, len(existingEntry.GetChunks()), len(newEntry.GetChunks()))
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newEntry.GetChunks(), targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
@@ -349,9 +390,9 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		existingEntry.RemoteEntry = newEntry.RemoteEntry
 	default:
 		// source-side chunks resolve via source filer; sink volume IDs may collide.
-		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
+		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), fs.filerSource.FilerJwt(), oldEntry, newEntry)
 		if err != nil {
-			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
+			return true, fmt.Errorf("replicate %s compare chunks error: %w", key, err)
 		}
 
 		// delete the chunks that are deleted from the source
@@ -361,7 +402,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry))
+		replicatedChunks, err := fs.replicateChunks(context.Background(), newChunks, targetKey, getEntryMtimeNs(newEntry), "")
 		if err != nil {
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
@@ -388,19 +429,19 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		if _, err := client.UpdateEntry(context.Background(), request); err != nil {
-			return fmt.Errorf("update existingEntry %s: %v", key, err)
+			return fmt.Errorf("update existingEntry %s: %w", key, err)
 		}
 
 		return nil
 	})
 
 }
-func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, oldEntry.GetChunks(), 0, math.MaxInt64)
+func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, filerJwtFn security.FilerJwtProvider, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+	aData, aMeta, aErr := filer.ResolveChunkManifestWithFilerJwt(ctx, lookupFileIdFn, filerJwtFn, oldEntry.GetChunks(), 0, math.MaxInt64, nil)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, newEntry.GetChunks(), 0, math.MaxInt64)
+	bData, bMeta, bErr := filer.ResolveChunkManifestWithFilerJwt(ctx, lookupFileIdFn, filerJwtFn, newEntry.GetChunks(), 0, math.MaxInt64, nil)
 	if bErr != nil {
 		return nil, nil, bErr
 	}
@@ -434,7 +475,7 @@ func EntryMtimeNs(entry *filer_pb.Entry) int64 {
 // meta events are full snapshots, so a later event re-carries the current chunks).
 // Otherwise the live version is corrupt, so return the error and halt loudly.
 func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s with superseded corrupt chunk: %v", key, err)
 		return nil
 	}
@@ -443,16 +484,56 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 }
 
 // onReplicateChunkError handles a non-size-mismatch replicateChunks failure.
-// Skip (return nil) only when the live source has moved past this version —
-// deleted or strictly-newer mtime — so a later event carries the current
-// content and the skip is lossless. Otherwise propagate so the offset stays
-// put and the event is retried; returning nil would silently drop the file.
+// Skip (return nil) when the live source has moved past this version — deleted
+// or strictly-newer mtime — so a later event carries the current content and the
+// skip is lossless, or when the source has lost the chunk for good: it can never
+// serve those bytes to anyone, and holding the offset for it only stops every
+// later event from ever being checkpointed. Otherwise propagate so the offset
+// stays put and the event is retried; returning nil would silently drop the file.
 func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, err error) error {
-	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+	if fs.sourceMovedOn(key, entry) {
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
 		return nil
 	}
+	// A volume server's own 404 names this needle, so a direct-read 404 needs no
+	// liveness probe; a filer-proxied 404 also covers "no volume locations" and
+	// could be an outage, so it still must pass the probe.
+	direct404 := errors.Is(err, util_http.ErrNotFound) && fs.filerSource != nil && !fs.filerSource.ProxyByFiler()
+	if errors.Is(err, errSourceChunkMissing) && (direct404 || fs.sourceStillServesChunks()) {
+		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
+		return nil
+	}
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
+}
+
+// sourceMovedOn reports whether the live source entry moved past the replayed
+// version: gone, strictly newer, or rewritten in place so it no longer
+// references the same chunks — the last is invisible to the mtime check. A live
+// entry older than the replayed version proves nothing about it.
+func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
+	if !ok {
+		return false
+	}
+	replayedMtimeNs := getEntryMtimeNs(entry)
+	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
+		return true
+	}
+	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
+		return false
+	}
+	liveIds := chunkFileIds(live.GetChunks())
+	replayedIds := chunkFileIds(entry.GetChunks())
+	if len(liveIds) != len(replayedIds) {
+		return true
+	}
+	for id := range replayedIds {
+		if !liveIds[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with

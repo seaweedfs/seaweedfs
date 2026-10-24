@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     paths:
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - '.github/workflows/rust_binaries_dev.yml'
 
 permissions:
@@ -41,13 +42,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -110,15 +109,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install protobuf compiler
-        run: brew install protobuf
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |

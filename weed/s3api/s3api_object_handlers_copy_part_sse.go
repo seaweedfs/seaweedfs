@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -73,15 +75,17 @@ func uploadEntryHasChecksum(uploadEntry *filer_pb.Entry) bool {
 	return checksumAlgorithmFromHeaderName(headerName) != ChecksumAlgorithmNone
 }
 
-// sourceEntryHasSSE reports whether the source object's chunks are SSE
+// sourceEntryIsEncrypted reports whether the source object's chunks are
 // ciphertext on disk and therefore cannot be raw-copied — they must be
-// decrypted on read.
-func sourceEntryHasSSE(srcEntry *filer_pb.Entry) bool {
+// decrypted on read. That is SSE, and also -encryptVolumeData, whose per-chunk
+// key only ever decrypts a whole chunk and whose chunks carry no ETag for the
+// copied part to report.
+func sourceEntryIsEncrypted(srcEntry *filer_pb.Entry) bool {
 	if srcEntry == nil {
 		return false
 	}
 	for _, c := range srcEntry.GetChunks() {
-		if c.GetSseType() != filer_pb.SSEType_NONE {
+		if c.GetSseType() != filer_pb.SSEType_NONE || len(c.GetCipherKey()) > 0 {
 			return true
 		}
 	}
@@ -150,12 +154,13 @@ func (s3a *S3ApiServer) openSourcePlaintextReader(
 	case s3_constants.SSETypeC:
 		return nil, fmt.Errorf("%w: UploadPartCopy from SSE-C source", errCopySourceSSEUnsupported)
 	default:
-		// Unencrypted source: stream raw bytes and apply range.
-		raw, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry)
+		// Plaintext or volume-encrypted source: the chunk stream seeks, so ask
+		// it for the range rather than reading and discarding the prefix.
+		raw, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry, startOffset, sliceLen)
 		if err != nil {
-			return nil, fmt.Errorf("open unencrypted source: %w", err)
+			return nil, fmt.Errorf("open source: %w", err)
 		}
-		return applyRange(raw, startOffset, sliceLen)
+		return raw, nil
 	}
 }
 
@@ -221,7 +226,7 @@ func (s3a *S3ApiServer) openSSES3SourcePlaintextReader(
 	if err != nil {
 		return nil, fmt.Errorf("get SSE-S3 IV: %w", err)
 	}
-	encStream, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry)
+	encStream, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry, 0, int64(filer.FileSize(srcEntry)))
 	if err != nil {
 		return nil, fmt.Errorf("open ciphertext source: %w", err)
 	}
@@ -364,7 +369,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	r *http.Request,
 	srcEntry *filer_pb.Entry,
 	startOffset, endOffset int64,
-	dstBucket, uploadID string,
+	dstBucket, dstObject, uploadID string,
 	partID int,
 	uploadEntry *filer_pb.Entry,
 ) (etag string, sseMetadata SSEResponseMetadata, errCode s3err.ErrorCode) {
@@ -399,7 +404,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	applyDestChecksumHeaderToCopyRequest(cloned, uploadEntry)
 
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false)
+	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false, s3a.toFilerPath(dstBucket, dstObject))
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code
 	}
@@ -411,18 +416,23 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, uploadID string, partID int) (string, s3err.ErrorCode) {
 	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
+		if err := s3a.rm(context.Background(), uploadDir, partName, false, false); err != nil {
 			return "", s3err.ErrInternalError
 		}
 	}
+	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
 	if err := s3a.mkFile(uploadDir, partName, nil, func(e *filer_pb.Entry) {
 		if e.Attributes == nil {
 			e.Attributes = &filer_pb.FuseAttributes{}
 		}
 		e.Attributes.FileSize = 0
+		e.Attributes.Md5 = md5.New().Sum(nil)
+		if e.Extended == nil {
+			e.Extended = map[string][]byte{}
+		}
+		e.Extended[s3_constants.ExtETagKey] = []byte(emptyMD5Hex)
 	}); err != nil {
 		return "", s3err.ErrInternalError
 	}
-	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
 	return emptyMD5Hex, s3err.ErrNone
 }

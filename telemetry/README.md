@@ -68,6 +68,8 @@ message TelemetryData {
 | `broker_count` | Number of broker servers | `1` |
 | `timestamp` | When data was collected | `1640995200` |
 
+A master starts reporting once its cluster stores at least 10 GiB, and the server drops reports under that floor. Every fresh `weed server`, CI job and throwaway container mints its own cluster id, and at tens of thousands a day they were nearly all of the counted clusters and almost none of the bytes.
+
 ## Quick Start
 
 ### 1. Deploy Telemetry Server
@@ -139,7 +141,7 @@ The telemetry server exposes these Prometheus metrics:
 ### Cluster Metrics
 - `seaweedfs_telemetry_total_clusters`: Total unique clusters (30 days)
 - `seaweedfs_telemetry_active_clusters`: Active clusters (7 days)
-- `seaweedfs_telemetry_confirmed_clusters`: Active clusters seen on 2+ distinct days — one-shot reports don't count, and the version/OS distributions in `/api/stats` are computed over these
+- `seaweedfs_telemetry_confirmed_clusters`: Active clusters seen on 7+ distinct days — one-shot reports don't count, and the version/OS distributions in `/api/stats` are computed over these
 
 ### Per-Cluster Metrics
 - `seaweedfs_telemetry_volume_servers{cluster_id}`: Volume servers per cluster
@@ -156,6 +158,7 @@ series across upgrades. To slice values by version or OS, join with
 
 ### Server Metrics
 - `seaweedfs_telemetry_reports_received_total`: Total telemetry reports received
+- `seaweedfs_telemetry_reports_skipped_total`: Reports dropped because the cluster stores less than 10 GiB
 
 ## API Endpoints
 

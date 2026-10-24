@@ -15,15 +15,17 @@ use tracing::warn;
 use crate::config::MinFreeSpace;
 use crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars;
 use crate::storage::erasure_coding::ec_shard::{
-    EcVolumeShard, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
-    ERASURE_CODING_SMALL_BLOCK_SIZE,
+    DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
+    EcVolumeShard, ShardId,
 };
-use crate::storage::erasure_coding::ec_volume::EcVolume;
+use crate::storage::erasure_coding::ec_volume::{
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+};
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
+use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
 use crate::storage::volume::{
-    remove_volume_files, volume_file_name, VifVolumeInfo, Volume, VolumeError,
+    VifVolumeInfo, Volume, VolumeError, VolumeSpec, remove_volume_files, volume_file_name,
 };
 
 /// A single disk location managing volumes in one directory.
@@ -35,7 +37,7 @@ pub struct DiskLocation {
     pub tags: Vec<String>,
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
-    volumes: HashMap<VolumeId, Volume>,
+    volumes: HashMap<VolumeId, Arc<Volume>>,
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
@@ -131,10 +133,10 @@ impl DiskLocation {
         for entry in entries {
             let entry = entry?;
             let name = entry.file_name().into_string().unwrap_or_default();
-            if let Some((collection, vid)) = parse_volume_filename(&name) {
-                if seen.insert((collection.clone(), vid)) {
-                    dat_files.push((collection, vid));
-                }
+            if let Some((collection, vid)) = parse_volume_filename(&name)
+                && seen.insert((collection.clone(), vid))
+            {
+                dat_files.push((collection, vid));
             }
         }
 
@@ -205,7 +207,6 @@ impl DiskLocation {
                 continue;
             }
 
-
             // Load existing data only; never create a phantom `.dat`. A lone
             // `.vif`/`.idx` (e.g. an EC sidecar whose `.ecx` is on a sibling
             // disk) would otherwise have Volume::new write an 8-byte stub that
@@ -236,6 +237,7 @@ impl DiskLocation {
         }
 
         for (collection, vid, v) in self.open_volumes(to_load, needle_map_kind) {
+            let v = Arc::new(v);
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&collection, "volume"])
                 .inc();
@@ -280,30 +282,33 @@ impl DiskLocation {
         let opened = Mutex::new(Vec::with_capacity(to_load.len()));
         std::thread::scope(|scope| {
             for _ in 0..workers {
-                scope.spawn(|| loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((vid, collections)) = to_load.get(i) else {
-                        return;
-                    };
-                    for collection in collections {
-                        match Volume::new(
-                            &self.directory,
-                            &self.idx_directory,
-                            collection,
-                            *vid,
-                            needle_map_kind,
-                            None, // replica placement read from superblock
-                            None, // TTL read from superblock
-                            0,    // no preallocate on load
-                            Version::current(),
-                        ) {
-                            Ok(mut v) => {
-                                v.location_disk_space_low = self.is_disk_space_low.clone();
-                                opened.lock().unwrap().push((collection.clone(), *vid, v));
-                                break;
-                            }
-                            Err(e) => {
-                                warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((vid, collections)) = to_load.get(i) else {
+                            return;
+                        };
+                        for collection in collections {
+                            // Replica placement and TTL are read back from the
+                            // superblock, and a load never preallocates.
+                            match Volume::new(
+                                &self.directory,
+                                &self.idx_directory,
+                                *vid,
+                                needle_map_kind,
+                                &VolumeSpec {
+                                    collection,
+                                    ..Default::default()
+                                },
+                            ) {
+                                Ok(mut v) => {
+                                    v.location_disk_space_low = self.is_disk_space_low.clone();
+                                    opened.lock().unwrap().push((collection.clone(), *vid, v));
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                                }
                             }
                         }
                     }
@@ -327,10 +332,10 @@ impl DiskLocation {
                         .strip_suffix(".cpc")
                         .or_else(|| name.strip_suffix(".cpd"))
                         .or_else(|| name.strip_suffix(".cpx"));
-                    if let Some(stem) = stem {
-                        if let Some(key) = parse_collection_volume_id(stem) {
-                            pending.insert(key);
-                        }
+                    if let Some(stem) = stem
+                        && let Some(key) = parse_collection_volume_id(stem)
+                    {
+                        pending.insert(key);
                     }
                 }
             }
@@ -374,8 +379,10 @@ impl DiskLocation {
         let mut expected_shard_size: Option<i64> = None;
         let dat_exists = match fs::metadata(&dat_path) {
             Ok(meta) if meta.len() > SUPER_BLOCK_SIZE as u64 => {
-                expected_shard_size =
-                    Some(calculate_expected_shard_size(meta.len() as i64, data_shards));
+                expected_shard_size = Some(calculate_expected_shard_size(
+                    meta.len() as i64,
+                    data_shards,
+                ));
                 true
             }
             Ok(_) => false,
@@ -399,7 +406,13 @@ impl DiskLocation {
                         if size != prev {
                             // Inconsistent sizes signal corruption or mixed
                             // generations; not trusted for deletion -> keep.
-                            warn!(volume_id = vid.0, shard = i, size, expected = prev, "EC shard size mismatch; keeping shards");
+                            warn!(
+                                volume_id = vid.0,
+                                shard = i,
+                                size,
+                                expected = prev,
+                                "EC shard size mismatch; keeping shards"
+                            );
                             return true;
                         }
                     } else {
@@ -426,11 +439,16 @@ impl DiskLocation {
         if shard_count == 0 {
             return false;
         }
-        if let (Some(actual), Some(expected)) = (actual_shard_size, expected_shard_size) {
-            if actual < expected {
-                warn!(volume_id = vid.0, actual, expected, "shards smaller than the .dat's full encode; reclaiming the complete .dat");
-                return false;
-            }
+        if let (Some(actual), Some(expected)) = (actual_shard_size, expected_shard_size)
+            && actual < expected
+        {
+            warn!(
+                volume_id = vid.0,
+                actual,
+                expected,
+                "shards smaller than the .dat's full encode; reclaiming the complete .dat"
+            );
+            return false;
         }
         true
     }
@@ -445,13 +463,16 @@ impl DiskLocation {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
-        // Remove index files from idx directory (.ecx, .ecj)
+        // Remove index files from idx directory (.ecx, .ecj, and a compaction
+        // tmp a crash may have left beside the .ecj)
         rm_if_present(format!("{}.ecx", idx_base))?;
         rm_if_present(format!("{}.ecj", idx_base))?;
+        rm_if_present(format!("{}{}", idx_base, ECJ_COMPACT_TMP_EXT))?;
         // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
         if self.idx_directory != self.directory {
             rm_if_present(format!("{}.ecx", base))?;
             rm_if_present(format!("{}.ecj", base))?;
+            rm_if_present(format!("{}{}", base, ECJ_COMPACT_TMP_EXT))?;
         }
 
         // Remove all EC shard files (.ec00 ~ .ec31)
@@ -463,6 +484,13 @@ impl DiskLocation {
         remove_bitrot_sidecars(&base)?;
         if self.idx_directory != self.directory {
             remove_bitrot_sidecars(&idx_base)?;
+        }
+
+        // Staged 2PC generations (<base>.ecNN.v<N>, versioned .ecx/.ecj/.vif)
+        // belong to this volume's EC state too; leaving them orphans the files.
+        crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&base, 0)?;
+        if self.idx_directory != self.directory {
+            crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&idx_base, 0)?;
         }
         Ok(())
     }
@@ -510,10 +538,10 @@ impl DiskLocation {
     pub(crate) fn ec_generation_ts_ns(&self, collection: &str, vid: VolumeId) -> Option<i64> {
         for dir in [&self.directory, &self.idx_directory] {
             let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
-            if let Ok(s) = fs::read_to_string(&vif) {
-                if let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s) {
-                    return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
-                }
+            if let Ok(s) = fs::read_to_string(&vif)
+                && let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s)
+            {
+                return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
             }
             if self.directory == self.idx_directory {
                 break;
@@ -522,20 +550,23 @@ impl DiskLocation {
         None
     }
 
-    /// Find a volume by ID.
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
-        self.volumes.get(&vid)
-    }
-
-    /// Find a volume by ID (mutable).
-    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
-        self.volumes.get_mut(&vid)
+    /// Find a volume by ID. Returns a shared handle like Go's findVolume:
+    /// the lookup borrows the map briefly and I/O runs on the handle after.
+    pub fn find_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
+        self.volumes.get(&vid).cloned()
     }
 
     /// Add a volume to this location.
     pub fn set_volume(&mut self, vid: VolumeId, volume: Volume) {
         let collection = volume.collection.clone();
-        self.volumes.insert(vid, volume);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(volume)) {
+            // A held handle would keep writing the same files against a stale
+            // in-memory index; close it so the stale handle fails closed.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[&collection, "volume"])
             .inc();
@@ -545,35 +576,34 @@ impl DiskLocation {
     pub fn create_volume(
         &mut self,
         vid: VolumeId,
-        collection: &str,
         needle_map_kind: NeedleMapKind,
-        replica_placement: Option<ReplicaPlacement>,
-        ttl: Option<crate::storage::needle::ttl::TTL>,
-        preallocate: u64,
-        version: Version,
+        spec: &VolumeSpec<'_>,
     ) -> Result<(), VolumeError> {
         let mut v = Volume::new(
             &self.directory,
             &self.idx_directory,
-            collection,
             vid,
             needle_map_kind,
-            replica_placement,
-            ttl,
-            preallocate,
-            version,
+            spec,
         )?;
         v.location_disk_space_low = self.is_disk_space_low.clone();
         crate::metrics::VOLUME_GAUGE
-            .with_label_values(&[collection, "volume"])
+            .with_label_values(&[spec.collection, "volume"])
             .inc();
-        self.volumes.insert(vid, v);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(v)) {
+            // Same fail-closed rule as set_volume: a stale handle must not
+            // keep writing the files the replacement just reopened.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         Ok(())
     }
 
     /// Remove and close a volume.
-    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Volume> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
+    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Arc<Volume>> {
+        if let Some(v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
@@ -591,14 +621,30 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         only_empty: bool,
+        only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
-            crate::metrics::VOLUME_GAUGE
-                .with_label_values(&[&v.collection, "volume"])
-                .dec();
-            v.destroy(only_empty, keep_remote_data)?;
-            Ok(())
+        // Refuse before removing: a refused destroy must leave it mounted.
+        if let Some(v) = self.volumes.get(&vid)
+            && v.is_compacting()
+        {
+            return Err(v.compacting_error());
+        }
+        if let Some(v) = self.volumes.remove(&vid) {
+            match v.destroy(only_empty, only_garbage, keep_remote_data) {
+                Ok(()) => {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
+                    Ok(())
+                }
+                Err(e) => {
+                    // A failed destroy left the local files in place, so the
+                    // replica stays registered rather than becoming a phantom.
+                    self.volumes.insert(vid, v);
+                    Err(e)
+                }
+            }
         } else {
             Err(VolumeError::NotFound)
         }
@@ -614,12 +660,14 @@ impl DiskLocation {
             .collect();
 
         for vid in vids {
-            if let Some(mut v) = self.volumes.remove(&vid) {
-                crate::metrics::VOLUME_GAUGE
-                    .with_label_values(&[&v.collection, "volume"])
-                    .dec();
-                if let Err(e) = v.destroy(false, false) {
+            if let Some(v) = self.volumes.remove(&vid) {
+                if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
+                    self.volumes.insert(vid, v);
+                } else {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
                 }
             }
         }
@@ -660,7 +708,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn iter_volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Number of free volume slots.
@@ -669,8 +717,7 @@ impl DiskLocation {
     pub fn free_volume_count(&self) -> i32 {
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let max = self.max_volume_count.load(Ordering::Relaxed);
-        let free_count = (max as i64 - self.volumes.len() as i64)
-            * DATA_SHARDS_COUNT as i64
+        let free_count = (max as i64 - self.volumes.len() as i64) * DATA_SHARDS_COUNT as i64
             - self.ec_shard_count() as i64;
         let effective_free = free_count / DATA_SHARDS_COUNT as i64;
         if effective_free > 0 {
@@ -682,12 +729,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
-    }
-
-    /// Iterate over all volumes (mutable).
-    pub fn volumes_mut(&mut self) -> impl Iterator<Item = (&VolumeId, &mut Volume)> {
-        self.volumes.iter_mut()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Sum of unused space in writable volumes (volumeSizeLimit - actual size per volume).
@@ -698,7 +740,11 @@ impl DiskLocation {
             if vol.is_read_only() {
                 continue;
             }
-            let dat_size = vol.dat_file_size().unwrap_or(0);
+            // A preallocated volume already holds its space on disk.
+            let dat_size = vol
+                .dat_file_size()
+                .unwrap_or(0)
+                .max(vol.dat_allocated_size());
             let idx_size = vol.idx_file_size();
             let used = dat_size + idx_size;
             if volume_size_limit > used {
@@ -773,22 +819,18 @@ impl DiskLocation {
     /// Mirrors `DiskLocation.HasEcxFileOnDisk` in
     /// `weed/storage/disk_location_ec.go`. Skips entries that are
     /// directories so a stray dir named `<collection>_<vid>.ecx` doesn't
-    /// register as a present index file.
+    /// register as a present index file. A 0-byte `.ecx` is a corrupt stub
+    /// left by a failed EC distribute copy; it must not steer placement
+    /// toward this disk, so it counts as absent (Go requires `Size() > 0`).
     pub fn has_ecx_file_on_disk(&self, collection: &str, vid: VolumeId) -> bool {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
-        let idx_path = format!("{}.ecx", idx_base);
-        if let Ok(meta) = fs::metadata(&idx_path) {
-            if !meta.is_dir() {
-                return true;
-            }
+        if is_usable_ecx_file(&format!("{}.ecx", idx_base)) {
+            return true;
         }
         if self.idx_directory != self.directory {
             let data_base = volume_file_name(&self.directory, collection, vid);
-            let data_path = format!("{}.ecx", data_base);
-            if let Ok(meta) = fs::metadata(&data_path) {
-                if !meta.is_dir() {
-                    return true;
-                }
+            if is_usable_ecx_file(&format!("{}.ecx", data_base)) {
+                return true;
             }
         }
         false
@@ -797,6 +839,20 @@ impl DiskLocation {
     /// Remove an EC volume, returning it.
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         self.ec_volumes.remove(&vid)
+    }
+
+    /// Drop the in-memory EC volume for vid and close its descriptors without
+    /// deleting files, so a following unlink frees the inodes instead of
+    /// leaving open fds serving the old bytes. Mirrors Go's unloadEcVolume.
+    pub fn unload_ec_volume(&mut self, vid: VolumeId) {
+        if let Some(mut ec_vol) = self.ec_volumes.remove(&vid) {
+            for _ in 0..ec_vol.shard_count() {
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&ec_vol.collection, "ec_shards"])
+                    .dec();
+            }
+            ec_vol.close();
+        }
     }
 
     /// Mount EC shards for a volume on this location.
@@ -811,7 +867,7 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let idx_dir = self.idx_directory.clone();
@@ -833,7 +889,7 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
         idx_dir: &str,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
@@ -843,15 +899,12 @@ impl DiskLocation {
         // .ecx open error, .ecj create error, malformed .vif) would
         // have to panic via unwrap(). Build the EcVolume up front and
         // propagate the error to the caller.
-        if !self.ec_volumes.contains_key(&vid) {
-            let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid)
-                .map_err(VolumeError::Io)?;
+        let created = !self.ec_volumes.contains_key(&vid);
+        if created {
+            let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid).map_err(VolumeError::Io)?;
             self.ec_volumes.insert(vid, ec_vol);
         }
-        let ec_vol = self
-            .ec_volumes
-            .get_mut(&vid)
-            .expect("just inserted above");
+        let ec_vol = self.ec_volumes.get_mut(&vid).expect("just inserted above");
         // When the orchestrator supplied a source disk type on the Mount
         // RPC, override the EC volume's disk type so heartbeats report
         // under the source volume's disk type (#9423). When the caller
@@ -866,9 +919,27 @@ impl DiskLocation {
         }
 
         for &shard_id in shard_ids {
-            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            // A mount retry re-listing a shard this volume already holds:
+            // keep the existing registration (mirrors Go's AddEcVolumeShard
+            // added=false) — re-adding would replace a serving fd and bump
+            // the ec_shards gauge without growing the mounted count.
+            if ec_vol.has_shard(shard_id) {
+                continue;
+            }
+            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id);
             shard.disk_type = ec_vol.disk_type.clone();
-            ec_vol.add_shard(shard).map_err(VolumeError::Io)?;
+            if let Err(e) = ec_vol.add_shard(shard) {
+                // The shard was dropped (its descriptors closed) inside the
+                // failed add. If this call just created the EcVolume and it
+                // holds nothing, remove it too — a zero-shard registration
+                // would advertise a mount that serves no data while pinning
+                // its descriptors.
+                let now_empty = ec_vol.shard_count() == 0;
+                if created && now_empty {
+                    self.ec_volumes.remove(&vid);
+                }
+                return Err(VolumeError::Io(e));
+            }
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[collection, "ec_shards"])
                 .inc();
@@ -883,14 +954,14 @@ impl DiskLocation {
     /// caller passes a shard that lives on a sibling disk
     /// (cross-disk reconcile makes that the common case for the same
     /// `vid` after reconciliation).
-    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
+    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[ShardId]) {
         if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
             let collection = ec_vol.collection.clone();
             for &shard_id in shard_ids {
-                if !ec_vol.has_shard(shard_id as u8) {
+                if !ec_vol.has_shard(shard_id) {
                     continue;
                 }
-                ec_vol.remove_shard(shard_id as u8);
+                let _ = ec_vol.remove_shard(shard_id);
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&collection, "ec_shards"])
                     .dec();
@@ -921,31 +992,36 @@ impl DiskLocation {
         // double-count for those filenames.
         let mut seen: HashSet<String> = HashSet::new();
         let mut entries: Vec<String> = Vec::new();
-        for ent in fs::read_dir(&self.directory)? {
-            let ent = ent?;
-            if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if seen.insert(name.clone()) {
-                entries.push(name);
-            }
-        }
-        if self.idx_directory != self.directory {
-            for ent in fs::read_dir(&self.idx_directory)? {
+        // Keep only the shard and index files this scan acts on: a disk of
+        // regular volumes has millions of .dat/.idx/.vif names that would
+        // otherwise each cost a String here and a slot in the sort below.
+        let mut collect = |dir: &str| -> io::Result<()> {
+            for ent in fs::read_dir(dir)? {
                 let ent = ent?;
                 if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
                 let name = ent.file_name().to_string_lossy().into_owned();
+                let Some(dot) = name.rfind('.') else {
+                    continue;
+                };
+                let ext = &name[dot..];
+                if parse_ec_shard_extension(ext).is_none() && ext != ".ecx" {
+                    continue;
+                }
                 if seen.insert(name.clone()) {
                     entries.push(name);
                 }
             }
+            Ok(())
+        };
+        collect(&self.directory)?;
+        if self.idx_directory != self.directory {
+            collect(&self.idx_directory)?;
         }
         entries.sort();
 
-        let mut same_volume_shards: Vec<(String, u32)> = Vec::new(); // (filename, shard_id)
+        let mut same_volume_shards: Vec<(String, ShardId)> = Vec::new(); // (filename, shard_id)
         let mut prev_vid: Option<VolumeId> = None;
         let mut prev_collection: String = String::new();
 
@@ -1010,7 +1086,12 @@ impl DiskLocation {
     /// Validate + mount a (collection, vid) group when its `.ecx` is
     /// found. Mirrors `handleFoundEcxFile` in
     /// `weed/storage/disk_location_ec.go`.
-    fn handle_found_ecx_file(&mut self, shards: &[(String, u32)], collection: &str, vid: VolumeId) {
+    fn handle_found_ecx_file(
+        &mut self,
+        shards: &[(String, ShardId)],
+        collection: &str,
+        vid: VolumeId,
+    ) {
         let base = volume_file_name(&self.directory, collection, vid);
         let dat_path = format!("{}.dat", base);
         let dat_exists = check_dat_file_exists(&dat_path);
@@ -1024,7 +1105,7 @@ impl DiskLocation {
             return;
         }
 
-        let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+        let shard_ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
         if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids, "") {
             // A mount failure (corrupt/locked .ecx, EMFILE, transient I/O) is
             // not proof the shards are disposable -- validate_ec_volume already
@@ -1033,8 +1114,7 @@ impl DiskLocation {
             // delete on a load error.
             warn!(
                 volume_id = vid.0,
-                "Failed to load EC shards: {}; keeping files for retry",
-                e,
+                "Failed to load EC shards: {}; keeping files for retry", e,
             );
             self.unmount_ec_shards(vid, &shard_ids);
         }
@@ -1047,7 +1127,7 @@ impl DiskLocation {
     /// distributed-EC shards waiting for cross-disk reconciliation.
     fn check_orphaned_shards(
         &self,
-        shards: &[(String, u32)],
+        shards: &[(String, ShardId)],
         collection: &str,
         vid: VolumeId,
     ) -> bool {
@@ -1083,7 +1163,7 @@ impl DiskLocation {
 
     /// Close all volumes.
     pub fn close(&mut self) {
-        for (_, v) in self.volumes.iter_mut() {
+        for v in self.volumes.values_mut() {
             v.close();
         }
         self.volumes.clear();
@@ -1103,20 +1183,60 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
             Ok(p) => p,
             Err(_) => return (0, 0),
         };
-        unsafe {
-            let mut stat: libc::statvfs = std::mem::zeroed();
-            if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                let all = stat.f_blocks as u64 * stat.f_frsize as u64;
-                let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-                return (all, free);
-            }
+        // SAFETY: `libc::statvfs` is plain data — integers and reserved
+        // padding, no pointers and no restricted niches — so the all-zero
+        // value is a valid one for the call to overwrite.
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `c_path` is a live NUL-terminated `CString` that outlives
+        // the call, and `&mut stat` is a live, aligned, exclusive pointer the
+        // kernel only writes through; the fields are read below only after
+        // the call reports success.
+        if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+            return (0, 0);
         }
-        (0, 0)
+        let all = stat.f_blocks as u64 * stat.f_frsize as u64;
+        let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+        (all, free)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = path;
-        (0, 0)
+        use std::os::windows::ffi::OsStrExt;
+
+        // Canonicalize so symlinks, `.`/`..` segments, and relative paths
+        // resolve to the real location before querying. `\\?\`-prefixed
+        // extended-length paths and UNC (`\\?\UNC\...`) are passed through
+        // untouched: GetDiskFreeSpaceExW accepts them as-is.
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return (0, 0),
+        };
+        // UTF-16 with trailing NUL for the Win32 wide-string call.
+        let mut wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+        // UNC directory names must end in a backslash for GetDiskFreeSpaceExW.
+        if !wide.ends_with(&[0x5C]) {
+            wide.push(0x5C);
+        }
+        wide.push(0);
+        // SAFETY: `wide` is NUL-terminated; the out-params are valid u64
+        // writes; the call has no other preconditions.
+        unsafe {
+            let mut free_available: u64 = 0;
+            let mut total: u64 = 0;
+            let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_available,
+                &mut total,
+                std::ptr::null_mut(),
+            );
+            if ok == 0 {
+                return (0, 0);
+            }
+            return (total, free_available);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        compile_error!("get_disk_stats is implemented for unix and windows only");
     }
 }
 
@@ -1152,7 +1272,12 @@ fn rm_if_present(path: String) -> io::Result<()> {
     }
 }
 
-fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &str, vid: VolumeId) -> usize {
+fn ec_data_shards_from_vif(
+    directory: &str,
+    idx_directory: &str,
+    collection: &str,
+    vid: VolumeId,
+) -> usize {
     for dir in [directory, idx_directory] {
         let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
         if let Some(ds) = fs::read_to_string(&vif)
@@ -1160,10 +1285,9 @@ fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &st
             .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
             .and_then(|vi| vi.ec_shard_config)
             .map(|c| c.data_shards as usize)
+            && ds > 0
         {
-            if ds > 0 {
-                return ds;
-            }
+            return ds;
         }
         if directory == idx_directory {
             break;
@@ -1199,7 +1323,7 @@ fn parse_collection_volume_id(base: &str) -> Option<(String, VolumeId)> {
 
 /// `pub(crate)` re-export of [`parse_ec_shard_extension`] for the
 /// cross-disk reconcile in `store_ec_reconcile.rs`.
-pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<u32> {
+pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<ShardId> {
     parse_ec_shard_extension(ext)
 }
 
@@ -1213,7 +1337,7 @@ pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<u32> {
 /// shardId > 255` guard. The 3-digit form (`.ec100`–`.ec255`) is
 /// retained so the parser can still recognise shards from custom
 /// 32+ ratios that fit in a u8 even though OSS only ships 10+4.
-fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
+fn parse_ec_shard_extension(ext: &str) -> Option<ShardId> {
     let rest = ext.strip_prefix(".ec")?;
     if rest.len() < 2 || rest.len() > 3 {
         return None;
@@ -1222,7 +1346,7 @@ fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
     if id > 255 {
         return None;
     }
-    Some(id)
+    ShardId::try_from(id).ok()
 }
 
 /// Robust check that a `.dat` with actual data exists. An empty `.dat`
@@ -1241,7 +1365,7 @@ fn check_dat_file_exists(path: &str) -> bool {
 /// True when a `.vif` references remote-tier files: a remote-only volume
 /// that has no local `.dat` but must still load via the remote path,
 /// rather than be skipped as a lone EC sidecar.
-fn vif_references_remote_file(vif_path: &str) -> bool {
+pub(crate) fn vif_references_remote_file(vif_path: &str) -> bool {
     fs::read_to_string(vif_path)
         .ok()
         .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
@@ -1284,7 +1408,10 @@ fn remove_empty_ec_dat_stub(volume_name: &str, idx_name: &str, vid: VolumeId) ->
         return false;
     }
 
-    warn!(volume_id = vid.0, "removing leftover empty .dat stub for EC volume");
+    warn!(
+        volume_id = vid.0,
+        "removing leftover empty .dat stub for EC volume"
+    );
     let _ = fs::remove_file(&dat_path);
     let _ = fs::remove_file(format!("{}.idx", idx_name));
     true
@@ -1306,6 +1433,17 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// get_disk_stats must report real capacity for a real path on every
+    /// platform (Windows included) — consumers treat total==0 as "unknown"
+    /// and leave available_space at 0, which breaks volume assignment.
+    #[test]
+    fn test_get_disk_stats_reports_capacity_for_real_path() {
+        let tmp = TempDir::new().unwrap();
+        let (total, free) = get_disk_stats(tmp.path().to_str().unwrap());
+        assert!(total > 0, "expected total>0, got {total}");
+        assert!(free > 0, "expected free>0, got {free}");
+    }
 
     /// When `-dir.idx` is configured the EC `.vif` may live in the idx
     /// directory; the sweep must look there too, not only the data dir.
@@ -1329,7 +1467,11 @@ mod tests {
             }),
             ..Default::default()
         };
-        std::fs::write(format!("{}.vif", ibase), serde_json::to_string(&vif).unwrap()).unwrap();
+        std::fs::write(
+            format!("{}.vif", ibase),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
 
         assert!(
             remove_empty_ec_dat_stub(&vbase, &ibase, VolumeId(42)),
@@ -1345,16 +1487,30 @@ mod tests {
     fn test_validate_ec_volume_partial_dat_next_to_full_shards_keeps() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0), Vec::new()).unwrap();
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
         let base = volume_file_name(dir, "", VolumeId(70));
         let ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let full = calculate_expected_shard_size(30 * 1024 * 1024, ds);
         for i in 0..ds {
-            std::fs::File::create(format!("{}.ec{:02}", base, i)).unwrap().set_len(full as u64).unwrap();
+            std::fs::File::create(format!("{}.ec{:02}", base, i))
+                .unwrap()
+                .set_len(full as u64)
+                .unwrap();
         }
         // Partial .dat: bigger than a superblock so it is not swept as a stub,
         // but smaller than what these shards encode.
-        std::fs::File::create(format!("{}.dat", base)).unwrap().set_len(5 * 1024 * 1024).unwrap();
+        std::fs::File::create(format!("{}.dat", base))
+            .unwrap()
+            .set_len(5 * 1024 * 1024)
+            .unwrap();
         assert!(
             loc.validate_ec_volume("", VolumeId(70)),
             "full-size shards beside a smaller (stale/partial) .dat must be kept",
@@ -1368,15 +1524,29 @@ mod tests {
     fn test_validate_ec_volume_interrupted_encode_reclaims() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0), Vec::new()).unwrap();
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
         let base = volume_file_name(dir, "", VolumeId(71));
         let ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let dat_size = 30 * 1024 * 1024i64;
-        std::fs::File::create(format!("{}.dat", base)).unwrap().set_len(dat_size as u64).unwrap();
+        std::fs::File::create(format!("{}.dat", base))
+            .unwrap()
+            .set_len(dat_size as u64)
+            .unwrap();
         let partial = calculate_expected_shard_size(dat_size, ds) / 3;
         assert!(partial > 0);
         for i in 0..ds {
-            std::fs::File::create(format!("{}.ec{:02}", base, i)).unwrap().set_len(partial as u64).unwrap();
+            std::fs::File::create(format!("{}.ec{:02}", base, i))
+                .unwrap()
+                .set_len(partial as u64)
+                .unwrap();
         }
         assert!(
             !loc.validate_ec_volume("", VolumeId(71)),
@@ -1421,7 +1591,11 @@ mod tests {
             }),
             ..Default::default()
         };
-        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        std::fs::write(
+            format!("{}.vif", dbase),
+            serde_json::to_string(&with_gen).unwrap(),
+        )
+        .unwrap();
         assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
 
         // A .vif with no EC config reads as generation 0 (recovered/pre-upgrade live volume).
@@ -1430,12 +1604,20 @@ mod tests {
             version: 3,
             ..Default::default()
         };
-        std::fs::write(format!("{}.vif", dbase), serde_json::to_string(&no_cfg).unwrap()).unwrap();
+        std::fs::write(
+            format!("{}.vif", dbase),
+            serde_json::to_string(&no_cfg).unwrap(),
+        )
+        .unwrap();
         assert_eq!(loc.ec_generation_ts_ns("", vid), Some(0));
 
         // idx-dir fallback: only the idx dir holds the .vif.
         std::fs::remove_file(format!("{}.vif", dbase)).unwrap();
-        std::fs::write(format!("{}.vif", ibase), serde_json::to_string(&with_gen).unwrap()).unwrap();
+        std::fs::write(
+            format!("{}.vif", ibase),
+            serde_json::to_string(&with_gen).unwrap(),
+        )
+        .unwrap();
         assert_eq!(loc.ec_generation_ts_ns("", vid), Some(4242));
     }
 
@@ -1475,16 +1657,8 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(
-            VolumeId(1),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
+        loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
 
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_some());
@@ -1508,24 +1682,15 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-            loc.create_volume(
-                VolumeId(1),
-                "",
-                NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
-            )
-            .unwrap();
+            loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+                .unwrap();
             loc.create_volume(
                 VolumeId(2),
-                "test",
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "test",
+                    ..Default::default()
+                },
             )
             .unwrap();
             loc.close();
@@ -1568,12 +1733,11 @@ mod tests {
             .unwrap();
             loc.create_volume(
                 VolumeId(9),
-                "good",
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "good",
+                    ..Default::default()
+                },
             )
             .unwrap();
             loc.close();
@@ -1617,29 +1781,13 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(
-            VolumeId(1),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
-        loc.create_volume(
-            VolumeId(2),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
+        loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
+        loc.create_volume(VolumeId(2), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
-        loc.delete_volume(VolumeId(1), false, false).unwrap();
+        loc.delete_volume(VolumeId(1), false, false, false).unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_none());
     }
@@ -1660,32 +1808,29 @@ mod tests {
 
         loc.create_volume(
             VolumeId(1),
-            "pics",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "pics",
+                ..Default::default()
+            },
         )
         .unwrap();
         loc.create_volume(
             VolumeId(2),
-            "pics",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "pics",
+                ..Default::default()
+            },
         )
         .unwrap();
         loc.create_volume(
             VolumeId(3),
-            "docs",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "docs",
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(loc.volumes_len(), 3);
@@ -1693,6 +1838,34 @@ mod tests {
         loc.delete_collection("pics").unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(3)).is_some());
+    }
+
+    /// A 0-byte `.ecx` is the stub a failed EC distribute copy leaves behind.
+    /// Go's HasEcxFileOnDisk requires Size() > 0 so the stub cannot pin
+    /// placement to a disk that has no usable index.
+    #[test]
+    fn test_has_ecx_file_on_disk_ignores_zero_byte_stub() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&idx).unwrap();
+        let loc = DiskLocation::new(
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        fs::write(idx.join("pics_7.ecx"), b"").unwrap();
+        assert!(!loc.has_ecx_file_on_disk("pics", VolumeId(7)));
+
+        // A real index in the data dir still counts, stub or no stub.
+        fs::write(data.join("pics_7.ecx"), [0u8; 16]).unwrap();
+        assert!(loc.has_ecx_file_on_disk("pics", VolumeId(7)));
     }
 
     #[test]
@@ -1711,6 +1884,8 @@ mod tests {
 
         let shard_path = format!("{}/pics_7.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/pics_7.ecx", dir), [0u8; 16]).unwrap();
 
         loc.mount_ec_shards(VolumeId(7), "pics", &[0], "").unwrap();
         assert!(loc.has_ec_volume(VolumeId(7)));
@@ -1748,7 +1923,9 @@ mod tests {
         // mount_ec_shards with source_disk_type="ssd" — simulating the
         // VolumeEcShardsMount RPC path.
         std::fs::write(format!("{}/pics_7.ec00", dir), b"ec-shard").unwrap();
-        loc.mount_ec_shards(VolumeId(7), "pics", &[0], "ssd").unwrap();
+        std::fs::write(format!("{}/pics_7.ecx", dir), [0u8; 16]).unwrap();
+        loc.mount_ec_shards(VolumeId(7), "pics", &[0], "ssd")
+            .unwrap();
         {
             let ec_vol = loc.find_ec_volume(VolumeId(7)).expect("ec volume mounted");
             assert_eq!(
@@ -1765,13 +1942,105 @@ mod tests {
         std::fs::write(format!("{}/pics_7.ec01", dir), b"ec-shard").unwrap();
         loc.mount_ec_shards(VolumeId(7), "pics", &[1], "").unwrap();
         {
-            let ec_vol = loc.find_ec_volume(VolumeId(7)).expect("ec volume still mounted");
+            let ec_vol = loc
+                .find_ec_volume(VolumeId(7))
+                .expect("ec volume still mounted");
             assert_eq!(
                 ec_vol.disk_type,
                 DiskType::Ssd,
                 "empty-source remount must not reset disk type to the physical location's",
             );
         }
+    }
+
+    /// A refused shard (a 0-byte file beside an index with entries) on the
+    /// FIRST mount of a volume must not leave the just-created zero-shard
+    /// EcVolume registered — it would advertise a mount serving no data,
+    /// pin the .ecx/.ecj descriptors, and make placement's mounted tier
+    /// prefer this disk. A volume that already holds shards keeps them
+    /// (the mount RPC's pre-existing first-error-aborts contract).
+    #[test]
+    fn test_mount_ec_shards_refused_shard_removes_created_empty_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // An index with one 16-byte entry and a 0-byte shard: the mount is
+        // refused, and the EcVolume created for it must be unregistered.
+        std::fs::write(format!("{}/pics_9.ecx", dir), [0u8; 16]).unwrap();
+        std::fs::write(format!("{}/pics_9.ec00", dir), b"").unwrap();
+        let err = loc
+            .mount_ec_shards(VolumeId(9), "pics", &[0], "")
+            .expect_err("a 0-byte shard beside an index with entries must refuse the mount");
+        assert!(
+            err.to_string().contains("empty (0 bytes)"),
+            "want the empty-shard refusal, got: {}",
+            err
+        );
+        assert!(
+            loc.find_ec_volume(VolumeId(9)).is_none(),
+            "a refused first mount must not leave a zero-shard EcVolume registered",
+        );
+
+        // With a valid shard mounted, a later refused shard keeps the
+        // existing registration intact.
+        std::fs::write(format!("{}/pics_9.ec01", dir), b"good bytes").unwrap();
+        loc.mount_ec_shards(VolumeId(9), "pics", &[1], "").unwrap();
+        loc.mount_ec_shards(VolumeId(9), "pics", &[0], "")
+            .expect_err("the 0-byte shard stays refused");
+        assert_eq!(
+            loc.find_ec_volume(VolumeId(9)).map(|v| v.shard_count()),
+            Some(1),
+            "an existing volume keeps its valid shards when a later shard is refused",
+        );
+    }
+
+    /// A mount retry re-listing an already mounted shard must keep the
+    /// existing registration and not bump the ec_shards gauge — the Rust
+    /// twin of Go's AddEcVolumeShard added=false handling.
+    #[test]
+    fn test_mount_ec_shards_duplicate_keeps_registration_and_gauge() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // A collection name unique to this test: the gauge is process-global
+        // and sibling tests running in parallel touch other labels.
+        std::fs::write(format!("{}/dupmount_11.ec00", dir), b"shard bytes").unwrap();
+        std::fs::write(format!("{}/dupmount_11.ecx", dir), [0u8; 16]).unwrap();
+        let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&["dupmount", "ec_shards"]);
+        let before = gauge.get();
+
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "")
+            .unwrap();
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "")
+            .expect("a duplicate mount must succeed as a no-op");
+
+        assert_eq!(
+            loc.find_ec_volume(VolumeId(11)).map(|v| v.shard_count()),
+            Some(1),
+        );
+        assert_eq!(
+            gauge.get(),
+            before + 1.0,
+            "the duplicate mount must not bump the ec_shards gauge",
+        );
     }
 
     #[test]
@@ -1835,8 +2104,11 @@ mod tests {
             let path = format!("{}/{}_{}.ec{:02}", dir, collection, vid.0, sid);
             std::fs::write(&path, b"shard data nonempty").unwrap();
         }
-        std::fs::write(format!("{}/{}_{}.ecx", dir, collection, vid.0), vec![0u8; 20])
-            .unwrap();
+        std::fs::write(
+            format!("{}/{}_{}.ecx", dir, collection, vid.0),
+            vec![0u8; 20],
+        )
+        .unwrap();
         std::fs::write(format!("{}/{}_{}.ecj", dir, collection, vid.0), b"").unwrap();
         std::fs::write(
             format!("{}/{}_{}.vif", dir, collection, vid.0),

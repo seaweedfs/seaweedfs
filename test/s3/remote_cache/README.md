@@ -42,7 +42,7 @@ This tests the full remote caching workflow including singleflight deduplication
 
 | Test File | Commands Tested | Test Count | Description |
 |-----------|----------------|------------|-------------|
-| `remote_cache_test.go` | Basic caching | 5 tests | Original caching workflow and singleflight tests |
+| `remote_cache_test.go` | Basic caching | 6 tests | Original caching workflow and singleflight tests, plus a mount with `-cacheWait=0` reading straight from the remote |
 | `remote_cache_copy_test.go` | S3 CopyObject / UploadPartCopy from a remote-only source | 2 tests | Source object lives only in remote storage; CopyObject and UploadPartCopy must cache it locally before persisting the destination so the result is readable |
 | `command_remote_configure_test.go` | `remote.configure` | 6 tests | Configuration management |
 | `command_remote_mount_test.go` | `remote.mount`, `remote.unmount`, `remote.mount.buckets` | 10 tests | Mount operations |
@@ -51,7 +51,7 @@ This tests the full remote caching workflow including singleflight deduplication
 | `command_remote_meta_sync_test.go` | `remote.meta.sync` | 8 tests | Metadata synchronization |
 | `command_edge_cases_test.go` | All commands | 11 tests | Edge cases and stress tests |
 
-**Total: 67 test cases covering 8 weed shell commands and the S3 copy paths for remote-only sources**
+**Total: 68 test cases covering 8 weed shell commands and the S3 copy paths for remote-only sources**
 
 ### Commands Tested
 
@@ -222,6 +222,11 @@ Tests HTTP range requests work correctly after caching.
 
 ### TestRemoteCacheNotFound
 Tests proper error handling for non-existent objects.
+
+### TestRemoteCacheWaitZero
+Remounts with `remote.mount -cacheWait=0` and checks that a read of a remote-only
+object is served from the remote and leaves the object uncached, while the default
+size-based wait caches it.
 
 ## Troubleshooting
 

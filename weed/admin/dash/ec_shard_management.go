@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
@@ -44,7 +45,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 	// Get detailed EC shard information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -65,6 +66,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
+								shardsInfo := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Mark this shard as present for this volume
@@ -74,7 +76,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 											VolumeID:     volumeId,
 											ShardID:      uint32(shardId),
 											Collection:   ecShardInfo.Collection,
-											Size:         0, // EC shards don't have individual size in the API response
+											Size:         uint64(shardsInfo.Size(erasure_coding.ShardId(shardId))),
 											Server:       node.Id,
 											DataCenter:   dc.Id,
 											Rack:         rack.Id,
@@ -261,7 +263,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 	// Get detailed EC shard information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -559,7 +561,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 	// Get detailed EC shard information for the specific volume via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
 		if err != nil {
 			return err
 		}
@@ -571,6 +573,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 						for _, diskInfo := range node.DiskInfos {
 							// Process EC shard information for this specific volume
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// An older master ignores the filter.
 								if ecShardInfo.Id == volumeID {
 									collection = ecShardInfo.Collection
 									dataCenters[dc.Id] = true

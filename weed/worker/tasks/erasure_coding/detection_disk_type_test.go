@@ -18,7 +18,7 @@ import (
 func TestPlanECDestinationsPrefersSourceDiskType_FullCluster(t *testing.T) {
 	// 14 nodes × 2 disks per node (hdd + ssd) — enough SSD slots alone
 	// for a 10+4 layout with one-shard-per-(server,disk) diversity.
-	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd", "ssd"}, 100, 0)
+	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd", "ssd"}, 100, 0, "")
 
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   1,
@@ -53,7 +53,7 @@ func TestPlanECDestinationsPrefersSourceDiskType_FullCluster(t *testing.T) {
 func TestPlanECDestinationsSpillsToOtherDiskType_WhenPreferredScarce(t *testing.T) {
 	// Start with every node carrying both HDD and SSD, then strip SSD
 	// from all but the first node so the SSD pool is too small alone.
-	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd", "ssd"}, 100, 0)
+	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd", "ssd"}, 100, 0, "")
 	topo := activeTopology.GetTopologyInfo()
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {

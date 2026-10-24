@@ -73,9 +73,12 @@ func (s *AdminServer) recordDashboardSample() {
 				}
 			}
 			sample.tasks = float64(active)
-			sample.workers = float64(stats.ActiveWorkers)
 		}
 	}
+	// Counted across both worker registries, same as the Prometheus gauge, so
+	// the card isn't stuck at 0 on clusters that only run plugin workers.
+	workers, _, _ := s.workerFleetTotals()
+	sample.workers = float64(workers)
 
 	s.dashSamplesMu.Lock()
 	s.dashSamples = append(s.dashSamples, sample)

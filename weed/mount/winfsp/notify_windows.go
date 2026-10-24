@@ -14,11 +14,13 @@ import (
 // stays invisible until the user refreshes by hand.
 type notifier struct {
 	host      *cgofuse.FileSystemHost
+	fs        *WinFS
 	mountRoot util.FullPath
 }
 
 // notify reports one applied event. Windows wants the path relative to the
-// mount, and an action describing what happened to it.
+// mount, and an action describing what happened to it; the adapter's own path
+// cache is out of date for the same path.
 func (n *notifier) notify(invalidation meta_cache.EntryInvalidation) {
 	if n.host == nil {
 		return
@@ -27,6 +29,8 @@ func (n *notifier) notify(invalidation meta_cache.EntryInvalidation) {
 	// describing the new, so reporting RenamedTo here as well would send the
 	// destination twice — and as a create even when a directory moved.
 	if path, ok := relativeToMount(n.mountRoot, invalidation.Path); ok {
+		isDirectory := invalidation.WasDirectory || invalidation.Entry.GetIsDirectory()
+		n.fs.invalidatePath(path, isDirectory)
 		n.send(path, n.action(invalidation))
 	}
 }

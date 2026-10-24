@@ -11,7 +11,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 )
 
-const BucketLifecycleConfigurationXMLKey = "s3-bucket-lifecycle-configuration-xml"
+// The bucket lifecycle configuration lives here rather than in weed/s3api so
+// callers outside the gateway (the admin dashboard, the scheduler itself) and
+// the gateway share one definition of the extended-attribute keys and the
+// size cap. weed/s3api aliases these; nothing redeclares the values.
+const (
+	BucketLifecycleConfigurationXMLKey            = "s3-bucket-lifecycle-configuration-xml"
+	BucketLifecycleTransitionMinimumObjectSizeKey = "s3-bucket-lifecycle-transition-default-minimum-object-size"
+
+	// MaxBucketLifecycleConfigurationSize caps the serialized XML, mirroring
+	// the S3 API's limit.
+	MaxBucketLifecycleConfigurationSize = 1 << 20
+)
 
 // ParseError is returned alongside successfully-loaded inputs so callers can
 // surface malformed bucket configs rather than silently dropping them.
@@ -71,14 +82,17 @@ func LoadCompileInputs(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 }
 
 // IsBucketVersioned returns true when the bucket's filer entry has the
-// versioning extended attribute set to Enabled or Suspended.
+// versioning extended attribute set to Enabled or Suspended, or when
+// Object Lock is on: lock requires versioning, so the gateway writes
+// version siblings even if the versioning attribute is absent.
 func IsBucketVersioned(entry *filer_pb.Entry) bool {
-	v, ok := entry.Extended[s3_constants.ExtVersioningKey]
-	if !ok {
-		return false
+	if v, ok := entry.Extended[s3_constants.ExtVersioningKey]; ok {
+		s := strings.ToLower(strings.TrimSpace(string(v)))
+		if s == "enabled" || s == "suspended" {
+			return true
+		}
 	}
-	s := strings.ToLower(strings.TrimSpace(string(v)))
-	return s == "enabled" || s == "suspended"
+	return string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]) == s3_constants.ObjectLockEnabled
 }
 
 // AllActivePriorStates seeds every compiled action as bootstrap-complete +

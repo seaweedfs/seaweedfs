@@ -26,7 +26,7 @@ func (e *DirectoryTooLargeError) Error() string {
 
 // maxCacheableEntries is the directory size above which a build gives up, or 0
 // to cache everything.
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
+func EnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
 	// Collect all uncached paths from target directory up to root
 	var uncachedPaths []util.FullPath
 	currentPath := dirPath
@@ -61,7 +61,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 	// Fetch all uncached directories in parallel with context for cancellation
 	// If one fetch fails, cancel the others to avoid unnecessary work
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(ctx)
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {
@@ -91,8 +91,10 @@ const (
 )
 
 func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, maxCacheableEntries int) error {
-	// Use singleflight to deduplicate concurrent requests for the same path
-	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
+	// Use singleflight to deduplicate concurrent requests for the same path.
+	// DoChan so a canceled request stops waiting even when another request
+	// owns the in-flight build.
+	resultCh := mc.visitGroup.DoChan(string(path), func() (interface{}, error) {
 		// Check for cancellation before starting
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -132,9 +134,10 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		}()
 
 		// reloadFromFiler wipes the cached children and reloads them from the filer.
-		reloadFromFiler := func() (entryCount int, snapshotTsNs int64, err error) {
+		reloadFromFiler := func() (entryCount int, snapshotTsNs int64, sections sectionBoundsCollector, err error) {
 			err = util.Retry("ReadDirAllEntries", func() error {
 				entryCount = 0
+				sections = sectionBoundsCollector{}
 				var batch []*filer.Entry // reset on retry, allow GC of previous entries
 				if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
 					return fmt.Errorf("clear existing entries for %s: %w", path, err)
@@ -149,6 +152,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 					if maxCacheableEntries > 0 && entryCount >= maxCacheableEntries {
 						return &DirectoryTooLargeError{Path: path}
 					}
+					sections.note(entry.Name())
 					batch = append(batch, entry)
 					entryCount++
 
@@ -171,10 +175,10 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				}
 				return nil
 			})
-			return entryCount, snapshotTsNs, err
+			return entryCount, snapshotTsNs, sections, err
 		}
 
-		entryCount, snapshotTsNs, fetchErr := reloadFromFiler()
+		entryCount, snapshotTsNs, sections, fetchErr := reloadFromFiler()
 		if fetchErr != nil {
 			var tooLarge *DirectoryTooLargeError
 			if errors.As(fetchErr, &tooLarge) {
@@ -204,7 +208,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 					return nil, ctx.Err()
 				}
 			}
-			if entryCount, snapshotTsNs, fetchErr = reloadFromFiler(); fetchErr != nil {
+			if entryCount, snapshotTsNs, sections, fetchErr = reloadFromFiler(); fetchErr != nil {
 				cleanupBuild("failed")
 				return nil, fmt.Errorf("confirm empty list %s: %w", path, fetchErr)
 			}
@@ -213,14 +217,19 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			}
 		}
 
-		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs); err != nil {
+		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs, sections.bounds); err != nil {
 			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)
 		}
 		cleanupDone = true // Prevent deferred cleanup after successful publish
 		return nil, nil
 	})
-	return err
+	select {
+	case result := <-resultCh:
+		return result.Err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func IsHiddenSystemEntry(dir, name string) bool {

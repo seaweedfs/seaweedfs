@@ -23,7 +23,7 @@
                     <div class="modal-content">
                         <div class="modal-header" id="globalAlertModalHeader">
                             <h5 class="modal-title" id="globalAlertModalLabel">
-                                <i class="fas fa-info-circle me-2" id="globalAlertModalIcon"></i>
+                                <i class="bi bi-info-circle me-2" id="globalAlertModalIcon"></i>
                                 <span id="globalAlertModalTitle">Notice</span>
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -44,7 +44,7 @@
                     <div class="modal-content">
                         <div class="modal-header bg-warning">
                             <h5 class="modal-title" id="globalConfirmModalLabel">
-                                <i class="fas fa-question-circle me-2"></i><span id="globalConfirmModalTitleText">Confirm Action</span>
+                                <i class="bi bi-question-circle me-2"></i><span id="globalConfirmModalTitleText">Confirm Action</span>
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
@@ -65,7 +65,7 @@
                     <div class="modal-content">
                         <div class="modal-header bg-danger text-white">
                             <h5 class="modal-title" id="globalDeleteModalLabel">
-                                <i class="fas fa-exclamation-triangle me-2"></i>Confirm Delete
+                                <i class="bi bi-exclamation-triangle me-2"></i>Confirm Delete
                             </h5>
                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
@@ -77,7 +77,7 @@
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                             <button type="button" class="btn btn-danger" id="globalDeleteConfirmBtn">
-                                <i class="fas fa-trash me-1"></i>Delete
+                                <i class="bi bi-trash me-1"></i>Delete
                             </button>
                         </div>
                     </div>
@@ -119,25 +119,25 @@
         const types = {
             'success': {
                 title: 'Success',
-                icon: 'fa-check-circle',
+                icon: 'bi-check-circle',
                 headerClass: 'bg-success text-white',
                 btnClose: 'btn-close-white'
             },
             'error': {
                 title: 'Error',
-                icon: 'fa-exclamation-triangle',
+                icon: 'bi-exclamation-triangle',
                 headerClass: 'bg-danger text-white',
                 btnClose: 'btn-close-white'
             },
             'warning': {
                 title: 'Warning',
-                icon: 'fa-exclamation-circle',
+                icon: 'bi-exclamation-circle',
                 headerClass: 'bg-warning text-dark',
                 btnClose: ''
             },
             'info': {
                 title: 'Notice',
-                icon: 'fa-info-circle',
+                icon: 'bi-info-circle',
                 headerClass: 'bg-info text-white',
                 btnClose: 'btn-close-white'
             }
@@ -151,7 +151,7 @@
         closeBtn.className = 'btn-close ' + config.btnClose;
 
         // Update icon
-        iconEl.className = 'fas ' + config.icon + ' me-2';
+        iconEl.className = 'bi ' + config.icon + ' me-2';
 
         // Update title
         titleEl.textContent = title || config.title;
@@ -166,6 +166,36 @@
         // Show modal
         const bsModal = new bootstrap.Modal(modal);
         bsModal.show();
+    };
+
+    /**
+     * Show a transient message that does not have to be dismissed
+     * @param {string} message - The message to display
+     * @param {string} type - Bootstrap contextual color, defaults to 'success'
+     */
+    window.showToast = function (message, type) {
+        let container = document.getElementById('globalToastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'globalToastContainer';
+            container.className = 'toast-container position-fixed top-0 end-0 p-3';
+            // Above any modal, however deeply they are stacked.
+            container.style.zIndex = '9999';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center text-white bg-' + (type || 'success') + ' border-0';
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div>' +
+            '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+        container.appendChild(toast);
+
+        toast.addEventListener('hidden.bs.toast', function () {
+            toast.remove();
+        });
+
+        new bootstrap.Toast(toast, { delay: 3000 }).show();
     };
 
     /**
@@ -289,6 +319,40 @@
         };
         return text.replace(/[&<>"']/g, function (m) { return map[m]; });
     }
+
+    // Bootstrap gives every modal and backdrop the same z-index, so a modal
+    // opened while another one is showing paints behind it and cannot be
+    // clicked. Lift each nested modal, and its backdrop, above what is already
+    // on screen.
+    const MODAL_Z_INDEX = 1055;
+    const MODAL_Z_INDEX_STEP = 20;
+
+    document.addEventListener('show.bs.modal', function (event) {
+        const depth = document.querySelectorAll('.modal.show').length;
+        if (depth === 0) {
+            return;
+        }
+
+        const zIndex = MODAL_Z_INDEX + depth * MODAL_Z_INDEX_STEP;
+        event.target.style.zIndex = zIndex;
+
+        // Bootstrap only creates the backdrop after this event returns.
+        setTimeout(function () {
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            const backdrop = backdrops[backdrops.length - 1];
+            if (backdrop) {
+                backdrop.style.zIndex = zIndex - 1;
+            }
+        }, 0);
+    });
+
+    document.addEventListener('hidden.bs.modal', function (event) {
+        event.target.style.zIndex = '';
+        // Closing any modal releases the scroll lock the others still need.
+        if (document.querySelector('.modal.show')) {
+            document.body.classList.add('modal-open');
+        }
+    });
 
     // Auto-initialize on DOMContentLoaded
     if (document.readyState === 'loading') {

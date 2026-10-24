@@ -1,0 +1,40 @@
+# Rust plugin workers for SeaweedFS.
+#
+# `core` is the plugin.proto contract and nothing else; a worker crate beside it
+# supplies job handlers and a binary. Adding a worker means adding a member here,
+# not touching the protocol. `sort` is neither: it is the sort specification the
+# sorting jobs share, so that two of them cannot drift on what an order means.
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/lance", "crates/sort"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# The edition needs 1.85; the dependency tree needs more. Verified with
+# `cargo +1.94.1 check --all-targets` (1.94.0 fails on the AWS SDK that
+# lance's `aws` feature pulls in).
+rust-version = "1.94.1"
+
+[workspace.lints.clippy]
+# Protobuf message literals keep `..Default::default()` on purpose: it is
+# what lets a proto gain a field without touching every constructor.
+needless_update = "allow"
+# Every `unsafe` block states its precondition, right above the block.
+undocumented_unsafe_blocks = "warn"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+prost = "0.14"
+prost-types = "0.14"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
+# Already in the tree via tonic; named here so the metrics server can use them.
+axum = "0.8"
+prometheus = { version = "0.13", default-features = false }
+tonic-prost-build = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

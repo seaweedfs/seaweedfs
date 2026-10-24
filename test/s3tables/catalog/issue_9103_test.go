@@ -52,7 +52,7 @@ func TestIssue9103_ConfigDoesNotVendWarehousePrefix(t *testing.T) {
 
 	env := sharedEnv
 	bucketName := "warehouse-9103cfg-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	warehouse := fmt.Sprintf("s3://%s/", bucketName)
 	u := fmt.Sprintf("%s/v1/config?warehouse=%s", env.IcebergURL(), url.QueryEscape(warehouse))
@@ -88,7 +88,7 @@ func TestIssue9103_BareNamespacesListMissesNamespaceInAttachedBucket(t *testing.
 
 	env := sharedEnv
 	bucketName := "warehouse-9103ns-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	namespace := "ovirt"
 	status, _, err := doIcebergJSONRequest(env, http.MethodPost,
@@ -218,6 +218,9 @@ SELECT * FROM test_catalog.%s.%s LIMIT 0;
 	}
 
 	if runErr != nil {
+		if testutil.IsIllegalInstruction(runErr) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", runErr)
+		}
 		if strings.Contains(outStr, "does not exist because schema") &&
 			strings.Contains(outStr, namespace) {
 			t.Fatalf("reproduced issue #9103: DuckDB cannot see namespace %q after ATTACH 's3://%s/'; see output above",

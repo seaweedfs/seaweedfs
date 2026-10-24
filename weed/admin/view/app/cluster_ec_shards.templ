@@ -9,21 +9,21 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <div>
             <h1 class="h2">
-                <i class="fas fa-th-large me-2"></i>EC Shards
+                <i class="bi bi-grid me-2"></i>EC Shards
             </h1>
             if data.FilterCollection != "" {
                 <div class="d-flex align-items-center mt-2">
                     if data.FilterCollection == "default" {
                         <span class="badge bg-secondary text-white me-2">
-                            <i class="fas fa-filter me-1"></i>Collection: default
+                            <i class="bi bi-funnel me-1"></i>Collection: default
                         </span>
                     } else {
                         <span class="badge bg-info text-white me-2">
-                            <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                            <i class="bi bi-funnel me-1"></i>Collection: {data.FilterCollection}
                         </span>
                     }
                     <a href={ dash.PUrl(ctx, "/storage/ec-shards") } class="btn btn-sm btn-outline-secondary">
-                        <i class="fas fa-times me-1"></i>Clear Filter
+                        <i class="bi bi-x me-1"></i>Clear Filter
                     </a>
                 </div>
             }
@@ -37,7 +37,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                     <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportEcShards()">
-                    <i class="fas fa-download me-1"></i>Export
+                    <i class="bi bi-download me-1"></i>Export
                 </button>
             </div>
         </div>
@@ -54,7 +54,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalShards)}</h4>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-puzzle-piece fa-2x"></i>
+                            <i class="bi bi-puzzle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -69,7 +69,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalVolumes)}</h4>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-database fa-2x"></i>
+                            <i class="bi bi-database icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -85,7 +85,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <small>Complete (14/14 shards)</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-check-circle fa-2x"></i>
+                            <i class="bi bi-check-circle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -101,7 +101,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <small>Incomplete/Critical</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-exclamation-triangle fa-2x"></i>
+                            <i class="bi bi-exclamation-triangle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -119,12 +119,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             Volume ID
                             if data.SortBy == "volume_id" {
                                 if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
+                                    <i class="bi bi-sort-up ms-1"></i>
                                 } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
+                                    <i class="bi bi-sort-down ms-1"></i>
                                 }
                             } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
+                                <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                             }
                         </a>
                     </th>
@@ -135,12 +135,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                 Collection
                                 if data.SortBy == "collection" {
                                     if data.SortOrder == "asc" {
-                                        <i class="fas fa-sort-up ms-1"></i>
+                                        <i class="bi bi-sort-up ms-1"></i>
                                     } else {
-                                        <i class="fas fa-sort-down ms-1"></i>
+                                        <i class="bi bi-sort-down ms-1"></i>
                                     }
                                 } else {
-                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                    <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                 }
                             </a>
                         </th>
@@ -151,12 +151,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                 Data Center
                                 if data.SortBy == "datacenter" {
                                     if data.SortOrder == "asc" {
-                                        <i class="fas fa-sort-up ms-1"></i>
+                                        <i class="bi bi-sort-up ms-1"></i>
                                     } else {
-                                        <i class="fas fa-sort-down ms-1"></i>
+                                        <i class="bi bi-sort-down ms-1"></i>
                                     }
                                 } else {
-                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                    <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                 }
                             </a>
                         </th>
@@ -166,12 +166,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             Server
                             if data.SortBy == "server" {
                                 if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
+                                    <i class="bi bi-sort-up ms-1"></i>
                                 } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
+                                    <i class="bi bi-sort-down ms-1"></i>
                                 }
                             } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
+                                <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                             }
                         </a>
                     </th>
@@ -181,12 +181,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                 Rack
                                 if data.SortBy == "rack" {
                                     if data.SortOrder == "asc" {
-                                        <i class="fas fa-sort-up ms-1"></i>
+                                        <i class="bi bi-sort-up ms-1"></i>
                                     } else {
-                                        <i class="fas fa-sort-down ms-1"></i>
+                                        <i class="bi bi-sort-down ms-1"></i>
                                     }
                                 } else {
-                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                    <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                 }
                             </a>
                         </th>
@@ -240,7 +240,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                         onclick="showShardDetails(event)" 
                                         data-volume-id={ fmt.Sprintf("%d", shard.VolumeID) }
                                         title="View EC volume details">
-                                    <i class="fas fa-info-circle"></i>
+                                    <i class="bi bi-info-circle"></i>
                                 </button>
                             </div>
                         </td>
@@ -257,7 +257,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 if data.CurrentPage > 1 {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage-1) }>
-                            <i class="fas fa-chevron-left"></i>
+                            <i class="bi bi-chevron-left"></i>
                         </a>
                     </li>
                 }
@@ -306,7 +306,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 if data.CurrentPage < data.TotalPages {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage+1) }>
-                            <i class="fas fa-chevron-right"></i>
+                            <i class="bi bi-chevron-right"></i>
                         </a>
                     </li>
                 }
@@ -386,7 +386,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
 // displayShardDistribution shows the distribution summary for a volume's shards
 templ displayShardDistribution(shard dash.EcShardWithInfo, allShards []dash.EcShardWithInfo) {
     <div class="small">
-        <i class="fas fa-sitemap me-1"></i>
+        <i class="bi bi-diagram-3 me-1"></i>
         { calculateDistributionSummary(shard.VolumeID, allShards) }
     </div>
 }
@@ -394,16 +394,16 @@ templ displayShardDistribution(shard dash.EcShardWithInfo, allShards []dash.EcSh
 // displayVolumeStatus shows an improved status display
 templ displayVolumeStatus(shard dash.EcShardWithInfo) {
     if shard.IsComplete {
-        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
+        <span class="badge bg-success"><i class="bi bi-check me-1"></i>Complete</span>
     } else {
         if len(shard.MissingShards) > 10 {
-            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+            <span class="badge bg-danger"><i class="bi bi-exclamation-octagon me-1"></i>Critical ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
         } else if len(shard.MissingShards) > 6 {
-            <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+            <span class="badge bg-warning"><i class="bi bi-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
         } else if len(shard.MissingShards) > 2 {
-            <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+            <span class="badge bg-warning"><i class="bi bi-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
         } else {
-            <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+            <span class="badge bg-info"><i class="bi bi-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
         }
     }
 }

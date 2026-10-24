@@ -24,12 +24,19 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.event.inputs.image_tag || format('foundationdb_{0}_seaweedfs_{1}', github.event.inputs.fdb_version || '7.4.5', github.event.inputs.seaweedfs_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 permissions:
   contents: read
 
 jobs:
   build-foundationdb-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -61,6 +68,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Run FoundationDB tagged tests
         env:
@@ -126,7 +134,7 @@ jobs:
           echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.2.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -154,6 +162,7 @@ jobs:
           fi
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./docker
@@ -171,3 +180,8 @@ jobs:
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
 
+      - name: Sign
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/sign-image
+        with:
+          images: chrislusf/seaweedfs@${{ steps.build.outputs.digest }}

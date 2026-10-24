@@ -86,7 +86,7 @@ func TestEcShardsAcrossMultipleDisksOnSameNode(t *testing.T) {
 		1: {1, 4, 9},
 		3: {8, 12},
 	}
-	dnInfo := dn.ToDataNodeInfo()
+	dnInfo := dn.ToDataNodeInfo(VolumeFilter{})
 	gotPerDisk := map[uint32][]erasure_coding.ShardId{}
 	for _, diskInfo := range dnInfo.DiskInfos {
 		for _, eci := range diskInfo.EcShardInfos {

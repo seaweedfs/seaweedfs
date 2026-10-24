@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
@@ -53,7 +51,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	req.Identifier = raw.Identifier
 	var statisticsUpdates []statisticsUpdate
 	if len(raw.Requirements) > 0 {
-		if err := json.Unmarshal(raw.Requirements, &req.Requirements); err != nil {
+		normalized, err := normalizeRequirements(raw.Requirements)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid requirements: "+err.Error())
+			return
+		}
+		if err := json.Unmarshal(normalized, &req.Requirements); err != nil {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid requirements: "+err.Error())
 			return
 		}
@@ -143,6 +146,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid staged metadata location: "+parseLocationErr.Error())
 						return
 					}
+					if err := confineMetadataLocation(stagedBucket, stagedPath, bucketName); err != nil {
+						writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+						return
+					}
 					stagedMetadataBytes, loadErr := s.loadMetadataFile(r.Context(), stagedBucket, stagedPath, stagedFileName)
 					if loadErr != nil {
 						if !errors.Is(loadErr, filer_pb.ErrNotFound) {
@@ -171,6 +178,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
 					return
 				}
+				// From here the commit creates the table, writing its metadata
+				// file before the create that authorizes it.
+				if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+					writeManagerError(w, authErr)
+					return
+				}
 
 				for _, requirement := range req.Requirements {
 					validateAgainst := table.Metadata(nil)
@@ -190,6 +203,16 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
 						return
 					}
+				}
+
+				createBucket, createPath, createLocErr := parseS3Location(location)
+				if createLocErr != nil {
+					writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+createLocErr.Error())
+					return
+				}
+				if err := confineMetadataLocation(createBucket, createPath, bucketName); err != nil {
+					writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+					return
 				}
 
 				repairManifests(location)
@@ -219,10 +242,23 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeManagerError(w, err)
 			return
 		}
+		if reqErr := s.authorizeCommit(r.Context(), bucketARN, namespace, tableName, identityName); reqErr != nil {
+			writeError(w, reqErr.status, reqErr.errType, reqErr.message)
+			return
+		}
 
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {
 			location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
+		}
+		locBucket, locPath, locErr := parseS3Location(location)
+		if locErr != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+locErr.Error())
+			return
+		}
+		if err := confineMetadataLocation(locBucket, locPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
 		}
 		tableUUID := uuid.Nil
 		if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
@@ -311,7 +347,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
 			return
 		}
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
+		}
+		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 			return
 		}
@@ -350,8 +391,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			}
 			if attempt < maxCommitAttempts {
 				glog.V(1).Infof("Iceberg: CommitTable conflict for %s (attempt %d/%d), retrying", tableName, attempt, maxCommitAttempts)
-				jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
-				time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+				sleepBeforeCommitRetry(attempt)
 				continue
 			}
 			writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")
@@ -361,8 +401,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		if cleanupErr := s.deleteMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
 			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after update failure: %v", newMetadataLocation, cleanupErr)
 		}
-		glog.Errorf("Iceberg: CommitTable UpdateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+		logManagerError("CommitTable UpdateTable", err)
+		writeManagerError(w, err)
 		return
 	}
 }

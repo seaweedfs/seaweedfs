@@ -19,6 +19,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -125,6 +127,27 @@ func normalizePayloadHash(payloadHashValue string) string {
 	return payloadHashValue
 }
 
+// requestSigningService extracts the service name from the SigV4 credential
+// scope (…/region/service/aws4_request) so a failed request can be answered in
+// that service's error envelope.
+func requestSigningService(r *http.Request) string {
+	credential := r.URL.Query().Get("X-Amz-Credential")
+	if credential == "" {
+		v4Auth := strings.Replace(r.Header.Get("Authorization"), " ", "", -1)
+		v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
+		for _, field := range strings.Split(v4Auth, ",") {
+			if cred, ok := strings.CutPrefix(field, "Credential="); ok {
+				credential = cred
+				break
+			}
+		}
+	}
+	if parts := strings.Split(credential, "/"); len(parts) == 5 {
+		return parts[3]
+	}
+	return ""
+}
+
 // signValues data type represents structured form of AWS Signature V4 header.
 type signValues struct {
 	Credential    credentialHeader
@@ -150,8 +173,20 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	// Strip off the Algorithm prefix.
 	v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
 	authFields := strings.Split(strings.TrimSpace(v4Auth), ",")
-	if len(authFields) != 3 {
-		return sv, s3err.ErrMissingFields
+	malformed := len(authFields) != 3
+	var hasCredential, hasSignature bool
+	for _, field := range authFields {
+		field = strings.TrimSpace(field)
+		malformed = malformed || field == ""
+		hasCredential = hasCredential || strings.HasPrefix(field, "Credential=")
+		hasSignature = hasSignature || strings.HasPrefix(field, "Signature=")
+	}
+	if malformed {
+		// AWS distinguishes which required field is absent.
+		if !hasCredential {
+			return sv, s3err.ErrInvalidArgument
+		}
+		return sv, s3err.ErrAuthorizationHeaderMalformed
 	}
 
 	// Initialize signature version '4' structured header.
@@ -231,38 +266,40 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 
 	var cred *Credential
 
-	// 2. Check for STS session token
-	sessionToken := r.Header.Get("X-Amz-Security-Token")
-	if sessionToken == "" {
-		sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
-	}
-	if sessionToken != "" {
-		// Validate STS session token
-		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
-		if errCode != s3err.ErrNone {
-			return nil, nil, "", nil, errCode
-		}
-	} else {
-		// 3. Lookup user and credentials
-		var found bool
-		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
-		if !found {
-			// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
-			iam.m.RLock()
-			keyCount := len(iam.accessKeyIdent)
-			iam.m.RUnlock()
-
-			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
-				authInfo.AccessKey, keyCount, iam.isAuthEnabled)
-			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
-		}
-
+	// 2. Resolve the credential. A configured access key wins over a session
+	// token: credential vendors like Unity Catalog emit a token with static
+	// credentials too, and it adds nothing the signature does not prove.
+	// STS-issued access keys are never registered in the static map, so they
+	// still land on session-token validation.
+	sessionToken := extractSessionToken(r)
+	var found bool
+	identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
+	switch {
+	case found:
 		// Check service account expiration
 		if cred.isCredentialExpired() {
 			glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 				authInfo.AccessKey, cred.Expiration, time.Now().Unix())
 			return nil, nil, "", nil, s3err.ErrAccessDenied
 		}
+		if sessionToken != "" {
+			*r = *r.WithContext(s3_constants.IgnoreSessionTokenInContext(r.Context()))
+		}
+	case sessionToken != "":
+		// Validate STS session token
+		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
+		if errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
+		}
+	default:
+		// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
+		iam.m.RLock()
+		keyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
+		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// 3. Perform permission check
@@ -318,11 +355,26 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	// 8. Verify the signature for each plausible host value: when X-Forwarded-Host carries
 	// no port, the client may have signed the Host header the proxy kept or the forwarded
 	// host and port, and the headers alone cannot tell which.
-	pathForSignature := r.URL.EscapedPath()
+	// A router that rewrote the request path (e.g. the Iceberg catalog's
+	// doubled-/v1 collapse) records the client-sent path in the context;
+	// the signature covers that original path.
+	pathForSignature := s3_constants.GetOriginalRequestPathFromContext(r)
 	if pathForSignature == "" {
-		pathForSignature = r.URL.Path
+		pathForSignature = r.URL.EscapedPath()
+		if pathForSignature == "" {
+			pathForSignature = r.URL.Path
+		}
 	}
-	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
+	// The signature is checked against prefix+path but the request is routed
+	// and authorized on path alone, so only a trusted proxy may set the prefix.
+	iam.m.RLock()
+	trustedPeer := iam.trustedProxies.IsTrustedPeer(r)
+	iam.m.RUnlock()
+	forwardedPrefix := ""
+	if trustedPeer {
+		forwardedPrefix = r.Header.Get("X-Forwarded-Prefix")
+	}
+	var matchedHost string
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
 			break
@@ -333,23 +385,44 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 			calculatedSignature, errCode = verify(cleanedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
 
 		// 10. Verify with the original path
 		calculatedSignature, errCode = verify(pathForSignature)
 		if errCode == s3err.ErrNone {
-			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+			matchedHost = hostCandidate
+			break
 		}
 
 		// 11. Retry with decoded path if signature used raw path encoding
 		if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
 			calculatedSignature, errCode = verify(decodedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
+	}
+
+	if matchedHost != "" {
+		// The key of the credential that verified: the audit log and the
+		// catalog's vended sessions name it (never a key re-read from the request).
+		// Recorded before the retarget check so that refusal names it too.
+		s3_constants.RecordAccessKeyId(r.Context(), cred.AccessKey)
+		if found {
+			s3_constants.RecordStoredAccessKeyId(r.Context(), cred.AccessKey, cred.SecretKey)
+		}
+		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
+			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
+				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
+					r.Method, r.URL.Path, matchedHost, signedBucket, routedBucket)
+				return nil, nil, "", nil, s3err.ErrAccessDenied
+			}
+		}
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
 	return nil, nil, "", nil, errCode
@@ -426,6 +499,19 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		return nil, nil, s3err.ErrExpiredToken
 	}
 
+	// A session the table catalog vended for a static access key is bound to
+	// that key, as a role session is bound to its role's ID: deleting or
+	// deactivating the key, or deleting or disabling its identity, ends the
+	// session at its next request instead of at its expiry. Sessions minted
+	// before the binding existed carry only the audit field and stay unbound.
+	if sessionInfo.IdentityProvider == icebergVendedCredentialsProvider && sessionInfo.BoundAccessKeyId != "" {
+		if errCode := iam.vendedSessionKeyLive(sessionInfo.ExternalUserId, sessionInfo.BoundAccessKeyId, sessionInfo.BoundAccessKeyFingerprint); errCode != s3err.ErrNone {
+			glog.V(2).Infof("vended STS session %s: identity %q or the access key it was vended for is gone, disabled or inactive",
+				sessionInfo.SessionId, sessionInfo.ExternalUserId)
+			return nil, nil, errCode
+		}
+	}
+
 	// Validate required credential fields
 	if sessionInfo.Credentials.SecretAccessKey == "" {
 		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
@@ -470,10 +556,50 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
+	// ParentUser is set only for OIDC-federated sessions (see
+	// AssumeRoleWithWebIdentity), so it gates the audit identity claim: without
+	// it the request context's sub is the opaque session subject injected by
+	// ValidateJWTWithClaims, not the OIDC subject, and must not be surfaced as
+	// an authoritative identity.
+	if sessionInfo.ParentUser != "" {
+		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
+	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
+}
+
+// vendedSessionKeyLive answers ErrNone while owner is a known, enabled
+// identity holding accessKey as an active, unexpired credential, and
+// ErrInvalidAccessKeyID (as for an unknown key) otherwise. A fingerprint set
+// at mint time must still match, so a key re-created under the same id does
+// not revive sessions the deleted original had carried. One map lookup under
+// the read lock.
+func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fingerprint string) s3err.ErrorCode {
+	if owner == "" || accessKey == "" {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	fingerprintKey := iam.stsSigningKey()
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	identity, ok := iam.nameToIdentity[owner]
+	if !ok || identity == nil || identity.Disabled {
+		return s3err.ErrInvalidAccessKeyID
+	}
+	for _, credential := range identity.Credentials {
+		if credential == nil || credential.AccessKey != accessKey {
+			continue
+		}
+		if credential.Status == iamAccessKeyStatusInactive || credential.isCredentialExpired() {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		if fingerprint != "" && s3_constants.StoredCredentialFingerprint(fingerprintKey, accessKey, credential.SecretKey) != fingerprint {
+			return s3err.ErrInvalidAccessKeyID
+		}
+		return s3err.ErrNone
+	}
+	return s3err.ErrInvalidAccessKeyID
 }
 
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
@@ -720,13 +846,13 @@ func parseCredentialHeader(credElement string) (ch credentialHeader, aec s3err.E
 func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	signFields := strings.Split(strings.TrimSpace(signElement), "=")
 	if len(signFields) != 2 {
-		return "", s3err.ErrMissingFields
+		return "", s3err.ErrAuthorizationHeaderMalformed
 	}
 	if signFields[0] != "Signature" {
 		return "", s3err.ErrMissingSignTag
 	}
 	if signFields[1] == "" {
-		return "", s3err.ErrMissingFields
+		return "", s3err.ErrAuthorizationHeaderMalformed
 	}
 	signature := signFields[1]
 	return signature, s3err.ErrNone
@@ -757,12 +883,12 @@ func parseSignedHeaderList(signedHeadersValue string) ([]string, s3err.ErrorCode
 	return signedHeaders, s3err.ErrNone
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) s3err.ErrorCode {
+func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	// Parse credential tag.
 	credHeader, err := parseCredentialHeader("Credential=" + formValues.Get("X-Amz-Credential"))
 	if err != s3err.ErrNone {
-		return err
+		return nil, err
 	}
 
 	identity, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
@@ -775,19 +901,14 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 		glog.Warningf("InvalidAccessKeyId (POST policy): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
 
-		return s3err.ErrInvalidAccessKeyID
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Check service account expiration
 	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			credHeader.accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrAccessDenied
-	}
-
-	bucket := formValues.Get("bucket")
-	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
-		return s3err.ErrAccessDenied
+		return nil, s3err.ErrAccessDenied
 	}
 
 	// Get signing key.
@@ -798,9 +919,11 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 
 	// Verify signature.
 	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
-		return s3err.ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-	return s3err.ErrNone
+	s3_constants.RecordAccessKeyId(ctx, cred.AccessKey)
+	s3_constants.RecordStoredAccessKeyId(ctx, cred.AccessKey, cred.SecretKey)
+	return identity, s3err.ErrNone
 }
 
 // sigV4PayloadHashHeader is x-amz-content-sha256. It participates in the
@@ -822,6 +945,16 @@ var presignedSigV4ProtocolHeaders = map[string]struct{}{
 	"x-amz-expires":       {},
 	"x-amz-signedheaders": {},
 	"x-amz-signature":     {},
+}
+
+// presignedUnsignedSSECHeaders exempts SSE-C key material that AWS requires to
+// be sent but not signed on presigned requests: only the algorithm header is
+// part of the signature calculation.
+var presignedUnsignedSSECHeaders = map[string]struct{}{
+	strings.ToLower(s3_constants.AmzServerSideEncryptionCustomerKey):              {},
+	strings.ToLower(s3_constants.AmzServerSideEncryptionCustomerKeyMD5):           {},
+	strings.ToLower(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey):    {},
+	strings.ToLower(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5): {},
 }
 
 // verifySignedHeadersCoverage rejects requests that carry x-amz-* headers
@@ -850,6 +983,9 @@ func verifySignedHeadersCoverage(r *http.Request, signedHeaders []string, isPres
 			if _, exempt := presignedSigV4ProtocolHeaders[lower]; exempt {
 				continue
 			}
+			if _, exempt := presignedUnsignedSSECHeaders[lower]; exempt {
+				continue
+			}
 		}
 		glog.V(2).Infof("reject %s %s: unsigned header %q not in SignedHeaders", r.Method, r.URL.Path, name)
 		return s3err.ErrSignatureDoesNotMatch
@@ -873,6 +1009,12 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request, externalHost 
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
 			continue
 		}
+		// The Go server strips Content-Length into r.ContentLength; clients do
+		// sign it, so rebuild the value the same way the client saw it.
+		if strings.EqualFold(header, "content-length") && r.ContentLength >= 0 {
+			extractedSignedHeaders[header] = []string{strconv.FormatInt(r.ContentLength, 10)}
+			continue
+		}
 		// For all other headers we need to find them in the HTTP headers and copy them over.
 		// We skip non-existent headers to be compatible with AWS signatures.
 		if values, ok := reqHeaders[http.CanonicalHeaderKey(header)]; ok {
@@ -888,14 +1030,16 @@ func extractHostHeader(r *http.Request, externalHost string) string {
 }
 
 // extractHostHeaderCandidates returns the host values the client may have signed, most
-// likely first. When externalHost is set (from s3.externalUrl), it is the only candidate.
-// Otherwise, the host is reconstructed from X-Forwarded-* headers or the request Host.
+// likely first. externalHost (from s3.externalUrl) leads when set, but the hosts derived
+// from X-Forwarded-* headers or the request Host still follow it, so clients that reach
+// the gateway directly rather than through the proxy keep verifying.
 // When X-Forwarded-Host carries no port, the true client port is ambiguous: a proxy that
 // kept the Host header makes the r.Host port right, one that rewrote it makes
 // X-Forwarded-Port right, and a client on the scheme's default port signed no port at all.
 func extractHostHeaderCandidates(r *http.Request, externalHost string) []string {
+	var candidates []string
 	if externalHost != "" {
-		return []string{externalHost}
+		candidates = append(candidates, externalHost)
 	}
 
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
@@ -968,7 +1112,6 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 		}
 	}
 
-	var candidates []string
 	for _, port := range ports {
 		candidate := joinSignedHost(host, port, scheme)
 		if !slices.Contains(candidates, candidate) {
@@ -976,6 +1119,33 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 		}
 	}
 	return candidates
+}
+
+func bucketFromVirtualHost(host, domainConfig string) (string, bool) {
+	if domainConfig == "" {
+		return "", false
+	}
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	h = strings.ToLower(h)
+	pathStyleDomains, virtualHostDomains := classifyDomainNames(strings.Split(domainConfig, ","))
+	for _, domain := range pathStyleDomains {
+		if h == strings.ToLower(strings.TrimSpace(domain)) {
+			return "", false
+		}
+	}
+	for _, domain := range virtualHostDomains {
+		suffix := "." + strings.ToLower(strings.TrimSpace(domain))
+		if strings.HasSuffix(h, suffix) {
+			bucket := h[:len(h)-len(suffix)]
+			if bucket != "" {
+				return bucket, true
+			}
+		}
+	}
+	return "", false
 }
 
 // joinSignedHost renders host:port the way AWS SDKs sign it: default ports are stripped

@@ -5,15 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path"
 	"slices"
 	"strings"
+	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
@@ -24,7 +21,9 @@ import (
 
 var historyPath = path.Join(os.TempDir(), "weed-shell")
 
-func RunShell(options ShellOptions) {
+// Piped stdin returns the last command failure; an interactive session shows
+// the error to the operator and keeps going.
+func RunShell(options ShellOptions) error {
 	slices.SortFunc(Commands, func(a, b command) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
@@ -55,36 +54,20 @@ func RunShell(options ShellOptions) {
 
 	commandEnv := NewCommandEnv(&options)
 
+	connectTimeout := options.ConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 30 * time.Second
+	}
 	ctx := context.Background()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	if commandEnv.option.FilerAddress == "" {
-		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-				ClientType: cluster.FilerType,
-				FilerGroup: *options.FilerGroup,
-			})
-			if err != nil {
-				return err
-			}
-
-			for _, clusterNode := range resp.ClusterNodes {
-				filers = append(filers, pb.ServerAddress(clusterNode.Address))
-			}
-			return nil
-		})
-		if len(filers) > 0 {
-			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
-		}
-		if options.Debug {
-			if len(filers) > 0 {
-				fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *options.Masters, filers)
-			} else {
-				fmt.Fprintf(os.Stderr, "master: %s\n", *options.Masters)
-			}
-		}
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	reconnectCtx, cancelReconnect := context.WithCancel(ctx)
+	defer cancelReconnect()
+	go commandEnv.MasterClient.KeepConnectedToMaster(reconnectCtx)
+	if commandEnv.MasterClient.GetMaster(connectCtx) == "" {
+		err := fmt.Errorf("cannot connect to master %s within %s", *options.Masters, connectTimeout)
+		fmt.Fprintln(os.Stderr, err)
+		return err
 	}
 
 	if interactive {
@@ -94,7 +77,7 @@ func RunShell(options ShellOptions) {
 				if err != io.EOF {
 					fmt.Fprintf(os.Stderr, "%v\n", err)
 				}
-				return
+				return nil
 			}
 
 			if strings.TrimSpace(cmd) != "" {
@@ -102,32 +85,39 @@ func RunShell(options ShellOptions) {
 			}
 
 			for _, c := range util.StringSplit(cmd, ";") {
-				if processEachCmd(c, commandEnv) {
-					return
+				if exit, _ := processEachCmd(c, commandEnv); exit {
+					return nil
 				}
 			}
 		}
 	} else {
+		var lastErr error
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			cmd := scanner.Text()
 			for _, c := range util.StringSplit(cmd, ";") {
-				if processEachCmd(c, commandEnv) {
-					return
+				exit, err := processEachCmd(c, commandEnv)
+				if err != nil {
+					lastErr = err
+				}
+				if exit {
+					return lastErr
 				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
+			lastErr = err
 		}
+		return lastErr
 	}
 }
 
-func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
+func processEachCmd(cmd string, commandEnv *CommandEnv) (exit bool, cmdErr error) {
 	cmds := splitCommandLine(cmd)
 
 	if len(cmds) == 0 {
-		return false
+		return false, nil
 	} else {
 
 		args := cmds[1:]
@@ -136,24 +126,32 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 		if cmd == "help" || cmd == "?" {
 			printHelp(cmds)
 		} else if cmd == "exit" || cmd == "quit" {
-			return true
+			return true, nil
 		} else {
 			foundCommand := false
 			for _, c := range Commands {
 				if c.Name() == cmd || c.Name() == "fs."+cmd {
+					// noLock says "this invocation changes nothing", which is a
+					// property of the invocation and not of the session. A
+					// command that set it for a dry run would otherwise leave
+					// every later command in the session unlocked, so a real
+					// mutation right after a simulation would skip its lock.
+					commandEnv.SetNoLock(false)
 					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+						cmdErr = err
 					}
 					foundCommand = true
 				}
 			}
 			if !foundCommand {
 				fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
+				cmdErr = fmt.Errorf("unknown command: %v", cmd)
 			}
 		}
 
 	}
-	return false
+	return false, cmdErr
 }
 
 func splitCommandLine(line string) []string {

@@ -15,15 +15,33 @@ import (
 // - metadata/v*.metadata.json (table metadata)
 // - metadata/snap-*.avro (snapshot manifest lists)
 // - metadata/*.avro (manifest files)
-// - data/*.parquet, data/*.orc, data/*.avro (data files)
+// - metadata/*.stats, metadata/*.puffin (statistics files)
+// - data/*.parquet, *.orc, *.avro, *.puffin (data files)
 
 const uuidPattern = `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`
 
 var (
-	// Allowed directories in an Iceberg table
-	icebergAllowedDirs = map[string]bool{
+	// Allowed directories in a table. The set is the union of what every
+	// supported format writes, because this runs on the S3 door where the
+	// table's format is not in hand: metadata/ and data/ for Iceberg,
+	// _versions/ and _indices/ for Lance, which also puts its fragments in
+	// data/.
+	tableAllowedDirs = map[string]bool{
 		"metadata": true,
 		"data":     true,
+	}
+
+	// A format's own bookkeeping lives in underscore-prefixed directories that
+	// the catalog does not interpret: Lance writes _versions, _transactions,
+	// _indices and _deletions, and enumerating them here would mean guessing at
+	// the next one. Iceberg writes none, so admitting them costs it nothing.
+	formatOwnedDirPattern = regexp.MustCompile(`^_[a-z][a-z0-9_]*$`)
+
+	// Marker files a Lance table keeps at its root to record that it is
+	// reserved but not yet written, or deregistered but still on storage.
+	lanceMarkerFiles = map[string]bool{
+		".lance-reserved":     true,
+		".lance-deregistered": true,
 	}
 
 	// Patterns for valid metadata files.
@@ -51,6 +69,9 @@ var (
 		// whose naming we can't anticipate across engines and versions.
 		regexp.MustCompile(`^[A-Za-z0-9._-]+\.avro$`),
 		regexp.MustCompile(`^[A-Za-z0-9._-]+\.metadata\.json$`),
+		// Table and partition statistics files listed in the table metadata
+		// are Puffin files; engines name them *.stats or *.puffin.
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.puffin$`),
 	}
 
 	// Patterns for valid data files
@@ -58,6 +79,8 @@ var (
 		regexp.MustCompile(`^[^/]+\.parquet$`), // Parquet files
 		regexp.MustCompile(`^[^/]+\.orc$`),     // ORC files
 		regexp.MustCompile(`^[^/]+\.avro$`),    // Avro files
+		regexp.MustCompile(`^[^/]+\.puffin$`),  // Iceberg v3 deletion vectors
+		regexp.MustCompile(`^[^/]+\.lance$`),   // Lance fragments
 	}
 
 	// Data file partition path pattern (e.g., year=2024/month=01/)
@@ -91,11 +114,16 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 
 	topDir := parts[0]
 
+	// A Lance table's marker files sit at its root rather than in a directory.
+	if len(parts) == 1 && lanceMarkerFiles[topDir] {
+		return nil
+	}
+
 	// Check if top-level directory is allowed
-	if !icebergAllowedDirs[topDir] {
+	if !tableAllowedDirs[topDir] && !formatOwnedDirPattern.MatchString(topDir) {
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "files must be placed in 'metadata/' or 'data/' directories",
+			Message: "files must be placed in 'metadata/', 'data/' or a format-owned '_' directory",
 		}
 	}
 
@@ -119,6 +147,28 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 		return v.validateDataFile(remainingPath)
 	}
 
+	// Everything else is a format-owned directory: the only guard is that the
+	// path stays inside the table.
+	return validateFileSegments(remainingPath)
+}
+
+// IsTableMarkerFile reports whether a name is one of the marker files a table
+// keeps at its root.
+func IsTableMarkerFile(name string) bool {
+	return lanceMarkerFiles[name]
+}
+
+// validateFileSegments rejects traversal and empty segments in a path whose
+// contents the catalog does not otherwise interpret.
+func validateFileSegments(path string) error {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid path segment in: " + path,
+			}
+		}
+	}
 	return nil
 }
 
@@ -164,7 +214,7 @@ func validateFilePatterns(filename string, isMetadata bool) error {
 		errorMsg = "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file"
 	} else {
 		patterns = dataFilePatterns
-		errorMsg = "invalid data file format: must be .parquet, .orc, or .avro"
+		errorMsg = "invalid data file format: must be .parquet, .orc, .avro, .puffin or .lance"
 	}
 
 	for _, pattern := range patterns {

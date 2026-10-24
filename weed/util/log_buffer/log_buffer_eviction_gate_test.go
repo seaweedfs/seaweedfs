@@ -273,6 +273,46 @@ func TestEvictionGatedCursor(t *testing.T) {
 	}
 }
 
+// TestMarkEvictedThroughGatesYoungRing pins the young-ring gate: with the mark
+// set, a below-window gated cursor goes to disk before the first real eviction
+// instead of being served the earliest retained entry.
+func TestMarkEvictedThroughGatesYoungRing(t *testing.T) {
+	lb := NewLogBuffer("young-ring", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	seed := time.Now().Add(-time.Minute).UnixNano()
+	lb.MarkEvictedThrough(seed)
+	if got := lb.GetLastEvictedTsNs(); got != seed {
+		t.Fatalf("evicted through %v, want the mark %v", time.Unix(0, got), time.Unix(0, seed))
+	}
+	if got := lb.GetLastEvictedOriginalTsNs(); got != seed {
+		t.Fatalf("original watermark %v, want the mark %v", time.Unix(0, got), time.Unix(0, seed))
+	}
+	// A lower mark must not regress an established boundary.
+	lb.MarkEvictedThrough(seed - int64(time.Hour))
+	if got := lb.GetLastEvictedTsNs(); got != seed {
+		t.Fatalf("lower mark regressed the watermark to %v", time.Unix(0, got))
+	}
+
+	// One post-mark arrival: the ring's window starts well above the mark.
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+		TsNs: time.Now().UnixNano(), Data: []byte("x"), Key: []byte("k"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Below the mark: gated goes to disk, -2 keeps serving (MQ contract).
+	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed-1, EvictionGatedOffset)); err != ResumeFromDiskError {
+		t.Fatalf("gated below the mark: want ResumeFromDiskError, got %v", err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed-1, -2)); err != nil || buf == nil {
+		t.Fatalf("plain sentinel below the mark: buf=%v err=%v", buf != nil, err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed, EvictionGatedOffset)); err != nil || buf == nil {
+		t.Fatalf("gated at the mark: buf=%v err=%v", buf != nil, err)
+	}
+}
+
 // TestEvictionOriginalWatermark pins the second timestamp space. The ring bumps
 // an out-of-order arrival past its head, so a bump-heavy interval (peer history
 // replay) leaves stopTimes above anything on any peer's disk; a gap gate

@@ -120,7 +120,7 @@ func TestFixUnderReplicatedVolumesInParallel(t *testing.T) {
 		volumeIds = append(volumeIds, vid)
 	}
 
-	c := &commandVolumeFixReplication{collectionPattern: new(string)}
+	c := &commandVolumeFixReplication{}
 	fixedVolumes, err := c.fixUnderReplicatedVolumes(nil, io.Discard, false, volumeIds, volumeReplicas, allLocations, 0, 0, 8, 1)
 	if err != nil {
 		t.Fatalf("fixUnderReplicatedVolumes: %v", err)

@@ -19,7 +19,7 @@ func (f *Filer) ensureEntryInode(entry *Entry) {
 		entry.Attr.Crtime = time.Now()
 	}
 	if len(entry.HardLinkId) > 0 {
-		entry.Attr.Inode = uint64(util.HashStringToLong(string(entry.HardLinkId)))
+		entry.Attr.Inode = util.NormalizeInode(uint64(util.HashStringToLong(string(entry.HardLinkId))))
 		return
 	}
 	entry.Attr.Inode = entry.FullPath.AsInode(entry.Attr.Crtime.Unix())

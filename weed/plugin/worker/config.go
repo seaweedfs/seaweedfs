@@ -125,6 +125,21 @@ func ReadIntConfig(values map[string]*plugin_pb.ConfigValue, field string, fallb
 	return int(v)
 }
 
+// ReadBoolConfig reads a bool-valued plugin config field.
+func ReadBoolConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback bool) bool {
+	if values == nil {
+		return fallback
+	}
+	value := values[field]
+	if value == nil {
+		return fallback
+	}
+	if kind, ok := value.Kind.(*plugin_pb.ConfigValue_BoolValue); ok {
+		return kind.BoolValue
+	}
+	return fallback
+}
+
 // ReadBytesConfig reads a bytes-valued plugin config field, returning nil when
 // the value is missing or of a different kind.
 func ReadBytesConfig(values map[string]*plugin_pb.ConfigValue, field string) []byte {

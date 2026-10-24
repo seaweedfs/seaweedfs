@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 
 	"google.golang.org/protobuf/proto"
 
@@ -44,7 +43,7 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	entry.RUnlock()
 	if remoteOnly {
 		glog.V(4).Infof("download remote entry %s", fileFullPath)
-		err := fh.downloadRemoteEntry(entry)
+		err := fh.downloadRemoteEntry(ctx, entry)
 		if err != nil {
 			glog.V(1).Infof("download remote entry %s: %v", fileFullPath, err)
 			return 0, 0, err
@@ -83,16 +82,6 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		return int64(totalRead), 0, nil
 	}
 
-	// Try RDMA acceleration first if available
-	if fh.wfs.rdmaClient != nil && fh.wfs.option.RdmaEnabled {
-		totalRead, ts, err := fh.tryRDMARead(ctx, fileSize, buff, offset, chunks)
-		if err == nil {
-			glog.V(4).Infof("RDMA read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
-			return int64(totalRead), ts, nil
-		}
-		glog.V(4).Infof("RDMA read failed for %s, falling back to HTTP: %v", fileFullPath, err)
-	}
-
 	// Peer chunk sharing: try a peer mount's cache before the volume tier.
 	// Any failure falls through transparently. See design-weed-mount-
 	// peer-chunk-sharing.md §4.3.
@@ -122,67 +111,15 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	return int64(totalRead), ts, err
 }
 
-// tryRDMARead attempts to read file data using RDMA acceleration. chunks is a
-// snapshot captured under the LockedEntry lock by the caller.
-func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []byte, offset int64, chunks []*filer_pb.FileChunk) (int64, int64, error) {
-	// For now, we'll try to read the chunks directly using RDMA
-	// This is a simplified approach - in a full implementation, we'd need to
-	// handle chunk boundaries, multiple chunks, etc.
-
-	if len(chunks) == 0 {
-		return 0, 0, fmt.Errorf("no chunks available for RDMA read")
-	}
-
-	// Find the chunk that contains our offset using binary search
-	var targetChunk *filer_pb.FileChunk
-	var chunkOffset int64
-
-	// Get cached cumulative offsets for efficient binary search
-	cumulativeOffsets := fh.getCumulativeOffsets(chunks)
-
-	// Use binary search to find the chunk containing the offset
-	chunkIndex := sort.Search(len(chunks), func(i int) bool {
-		return offset < cumulativeOffsets[i+1]
-	})
-
-	// Verify the chunk actually contains our offset
-	if chunkIndex < len(chunks) && offset >= cumulativeOffsets[chunkIndex] {
-		targetChunk = chunks[chunkIndex]
-		chunkOffset = offset - cumulativeOffsets[chunkIndex]
-	}
-
-	if targetChunk == nil {
-		return 0, 0, fmt.Errorf("no chunk found for offset %d", offset)
-	}
-
-	// Calculate how much to read from this chunk
-	remainingInChunk := int64(targetChunk.Size) - chunkOffset
-	readSize := min(int64(len(buff)), remainingInChunk)
-
-	glog.V(4).Infof("RDMA read attempt: chunk=%s (fileId=%s), chunkOffset=%d, readSize=%d",
-		targetChunk.FileId, targetChunk.FileId, chunkOffset, readSize)
-
-	// Try RDMA read using file ID directly (more efficient)
-	data, isRDMA, err := fh.wfs.rdmaClient.ReadNeedle(ctx, targetChunk.FileId, uint64(chunkOffset), uint64(readSize))
-	if err != nil {
-		return 0, 0, fmt.Errorf("RDMA read failed: %w", err)
-	}
-
-	if !isRDMA {
-		return 0, 0, fmt.Errorf("RDMA not available for chunk")
-	}
-
-	// Copy data to buffer
-	copied := copy(buff, data)
-	return int64(copied), targetChunk.ModifiedTsNs, nil
-}
-
-func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
+func (fh *FileHandle) downloadRemoteEntry(ctx context.Context, entry *LockedEntry) error {
 
 	fileFullPath := fh.FullPath()
 	dir, _ := fileFullPath.DirAndName()
 
-	err := fh.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// callWait 0: this RPC streams a whole remote object filer-side, so a
+	// healthy download can legitimately outlast any metadata-call bound. The
+	// attempt stays bound to the caller's context instead.
+	err := fh.wfs.withFilerClient(ctx, false, 0, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(dir),
@@ -190,7 +127,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
-		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
+		resp, err := client.CacheRemoteObjectToLocalCluster(ctx, request)
 		if err != nil {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}

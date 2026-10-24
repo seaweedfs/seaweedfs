@@ -27,6 +27,8 @@ service Seaweed {
   }
   rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
   }
+  rpc VolumeListStream (VolumeListRequest) returns (stream VolumeListStreamResponse) {
+  }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
@@ -56,6 +58,8 @@ service Seaweed {
   rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
   }
   rpc RaftLeadershipTransfer (RaftLeadershipTransferRequest) returns (RaftLeadershipTransferResponse) {
+  }
+  rpc ResumeVolumeGrowth (ResumeVolumeGrowthRequest) returns (ResumeVolumeGrowthResponse) {
   }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
@@ -117,6 +121,12 @@ message Heartbeat {
   // place of `volumes`. A master that does not understand this never sets
   // volume_digest_supported, so it keeps being sent the whole list.
   repeated VolumeInformationMessage changed_volumes = 28;
+
+  // Highest volume id this server has ever observed, persisted locally. Fed
+  // by HeartbeatResponse.max_volume_id echoes and by AllocateVolume requests.
+  uint32 max_volume_id_seen = 29;
+  // Topology id of the master cluster this server last heartbeated to.
+  string last_seen_topology_id = 30;
 }
 
 message HeartbeatResponse {
@@ -133,6 +143,12 @@ message HeartbeatResponse {
   // The master compares volume digests, so a server that reports one may send
   // changed_volumes in place of its whole list.
   bool volume_digest_supported = 9;
+  // The leader's current allocation bound; servers persist it and report it
+  // back as max_volume_id_seen so the bound survives master state loss.
+  uint32 max_volume_id = 10;
+  // The leader's cluster identity; a different value reported back later
+  // means the master's state was rebuilt.
+  string topology_id = 11;
 }
 
 message VolumeInformationMessage {
@@ -143,6 +159,7 @@ message VolumeInformationMessage {
   uint64 delete_count = 5;
   uint64 deleted_byte_count = 6;
   bool read_only = 7;
+  bool read_only_can_delete = 17;
   uint32 replica_placement = 8;
   uint32 version = 9;
   uint32 ttl = 10;
@@ -162,6 +179,8 @@ message VolumeShortInformationMessage {
   uint32 ttl = 10;
   string disk_type = 15;
   uint32 disk_id = 16;
+  bool read_only = 17;
+  bool read_only_can_delete = 18;
 }
 
 message VolumeEcShardInformationMessage {
@@ -208,6 +227,9 @@ message KeepConnectedRequest {
   string filer_group = 5;
   string data_center = 6;
   string rack = 7;
+  // A draining filer leaves the lock ring but stays a cluster member, so peers
+  // keep following its metadata until the stream closes.
+  bool leave_lock_ring = 8;
 }
 
 message VolumeLocation {
@@ -220,6 +242,9 @@ message VolumeLocation {
   uint32 grpc_port = 7;
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
+  repeated uint32 remote_vids = 10;
+  repeated uint32 read_only_vids = 11;
+  repeated uint32 read_only_can_delete_vids = 12;
 }
 
 message ClusterNodeUpdate {
@@ -265,6 +290,9 @@ message Location {
   string public_url = 2;
   uint32 grpc_port = 3;
   string data_center = 4;
+  bool data_in_remote = 5;
+  bool read_only = 6;
+  bool read_only_can_delete = 7;
 }
 
 message AssignRequest {
@@ -291,6 +319,18 @@ message VolumeGrowRequest {
   string data_node = 7;
   uint32 memory_map_max_size_mb = 8;
   string disk_type = 9;
+  // If > 0, grow only when the average fill ratio of the layout's writable
+  // volumes has reached this threshold (e.g. 0.6). Lets callers pre-grow on
+  // fill level with one call, instead of listing volumes to compute the
+  // ratio themselves. Ignored when there are no writable volumes.
+  float grow_avg_fill_threshold = 10;
+}
+
+message ResumeVolumeGrowthRequest {
+}
+
+message ResumeVolumeGrowthResponse {
+  bool was_frozen = 1;
 }
 
 message AssignResponse {
@@ -406,10 +446,42 @@ message TopologyInfo {
   map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
+  // Empty and zero take everything. Only the volumes and ec shards listed
+  // under a disk are selected; the topology and its disk counters are always
+  // reported in full.
+  string collection = 1;
+  repeated uint32 volume_ids = 2;
+  // The one collection the empty string cannot name. A named collection wins.
+  bool default_collection_only = 3;
+  // Empty and zero take everything. Wildcards are supported.
+  string remote_storage_name = 4;
+  bool local_volume_only = 5;
+  // The topology, its disks and their counters alone, without the volumes
+  // and ec shards. Selecting volumes above contradicts this and is refused.
+  // A master that predates this field ignores it and answers in full.
+  bool topology_only = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;
   uint64 volume_size_limit_mb = 2;
+}
+
+// VolumeListStream answers the same request as VolumeList without either end
+// holding every volume in the cluster at once. At 800k volumes the reply is
+// 36MB on the wire but 305MB as messages, which the master built in full
+// before sending any of it.
+message VolumeListStreamResponse {
+  // Sent once, first, listing no volumes: the topology, its disks and their
+  // counters. Every message after carries volumes for one of those disks.
+  VolumeListResponse header = 1;
+  // Which disk this batch is from. A disk arrives over as many batches as it
+  // takes, so append rather than assign.
+  string data_center = 2;
+  string rack = 3;
+  string data_node = 4;
+  string disk_type = 5;
+  repeated VolumeInformationMessage volume_infos = 6;
+  repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
 }
 
 message LookupEcVolumeRequest {
@@ -565,4 +637,9 @@ message RaftLeadershipTransferResponse {
 }
 
 message VolumeGrowResponse {
+  // Average fill ratio of the layout's writable volumes at request time
+  // (0 when there are none). Reported whether or not growth was triggered.
+  float avg_fill = 1;
+  // Number of writable volumes at request time.
+  uint32 writable_count = 2;
 }

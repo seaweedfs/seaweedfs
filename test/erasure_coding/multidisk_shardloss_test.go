@@ -200,7 +200,7 @@ func disksWithShards(testDir string, volumeId uint32) int {
 func nodeVolumeDiskCounts(t *testing.T, commandEnv *shell.CommandEnv) map[string]int {
 	t.Helper()
 	var resp *master_pb.VolumeListResponse
-	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		var e error
 		resp, e = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return e

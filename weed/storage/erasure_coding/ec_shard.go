@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -77,7 +78,7 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 	baseFileName := v.FileName()
 
 	// open ecd file
-	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
+	if v.ecdFile, e = backend.OpenVolumeFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY); e != nil {
 		if e == os.ErrNotExist || strings.Contains(e.Error(), "no such file or directory") {
 			return nil, os.ErrNotExist
 		}
