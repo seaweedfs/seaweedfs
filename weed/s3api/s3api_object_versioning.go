@@ -1251,7 +1251,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 				// File doesn't exist anymore, deletion was successful
 				return nil
 			}
-			return fmt.Errorf("failed to delete null version %s: %v", normalizedObject, deleteErr)
+			return fmt.Errorf("failed to delete null version %s: %w", normalizedObject, deleteErr)
 		}
 		return nil
 	}
@@ -1302,7 +1302,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 			return nil
 		}
 		// File still exists but deletion failed for another reason
-		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
+		return fmt.Errorf("failed to delete version %s: %w", versionId, deleteErr)
 	}
 
 	switch {
