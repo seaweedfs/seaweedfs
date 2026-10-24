@@ -81,3 +81,16 @@ workers = 5                                        # optional: concurrent worker
 buffer_size = 10000                                # optional: event buffer size (default: 10000, range: 100-1000000)
 # event_types = ["create", "update", "delete", "rename"]  # optional: filter by event types (default: all)
 # path_prefixes = ["/important", "/data"]          # optional: filter by path prefixes (default: all)
+#
+# Additional endpoints can be declared as named subsections, each with its own
+# endpoint, filters, retry and worker settings, e.g.:
+# [notification.webhook.file_ingress]
+# enabled = true
+# endpoint = "https://ingress.example.com/hook"
+# event_types = ["create"]
+# path_prefixes = ["/buckets/uploads/data"]
+#
+# [notification.webhook.metadata_extractor]
+# enabled = true
+# endpoint = "https://metadata.example.com/hook"
+# path_prefixes = ["/buckets/repository"]
