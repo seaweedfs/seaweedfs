@@ -269,6 +269,8 @@ func newReplicateTestStore(t *testing.T, dir string) *storage.Store {
 func TestReplicatedWriteOverlapsLocalAndReplicaWrites(t *testing.T) {
 	replicaStarted := make(chan url.Values, 1)
 	releaseReplica := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseReplica) }) }
 	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		replicaStarted <- r.URL.Query()
 		<-releaseReplica
@@ -278,6 +280,7 @@ func TestReplicatedWriteOverlapsLocalAndReplicaWrites(t *testing.T) {
 		}
 	}))
 	defer replica.Close()
+	defer release()
 	replicaHost := strings.TrimPrefix(replica.URL, "http://")
 
 	masterFn, dialOption := startMockMasterServer(t, &mockMasterServer{
@@ -340,7 +343,7 @@ func TestReplicatedWriteOverlapsLocalAndReplicaWrites(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	close(releaseReplica)
+	release()
 	if err := <-done; err != nil {
 		t.Fatalf("ReplicatedWrite: %v", err)
 	}
