@@ -167,6 +167,22 @@ func MustFreeMiniPort(t *testing.T, name string) int {
 	return MustFreeMiniPorts(t, []string{name})[0]
 }
 
+// MiniAdminArgs returns weed mini flags pinning the admin server to
+// adminPort and adminPort+GrpcPortOffset and disabling the legacy compat
+// listener. Unconfigured minis all bind the fixed default admin port 12535
+// and the legacy port 23646 (+33646 gRPC), so sequential or concurrent
+// minis on one host collide on them. Allocate adminPort with
+// MustFreeMiniPort(s) — the admin binds late in mini startup, after the
+// cluster's own outbound connections may steal an ephemeral port, so it
+// must stay below the Linux ephemeral port floor.
+func MiniAdminArgs(adminPort int) []string {
+	return []string{
+		fmt.Sprintf("-admin.port=%d", adminPort),
+		fmt.Sprintf("-admin.port.grpc=%d", adminPort+GrpcPortOffset),
+		"-admin.port.legacy=0",
+	}
+}
+
 // AllocatePortSet atomically allocates miniCount master-style port pairs (each
 // with port and port+GrpcPortOffset reserved) plus regularCount additional
 // distinct ports. All listeners are held open until the entire batch is

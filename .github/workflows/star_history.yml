@@ -32,7 +32,7 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.x"
-          cache: pip
+          cache: ${{ runner.environment == 'github-hosted' && 'pip' || '' }}
           cache-dependency-path: .github/scripts/star_history.py
 
       - name: Install matplotlib

@@ -106,7 +106,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, checkErr)
 			continue
 		}
-		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerAddress.ToHttpAddress(), uploadsDir, staleUpload.Name)
+		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.FilerAddress().ToHttpAddress(), uploadsDir, staleUpload.Name)
 		if completed {
 			deleteUrl += "&skipChunkDeletion=true"
 		}

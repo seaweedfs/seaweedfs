@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,12 +49,15 @@ func startMini(t *testing.T, dir string, args ...string) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err)
 	miniLogPaths = append(miniLogPaths, logPath)
-	cmd := exec.Command(weedBinary, append([]string{"mini",
+	miniArgs := append([]string{"mini",
 		"-dir=" + dir,
 		"-s3.config=s3_config.json",
 		"-s3.allowDeleteBucketNotEmpty=true",
 		"-ip=127.0.0.1", "-ip.bind=127.0.0.1",
-	}, args...)...)
+	}, args...)
+	miniArgs = append(miniArgs, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-s3.port.lance=0", "-s3.port.iceberg=0")
+	cmd := exec.Command(weedBinary, miniArgs...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	require.NoError(t, cmd.Start())
@@ -93,6 +97,27 @@ func shellOn(t *testing.T, masterPort, command string) string {
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "shell %q failed: %s", command, out)
 	return stripLogs(string(out))
+}
+
+// waitForFilerListed polls the master until it lists a filer. A fresh
+// single-filer mini registers its filer only after an ~10 s empty-membership
+// confirm, and weed shell finds the filer through that listing, so shell
+// commands sent before it fail.
+func waitForFilerListed(t *testing.T, masterPort string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		cmd := exec.Command(weedBinary, "shell", "-master=localhost:"+masterPort)
+		cmd.Stdin = strings.NewReader("cluster.ps\nexit\n")
+		out, err := cmd.CombinedOutput()
+		if err == nil && strings.Contains(string(out), "* filers ") && !strings.Contains(string(out), "* filers 0\n") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("master on %s lists no filer after 60s: %v\n%s", masterPort, err, out)
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func chunkCountOn(t *testing.T, masterPort, path string) string {
@@ -162,6 +187,7 @@ func TestRemoteCacheEvictUnderPressure(t *testing.T) {
 		"-master.volumeSizeLimitMB=32", "-volume.max=2",
 		"-filer.remoteCacheEvictThreshold=0.99")
 	waitForHTTP(t, evictPrimaryS3)
+	waitForFilerListed(t, evictPrimaryMaster)
 
 	remote := createS3Client(evictRemoteS3)
 	_, err := remote.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(evictBucket)})

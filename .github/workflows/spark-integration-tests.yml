@@ -42,7 +42,7 @@ jobs:
       with:
         java-version: '11'
         distribution: 'temurin'
-        cache: maven
+        cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
 
     - name: Set up Go
       uses: actions/setup-go@v7

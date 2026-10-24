@@ -70,6 +70,13 @@ func TestIcebergTableLifecycle(t *testing.T) {
 
 func testIcebergLifecycleWithDuckDB(t *testing.T) {
 	env := shared
+
+	// The write phase's first act is INSTALLing the iceberg extension, whose
+	// binary can itself target a newer x86-64 baseline than the host CPU has.
+	testutil.RequireImageRunnable(t,
+		"--entrypoint", "duckdb", duckdbImage,
+		"-c", "INSTALL iceberg; LOAD iceberg; SELECT 1;")
+
 	bucket := "lifecycle-duckdb-" + randomSuffix()
 	namespace, table := "sales", "events"
 	env.createTableBucket(t, bucket, "ICEBERG")
@@ -109,6 +116,9 @@ func testIcebergLifecycleWithPyIceberg(t *testing.T) {
 	namespace, table := "sales", "events"
 	env.createTableBucket(t, bucket, "ICEBERG")
 	buildClientImage(t, pyicebergImage, "Dockerfile.pyiceberg")
+	testutil.RequireImageRunnable(t,
+		"--entrypoint", "python3", pyicebergImage,
+		"-c", "import pyarrow; from pyiceberg.catalog import load_catalog")
 
 	before := env.pyiceberg(t, "write", bucket, namespace, table)
 	assertSeeded(t, before)

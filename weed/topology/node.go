@@ -145,9 +145,12 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages   *DiskUsages
-	id           NodeId
-	parent       Node
+	diskUsages *DiskUsages
+	id         NodeId
+	// parent is an atomic pointer because unlinking runs under the rack's
+	// lock while readers (vacuum sweeps, usage propagation, String) reach
+	// it with no shared lock.
+	parent       atomic.Pointer[Node]
 	sync.RWMutex // lock children
 	children     map[NodeId]Node
 	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
@@ -292,8 +295,8 @@ func (n *NodeImpl) IsLocked() (isTryLock bool) {
 }
 
 func (n *NodeImpl) String() string {
-	if n.parent != nil {
-		return n.parent.String() + ":" + string(n.id)
+	if parent := n.Parent(); parent != nil {
+		return parent.String() + ":" + string(n.id)
 	}
 	return string(n.id)
 }
@@ -390,7 +393,11 @@ func (n *NodeImpl) ReleaseReservedCapacity(reservationId string) {
 	}
 }
 func (n *NodeImpl) SetParent(node Node) {
-	n.parent = node
+	if node == nil {
+		n.parent.Store(nil)
+		return
+	}
+	n.parent.Store(&node)
 }
 
 func (n *NodeImpl) Children() (ret []Node) {
@@ -403,7 +410,10 @@ func (n *NodeImpl) Children() (ret []Node) {
 }
 
 func (n *NodeImpl) Parent() Node {
-	return n.parent
+	if parent := n.parent.Load(); parent != nil {
+		return *parent
+	}
+	return nil
 }
 
 func (n *NodeImpl) GetValue() interface{} {
@@ -482,8 +492,8 @@ func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, u
 func (n *NodeImpl) UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts) { //can be negative
 	existingDisk := n.getOrCreateDisk(diskType)
 	existingDisk.addDiskUsageCounts(diskUsage)
-	if n.parent != nil {
-		n.parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
+	if parent := n.Parent(); parent != nil {
+		parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
 	}
 }
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
@@ -497,8 +507,8 @@ func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
 			break
 		}
 	}
-	if n.parent != nil {
-		n.parent.UpAdjustMaxVolumeId(vid)
+	if parent := n.Parent(); parent != nil {
+		parent.UpAdjustMaxVolumeId(vid)
 	}
 }
 func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
