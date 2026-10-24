@@ -7308,6 +7308,7 @@ mod tests {
                 .set(crate::server::write_queue::WriteQueue::new(
                     state.clone(),
                     128,
+                    crate::server::write_queue::SyncBatchOption::default(),
                 ))
                 .is_ok()
         );

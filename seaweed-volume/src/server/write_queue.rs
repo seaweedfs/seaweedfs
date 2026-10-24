@@ -56,6 +56,27 @@ const MAX_CONCURRENT_VOLUME_WRITES: usize = 8;
 /// retirement is the volume leaving the store.
 const IDLE_WORKER_POLL: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Tunes the per-volume durable-write worker. Once the queue drains with the
+/// batch still below min_bytes and min_requests, the batch stays open up to
+/// wait for stragglers instead of paying an fsync per request. Mirrors Go's
+/// storage.SyncBatchOption.
+#[derive(Clone, Copy)]
+pub struct SyncBatchOption {
+    pub min_bytes: usize,
+    pub min_requests: usize,
+    pub wait: std::time::Duration,
+}
+
+impl Default for SyncBatchOption {
+    fn default() -> Self {
+        SyncBatchOption {
+            min_bytes: 1024 * 1024,
+            min_requests: MAX_BATCH_SIZE,
+            wait: std::time::Duration::from_micros(500),
+        }
+    }
+}
+
 /// Handle for submitting write requests to the per-volume workers.
 #[derive(Clone)]
 pub struct WriteQueue {
@@ -67,6 +88,7 @@ pub struct WriteQueue {
     /// alone would multiply the old single queue's capacity by volume count.
     queue_permits: Arc<Semaphore>,
     workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
+    sync_batch: SyncBatchOption,
     /// Submissions accepted, for tests asserting which writes route here.
     #[cfg(test)]
     submits: Arc<std::sync::atomic::AtomicU64>,
@@ -75,13 +97,18 @@ pub struct WriteQueue {
 impl WriteQueue {
     /// Create a new write queue. Per-volume workers are spawned lazily on the
     /// first submission for that volume.
-    pub fn new(state: Arc<VolumeServerState>, capacity: usize) -> Self {
+    pub fn new(
+        state: Arc<VolumeServerState>,
+        capacity: usize,
+        sync_batch: SyncBatchOption,
+    ) -> Self {
         WriteQueue {
             state,
             capacity,
             io_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_VOLUME_WRITES)),
             queue_permits: Arc::new(Semaphore::new(capacity)),
             workers: Arc::new(Mutex::new(HashMap::new())),
+            sync_batch,
             #[cfg(test)]
             submits: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
@@ -107,6 +134,7 @@ impl WriteQueue {
                         state: self.state.clone(),
                         io_permits: self.io_permits.clone(),
                         workers: self.workers.clone(),
+                        sync_batch: self.sync_batch,
                     }
                     .run(),
                 );
@@ -191,6 +219,7 @@ struct VolumeWriteWorker {
     state: Arc<VolumeServerState>,
     io_permits: Arc<Semaphore>,
     workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
+    sync_batch: SyncBatchOption,
 }
 
 impl VolumeWriteWorker {
@@ -238,14 +267,36 @@ impl VolumeWriteWorker {
         let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
         let mut batch_bytes: usize = first.needle.data.len();
         batch.push(first);
+        // Armed once the queue first drains below the minimum batch; holds the
+        // batch open for stragglers so the wait bound is per batch, not per
+        // lull (Go's batchWait).
+        let mut window_deadline = None;
         while batch.len() < MAX_BATCH_SIZE && batch_bytes < MAX_BATCH_BYTES {
-            match self.rx.try_recv() {
-                Ok(req) => {
-                    batch_bytes += req.needle.data.len();
-                    batch.push(req);
-                }
-                Err(_) => break,
+            if window_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+                break;
             }
+            let req = match self.rx.try_recv() {
+                Ok(req) => req,
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    let sync = self.sync_batch;
+                    if sync.wait.is_zero()
+                        || batch_bytes >= sync.min_bytes
+                        || batch.len() >= sync.min_requests
+                    {
+                        // a drained queue flushes right away once it holds enough
+                        break;
+                    }
+                    let deadline = *window_deadline
+                        .get_or_insert_with(|| tokio::time::Instant::now() + sync.wait);
+                    match tokio::time::timeout_at(deadline, self.rx.recv()).await {
+                        Ok(Some(req)) => req,
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            };
+            batch_bytes += req.needle.data.len();
+            batch.push(req);
         }
         debug!("processing write batch of {} requests", batch.len());
 
@@ -380,7 +431,7 @@ mod tests {
     async fn test_write_queue_submit_no_volume() {
         // Submit a write to a non-existent volume -- should return VolumeError::NotFound.
         let state = make_test_state();
-        let queue = WriteQueue::new(state, MAX_BATCH_SIZE);
+        let queue = WriteQueue::new(state, MAX_BATCH_SIZE, SyncBatchOption::default());
 
         let needle = Needle {
             id: 1.into(),
@@ -402,7 +453,7 @@ mod tests {
     async fn test_write_queue_concurrent_submissions() {
         // Submit multiple concurrent writes -- all should complete (with errors since no volume).
         let state = make_test_state();
-        let queue = WriteQueue::new(state, MAX_BATCH_SIZE);
+        let queue = WriteQueue::new(state, MAX_BATCH_SIZE, SyncBatchOption::default());
 
         let mut handles = Vec::new();
         for i in 0..10u64 {
@@ -430,7 +481,7 @@ mod tests {
     async fn test_write_queue_batching() {
         // Verify that many concurrent writes get processed (testing the batching path).
         let state = make_test_state();
-        let queue = WriteQueue::new(state, MAX_BATCH_SIZE);
+        let queue = WriteQueue::new(state, MAX_BATCH_SIZE, SyncBatchOption::default());
 
         // Submit MAX_BATCH_SIZE requests concurrently
         let mut handles = Vec::new();
@@ -522,7 +573,7 @@ mod tests {
     async fn test_write_queue_dropped_sender() {
         // When the queue is dropped, subsequent submits should fail gracefully.
         let state = make_test_state();
-        let queue = WriteQueue::new(state, 1);
+        let queue = WriteQueue::new(state, 1, SyncBatchOption::default());
 
         // Clone then drop the original -- the worker keeps running via its rx handle.
         let queue2 = queue.clone();
@@ -665,7 +716,7 @@ mod tests {
                     .unwrap();
             }
         }
-        let queue = WriteQueue::new(state, MAX_BATCH_SIZE);
+        let queue = WriteQueue::new(state, MAX_BATCH_SIZE, SyncBatchOption::default());
 
         let in_append = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
@@ -733,5 +784,78 @@ mod tests {
         released.await.unwrap();
         assert!(a1.await.unwrap().is_ok());
         assert!(a2.await.unwrap().is_ok());
+    }
+
+    /// A durable write below the minimum batch rides out its window so a
+    /// straggler joins the same sync instead of each paying an fsync alone —
+    /// Go's batchWait. Paused time makes the hold observable: a lone write can
+    /// only complete once the runtime auto-advances to the window's deadline.
+    #[tokio::test(start_paused = true)]
+    async fn test_batch_window_defers_flush_for_stragglers() {
+        use crate::config::MinFreeSpace;
+        use crate::storage::types::{DiskType, NeedleId};
+        use crate::storage::volume::VolumeSpec;
+        use std::time::Duration;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let state = make_test_state();
+        {
+            let mut store = state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+        }
+
+        let queue = WriteQueue::new(
+            state,
+            MAX_BATCH_SIZE,
+            SyncBatchOption {
+                min_bytes: usize::MAX,
+                min_requests: MAX_BATCH_SIZE,
+                wait: Duration::from_secs(30),
+            },
+        );
+
+        let needle = |id: u64| Needle {
+            id: NeedleId(id),
+            cookie: 0x1111.into(),
+            data: vec![id as u8; 8],
+            data_size: 8,
+            ..Needle::default()
+        };
+
+        let start = tokio::time::Instant::now();
+        queue.submit(VolumeId(1), needle(1), true).await.unwrap();
+        assert!(start.elapsed() >= Duration::from_secs(30));
+
+        // Both submits land before the runtime can go idle, so the second is
+        // already queued when the first write's window is armed: they share
+        // one batch and complete at its deadline, not two windows apart.
+        let second = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.submit(VolumeId(1), needle(2), true).await }
+        });
+        let third = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.submit(VolumeId(1), needle(3), true).await }
+        });
+        let (second, third) = tokio::join!(second, third);
+        second.unwrap().unwrap();
+        third.unwrap().unwrap();
+        // One shared window ends both writes ~30s after their batch armed;
+        // back-to-back windows would keep the third out to ~90s.
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_secs(60) && elapsed < Duration::from_secs(90));
     }
 }
