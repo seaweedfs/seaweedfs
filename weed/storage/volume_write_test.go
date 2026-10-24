@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -495,5 +497,61 @@ func TestDoWriteRequestRefusesReadOnlyBeforeAppend(t *testing.T) {
 	}
 	if v.nm.IndexFileSize() != idxBefore {
 		t.Fatalf("idx size changed; needle must not index")
+	}
+}
+
+type syncCountingBackend struct {
+	backend.BackendStorageFile
+	syncs atomic.Int64
+}
+
+func (b *syncCountingBackend) Sync() error {
+	b.syncs.Add(1)
+	return b.BackendStorageFile.Sync()
+}
+
+// A drained queue used to flush whatever it held, turning durable writes into
+// one fsync per request at low concurrency. With a batch window configured, a
+// straggler that lands inside the window joins the same sync.
+func TestSyncBatchDefersFlushForStragglers(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	counting := &syncCountingBackend{BackendStorageFile: v.DataBackend}
+	v.DataBackend = counting
+	v.location = &DiskLocation{syncBatch: SyncBatchOption{
+		MinBytes:    1 * 1024 * 1024,
+		MinRequests: syncBatchMaxRequests,
+		Wait:        100 * time.Millisecond,
+	}}
+
+	done := make(chan error, 2)
+	writeAsync := func(id uint64) {
+		_, _, _, writeErr := v.writeNeedle2(newRandomNeedle(id), true, true, false)
+		done <- writeErr
+	}
+	go writeAsync(1)
+	time.Sleep(10 * time.Millisecond)
+	go writeAsync(2)
+	for i := 0; i < 2; i++ {
+		if writeErr := <-done; writeErr != nil {
+			t.Fatalf("write needle: %v", writeErr)
+		}
+	}
+	if syncs := counting.syncs.Load(); syncs != 1 {
+		t.Fatalf("expected both writes to share one .dat sync, got %d", syncs)
+	}
+
+	go writeAsync(3)
+	if writeErr := <-done; writeErr != nil {
+		t.Fatalf("write needle: %v", writeErr)
+	}
+	if syncs := counting.syncs.Load(); syncs != 2 {
+		t.Fatalf("expected a lone write to take its own sync, got %d total", syncs)
 	}
 }

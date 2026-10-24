@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -661,6 +662,26 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	}
 }
 
+const (
+	syncBatchMaxBytes    = 4 * 1024 * 1024
+	syncBatchMaxRequests = 128
+)
+
+// SyncBatchOption tunes the volume's durable-write worker. Once the queue
+// drains with the batch still below MinBytes and MinRequests, the batch stays
+// open up to Wait for stragglers instead of paying an fsync per request.
+type SyncBatchOption struct {
+	MinBytes    int64
+	MinRequests int
+	Wait        time.Duration
+}
+
+var DefaultSyncBatchOption = SyncBatchOption{
+	MinBytes:    1 * 1024 * 1024,
+	MinRequests: syncBatchMaxRequests,
+	Wait:        500 * time.Microsecond,
+}
+
 // startWorker returns the volume's batch-write channel, creating it and its
 // goroutine on first use, and nil once stopWorker has run.
 func (v *Volume) startWorker() chan *needle.AsyncRequest {
@@ -672,8 +693,12 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 	if v.asyncRequestsChan != nil {
 		return v.asyncRequestsChan
 	}
-	requests := make(chan *needle.AsyncRequest, 128)
+	requests := make(chan *needle.AsyncRequest, syncBatchMaxRequests)
 	v.asyncRequestsChan = requests
+	syncBatch := DefaultSyncBatchOption
+	if v.location != nil {
+		syncBatch = v.location.syncBatch
+	}
 	go func() {
 		chanClosed := false
 		for {
@@ -681,13 +706,22 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 			if chanClosed {
 				break
 			}
-			currentRequests := make([]*needle.AsyncRequest, 0, 128)
+			currentRequests := make([]*needle.AsyncRequest, 0, syncBatchMaxRequests)
 			currentBytesToWrite := int64(0)
+			var batchWait <-chan time.Time
 			for {
-				request, ok := <-requests
+				var request *needle.AsyncRequest
+				queueOpen := true
+				select {
+				case request, queueOpen = <-requests:
+				case <-batchWait:
+				}
 				// volume may be closed
-				if !ok {
+				if !queueOpen {
 					chanClosed = true
+					break
+				}
+				if request == nil {
 					break
 				}
 				if MaxPossibleVolumeSize < v.ContentSize()+uint64(currentBytesToWrite+request.ActualSize) {
@@ -698,9 +732,21 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				currentRequests = append(currentRequests, request)
 				currentBytesToWrite += request.ActualSize
 				// submit at most 4M bytes or 128 requests at one time to decrease request delay.
-				// it also need to break if there is no data in channel to avoid io hang.
-				if currentBytesToWrite >= 4*1024*1024 || len(currentRequests) >= 128 || len(requests) == 0 {
+				if currentBytesToWrite >= syncBatchMaxBytes || len(currentRequests) >= syncBatchMaxRequests {
 					break
+				}
+				if len(requests) > 0 {
+					continue
+				}
+				if syncBatch.Wait <= 0 || currentBytesToWrite >= syncBatch.MinBytes || len(currentRequests) >= syncBatch.MinRequests {
+					// a drained queue flushes right away once it holds enough
+					break
+				}
+				// flushing now would sync a singleton batch; hold the window
+				// open for stragglers, armed once per batch so the added
+				// latency stays bounded by Wait
+				if batchWait == nil {
+					batchWait = time.After(syncBatch.Wait)
 				}
 			}
 			if len(currentRequests) == 0 {

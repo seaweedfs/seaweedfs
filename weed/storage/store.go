@@ -1359,6 +1359,14 @@ func (s *Store) GetVolumeSizeLimit() uint64 {
 	return s.volumeSizeLimit.Load()
 }
 
+// SetSyncBatchOption applies the durable-write batch window to every disk.
+// It runs at startup, before any volume takes a write.
+func (s *Store) SetSyncBatchOption(syncBatch SyncBatchOption) {
+	for _, location := range s.Locations {
+		location.syncBatch = syncBatch
+	}
+}
+
 func (s *Store) SetPreallocate(x bool) {
 	s.preallocate.Store(x)
 }
