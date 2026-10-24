@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -551,6 +552,61 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 			t.Error("concurrent non-barrier dir updates should not conflict")
 		}
 	})
+}
+
+// TestConcurrentJobsUpToLimit proves independent-path jobs run in parallel up
+// to the concurrency limit: every admitted job is in flight before any
+// finishes (a serial loop could only have one running), and admissions past
+// the limit wait for a slot rather than running ahead of it.
+func TestConcurrentJobsUpToLimit(t *testing.T) {
+	const limit = 3
+	started := make(chan struct{}, limit)
+	release := make(chan struct{})
+	var inFlight, maxInFlight atomic.Int32
+
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		cur := inFlight.Add(1)
+		for {
+			if old := maxInFlight.Load(); cur <= old || maxInFlight.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		inFlight.Add(-1)
+		return nil
+	}, limit, 0)
+
+	admitDone := make(chan struct{})
+	go func() {
+		defer close(admitDone)
+		for i := 0; i < limit+1; i++ {
+			p.AddSyncJob(makeResp("/d", fmt.Sprintf("f%d", i), false, int64(i+1), true))
+		}
+	}()
+
+	for i := 0; i < limit; i++ {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d jobs entered flight", i, limit)
+		}
+	}
+	// The extra admission must still be blocked on a full pool.
+	select {
+	case <-started:
+		t.Fatal("a job started with no free slot")
+	case <-admitDone:
+		t.Fatal("submission returned past the concurrency limit")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	<-admitDone
+	p.Drain()
+	if got := maxInFlight.Load(); got != limit {
+		t.Fatalf("peak in-flight = %d, want %d", got, limit)
+	}
 }
 
 // benchResult prevents the compiler from optimizing away the conflict check.
