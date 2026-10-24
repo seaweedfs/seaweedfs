@@ -43,6 +43,8 @@ start-server: build-weed
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-dir=$(SERVER_DIR) \
+		-ip=127.0.0.1 \
+		-ip.bind=127.0.0.1 \
 		-s3.port=$(S3_PORT) \
 		-filer.port.grpc=$(FILER_GRPC_PORT) \
 		> weed-test.log 2>&1 & \

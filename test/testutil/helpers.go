@@ -51,6 +51,11 @@ func RequireImageRunnable(t *testing.T, args ...string) {
 	}
 }
 
+func IsIllegalInstruction(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 132
+}
+
 func FindBindIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {

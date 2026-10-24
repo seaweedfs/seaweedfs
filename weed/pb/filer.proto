@@ -786,7 +786,8 @@ message FilerConf {
         string replication = 3;
         string ttl = 4;
         string disk_type = 5;
-        bool fsync = 6;
+        // unset inherits from the enclosing path rule, set overrides it
+        optional bool fsync = 6;
         uint32 volume_growth_count = 7;
         bool read_only = 8;
         string data_center = 9;

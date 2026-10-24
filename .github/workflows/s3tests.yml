@@ -58,9 +58,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -411,9 +411,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -582,9 +582,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
@@ -811,9 +811,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15

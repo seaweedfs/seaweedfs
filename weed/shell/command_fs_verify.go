@@ -254,7 +254,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		StopTsNs:               time.Now().UnixNano(),
 		EventErrorType:         pb.DontLogError,
 	}
-	err = pb.FollowMetadata(c.env.option.FilerAddress, c.env.option.GrpcDialOption, metadataFollowOption, processEventFn)
+	err = pb.FollowMetadata(c.env.FilerAddress(), c.env.option.GrpcDialOption, metadataFollowOption, processEventFn)
 	return fileCount, errCount, prunedCount, err
 }
 

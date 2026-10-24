@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,6 +199,372 @@ func (c *bodyCapturingHTTPClient) Do(req *http.Request) (*http.Response, error) 
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(c.successJSON)),
 	}, nil
+}
+
+// stallingHTTPClient parks the first stalls calls without draining the request
+// body (a conn that never drains) until the request ctx is cancelled, and
+// delays the rest by slowFor after draining.
+type stallingHTTPClient struct {
+	mu          sync.Mutex
+	stalls      int
+	slowFor     time.Duration
+	requestCtxs []context.Context
+}
+
+func (c *stallingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.requestCtxs = append(c.requestCtxs, req.Context())
+	stall := c.stalls > 0
+	if stall {
+		c.stalls--
+	}
+	c.mu.Unlock()
+
+	if stall {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	if c.slowFor > 0 {
+		time.Sleep(c.slowFor)
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
+// markHostFast arms the stall watchdog the way a recent fast upload would:
+// the recorded rate is high enough that the adaptive budget lands on
+// uploadStallMinWait for test-sized bodies.
+func markHostFast(u *Uploader, host string) {
+	u.fastUploadHosts.Store(host, fastHostMark{at: time.Now().UnixNano(), bps: 1 << 30})
+}
+
+// A host that just served a fast upload arms the stall watchdog: a request
+// parked well past the floor is riding a wedged conn, so it is cancelled and
+// the retry runs on a fresh conn without the watchdog.
+func TestUploadStallWatchdogRetriesOnFreshConn(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 50 * time.Millisecond
+
+	client := &stallingHTTPClient{stalls: 1}
+	uploader := newUploader(client)
+	markHostFast(uploader, "test-host:8080")
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("upload should have retried on a fresh conn: %v", err)
+	}
+	if result.RetryCount != 1 || len(client.requestCtxs) != 2 {
+		t.Fatalf("got retries=%d calls=%d, want one retry on a fresh conn", result.RetryCount, len(client.requestCtxs))
+	}
+	if err := client.requestCtxs[0].Err(); err == nil {
+		t.Fatalf("first attempt context was not cancelled")
+	}
+}
+
+// readStallHTTPClient answers with a response body that never delivers until
+// the request ctx is cancelled — the conn that took the request then wedged on
+// the read side.
+type readStallHTTPClient struct {
+	mu    sync.Mutex
+	stall bool
+}
+
+func (c *readStallHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	c.mu.Lock()
+	stall := c.stall
+	c.stall = false
+	c.mu.Unlock()
+	var body io.ReadCloser = io.NopCloser(strings.NewReader(`{"size":1}`))
+	if stall {
+		body = &ctxBlockedBody{ctx: req.Context()}
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       body,
+	}, nil
+}
+
+type ctxBlockedBody struct{ ctx context.Context }
+
+func (b *ctxBlockedBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (b *ctxBlockedBody) Close() error { return nil }
+
+// The watchdog stays armed through the response read: a conn that accepts the
+// body then wedges on the reply is as wedged as one that never drains.
+func TestUploadStallWatchdogCoversResponseRead(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 50 * time.Millisecond
+
+	client := &readStallHTTPClient{stall: true}
+	uploader := newUploader(client)
+	markHostFast(uploader, "test-host:8080")
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("upload should have retried past the stalled read: %v", err)
+	}
+	if result.RetryCount != 1 {
+		t.Fatalf("got retries=%d, want one retry on a fresh conn", result.RetryCount)
+	}
+}
+
+// rearmHTTPClient parks the first attempt on a conn that never drains and
+// re-marks the host fast as it fails — a concurrent healthy upload can restore
+// the mark while this upload is between attempts. The retry drains slowly, so
+// a re-armed watchdog would cancel it too.
+type rearmHTTPClient struct {
+	uploader *Uploader
+	calls    int32
+	slowFor  time.Duration
+}
+
+func (c *rearmHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if atomic.AddInt32(&c.calls, 1) == 1 {
+		<-req.Context().Done()
+		markHostFast(c.uploader, req.URL.Host)
+		return nil, req.Context().Err()
+	}
+	// Park past the watchdog floor like a real wedged conn: a re-armed
+	// watchdog must cancel this attempt instead of the sleep masking it.
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case <-time.After(c.slowFor):
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
+// A re-proven host must not re-arm the watchdog for the retry: the conn it
+// cancelled says nothing about the next conn, and re-arming could burn every
+// remaining attempt.
+func TestUploadStallWatchdogStaysDisarmedOnRetry(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 40 * time.Millisecond
+
+	uploader := newUploader(nil)
+	uploader.httpClient = &rearmHTTPClient{uploader: uploader, slowFor: 60 * time.Millisecond}
+	markHostFast(uploader, "test-host:8080")
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("retry should run unbounded once the watchdog has fired: %v", err)
+	}
+	if result.RetryCount != 1 {
+		t.Fatalf("got retries=%d, want one retry", result.RetryCount)
+	}
+}
+
+// The disarm is per upload: a caller reusing its UploadOption still gets an
+// armed watchdog on the next call — a second stalled conn must cancel too.
+func TestUploadStallWatchdogRearmsForNextUpload(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 40 * time.Millisecond
+
+	client := &stallingHTTPClient{}
+	uploader := newUploader(client)
+	markHostFast(uploader, "test-host:8080")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// IsInputCompressed keeps the body large enough to re-prove the host:
+	// compressed near-zeros would send too few bytes to re-mark it.
+	option := &UploadOption{UploadUrl: "http://test-host:8080/1,deadbeef", MaxAttempts: 2, IsInputCompressed: true}
+	for i := 0; i < 2; i++ {
+		client.mu.Lock()
+		client.stalls = 1
+		client.mu.Unlock()
+		result, err := uploader.UploadData(ctx, make([]byte, 300*1024), option)
+		if err != nil {
+			t.Fatalf("upload %d should have retried on a fresh conn: %v", i, err)
+		}
+		if result.RetryCount != 1 {
+			t.Fatalf("upload %d got retries=%d, want its own stall caught", i, result.RetryCount)
+		}
+	}
+	if option.stallWatchdogDisarmed {
+		t.Fatalf("a stall must not disarm the watchdog on the caller's option")
+	}
+}
+
+// A real transport must drop the conn a cancelled request was riding: the
+// retry has to dial again rather than land back on the parked conn. The first
+// conn here wedges mid-reply — headers flush, then the body never arrives.
+func TestUploadStallWatchdogDialsFreshConn(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 50 * time.Millisecond
+
+	var requests, dials int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if atomic.AddInt32(&requests, 1) == 1 {
+			w.WriteHeader(http.StatusCreated)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"size":1}`))
+	}))
+	defer srv.Close()
+
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			atomic.AddInt32(&dials, 1)
+			return new(net.Dialer).DialContext(ctx, network, addr)
+		},
+	}
+	defer tr.CloseIdleConnections()
+	uploader := newUploader(&http.Client{Transport: tr})
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	markHostFast(uploader, host)
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   srv.URL + "/1,deadbeef",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("upload should have retried on a fresh conn: %v", err)
+	}
+	if result.RetryCount != 1 || atomic.LoadInt32(&dials) != 2 {
+		t.Fatalf("got retries=%d dials=%d, want one retry on a fresh conn", result.RetryCount, dials)
+	}
+}
+
+// Once the body drains the wait is the server's commit: a write that takes
+// longer than the stall floor to acknowledge must not be cancelled — the conn
+// is healthy, the server is just busy.
+func TestUploadStallWatchdogAllowsSlowCommit(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 30 * time.Millisecond
+
+	client := &stallingHTTPClient{slowFor: 80 * time.Millisecond}
+	uploader := newUploader(client)
+	markHostFast(uploader, "test-host:8080")
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	if err != nil || result.RetryCount != 0 {
+		t.Fatalf("a slow commit must not be cancelled: result=%+v err=%v", result, err)
+	}
+}
+
+// A fast rejection proves nothing about how the conn drains, so it must not
+// mark the host fast and arm the watchdog for the next upload.
+func TestUploadStallWatchdogIgnoresFailedWrites(t *testing.T) {
+	uploader := newUploader(&rejectHTTPClient{})
+	_, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	if err == nil {
+		t.Fatalf("rejected upload should fail")
+	}
+	if _, ok := uploader.fastUploadHosts.Load("test-host:8080"); ok {
+		t.Fatalf("a failed upload must not mark the host fast")
+	}
+}
+
+type rejectHTTPClient struct{}
+
+func (c *rejectHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	return &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":"volume is read only"}`)),
+	}, nil
+}
+
+// Without a recent fast upload the watchdog stays off: a chronically slow link
+// is the link, not a conn, and must not get its uploads cancelled.
+func TestUploadStallWatchdogKeepsUnprovenHost(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 20 * time.Millisecond
+
+	client := &stallingHTTPClient{slowFor: 60 * time.Millisecond}
+	uploader := newUploader(client)
+
+	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://slow-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("unproven host upload should not be cancelled: %v", err)
+	}
+	if result.RetryCount != 0 || len(client.requestCtxs) != 1 {
+		t.Fatalf("got retries=%d calls=%d, want a single unbounded attempt", result.RetryCount, len(client.requestCtxs))
+	}
+}
+
+// Any sizeable completed upload marks its host at the rate it proved — slow
+// or fast — because the stall budget scales off that rate. Only a too-small
+// body fails to measure.
+func TestUploadObservedBps(t *testing.T) {
+	if bps := uploadObservedBps(4<<20, 4*time.Second); bps != 1<<20 {
+		t.Fatalf("4MiB in 4s observed %d B/s, want 1MiB/s", bps)
+	}
+	if bps := uploadObservedBps(4<<20, 3*time.Hour); bps <= 0 {
+		t.Fatalf("a slow upload still proves the rate it moved at")
+	}
+	if bps := uploadObservedBps(64*1024, time.Millisecond); bps != 0 {
+		t.Fatalf("a small upload says nothing about host speed")
+	}
+	if bps := uploadObservedBps(4<<20, 0); bps != 0 {
+		t.Fatalf("a zero-duration sample is not a measurement")
+	}
+}
+
+// The stall budget scales with the rate the host last proved, so the same
+// body gets little slack on a fast link and plenty on a slow one — no fixed
+// floor fits both.
+func TestUploadStallTimeoutScalesWithMeasuredRate(t *testing.T) {
+	// 8MiB/s observed → a 64MiB body gets 8x the time it needs at that rate.
+	if d := uploadStallTimeout(64<<20, 8<<20); d != 64*time.Second {
+		t.Fatalf("stall budget = %v, want 64s", d)
+	}
+	// The same body on a 64MiB/s host gets 8s — under the floor, so clamped.
+	if d := uploadStallTimeout(64<<20, 64<<20); d != uploadStallMinWait {
+		t.Fatalf("stall budget = %v, want the min wait %v", d, uploadStallMinWait)
+	}
+	// A tiny body on a fast host cannot race its own conn.
+	if d := uploadStallTimeout(1, 1<<30); d != uploadStallMinWait {
+		t.Fatalf("stall budget = %v, want the min wait %v", d, uploadStallMinWait)
+	}
 }
 
 type fsyncAssignClient struct {
