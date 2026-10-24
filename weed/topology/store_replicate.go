@@ -83,7 +83,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	replicaMime := string(n.Mime)
 	replicaData := n.Data
 	replicaPairMap := make(map[string]string)
-	if n.HasPairs() {
+	if replicaCount > 0 && n.HasPairs() {
 		tmpMap := make(map[string]string)
 		if pe := json.Unmarshal(n.Pairs, &tmpMap); pe != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
