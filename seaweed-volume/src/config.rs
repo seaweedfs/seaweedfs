@@ -233,6 +233,25 @@ pub struct Cli {
     #[arg(long = "volume.allowUntrustedRemoteEndpoints", default_value_t = false)]
     pub allow_untrusted_remote_endpoints: bool,
 
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchBytes", default_value_t = 1024 * 1024)]
+    pub fsync_min_batch_bytes: u64,
+
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchRequests", default_value_t = 128)]
+    pub fsync_min_batch_requests: usize,
+
+    /// How long a below-minimum fsync batch waits for more requests once the
+    /// queue drains; 0 flushes immediately.
+    #[arg(
+        long = "fsyncBatchWait",
+        default_value = "500us",
+        value_parser = parse_go_duration
+    )]
+    pub fsync_batch_wait: std::time::Duration,
+
     /// A file of command line options, each line in optionName=optionValue format.
     #[arg(long = "options", default_value = "")]
     pub options: String,
@@ -308,6 +327,14 @@ pub struct VolumeServerConfig {
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation
     /// (allows loopback / link-local / metadata hosts).
     pub allow_untrusted_remote_endpoints: bool,
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_bytes: u64,
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_requests: usize,
+    /// How long a below-minimum fsync batch waits for stragglers.
+    pub fsync_batch_wait: std::time::Duration,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -938,6 +965,9 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         concurrent_download_limit: cli.concurrent_download_limit_mb as i64 * 1024 * 1024,
         inflight_upload_data_timeout: cli.inflight_upload_data_timeout,
         inflight_download_data_timeout: cli.inflight_download_data_timeout,
+        fsync_min_batch_bytes: cli.fsync_min_batch_bytes,
+        fsync_min_batch_requests: cli.fsync_min_batch_requests,
+        fsync_batch_wait: cli.fsync_batch_wait,
         has_slow_read: cli.has_slow_read,
         read_buffer_size_mb: cli.read_buffer_size_mb,
         ldb_timeout: cli.ldb_timeout,
