@@ -4,6 +4,13 @@
 #    /etc/seaweedfs/master.toml
 # this file is read by master
 
+[master]
+# cap on writable volumes per volume layout (collection + replica placement +
+# ttl + disk type) that write assignments spread over; fullest picked first.
+# 0 = no limit
+max_writable_volumes_per_layout = 0
+
+
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
 # Scripts are skipped while an admin server is connected.

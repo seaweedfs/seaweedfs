@@ -134,6 +134,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	if v.IsSet("master.vacuum.max_parallel_per_server") {
 		option.MaxParallelVacuumPerServer = v.GetInt("master.vacuum.max_parallel_per_server")
 	}
+	v.SetDefault("master.max_writable_volumes_per_layout", option.MaxWritableVolumes)
+	option.MaxWritableVolumes = v.GetInt("master.max_writable_volumes_per_layout")
 
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
