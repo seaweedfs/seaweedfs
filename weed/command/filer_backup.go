@@ -156,7 +156,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		} else {
 			lastOffsetTsNs, err := getOffsetWithFallback(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 			if err != nil {
-				glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
+				return 0, fmt.Errorf("read backup offset: %w", err)
 			} else if lastOffsetTsNs > 0 {
 				startFrom = time.Unix(0, lastOffsetTsNs)
 				glog.V(0).Infof("resuming from %v", startFrom)
