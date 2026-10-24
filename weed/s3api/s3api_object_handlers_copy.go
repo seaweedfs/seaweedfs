@@ -70,13 +70,12 @@ func isValidDirective(value string) bool {
 	return value == "" || value == DirectiveCopy || value == DirectiveReplace
 }
 
-// copyChangesStorage reports whether a copy request sets the storage class or
-// the encryption of the copy. Either one makes copying an object onto itself a
-// change AWS accepts, e.g. to change its storage class with the COPY directive.
-func copyChangesStorage(h http.Header) bool {
-	return h.Get(s3_constants.AmzStorageClass) != "" ||
-		h.Get(s3_constants.AmzServerSideEncryption) != "" ||
-		h.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != ""
+// copyChangesStorageClass reports whether a copy request asks for a storage
+// class other than the source object's. That makes copying an object onto
+// itself a change AWS accepts, even with the COPY directive.
+func (s3a *S3ApiServer) copyChangesStorageClass(h http.Header, src *filer_pb.Entry) bool {
+	sc := h.Get(s3_constants.AmzStorageClass)
+	return sc != "" && sc != s3a.getStorageClassFromExtended(src.Extended)
 }
 
 // hasPrefixFold reports whether s starts with prefix, ignoring case.
@@ -179,8 +178,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	// Read before bucket defaults below add encryption headers the client did not send.
-	changesStorage := copyChangesStorage(r.Header)
 
 	// A copy request without SSE headers takes the destination bucket's
 	// default encryption, including its configured KMS key and bucket-key
@@ -282,9 +279,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	sameDestination := srcBucket == dstBucket && srcObject == dstObject
+	changesStorageClass := s3a.copyChangesStorageClass(r.Header, entry)
 	// A self-copy into a versioned bucket writes a new version instead of overwriting in
 	// place, so it is not the no-op AWS rejects. It is how an earlier version is restored.
-	if sameDestination && !(replaceMeta || replaceTagging || changesStorage) && srcVersioningState != s3_constants.VersioningEnabled {
+	if sameDestination && !(replaceMeta || replaceTagging || changesStorageClass) && srcVersioningState != s3_constants.VersioningEnabled {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
@@ -316,7 +314,16 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	replacesSource := copyReplacesSourceEntry(sameDestination, dstVersioningState, srcVersionId)
 
-	if replacesSource && (replaceMeta || replaceTagging || changesStorage) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+	// A self-copy that only changes the storage class updates the object in
+	// place and has to keep its encryption as stored. The direct strategy
+	// compares only KMS key IDs, so SSE-KMS requests stay rejected too.
+	if replacesSource && changesStorageClass && !(replaceMeta || replaceTagging) &&
+		(IsSSEKMSRequest(r) || !s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
+		return
+	}
+
+	if replacesSource && (replaceMeta || replaceTagging || changesStorageClass) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
 		// Bind the entire self-copy update to the snapshot read on each attempt.
