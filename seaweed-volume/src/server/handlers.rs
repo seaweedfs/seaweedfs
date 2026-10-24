@@ -1566,7 +1566,9 @@ fn etag_list_matches(header: &str, etag: &str) -> bool {
     split_etag_list(header).into_iter().any(|tag| {
         let tag = tag.trim();
         let tag = tag.strip_prefix("W/").unwrap_or(tag);
-        tag.trim_matches('"') == etag
+        // Empty list elements are ignored, so padding like a trailing
+        // comma cannot match an empty opaque tag.
+        !tag.is_empty() && tag.trim_matches('"') == etag
     })
 }
 
@@ -5709,6 +5711,10 @@ mod tests {
             (
                 vec![(header::IF_NONE_MATCH, format!("\"{bare},old\""))],
                 false,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\",,\"{bare}\""))],
+                true,
             ),
             (
                 vec![
