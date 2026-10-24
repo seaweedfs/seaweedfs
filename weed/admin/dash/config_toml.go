@@ -106,6 +106,8 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecConf.FreeSlotsDeadband = v.GetInt(k)
 		if ecConf.FreeSlotsDeadband < 0 {
 			ecConf.FreeSlotsDeadband = 0
+		} else if ecConf.FreeSlotsDeadband > 100000 {
+			ecConf.FreeSlotsDeadband = 100000
 		}
 		ecChanged = true
 	}

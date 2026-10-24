@@ -163,6 +163,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 100000}},
 						},
 						{
 							Name:        "strict_placement",
@@ -664,6 +665,8 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	deadband := pluginworker.ReadIntConfig(values, "free_slots_deadband", taskConfig.FreeSlotsDeadband)
 	if deadband < 0 {
 		deadband = 0
+	} else if deadband > 100000 {
+		deadband = 100000
 	}
 	taskConfig.FreeSlotsDeadband = deadband
 
