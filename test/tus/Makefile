@@ -106,13 +106,13 @@ start-seaweedfs: check-binary
 	
 	# Wait for filer to be ready
 	@echo "$(YELLOW)Waiting for filer to be ready...$(NC)"
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s -f http://127.0.0.1:$(FILER_PORT)/ > /dev/null 2>&1; then \
 			echo "$(GREEN)Filer is ready$(NC)"; \
 			break; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
-			echo "$(RED)Filer failed to start within 30 seconds$(NC)"; \
+			echo "$(RED)Filer failed to start within 90 seconds$(NC)"; \
 			$(MAKE) debug-logs; \
 			exit 1; \
 		fi; \
