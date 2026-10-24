@@ -598,7 +598,7 @@ func TestEcShardPlacementViolations(t *testing.T) {
 	assert.Empty(t, violationsOf(topo, &super_block.ReplicaPlacement{SameRackCount: 2, DiffRackCount: 3}))
 }
 
-func TestVerifyEcShardsBeforeDeleteStrictPlacement(t *testing.T) {
+func TestVerifyEcShardsBeforeDeletePlacement(t *testing.T) {
 	oldAttempts, oldInterval := verifyEcShardAttempts, verifyEcShardRetryInterval
 	verifyEcShardAttempts, verifyEcShardRetryInterval = 2, time.Millisecond
 	t.Cleanup(func() {
@@ -645,11 +645,11 @@ func TestVerifyEcShardsBeforeDeleteStrictPlacement(t *testing.T) {
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		onePerNode[fmt.Sprintf("n%d:8080", i)] = 1 << i
 	}
-	assert.NoError(t, verifyEcShardsBeforeDelete(envWith(topologyWith(onePerNode)), []needle.VolumeId{vid}, types.HardDriveType, false, rp, true))
+	assert.NoError(t, verifyEcShardsBeforeDelete(envWith(topologyWith(onePerNode)), []needle.VolumeId{vid}, types.HardDriveType, false, rp))
 
 	// All 14 shards on one node: over the cap, so the gate refuses to let the
 	// source volume be deleted.
-	err := verifyEcShardsBeforeDelete(envWith(topologyWith(map[string]uint32{"n1:8080": 0x3FFF})), []needle.VolumeId{vid}, types.HardDriveType, false, rp, true)
+	err := verifyEcShardsBeforeDelete(envWith(topologyWith(map[string]uint32{"n1:8080": 0x3FFF})), []needle.VolumeId{vid}, types.HardDriveType, false, rp)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "does not meet the requested replica placement limits")
 }

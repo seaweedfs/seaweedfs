@@ -54,9 +54,8 @@ func (c *commandEcEncode) Help() string {
 	per node (the data-center digit is not used for EC). For example
 	-shardReplicaPlacement=021 requests at most 1 shard per node and 2 per rack.
 	Only when the final placement meets these limits does losing one rack cost
-	at most 2 shards; -strictPlacement turns the request into a requirement,
-	failing the encode (and keeping the original volumes) when the cluster
-	cannot honor it.
+	at most 2 shards, so the encode fails (and keeps the original volumes)
+	when the cluster cannot honor them.
 
 	The -collection parameter is a comma-separated list of collection names, with
 	"*" and "?" wildcards, and regex patterns:
@@ -112,7 +111,6 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
 	diskTypeStr := encodeCommand.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	applyBalancing := encodeCommand.Bool("rebalance", true, "re-balance EC shards after creation (default: true)")
-	strictPlacement := encodeCommand.Bool("strictPlacement", false, "fail the encode when the final shard placement does not meet the -shardReplicaPlacement limits, keeping the original volumes")
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
 	if err = encodeCommand.Parse(args); err != nil {
@@ -124,9 +122,6 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	rp, err := parseReplicaPlacementArg(commandEnv, *shardReplicaPlacement)
 	if err != nil {
 		return err
-	}
-	if *strictPlacement && (rp == nil || (rp.SameRackCount <= 0 && rp.DiffRackCount <= 0)) {
-		fmt.Fprintf(writer, "warning: -strictPlacement is set but the shard replica placement %v carries no per-node or per-rack limit; every placement satisfies it\n", rp)
 	}
 
 	// Parse source disk type filter (optional)
@@ -192,7 +187,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		if len(batches) > 1 {
 			fmt.Printf("Starting EC encoding batch %d/%d with %d volumes: %v\n", i+1, len(batches), len(batchVolumeIds), batchVolumeIds)
 		}
-		if err := ec.ProcessEcEncodeBatch(commandEnv.ecEnv(), writer, batchVolumeIds, rp, diskType, *maxParallelization, *applyBalancing, *strictPlacement, *collection); err != nil {
+		if err := ec.ProcessEcEncodeBatch(commandEnv.ecEnv(), writer, batchVolumeIds, rp, diskType, *maxParallelization, *applyBalancing, *collection); err != nil {
 			return fmt.Errorf("ec encode batch %d/%d for volumes %v: %w", i+1, len(batches), batchVolumeIds, err)
 		}
 	}
