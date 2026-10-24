@@ -436,11 +436,13 @@ async fn run(
     // The write queue is always on: durable (fsync) uploads go through it so
     // a batch shares one .dat/.idx sync, the way Go's per-volume async writer
     // group-commits. Non-fsync writes stay on the synchronous path.
+    let min_bytes = usize::try_from(config.fsync_min_batch_bytes)
+        .map_err(|_| "fsyncMinBatchBytes exceeds this platform's maximum usize value")?;
     let wq = WriteQueue::new(
         state.clone(),
         128,
         write_queue::SyncBatchOption {
-            min_bytes: config.fsync_min_batch_bytes as usize,
+            min_bytes,
             min_requests: config.fsync_min_batch_requests,
             wait: config.fsync_batch_wait,
         },
