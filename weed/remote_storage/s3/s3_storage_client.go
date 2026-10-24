@@ -712,6 +712,9 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 	}
 
 	tagging := toTagging(newEntry.Extended)
+	if reflect.DeepEqual(tagging.TagSet, toTagging(oldEntry.Extended).TagSet) {
+		return
+	}
 	if len(tagging.TagSet) > 0 {
 		_, err = s.conn.PutObjectTagging(&s3.PutObjectTaggingInput{
 			Bucket:  aws.String(loc.Bucket),

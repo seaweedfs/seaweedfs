@@ -375,6 +375,17 @@ func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
 	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
 }
 
+func TestS3UpdateFileMetadataIgnoresNonTagAttributes(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	old := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+	updated := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v2")}}
+
+	_, err := client.UpdateFileMetadata(loc, old, updated)
+	require.NoError(t, err)
+	require.Empty(t, rt.requests, "non-tag attribute changes must not send tagging calls")
+}
+
 func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
 	client, rt := newRecordingS3Client(t, true)
 	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
