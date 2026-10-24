@@ -536,7 +536,13 @@ func TestSyncBatchDefersFlushForStragglers(t *testing.T) {
 		done <- writeErr
 	}
 	go writeAsync(1)
-	time.Sleep(10 * time.Millisecond)
+	// once the worker has taken the first write off the queue it holds the
+	// batch open for the window, so a second write can only land inside it
+	assert.Eventually(t, func() bool {
+		v.asyncWorkerLock.Lock()
+		defer v.asyncWorkerLock.Unlock()
+		return v.asyncRequestsChan != nil && len(v.asyncRequestsChan) == 0
+	}, 5*time.Second, time.Millisecond)
 	go writeAsync(2)
 	for i := 0; i < 2; i++ {
 		if writeErr := <-done; writeErr != nil {
