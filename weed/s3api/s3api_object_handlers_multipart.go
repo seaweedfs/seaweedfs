@@ -265,7 +265,12 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxUploads)
 		return
 	}
-	keyMarker := decodeListContinuationToken(decodeEscapedEcho(multipartKeyMarker, encodingType == s3.EncodingTypeUrl, urlQueryEscape))
+	// The decode mirrors the response encoding: under encoding-type=url the
+	// markers go out url-escaped, otherwise they carry the token form.
+	keyMarker := decodeListContinuationToken(multipartKeyMarker)
+	if encodingType == s3.EncodingTypeUrl {
+		keyMarker = decodeEscapedEcho(multipartKeyMarker, true, urlQueryEscape)
+	}
 	if keyMarker != "" {
 		// Marker not common with prefix is not implemented.
 		if !strings.HasPrefix(keyMarker, prefix) {

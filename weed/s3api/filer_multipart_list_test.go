@@ -180,6 +180,32 @@ func TestSelectMultipartUploadsUrlEncodesMarkersAndKeys(t *testing.T) {
 	}
 }
 
+// A raw key that already carries the token prefix must survive an
+// encoding-type=url round trip: under url mode the wire form is the url escape
+// alone, so the request decode only unescapes — running the token decode on
+// "base64:..." would misread the raw key as an encoded token.
+func TestSelectMultipartUploadsUrlTokenPrefixedKeyRoundTrip(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		uploadEntry("1", "base64:AQ", 10),
+		uploadEntry("2", "base64:z", 20),
+	}
+	input := listUploadsInput("", "", "", 1)
+	input.EncodingType = aws.String(s3.EncodingTypeUrl)
+
+	out := selectMultipartUploads(input, entries)
+	resume := decodeEscapedEcho(*out.NextKeyMarker, true, urlQueryEscape)
+	if resume != "base64:AQ" {
+		t.Fatalf("next key marker %q resumes at %q, want %q", *out.NextKeyMarker, resume, "base64:AQ")
+	}
+
+	input.KeyMarker = aws.String(resume)
+	input.UploadIdMarker = out.NextUploadIdMarker
+	out = selectMultipartUploads(input, entries)
+	if *out.IsTruncated || len(out.Upload) != 1 || *out.Upload[0].Key != "base64%3Az" {
+		t.Fatalf("second page got truncated=%v uploads %v", *out.IsTruncated, out.Upload)
+	}
+}
+
 func TestSelectMultipartUploadsCapsRequestedPageSize(t *testing.T) {
 	// max-uploads is caller-controlled; the page stays bounded at the server cap
 	page := newMultipartUploadPage(listUploadsInput("", "", "", 10*maxUploadsList))
