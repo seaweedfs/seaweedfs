@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // ====================================================================
@@ -360,18 +361,15 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 		entry.WormEnforcedAtTsNs = time.Now().UnixNano()
 	}
 
-	// Update the entry
+	// Update the entry in place. UpdateEntry persists the whole fetched entry, so
+	// attributes, inline content, and remote references survive the metadata change
+	// where mkFile's fresh entry would drop them.
 	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
 	// and PutObjectLegalHold update the same object simultaneously, as they might
-	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that mkFile operations are typically serialized at the filer level, but
-	// future implementations might consider using atomic update operations or
-	// entry-level locking for complete safety.
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
-	})
+	// overwrite each other's Extended map changes.
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), entryPath).DirAndName()
+	entry.Name = name
+	return s3a.updateEntry(dir, entry)
 }
 
 // ====================================================================
@@ -416,17 +414,9 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 
 	entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold.Status)
 
-	// Update the entry
-	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
-	// and PutObjectLegalHold update the same object simultaneously, as they might
-	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that mkFile operations are typically serialized at the filer level, but
-	// future implementations might consider using atomic update operations or
-	// entry-level locking for complete safety.
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-	})
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), entryPath).DirAndName()
+	entry.Name = name
+	return s3a.updateEntry(dir, entry)
 }
 
 // ====================================================================

@@ -867,13 +867,13 @@ func timePtr(t time.Time) *time.Time {
 }
 
 // retentionTestFiler serves the two filer calls a lock write needs: the lookup
-// that resolves the version and the create that persists the updated entry.
+// that resolves the version and the update that persists the modified entry.
 type retentionTestFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 
 	mu      sync.Mutex
 	entries map[string]*filer_pb.Entry
-	created []string
+	updates []string
 }
 
 func (f *retentionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -885,12 +885,12 @@ func (f *retentionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_
 	return &filer_pb.LookupDirectoryEntryResponse{}, nil
 }
 
-func (f *retentionTestFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+func (f *retentionTestFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.created = append(f.created, req.Directory+"/"+req.Entry.Name)
+	f.updates = append(f.updates, req.Directory+"/"+req.Entry.Name)
 	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
-	return &filer_pb.CreateEntryResponse{}, nil
+	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
 func newRetentionTestServer(t *testing.T, f *retentionTestFiler) *S3ApiServer {
@@ -912,7 +912,18 @@ func newRetentionTestServer(t *testing.T, f *retentionTestFiler) *S3ApiServer {
 // the lock under .versions/v_null leaves the real entry unlocked.
 func TestNullVersionLockWritesToPlainEntry(t *testing.T) {
 	f := &retentionTestFiler{entries: map[string]*filer_pb.Entry{
-		"/buckets/b/key": {Name: "key", Chunks: []*filer_pb.FileChunk{{FileId: "1,0000000000000001"}}},
+		"/buckets/b/key": {
+			Name:    "key",
+			Chunks:  []*filer_pb.FileChunk{{FileId: "1,0000000000000001"}},
+			Content: []byte("inline"),
+			Attributes: &filer_pb.FuseAttributes{
+				Mime: "text/plain",
+				Md5:  []byte("etagmd5"),
+			},
+			Extended: map[string][]byte{
+				"ETag": []byte("\"etagmd5\""),
+			},
+		},
 	}}
 	s3a := newRetentionTestServer(t, f)
 
@@ -924,19 +935,23 @@ func TestNullVersionLockWritesToPlainEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setObjectRetention: %v", err)
 	}
-	if len(f.created) != 1 || f.created[0] != "/buckets/b/key" {
-		t.Fatalf("retention write landed on %v, want /buckets/b/key", f.created)
+	if len(f.updates) != 1 || f.updates[0] != "/buckets/b/key" {
+		t.Fatalf("retention write landed on %v, want /buckets/b/key", f.updates)
 	}
-	if got := string(f.entries["/buckets/b/key"].Extended[s3_constants.ExtObjectLockModeKey]); got != s3_constants.RetentionModeCompliance {
+	updated := f.entries["/buckets/b/key"]
+	if got := string(updated.Extended[s3_constants.ExtObjectLockModeKey]); got != s3_constants.RetentionModeCompliance {
 		t.Fatalf("plain entry lock mode = %q, want COMPLIANCE", got)
 	}
+	if updated.Attributes.Mime != "text/plain" || len(updated.Content) == 0 || len(updated.Chunks) != 1 || string(updated.Extended["ETag"]) != "\"etagmd5\"" {
+		t.Fatalf("lock write dropped entry fields: %+v", updated)
+	}
 
-	f.created = nil
+	f.updates = nil
 	if err := s3a.setObjectLegalHold("b", "key", "null", &ObjectLegalHold{Status: "ON"}); err != nil {
 		t.Fatalf("setObjectLegalHold: %v", err)
 	}
-	if len(f.created) != 1 || f.created[0] != "/buckets/b/key" {
-		t.Fatalf("legal hold write landed on %v, want /buckets/b/key", f.created)
+	if len(f.updates) != 1 || f.updates[0] != "/buckets/b/key" {
+		t.Fatalf("legal hold write landed on %v, want /buckets/b/key", f.updates)
 	}
 	if got := string(f.entries["/buckets/b/key"].Extended[s3_constants.ExtLegalHoldKey]); got != "ON" {
 		t.Fatalf("plain entry legal hold = %q, want ON", got)
