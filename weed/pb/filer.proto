@@ -326,6 +326,7 @@ enum FilerError {
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
     PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
     READ_ONLY             = 7; // path matches a read-only storage rule (e.g. bucket over quota)
+    ENTRY_LOCKED          = 8; // mutation refused by an active legal hold or retention
 }
 
 // ObjectMutation is one entry-level change applied by ObjectTransaction. All

@@ -86,6 +86,7 @@ const (
 	FilerError_ENTRY_ALREADY_EXISTS  FilerError = 5 // O_EXCL and entry already exists
 	FilerError_PRECONDITION_FAILED   FilerError = 6 // WriteCondition not satisfied
 	FilerError_READ_ONLY             FilerError = 7 // path matches a read-only storage rule (e.g. bucket over quota)
+	FilerError_ENTRY_LOCKED          FilerError = 8 // mutation refused by an active legal hold or retention
 )
 
 // Enum value maps for FilerError.
@@ -99,6 +100,7 @@ var (
 		5: "ENTRY_ALREADY_EXISTS",
 		6: "PRECONDITION_FAILED",
 		7: "READ_ONLY",
+		8: "ENTRY_LOCKED",
 	}
 	FilerError_value = map[string]int32{
 		"OK":                    0,
@@ -109,6 +111,7 @@ var (
 		"ENTRY_ALREADY_EXISTS":  5,
 		"PRECONDITION_FAILED":   6,
 		"READ_ONLY":             7,
+		"ENTRY_LOCKED":          8,
 	}
 )
 
@@ -7939,7 +7942,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x05SSE_C\x10\x01\x12\v\n" +
 	"\aSSE_KMS\x10\x02\x12\n" +
 	"\n" +
-	"\x06SSE_S3\x10\x03*\xb4\x01\n" +
+	"\x06SSE_S3\x10\x03*\xc6\x01\n" +
 	"\n" +
 	"FilerError\x12\x06\n" +
 	"\x02OK\x10\x00\x12\x17\n" +
@@ -7949,7 +7952,8 @@ const file_filer_proto_rawDesc = "" +
 	"\x10EXISTING_IS_FILE\x10\x04\x12\x18\n" +
 	"\x14ENTRY_ALREADY_EXISTS\x10\x05\x12\x17\n" +
 	"\x13PRECONDITION_FAILED\x10\x06\x12\r\n" +
-	"\tREAD_ONLY\x10\a*u\n" +
+	"\tREAD_ONLY\x10\a\x12\x10\n" +
+	"\fENTRY_LOCKED\x10\b*u\n" +
 	"\vPosixLockOp\x12\f\n" +
 	"\bTRY_LOCK\x10\x00\x12\n" +
 	"\n" +
