@@ -322,9 +322,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	// recheck under the lock: WORM may have been enabled during the upload
 	if enforced, wormErr := fs.wormEnforcedForEntry(ctx, path); wormErr != nil {
-		return nil, wormErr, nil
+		return nil, wormErr, uncommittedChunks
 	} else if enforced {
-		return nil, errors.New(constants.ErrMsgOperationNotPermitted), nil
+		return nil, errors.New(constants.ErrMsgOperationNotPermitted), uncommittedChunks
 	}
 
 	inlineAppendHandled := false
