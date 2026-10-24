@@ -137,6 +137,19 @@ type MetadataProcessor struct {
 	failedSticky     bool
 	oldestFailedTsNs int64
 
+	// earliestFailedTsNs is the smallest timestamp this processor ever failed
+	// on, latched for its lifetime: a redelivery can clear failedTs, but by
+	// then the processor is stopped and has already dropped unrecorded
+	// events — possibly sharing the failure's timestamp — so a resume
+	// position must still sit behind it.
+	earliestFailedTsNs int64
+
+	// newestSeenTsNs is the largest TsNs the stream has offered, job or
+	// marker. A watermark equal to it is not a safe resume point: more
+	// events at the same timestamp can still sit unread in the log, so the
+	// persisted position has to stay one tick below it.
+	newestSeenTsNs int64
+
 	// resubscribeCh closes once a failure has stopped the processor and all
 	// in-flight jobs have drained, asking the metadata follower to drop the
 	// stream so the caller's reconnect replays the pinned events in order —
@@ -199,11 +212,38 @@ func (t *MetadataProcessor) OldestFailedTsNs() int64 {
 	return t.oldestFailedTsNs
 }
 
+// EarliestFailedTsNs returns the smallest timestamp this processor has ever
+// failed on, including failures later cleared by a redelivery.
+func (t *MetadataProcessor) EarliestFailedTsNs() int64 {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	return t.earliestFailedTsNs
+}
+
+// NewestSeenTsNs returns the largest TsNs the stream has offered so far.
+func (t *MetadataProcessor) NewestSeenTsNs() int64 {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	return t.newestSeenTsNs
+}
+
 // ResubscribeCh closes once a job failure has stopped the processor and its
 // in-flight jobs have drained, signaling the metadata follower to drop the
 // stream so a reconnect replays what the watermark still covers.
 func (t *MetadataProcessor) ResubscribeCh() <-chan struct{} {
 	return t.resubscribeCh
+}
+
+// Drain blocks until every admitted job has finished. Callers whose stream
+// just ended use it before reconnecting: a replayed event must not race a
+// still-running job for the same path, or the older write could finish last
+// and clobber the newer one.
+func (t *MetadataProcessor) Drain() {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	for t.activeJobCount > 0 {
+		t.activeJobsCond.Wait()
+	}
 }
 
 // pathAncestors returns all proper ancestor directories of p.
@@ -339,6 +379,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		// to it so idle stretches still advance the resume point.
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
+		if resp.TsNs > t.newestSeenTsNs {
+			t.newestSeenTsNs = resp.TsNs
+		}
 		if resp.TsNs > t.filteredTsNs {
 			t.filteredTsNs = resp.TsNs
 		}
@@ -353,6 +396,10 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
+
+	if resp.TsNs > t.newestSeenTsNs {
+		t.newestSeenTsNs = resp.TsNs
+	}
 
 	p, newPath, kind := extractJobInfo(resp)
 	eventKey := failedEventKey{tsNs: resp.TsNs, path: p, newPath: newPath, kind: kind}
@@ -425,6 +472,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			// whole mechanism exists to remove.
 			t.stopped = true
 			t.activeJobsCond.Broadcast()
+			if t.earliestFailedTsNs == 0 || resp.TsNs < t.earliestFailedTsNs {
+				t.earliestFailedTsNs = resp.TsNs
+			}
 			if t.failedSticky {
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs

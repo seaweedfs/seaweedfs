@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -553,6 +554,61 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	})
 }
 
+// TestConcurrentJobsUpToLimit proves independent-path jobs run in parallel up
+// to the concurrency limit: every admitted job is in flight before any
+// finishes (a serial loop could only have one running), and admissions past
+// the limit wait for a slot rather than running ahead of it.
+func TestConcurrentJobsUpToLimit(t *testing.T) {
+	const limit = 3
+	started := make(chan struct{}, limit)
+	release := make(chan struct{})
+	var inFlight, maxInFlight atomic.Int32
+
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		cur := inFlight.Add(1)
+		for {
+			if old := maxInFlight.Load(); cur <= old || maxInFlight.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		inFlight.Add(-1)
+		return nil
+	}, limit, 0)
+
+	admitDone := make(chan struct{})
+	go func() {
+		defer close(admitDone)
+		for i := 0; i < limit+1; i++ {
+			p.AddSyncJob(makeResp("/d", fmt.Sprintf("f%d", i), false, int64(i+1), true))
+		}
+	}()
+
+	for i := 0; i < limit; i++ {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d jobs entered flight", i, limit)
+		}
+	}
+	// The extra admission must still be blocked on a full pool.
+	select {
+	case <-started:
+		t.Fatal("a job started with no free slot")
+	case <-admitDone:
+		t.Fatal("submission returned past the concurrency limit")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	<-admitDone
+	p.Drain()
+	if got := maxInFlight.Load(); got != limit {
+		t.Fatalf("peak in-flight = %d, want %d", got, limit)
+	}
+}
+
 // benchResult prevents the compiler from optimizing away the conflict check.
 var benchResult bool
 
@@ -1071,5 +1127,109 @@ func TestResubscribeWaitsForSameTsSibling(t *testing.T) {
 	case <-p.ResubscribeCh():
 	case <-time.After(time.Second):
 		t.Fatal("resubscribe channel never closed after the same-ts jobs drained")
+	}
+}
+
+// TestResumeStaysBehindClearedPin verifies the resume floor outlives the
+// ledger pin: a redelivery can clear failedTs, but events dropped while the
+// processor was stopped — including ones sharing the failure's timestamp —
+// still have to replay, so the resume position stays one tick below the
+// earliest failure.
+func TestResumeStaysBehindClearedPin(t *testing.T) {
+	fail := true
+	release := make(chan struct{})
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		name := resp.EventNotification.NewEntry.GetName()
+		if name == "slow.txt" {
+			<-release
+		}
+		if name == "bad.txt" && fail {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 10, 0)
+
+	// the slow job holds the drain — and the resubscribe — open so the
+	// redelivery still lands on this processor
+	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 300, true))
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 200 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	// a same-ts sibling arriving after the stop is dropped
+	p.AddSyncJob(makeResp("/dir", "sib.txt", false, 200, true))
+	p.activeJobsLock.Lock()
+	dropped := p.activeJobTs[200] == 0
+	p.activeJobsLock.Unlock()
+	if !dropped {
+		t.Fatal("sibling admitted after the failure stopped the processor")
+	}
+
+	// the redelivery runs and clears the pin
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	deadline = time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after the redelivery, want 0", got)
+	}
+
+	if got := p.EarliestFailedTsNs(); got != 200 {
+		t.Fatalf("earliest failed = %d, want the floor held at 200", got)
+	}
+	if got := resumeTsNsFor(p); got != 199 {
+		t.Fatalf("resume = %d, want 199 so the dropped sibling replays", got)
+	}
+
+	close(release)
+	waitForJobsToDrain(t, p)
+}
+
+// TestResumeStaysBelowNewestSeen covers the frontier case: when every admitted
+// job has finished, the watermark sits on the newest timestamp seen — but the
+// log can still hold same-timestamp events the stream has not delivered yet.
+// An exclusive resume there would skip them, so the position stays one tick
+// below until a newer timestamp proves the block is closed.
+func TestResumeStaysBelowNewestSeen(t *testing.T) {
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	}, 10, 0)
+
+	// the event at 100 finishes before a same-timestamp sibling could even be
+	// read; the watermark reaches the frontier but cannot persist there
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+	if got := resumeTsNsFor(p); got != 99 {
+		t.Fatalf("resume = %d at the frontier, want 99 so an unread same-ts event replays", got)
+	}
+
+	// once a newer timestamp is seen the 100-block is closed: a slow job at
+	// 200 in flight pins nothing below it, so 100 is now a safe position
+	release := make(chan struct{})
+	p2 := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 200 {
+			<-release
+		}
+		return nil
+	}, 10, 0)
+	p2.AddSyncJob(makeResp("/dir", "c.txt", false, 100, true))
+	p2.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p2.processedTsWatermark.Load() != 100 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := resumeTsNsFor(p2); got != 100 {
+		t.Fatalf("resume = %d below the frontier, want 100", got)
+	}
+
+	// finishing the 200 job lands the watermark back on the frontier
+	close(release)
+	waitForJobsToDrain(t, p2)
+	if got := resumeTsNsFor(p2); got != 199 {
+		t.Fatalf("resume = %d at the frontier, want 199", got)
 	}
 }
