@@ -339,6 +339,11 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 }
 
 func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
+	// A stall disarms the watchdog for this upload's remaining attempts only;
+	// keep that on a per-call option so a caller reusing UploadOption starts
+	// the next upload armed.
+	localOption := *option
+	option = &localOption
 	maxAttempts := option.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3

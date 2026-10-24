@@ -371,6 +371,38 @@ func TestUploadStallWatchdogStaysDisarmedOnRetry(t *testing.T) {
 	}
 }
 
+// The disarm is per upload: a caller reusing its UploadOption still gets an
+// armed watchdog on the next call — a second stalled conn must cancel too.
+func TestUploadStallWatchdogRearmsForNextUpload(t *testing.T) {
+	defer func(orig time.Duration) { uploadStallMinWait = orig }(uploadStallMinWait)
+	uploadStallMinWait = 40 * time.Millisecond
+
+	client := &stallingHTTPClient{}
+	uploader := newUploader(client)
+	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// IsInputCompressed keeps the body large enough to re-prove the host:
+	// compressed near-zeros would send too few bytes to re-mark it.
+	option := &UploadOption{UploadUrl: "http://test-host:8080/1,deadbeef", MaxAttempts: 2, IsInputCompressed: true}
+	for i := 0; i < 2; i++ {
+		client.mu.Lock()
+		client.stalls = 1
+		client.mu.Unlock()
+		result, err := uploader.UploadData(ctx, make([]byte, 300*1024), option)
+		if err != nil {
+			t.Fatalf("upload %d should have retried on a fresh conn: %v", i, err)
+		}
+		if result.RetryCount != 1 {
+			t.Fatalf("upload %d got retries=%d, want its own stall caught", i, result.RetryCount)
+		}
+	}
+	if option.stallWatchdogDisarmed {
+		t.Fatalf("a stall must not disarm the watchdog on the caller's option")
+	}
+}
+
 // A real transport must drop the conn a cancelled request was riding: the
 // retry has to dial again rather than land back on the parked conn. The first
 // conn here wedges mid-reply — headers flush, then the body never arrives.
