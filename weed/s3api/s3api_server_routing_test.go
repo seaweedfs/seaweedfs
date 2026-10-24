@@ -444,8 +444,8 @@ func TestRouting_BucketRouteMatchesAnyHost(t *testing.T) {
 	}
 }
 
-// TestRouting_BucketRootPreflightUsesBucketCORS is a regression test for
-// issue #12025. A path-style preflight for the bucket root without a trailing
+// TestRouting_BucketRootPreflightUsesBucketCORS is a regression test: a
+// path-style preflight for the bucket root without a trailing
 // slash must be evaluated against the bucket CORS rules like /bucket/, not
 // answered from the global AllowedOrigins. Service-level paths keep the
 // global answer, and virtual-host routing is unchanged.
