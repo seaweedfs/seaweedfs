@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -1045,6 +1046,158 @@ func TestRequestObjectTagConditionDeny(t *testing.T) {
 			}
 
 			if result := engine.EvaluatePolicy("test-bucket", args); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func evaluateTaggedRequest(engine *PolicyEngine, method, target string, headers map[string]string, tagging string) PolicyEvaluationResult {
+	if method == "" {
+		method = http.MethodPut
+	}
+	req := httptest.NewRequest(method, "/test-bucket/test-object"+target, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if tagging != "" {
+		req.Header.Set(s3_constants.AmzObjectTagging, tagging)
+	}
+	return engine.EvaluatePolicy("test-bucket", &PolicyEvaluationArgs{
+		Action:     "s3:PutObject",
+		Resource:   "arn:aws:s3:::test-bucket/test-object",
+		Principal:  "*",
+		Conditions: engine.ExtractConditionValuesFromRequest(req),
+	})
+}
+
+func TestRequestObjectTagKeysCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAllValues:StringEquals": {
+						"s3:RequestObjectTagKeys": ["department", "project"]
+					},
+					"Null": {
+						"s3:RequestObjectTagKeys": "false"
+					}
+				}
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAnyValue:StringLike": {
+						"s3:RequestObjectTagKeys": ["secret*"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	copyHeaders := map[string]string{"X-Amz-Copy-Source": "/src-bucket/src-object"}
+	replaceHeaders := map[string]string{
+		"X-Amz-Copy-Source":                    "/src-bucket/src-object",
+		s3_constants.AmzObjectTaggingDirective: "REPLACE",
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		headers  map[string]string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"listed key allows", "", "", nil, "department=engineering", PolicyResultAllow},
+		{"all listed keys allow", "", "", nil, "department=engineering&project=alpha", PolicyResultAllow},
+		{"unlisted key is not allowed", "", "", nil, "department=engineering&owner=bob", PolicyResultIndeterminate},
+		{"no tagging header is not allowed", "", "", nil, "", PolicyResultIndeterminate},
+		{"repeated key counts once", "", "", nil, "department=a&department=b", PolicyResultAllow},
+		{"url-encoded key is decoded", "", "", nil, "depart%6Dent=engineering", PolicyResultAllow},
+		{"empty segments add no key", "", "", nil, "&department=engineering&", PolicyResultAllow},
+		{"empty key is not allowed", "", "", nil, "department=engineering&=x", PolicyResultIndeterminate},
+		{"key case is preserved", "", "", nil, "Department=engineering", PolicyResultIndeterminate},
+		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
+		{"secret key is denied", "", "", nil, "secret=1", PolicyResultDeny},
+		{"secret key behind a padded header is denied", "", "", nil, "secret=1" + strings.Repeat("&", 10001), PolicyResultDeny},
+		{"secret key among listed keys is denied", "", "", nil, "department=engineering&secret-level=2", PolicyResultDeny},
+		{"url-encoded secret key is denied", "", "", nil, "secr%65t=1", PolicyResultDeny},
+		{"secret key on a copy that replaces tags is denied", "", "", replaceHeaders, "secret=1", PolicyResultDeny},
+		{"secret key on a multipart create is denied", "POST", "?uploads", nil, "secret=1", PolicyResultDeny},
+		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "secret=1", PolicyResultIndeterminate},
+		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "secret=1", PolicyResultIndeterminate},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if result := evaluateTaggedRequest(engine, tt.method, tt.target, tt.headers, tt.tagging); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRequestObjectTagKeysRequiredTagDeny(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAllValues:StringNotEquals": {
+						"s3:RequestObjectTagKeys": ["department", "project"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"required key passes", "department=engineering", PolicyResultAllow},
+		{"required key with another key passes", "project=alpha&owner=bob", PolicyResultAllow},
+		{"only other keys are denied", "owner=bob", PolicyResultDeny},
+		{"no tagging header is denied", "", PolicyResultDeny},
+		{"malformed header is denied", "department=engineering&%zz", PolicyResultDeny},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if result := evaluateTaggedRequest(engine, "", "", nil, tt.tagging); result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})

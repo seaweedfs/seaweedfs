@@ -669,8 +669,58 @@ func (e *NullEvaluator) Evaluate(conditionValue interface{}, contextValues []str
 	return false
 }
 
-// GetConditionEvaluator returns the appropriate evaluator for a condition operator
+// forAllValuesEvaluator matches when every request value satisfies the base
+// operator on its own, and so also when the request carries no value.
+type forAllValuesEvaluator struct {
+	base ConditionEvaluator
+}
+
+func (e *forAllValuesEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	for _, v := range contextValues {
+		if !e.base.Evaluate(conditionValue, []string{v}) {
+			return false
+		}
+	}
+	return true
+}
+
+// forAnyValueEvaluator matches when at least one request value satisfies the
+// base operator on its own. Checking values one at a time keeps a negated
+// base such as StringNotEquals from meaning "none of them".
+type forAnyValueEvaluator struct {
+	base ConditionEvaluator
+}
+
+func (e *forAnyValueEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	for _, v := range contextValues {
+		if e.base.Evaluate(conditionValue, []string{v}) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetConditionEvaluator returns the appropriate evaluator for a condition
+// operator, including the ForAllValues: and ForAnyValue: set qualifiers.
 func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
+	if base, ok := strings.CutPrefix(operator, "ForAllValues:"); ok {
+		evaluator, err := baseConditionEvaluator(base)
+		if err != nil {
+			return nil, err
+		}
+		return &forAllValuesEvaluator{base: evaluator}, nil
+	}
+	if base, ok := strings.CutPrefix(operator, "ForAnyValue:"); ok {
+		evaluator, err := baseConditionEvaluator(base)
+		if err != nil {
+			return nil, err
+		}
+		return &forAnyValueEvaluator{base: evaluator}, nil
+	}
+	return baseConditionEvaluator(operator)
+}
+
+func baseConditionEvaluator(operator string) (ConditionEvaluator, error) {
 	switch operator {
 	case "StringEquals":
 		return &StringEqualsEvaluator{}, nil
@@ -732,6 +782,10 @@ const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
 // request sets through the X-Amz-Tagging header.
 const RequestObjectTagPrefix = "s3:RequestObjectTag/"
 
+// RequestObjectTagKeys is the multi-valued condition key listing the keys of
+// the tags a request sets through the X-Amz-Tagging header.
+const RequestObjectTagKeys = "s3:RequestObjectTagKeys"
+
 // getConditionContextValue resolves the value(s) for a condition key.
 // For s3:ExistingObjectTag/<key> conditions, it looks up the tag in objectEntry.
 // For other condition keys, it looks up the value in contextValues.
@@ -780,7 +834,8 @@ func evaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		for key, value := range conditionMap {
 			contextVals := getConditionContextValue(key, contextValues, objectEntry)
 			if original := originalGrants[key]; len(original) != 0 && isGrantConditionKey(key) {
-				switch operator {
+				// Extra values can only make ForAllValues fail, so it keeps the canonical list.
+				switch strings.TrimPrefix(operator, "ForAnyValue:") {
 				case "StringEquals", "StringEqualsIgnoreCase", "StringLike", "ArnEquals", "ArnLike":
 					contextVals = append(append([]string(nil), contextVals...), original...)
 				}

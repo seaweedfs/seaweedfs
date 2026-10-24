@@ -53,6 +53,11 @@ func FromTags(tags map[string]string) (t *Tagging) {
 func parseTagsHeader(tags string) (map[string]string, error) {
 	parsedTags := make(map[string]string)
 	for _, v := range util.StringSplit(tags, "&") {
+		// url.ParseQuery skips empty segments too, so a copy stores the
+		// same tag keys that PutObject and bucket policies see.
+		if v == "" {
+			continue
+		}
 		key, value, hasValue := strings.Cut(v, "=")
 		decodedKey, err := url.QueryUnescape(key)
 		if err != nil {
