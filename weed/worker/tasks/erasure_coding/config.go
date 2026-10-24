@@ -195,7 +195,7 @@ func GetConfigSpec() base.ConfigSpec {
 				Required:     false,
 				DisplayName:  "Free Volume Deadband (M)",
 				Description:  "Treat |Δfree volume slots| ≤ M as a Place tie and rank by liveShards instead",
-				HelpText:     "0 (default) keeps strict freeSlots ranking. A positive M is volume slots; Place applies M × data shards (10+4 → ×10). Worker plugin config; not stored in TaskPolicy proto.",
+				HelpText:     "0 (default) keeps strict freeSlots ranking. A positive M is volume slots; Place applies M × data shards (10+4 → ×10).",
 				Placeholder:  "0",
 				Unit:         config.UnitCount,
 				InputType:    "number",
@@ -216,13 +216,14 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
 		TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
 			ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-				FullnessRatio:    float64(c.FullnessRatio),
-				QuietForSeconds:  int32(c.QuietForSeconds),
-				MinVolumeSizeMb:  int32(c.MinSizeMB),
-				CollectionFilter: c.CollectionFilter,
-				PreferredTags:    preferredTagsCopy,
-				ReplicaPlacement: c.ReplicaPlacement,
-				StrictPlacement:  c.StrictPlacement,
+				FullnessRatio:     float64(c.FullnessRatio),
+				QuietForSeconds:   int32(c.QuietForSeconds),
+				MinVolumeSizeMb:   int32(c.MinSizeMB),
+				CollectionFilter:  c.CollectionFilter,
+				PreferredTags:     preferredTagsCopy,
+				ReplicaPlacement:  c.ReplicaPlacement,
+				StrictPlacement:   c.StrictPlacement,
+				FreeSlotsDeadband: int32(c.FreeSlotsDeadband),
 			},
 		},
 	}
@@ -248,6 +249,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 		c.ReplicaPlacement = ecConfig.ReplicaPlacement
 		c.StrictPlacement = ecConfig.StrictPlacement
+		c.FreeSlotsDeadband = int(ecConfig.FreeSlotsDeadband)
 	}
 
 	return nil

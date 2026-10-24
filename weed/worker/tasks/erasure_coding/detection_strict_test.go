@@ -39,12 +39,16 @@ func TestPlanECDestinationsStrictPlacement(t *testing.T) {
 func TestStrictPlacementRoundTripsThroughTaskPolicy(t *testing.T) {
 	cfg := NewDefaultConfig()
 	cfg.StrictPlacement = true
+	cfg.FreeSlotsDeadband = 3
 
 	restored := NewDefaultConfig()
 	require.NoError(t, restored.FromTaskPolicy(cfg.ToTaskPolicy()))
 	require.True(t, restored.StrictPlacement, "strict placement must survive the persisted policy round trip")
+	require.Equal(t, 3, restored.FreeSlotsDeadband, "free_slots_deadband must survive the persisted policy round trip")
 
 	restored.StrictPlacement = false
+	restored.FreeSlotsDeadband = 0
 	require.NoError(t, restored.FromTaskPolicy(restored.ToTaskPolicy()))
 	require.False(t, restored.StrictPlacement)
+	require.Zero(t, restored.FreeSlotsDeadband)
 }
