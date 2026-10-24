@@ -323,6 +323,9 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 				firstErr = genErr
 				hasErr.Store(true)
 			})
+			close(outputChan)
+			wg.Wait()
+			<-saveErrChan
 			return genErr
 		} else {
 			if e.IsDirectory {

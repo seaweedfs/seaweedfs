@@ -271,19 +271,33 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
 
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
-			return fmt.Errorf("collectFilerFileIdAndPaths: %w", err)
+		var queuePurge func(purgeItem)
+		var finishPurge func()
+		if *applyPurging || *purgeAbsent {
+			queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
 		}
-		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
-			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
-				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
+		err = func() error {
+			if err := c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, queuePurge, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
+				return fmt.Errorf("collectFilerFileIdAndPaths: %w", err)
 			}
+			for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
+				// for each volume, check filer file ids
+				if err := c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, queuePurge); err != nil {
+					return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
+				}
+			}
+			return nil
+		}()
+		if finishPurge != nil {
+			finishPurge()
+		}
+		if err != nil {
+			return err
 		}
 		c.purgeEmptyDirectories()
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, nil, 0, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %w", err)
 		}
 		// If any entry's manifest could not be resolved, our in-use fid set
@@ -306,7 +320,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, queuePurge func(purgeItem), collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
 	}
@@ -382,12 +396,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		},
 		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
-			var queuePurge func(purgeItem)
-			var finishPurge func()
-			if purgeAbsent {
-				queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
-				defer finishPurge()
-			}
 			for item := range outputChan {
 				i := item.(*Item)
 				if f, ok := files[i.vid]; ok {
@@ -398,6 +406,13 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 						return err
 					}
 					if _, err := f.Write([]byte(i.path)); err != nil {
+						return err
+					}
+					util.Uint32toBytes(buffer[:4], uint32(len(i.hardLinkId)))
+					if _, err := f.Write(buffer[:4]); err != nil {
+						return err
+					}
+					if _, err := f.Write(i.hardLinkId); err != nil {
 						return err
 					}
 				} else if *c.findMissingChunksInFiler {
@@ -423,10 +438,10 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		})
 }
 
-func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
+func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, queuePurge func(purgeItem)) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, applyPurging)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, queuePurge)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -650,7 +665,7 @@ func (lw *lockedWriter) Write(p []byte) (int, error) {
 	return lw.w.Write(p)
 }
 
-func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
+func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte)) error {
 	fp, err := os.Open(getFilerFileIdFile(c.tempFolder, volumeId))
 	if err != nil {
 		return err
@@ -685,13 +700,23 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
 		item.path = util.FullPath(pathBytes)
+		item.hardLinkId = nil
+		if _, err := io.ReadFull(br, buffer[:4]); err != nil {
+			return fmt.Errorf("read fid hard link id size for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+		}
+		if hardLinkIdSize := util.BytesToUint32(buffer[:4]); hardLinkIdSize > 0 {
+			item.hardLinkId = make([]byte, int(hardLinkIdSize))
+			if _, err := io.ReadFull(br, item.hardLinkId); err != nil {
+				return fmt.Errorf("read fid hard link id for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+			}
+		}
 		needleId := types.NeedleId(item.fileKey)
-		fn(needleId, item.path)
+		fn(needleId, item.path, item.hardLinkId)
 	}
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, queuePurge func(purgeItem)) (err error) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
 	}
@@ -702,11 +727,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte) {
 		if _, found := db.Get(needleId); !found {
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
-			if applyPurging {
-				c.httpDelete(itemPath)
+			if queuePurge != nil {
+				queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
 			}
 		}
 	}); err != nil {
@@ -889,7 +914,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath, _ []byte) {
 		inUseCount++
 		if *c.verifyNeedle && !vinfo.isEcVolume {
 			if needleValue, ok := volumeFileIdDb.Get(filerNeedleId); ok && !needleValue.Size.IsDeleted() {

@@ -788,7 +788,22 @@ func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs 
 		return fmt.Errorf("check local state for %s: %w", entry.FullPath, err)
 	}
 	if localTsNs >= peerTsNs {
-		return nil
+		if localTsNs != 0 {
+			return nil
+		}
+		// Zero timestamps carry no order: keep the path only when an entry
+		// exists locally — a missing one takes the peer's copy, or an
+		// epoch-dated entry from a peer reporting no commit time is dropped.
+		if f.Store == nil {
+			return nil
+		}
+		local, findErr := f.Store.FindEntry(ctx, entry.FullPath)
+		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+			return fmt.Errorf("check local state for %s: %w", entry.FullPath, findErr)
+		}
+		if local != nil {
+			return nil
+		}
 	}
 	if insertErr := f.Store.InsertEntry(ctx, entry); insertErr != nil {
 		// Entry already exists (root dir, or partial previous bootstrap);

@@ -5,8 +5,23 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
+
+// requireDiskSpaceForEncoding skips the subtest when dir's filesystem cannot
+// hold the .dat file plus the shards EC encoding writes for it, so ENOSPC on
+// space-constrained runners doesn't surface as a test failure.
+func requireDiskSpaceForEncoding(t *testing.T, dir string, datFileSize int64, expectedShardSize int64) {
+	t.Helper()
+	needBytes := uint64(datFileSize) +
+		uint64(expectedShardSize)*erasure_coding.TotalShardsCount +
+		16*erasure_coding.ErasureCodingSmallBlockSize
+	if free := stats.NewDiskStatus(dir).Free; free < needBytes {
+		t.Skipf("insufficient free space in %s: have %d bytes, need ~%d to encode a %d-byte volume",
+			dir, free, needBytes, datFileSize)
+	}
+}
 
 // TestCalculateExpectedShardSizeWithRealEncoding validates our shard size calculation
 // by actually running EC encoding on real files and comparing the results
@@ -52,6 +67,10 @@ func TestCalculateExpectedShardSizeWithRealEncoding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Calculate expected shard size using our function
+			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
+			requireDiskSpaceForEncoding(t, tempDir, tt.datFileSize, expectedShardSize)
+
 			// Create a test .dat file with the specified size
 			baseFileName := filepath.Join(tempDir, "test_volume")
 			datFileName := baseFileName + ".dat"
@@ -81,9 +100,6 @@ func TestCalculateExpectedShardSizeWithRealEncoding(t *testing.T) {
 				written += int64(n)
 			}
 			datFile.Close()
-
-			// Calculate expected shard size using our function
-			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
 
 			// Run actual EC encoding
 			_, err = erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext())
@@ -146,6 +162,9 @@ func TestCalculateExpectedShardSizeEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
+			requireDiskSpaceForEncoding(t, tempDir, tt.datFileSize, expectedShardSize)
+
 			baseFileName := filepath.Join(tempDir, tt.name)
 			datFileName := baseFileName + ".dat"
 
@@ -162,9 +181,6 @@ func TestCalculateExpectedShardSizeEdgeCases(t *testing.T) {
 			}
 			datFile.Write(data)
 			datFile.Close()
-
-			// Calculate expected
-			expectedShardSize := calculateExpectedShardSize(tt.datFileSize, erasure_coding.DataShardsCount)
 
 			// Run actual EC encoding
 			_, err = erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext())
