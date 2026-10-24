@@ -35,6 +35,9 @@ func TestLanceTableLifecycle(t *testing.T) {
 	namespace, table := "ml", "events"
 	env.createTableBucket(t, bucket, "LANCE")
 	buildClientImage(t, lanceImage, "Dockerfile.lance")
+	testutil.RequireImageRunnable(t,
+		"--entrypoint", "python3", lanceImage,
+		"-c", "import lance; import lance_namespace; import pyarrow")
 
 	before := env.lance(t, "write", bucket, namespace, table)
 	assertSeeded(t, before)
