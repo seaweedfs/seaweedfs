@@ -364,7 +364,7 @@ func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
 	client, rt := newRecordingS3Client(t, false)
 	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
 	plain := &filer_pb.Entry{}
-	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"X-Amz-Tagging-k1": []byte("v1")}}
 
 	_, err := client.UpdateFileMetadata(loc, plain, tagged)
 	require.NoError(t, err)
@@ -375,11 +375,22 @@ func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
 	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
 }
 
+func TestS3UpdateFileMetadataIgnoresNonTagAttributes(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	old := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+	updated := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v2")}}
+
+	_, err := client.UpdateFileMetadata(loc, old, updated)
+	require.NoError(t, err)
+	require.Empty(t, rt.requests, "non-tag attribute changes must not send tagging calls")
+}
+
 func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
 	client, rt := newRecordingS3Client(t, true)
 	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
 	plain := &filer_pb.Entry{}
-	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"X-Amz-Tagging-k1": []byte("v1")}}
 
 	_, err := client.UpdateFileMetadata(loc, plain, tagged)
 	require.NoError(t, err)
@@ -393,6 +404,47 @@ func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
 	require.Len(t, rt.requests, 1)
 	require.Equal(t, http.MethodDelete, rt.requests[0].Method)
 	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+}
+
+func TestS3WriteFileSendsOnlyTagAttributes(t *testing.T) {
+	rt := &captureRoundTripper{}
+	client := newS3ClientWithTransport(t, rt, true)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.bin",
+	}
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			"X-Amz-Tagging-a b":  []byte("x=y"),
+			"Seaweed-X-Amz-Acl":  []byte(`[{"Permission":"FULL_CONTROL"}]`),
+			"Seaweed-X-Amz-ETag": []byte("etag-1"),
+			"Cache-Control":      []byte("no-cache"),
+		},
+	}
+
+	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	require.Equal(t, "a%20b=x%3Dy", rt.uploadReq.Header.Get("X-Amz-Tagging"))
+}
+
+func TestS3WriteFileOmitsTaggingWhenNoTagAttributes(t *testing.T) {
+	rt := &captureRoundTripper{}
+	client := newS3ClientWithTransport(t, rt, true)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.bin",
+	}
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{"Seaweed-X-Amz-Acl": []byte(`[{"Permission":"FULL_CONTROL"}]`)},
+	}
+
+	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	require.Empty(t, rt.uploadReq.Header.Get("X-Amz-Tagging"))
 }
 
 func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {
