@@ -772,8 +772,10 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
 	// A directory is deleted here one row at a time, which would strand whatever is
-	// under it, so a TTL an older build left on one is not acted on.
-	if entry != nil && entry.TtlSec > 0 && !entry.IsDirectory() {
+	// under it, so a TTL an older build left on one is not acted on. Retention
+	// outranks expiry the same way it outranks lifecycle rules on S3: a locked
+	// entry stays visible rather than being evicted on read.
+	if entry != nil && entry.TtlSec > 0 && !entry.IsDirectory() && !entryLockedForDelete(entry, false, time.Now()) {
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
@@ -812,7 +814,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			glog.V(1).InfofCtx(ctx, "listing %q canceled: %v", p, ctx.Err())
 			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
-			if entry.TtlSec > 0 && !entry.IsDirectory() {
+			if entry.TtlSec > 0 && !entry.IsDirectory() && !entryLockedForDelete(entry, false, time.Now()) {
 				if entry.IsExpireS3Enabled() {
 					if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 						// Collect for deletion after iteration completes to avoid DB deadlock
