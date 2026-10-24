@@ -208,6 +208,29 @@ func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
 	}
 }
 
+func TestStaleDuplicateReportDoesNotQuarantineSurvivor(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	topo.RegisterVolumeLayout(v1, dn1)
+
+	// dn2's copy is gone before its delayed duplicate check runs; the report
+	// still names dn2 but its layout no longer holds it.
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	if topo.isQuarantined(dn1, v1.Id) || topo.isQuarantined(dn2, v2.Id) {
+		t.Fatal("a report for a copy that is already gone must not quarantine anything")
+	}
+	if !isWritable(t, topo, v1) {
+		t.Fatal("the surviving copy must stay writable")
+	}
+}
+
 func TestQuarantineSurvivesResync(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
