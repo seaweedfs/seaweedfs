@@ -80,6 +80,7 @@ func TestNotModifiedChecksIfNoneMatchFirst(t *testing.T) {
 		{"etag across repeated lines", [][2]string{{"If-None-Match", `"x"`}, {"If-None-Match", `"353dd8be"`}}, true},
 		{"comma inside quotes", [][2]string{{"If-None-Match", `"353dd8be,old"`}}, false},
 		{"other etag ignores If-Modified-Since", [][2]string{{"If-None-Match", `"x"`}, {"If-Modified-Since", after}}, false},
+		{"empty If-None-Match ignores If-Modified-Since", [][2]string{{"If-None-Match", ``}, {"If-Modified-Since", after}}, false},
 		{"not modified since", [][2]string{{"If-Modified-Since", after}}, true},
 		{"modified since", [][2]string{{"If-Modified-Since", before}}, false},
 	}
