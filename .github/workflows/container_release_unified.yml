@@ -486,7 +486,9 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          # Keep unfixed findings in the report so digest-pinning consumers see
+          # the complete picture, not just what a patch could resolve.
+          ignore-unfixed: false
           limit-severities-for-sarif: true
           format: sarif
           output: trivy-results.sarif
