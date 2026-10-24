@@ -65,8 +65,13 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, fmt.Errorf("no brokers discovered from masters")
 	}
 
-	// Discover filers from masters using master client
-	filerAddresses, err := discoverFilersWithMasterClient(ctx, masterClient, filerGroup)
+	// Discover filers from masters using master client. A fresh filer registers
+	// with the master only after its empty-membership confirm window
+	// (emptyMembershipConfirmTimeout), so an empty list right after startup is
+	// normal: wait for it rather than hand an empty list to the accessor.
+	filerAddresses, err := waitForFilers(ctx, filerDiscoveryTimeout, func() ([]pb.ServerAddress, error) {
+		return discoverFilersWithMasterClient(ctx, masterClient, filerGroup)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
@@ -144,6 +149,31 @@ func discoverBrokersWithMasterClient(ctx context.Context, masterClient *wdclient
 }
 
 // discoverFilersWithMasterClient queries masters for available filers using reusable master client
+// filerDiscoveryTimeout bounds how long the gateway waits for the masters to
+// list a filer; well above a fresh filer's announce delay.
+var filerDiscoveryTimeout = 60 * time.Second
+
+// waitForFilers calls discover until it returns at least one filer, an error,
+// or timeout passes, retrying once a second while the list is empty.
+func waitForFilers(ctx context.Context, timeout time.Duration, discover func() ([]pb.ServerAddress, error)) ([]pb.ServerAddress, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		filers, err := discover()
+		if err != nil || len(filers) > 0 {
+			return filers, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("no filers registered with the masters after %v", timeout)
+		}
+		glog.V(1).Infof("no filers registered with the masters yet; retrying")
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 func discoverFilersWithMasterClient(ctx context.Context, masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
 	var filers []pb.ServerAddress
 
