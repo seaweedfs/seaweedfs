@@ -1420,9 +1420,9 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		output.Upload = append(output.Upload, upload)
 	}
 	if p.more {
-		last := output.Upload[len(output.Upload)-1]
+		last := candidates[len(candidates)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = last.Key, last.UploadId
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.entry.Name)
 	}
 	if aws.StringValue(input.EncodingType) == s3.EncodingTypeUrl {
 		// AWS url-encodes these key-named elements when encoding-type=url is
@@ -1436,22 +1436,29 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		for _, upload := range output.Upload {
 			upload.Key = encodeMultipartUploadURLField(upload.Key)
 		}
+	} else {
+		output.KeyMarker = encodeListContinuationTokenField(output.KeyMarker)
+		output.NextKeyMarker = encodeListContinuationTokenField(output.NextKeyMarker)
 	}
 	return output
 }
 
-// encodeMultipartUploadURLField url-encodes key text the way ListObjects does:
-// every "/"-separated segment is query-escaped and the separators are kept, so a
-// client recovers the exact key with url.QueryUnescape.
+// urlQueryEscape url-encodes key text per segment: every "/"-separated part is
+// query-escaped and the separators are kept, so a client recovers the exact key
+// with url.QueryUnescape.
+func urlQueryEscape(key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = url.QueryEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
 func encodeMultipartUploadURLField(value *string) *string {
 	if value == nil {
 		return nil
 	}
-	segments := strings.Split(*value, "/")
-	for i, segment := range segments {
-		segments[i] = url.QueryEscape(segment)
-	}
-	return aws.String(strings.Join(segments, "/"))
+	return aws.String(urlQueryEscape(*value))
 }
 
 type ListPartsResult struct {
