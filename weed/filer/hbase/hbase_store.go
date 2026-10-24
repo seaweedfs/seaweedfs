@@ -188,7 +188,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		value := cell.Value
 
-		if fileName == startFileName && !includeStartFile {
+		if fileName < startFileName || (fileName == startFileName && !includeStartFile) {
 			continue
 		}
 
