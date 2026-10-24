@@ -18,6 +18,15 @@ scripts = """{{DEFAULT_MAINTENANCE_SCRIPTS}}"""
 sleep_minutes = 17          # sleep minutes between each script execution
 
 
+# vacuum reclaims deleted space by compacting volumes
+[master.vacuum]
+# concurrent volume compactions per volume server; overrides the deprecated
+# -maxParallelVacuumPerServer flag (default 1) when set; 0 = no limit
+# max_parallel_per_server = 1
+# concurrent volume copies compacting within one rack; 0 = no limit
+max_parallel_per_rack = 0
+
+
 [master.sequencer]
 type = "raft"     # Choose [raft|snowflake] type for storing the file id sequence
 # when sequencer.type = snowflake, the snowflake id must be different from other masters
