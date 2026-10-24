@@ -201,4 +201,3 @@ func TestMediaSequenceBoundaryRoundTrip(t *testing.T) {
 		t.Fatalf("Extent = %d, want 1", plan.Extent)
 	}
 }
-
