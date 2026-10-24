@@ -52,24 +52,21 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	time.Sleep(2 * time.Second)
 	glog.V(1).Infof("Initial connection delay completed")
 
-	// Discover brokers from masters using master client
+	// Discover brokers and filers from masters using master client. A fresh
+	// node registers only after its announce delay (a filer also waits out its
+	// empty-membership confirm window), so an empty list right after startup
+	// is normal: wait rather than fail fast.
 	glog.V(1).Infof("About to call discoverBrokersWithMasterClient...")
-	brokerAddresses, err := discoverBrokersWithMasterClient(ctx, masterClient, filerGroup)
+	brokerAddresses, err := waitForClusterNodes(ctx, "brokers", clusterNodeDiscoveryTimeout, func() ([]string, error) {
+		return discoverBrokersWithMasterClient(ctx, masterClient, filerGroup)
+	})
 	if err != nil {
 		glog.Errorf("Broker discovery failed: %v", err)
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
 	}
 	glog.V(1).Infof("Broker discovery returned: %v", brokerAddresses)
 
-	if len(brokerAddresses) == 0 {
-		return nil, fmt.Errorf("no brokers discovered from masters")
-	}
-
-	// Discover filers from masters using master client. A fresh filer registers
-	// with the master only after its empty-membership confirm window
-	// (emptyMembershipConfirmTimeout), so an empty list right after startup is
-	// normal: wait for it rather than hand an empty list to the accessor.
-	filerAddresses, err := waitForFilers(ctx, filerDiscoveryTimeout, func() ([]pb.ServerAddress, error) {
+	filerAddresses, err := waitForClusterNodes(ctx, "filers", clusterNodeDiscoveryTimeout, func() ([]pb.ServerAddress, error) {
 		return discoverFilersWithMasterClient(ctx, masterClient, filerGroup)
 	})
 	if err != nil {
@@ -148,24 +145,23 @@ func discoverBrokersWithMasterClient(ctx context.Context, masterClient *wdclient
 	return brokers, err
 }
 
-// discoverFilersWithMasterClient queries masters for available filers using reusable master client
-// filerDiscoveryTimeout bounds how long the gateway waits for the masters to
-// list a filer; well above a fresh filer's announce delay.
-var filerDiscoveryTimeout = 60 * time.Second
+// clusterNodeDiscoveryTimeout bounds how long the gateway waits for the
+// masters to list a node; well above a fresh node's announce delay.
+var clusterNodeDiscoveryTimeout = 60 * time.Second
 
-// waitForFilers calls discover until it returns at least one filer, an error,
-// or timeout passes, retrying once a second while the list is empty.
-func waitForFilers(ctx context.Context, timeout time.Duration, discover func() ([]pb.ServerAddress, error)) ([]pb.ServerAddress, error) {
+// waitForClusterNodes calls discover until it returns at least one node, an
+// error, or timeout passes, retrying once a second while the list is empty.
+func waitForClusterNodes[T any](ctx context.Context, nodeType string, timeout time.Duration, discover func() ([]T, error)) ([]T, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		filers, err := discover()
-		if err != nil || len(filers) > 0 {
-			return filers, err
+		nodes, err := discover()
+		if err != nil || len(nodes) > 0 {
+			return nodes, err
 		}
 		if !time.Now().Before(deadline) {
-			return nil, fmt.Errorf("no filers registered with the masters after %v", timeout)
+			return nil, fmt.Errorf("no %s registered with the masters after %v", nodeType, timeout)
 		}
-		glog.V(1).Infof("no filers registered with the masters yet; retrying")
+		glog.V(1).Infof("no %s registered with the masters yet; retrying", nodeType)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

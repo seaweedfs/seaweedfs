@@ -14,7 +14,7 @@ import (
 // (which panics on it).
 func TestWaitForFilersWaitsOutEmptyListing(t *testing.T) {
 	calls := 0
-	filers, err := waitForFilers(context.Background(), 10*time.Second, func() ([]pb.ServerAddress, error) {
+	filers, err := waitForClusterNodes(context.Background(), "filers", 10*time.Second, func() ([]pb.ServerAddress, error) {
 		calls++
 		if calls < 3 {
 			return nil, nil
@@ -27,12 +27,12 @@ func TestWaitForFilersWaitsOutEmptyListing(t *testing.T) {
 }
 
 func TestWaitForFilersGivesUpWithAnError(t *testing.T) {
-	filers, err := waitForFilers(context.Background(), 1500*time.Millisecond, func() ([]pb.ServerAddress, error) { return nil, nil })
+	filers, err := waitForClusterNodes(context.Background(), "filers", 1500*time.Millisecond, func() ([]pb.ServerAddress, error) { return nil, nil })
 	if err == nil || len(filers) != 0 {
 		t.Fatalf("still empty: filers %v err %v, want an error", filers, err)
 	}
 	boom := errors.New("master down")
-	if _, err := waitForFilers(context.Background(), time.Minute, func() ([]pb.ServerAddress, error) { return nil, boom }); !errors.Is(err, boom) {
+	if _, err := waitForClusterNodes(context.Background(), "filers", time.Minute, func() ([]pb.ServerAddress, error) { return nil, boom }); !errors.Is(err, boom) {
 		t.Fatalf("discovery error: got %v, want it returned at once", err)
 	}
 }
