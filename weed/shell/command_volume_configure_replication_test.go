@@ -142,3 +142,80 @@ func TestConfigureReplicationOnVolumeServersConfiguresReplicasOneAtATime(t *test
 		t.Error("replicas of one volume were configured at the same time")
 	}
 }
+
+// configureReplicationGateServer blocks inside VolumeConfigure until the test
+// releases it, so the test can observe how many servers run at once.
+type configureReplicationGateServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	gate *configureReplicationGate
+}
+
+type configureReplicationGate struct {
+	entered   chan struct{}
+	release   chan struct{}
+	mu        sync.Mutex
+	active    int
+	maxActive int
+}
+
+func (s *configureReplicationGateServer) VolumeConfigure(_ context.Context, _ *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
+	s.gate.mu.Lock()
+	s.gate.active++
+	if s.gate.active > s.gate.maxActive {
+		s.gate.maxActive = s.gate.active
+	}
+	s.gate.mu.Unlock()
+
+	s.gate.entered <- struct{}{}
+	<-s.gate.release
+
+	s.gate.mu.Lock()
+	s.gate.active--
+	s.gate.mu.Unlock()
+	return &volume_server_pb.VolumeConfigureResponse{}, nil
+}
+
+func TestConfigureReplicationOnVolumeServersRunsServersInParallelUpToTheLimit(t *testing.T) {
+	const servers = 4
+	const maxParallelization = 2
+	gate := &configureReplicationGate{
+		entered: make(chan struct{}, servers),
+		release: make(chan struct{}),
+	}
+	var dataNodes []*master_pb.DataNodeInfo
+	for i := 0; i < servers; i++ {
+		dataNodes = append(dataNodes, startConfigureReplicationTestVolumeServer(t,
+			&configureReplicationGateServer{gate: gate}, uint32(i+1)))
+	}
+	commandEnv, topologyInfo := configureReplicationTestEnv(dataNodes...)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- configureReplicationOnVolumeServers(commandEnv, topologyInfo, allVolumes, "001", maxParallelization)
+	}()
+
+	for i := 0; i < maxParallelization; i++ {
+		select {
+		case <-gate.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d servers started; serial execution would hold the second call", i)
+		}
+	}
+
+	select {
+	case <-gate.entered:
+		t.Fatalf("more than %d servers ran while calls were held open", maxParallelization)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(gate.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if gate.maxActive != maxParallelization {
+		t.Errorf("at most %d servers ran together, expected %d", gate.maxActive, maxParallelization)
+	}
+}
