@@ -281,7 +281,9 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 	if err := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength); err != nil {
-		cleanup()
+		// CreateEntry can persist the entry and then fail creating parents;
+		// keep chunks the stored entry still references
+		fs.filer.DeleteUncommittedChunks(context.WithoutCancel(ctx), fs.inlineAppendChunksNotReferenced(ctx, entry.FullPath, fileChunks))
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
@@ -495,7 +497,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		newEntry.Md5 = md5Hash.Sum(nil)
 	}
 	if err := fs.filer.UpdateEntry(context.WithoutCancel(ctx), current, &newEntry, false); err != nil {
-		cleanup()
+		fs.filer.DeleteUncommittedChunks(context.WithoutCancel(ctx), fs.inlineAppendChunksNotReferenced(ctx, fullPath, newChunks))
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
