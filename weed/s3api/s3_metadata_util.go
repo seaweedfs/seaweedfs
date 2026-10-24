@@ -61,6 +61,7 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		}
 
 		// Validate: S3 spec does not allow duplicate tag keys
+		tagSet := make(map[string]string, len(parsedTags))
 		for key, values := range parsedTags {
 			if len(values) > 1 {
 				glog.Warningf("Duplicate tag key '%s' in header '%s'", key, tags)
@@ -71,6 +72,13 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 			if len(values) > 0 {
 				value = values[0]
 			}
+			tagSet[key] = value
+		}
+		if err := ValidateTags(tagSet); err != nil {
+			glog.Warningf("Invalid tags in header '%s': %v", tags, err)
+			return nil, s3err.ErrInvalidTag
+		}
+		for key, value := range tagSet {
 			metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
 	}
