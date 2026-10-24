@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'weed/s3api/**'
+      - 'weed/remote_storage/**'
       - 'weed/filer/**'
       - 'weed/server/**'
       - 'test/s3/**'
