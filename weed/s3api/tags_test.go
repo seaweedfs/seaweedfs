@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -130,5 +131,21 @@ func TestParseTagsHeader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateTagsUnicodeLength(t *testing.T) {
+	// S3 counts tag length in characters, not bytes
+	multibyteKey := strings.Repeat("中", 128)
+	multibyteValue := strings.Repeat("中", 256)
+
+	if err := ValidateTags(map[string]string{multibyteKey: multibyteValue}); err != nil {
+		t.Errorf("Expected 128-char key and 256-char value to pass, got %v", err)
+	}
+	if err := ValidateTags(map[string]string{strings.Repeat("中", 129): "v"}); err == nil {
+		t.Error("Expected 129-char key to fail")
+	}
+	if err := ValidateTags(map[string]string{"k": strings.Repeat("中", 257)}); err == nil {
+		t.Error("Expected 257-char value to fail")
 	}
 }
