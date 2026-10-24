@@ -421,8 +421,8 @@ jobs:
             chrislusf/seaweedfs@${{ steps.manifest.outputs.digest }}
 
       # Attest the merged multi-arch digest itself, so digest-pinning consumers
-      # can verify provenance and SBOM against the exact index they pull. Both
-      # steps reuse the GHCR login above and push as OCI referrers.
+      # can verify provenance against the exact index they pull. Both steps
+      # reuse the GHCR login above and push as OCI referrers.
       - name: Attest build provenance for ${{ matrix.variant }}
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/attest-build-provenance@v4
@@ -431,22 +431,27 @@ jobs:
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
-      - name: Generate SBOM for ${{ matrix.variant }}
+      # SBOMs are generated and attested per platform manifest: an index-wide
+      # scan only describes syft's default platform, while the manifests it
+      # merges differ (some ship the real binary, others placeholders), so the
+      # SBOM has to be bound to the platform digest a consumer actually pulls.
+      - name: Install syft
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
-          format: spdx-json
-          output-file: sbom-${{ matrix.variant }}.spdx.json
+        uses: anchore/sbom-action/download-syft@v0
 
-      - name: Attest SBOM for ${{ matrix.variant }}
+      - name: Attest per-platform SBOMs for ${{ matrix.variant }}
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: actions/attest-sbom@v4
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.manifest.outputs.digest }}
-          sbom-path: sbom-${{ matrix.variant }}.spdx.json
-          push-to-registry: true
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          for f in *; do
+            ref="${{ env.IMAGE }}@sha256:${f}"
+            syft "$ref" -o "spdx-json=/tmp/sbom-${f}.spdx.json"
+            cosign attest --yes \
+              --predicate "/tmp/sbom-${f}.spdx.json" \
+              --type spdxjson \
+              "$ref"
+          done
 
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
