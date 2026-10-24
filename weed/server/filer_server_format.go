@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 const (
@@ -198,6 +199,13 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, uploadErr)
 		return
+	}
+	if expectedMd5 := mediaPart.Header.Get("Content-Md5"); expectedMd5 != "" {
+		if md5bytes := md5Hash.Sum(nil); util.Base64Encode(md5bytes) != expectedMd5 && fmt.Sprintf("%x", md5bytes) != expectedMd5 {
+			cleanup()
+			writeJsonError(w, r, http.StatusBadRequest, errors.New(constants.ErrMsgBadDigest))
+			return
+		}
 	}
 	if total := layout.TotalSize(); written != total {
 		cleanup()
