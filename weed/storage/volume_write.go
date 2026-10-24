@@ -682,6 +682,9 @@ var DefaultSyncBatchOption = SyncBatchOption{
 	Wait:        500 * time.Microsecond,
 }
 
+// syncBatchAfter arms the batch window; a var so tests can drive it.
+var syncBatchAfter = time.After
+
 // startWorker returns the volume's batch-write channel, creating it and its
 // goroutine on first use, and nil once stopWorker has run.
 func (v *Volume) startWorker() chan *needle.AsyncRequest {
@@ -752,7 +755,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				// latency stays bounded by Wait
 				if batchWait == nil {
 					batchDeadline = time.Now().Add(syncBatch.Wait)
-					batchWait = time.After(syncBatch.Wait)
+					batchWait = syncBatchAfter(syncBatch.Wait)
 				}
 			}
 			if len(currentRequests) == 0 {

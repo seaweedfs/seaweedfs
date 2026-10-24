@@ -524,25 +524,44 @@ func TestSyncBatchDefersFlushForStragglers(t *testing.T) {
 
 	counting := &syncCountingBackend{BackendStorageFile: v.DataBackend}
 	v.DataBackend = counting
+	writeBytes := int64(needle.GetActualSize(16, v.Version()))
 	v.location = &DiskLocation{syncBatch: SyncBatchOption{
-		MinBytes:    1 * 1024 * 1024,
+		MinBytes:    writeBytes * 2,
 		MinRequests: syncBatchMaxRequests,
-		Wait:        100 * time.Millisecond,
+		Wait:        time.Minute,
 	}}
 
-	done := make(chan error, 2)
+	armed := make(chan chan time.Time, 4)
+	prevAfter := syncBatchAfter
+	syncBatchAfter = func(time.Duration) <-chan time.Time {
+		window := make(chan time.Time, 1)
+		armed <- window
+		return window
+	}
+	defer func() { syncBatchAfter = prevAfter }()
+
+	done := make(chan error, 3)
 	writeAsync := func(id uint64) {
-		_, _, _, writeErr := v.writeNeedle2(newRandomNeedle(id), true, true, false)
+		n := new(needle.Needle)
+		n.Data = make([]byte, 16)
+		n.Checksum = needle.NewCRC(n.Data)
+		n.Id = types.Uint64ToNeedleId(id)
+		_, _, _, writeErr := v.writeNeedle2(n, true, true, false)
 		done <- writeErr
 	}
-	go writeAsync(1)
-	// once the worker has taken the first write off the queue it holds the
-	// batch open for the window, so a second write can only land inside it
-	assert.Eventually(t, func() bool {
-		v.asyncWorkerLock.Lock()
-		defer v.asyncWorkerLock.Unlock()
-		return v.asyncRequestsChan != nil && len(v.asyncRequestsChan) == 0
-	}, 5*time.Second, time.Millisecond)
+	windowFor := func(id uint64) chan time.Time {
+		go writeAsync(id)
+		window := <-armed
+		select {
+		case <-done:
+			t.Fatalf("write %d flushed while its batch window was still open", id)
+		default:
+		}
+		return window
+	}
+
+	windowFor(1)
+	// the straggler fills the batch to MinBytes, closing the window early
 	go writeAsync(2)
 	for i := 0; i < 2; i++ {
 		if writeErr := <-done; writeErr != nil {
@@ -553,7 +572,8 @@ func TestSyncBatchDefersFlushForStragglers(t *testing.T) {
 		t.Fatalf("expected both writes to share one .dat sync, got %d", syncs)
 	}
 
-	go writeAsync(3)
+	window := windowFor(3)
+	window <- time.Now()
 	if writeErr := <-done; writeErr != nil {
 		t.Fatalf("write needle: %v", writeErr)
 	}
