@@ -1400,7 +1400,6 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	output := &ListMultipartUploadsResult{
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
-		EncodingType:   input.EncodingType,
 		KeyMarker:      input.KeyMarker,
 		MaxUploads:     aws.Int64(int64(p.limit)),
 		Prefix:         input.Prefix,
@@ -1429,6 +1428,7 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		// AWS url-encodes these key-named elements when encoding-type=url is
 		// requested; without it XML 1.0 cannot carry the keys at all and the
 		// encoder replaces their characters with U+FFFD.
+		output.EncodingType = input.EncodingType
 		output.Delimiter = encodeMultipartUploadURLField(output.Delimiter)
 		output.Prefix = encodeMultipartUploadURLField(output.Prefix)
 		output.KeyMarker = encodeMultipartUploadURLField(output.KeyMarker)
