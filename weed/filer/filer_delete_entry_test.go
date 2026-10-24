@@ -220,6 +220,29 @@ func TestDeleteEntryRecursiveRefusesLockedDescendant(t *testing.T) {
 	require.NotNil(t, store.getEntry("/d/locked.txt"))
 }
 
+// A lock refusal surfaces from any depth and cannot be waived by
+// ignoreRecursiveError: nothing in the subtree may be removed.
+func TestDeleteEntryRecursiveRefusesLockedGrandchild(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/d/early.txt", Attr: Attr{Mode: 0644}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{
+		FullPath: "/d/sub/locked.txt",
+		Attr:     Attr{Mode: 0644},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, time.Now().Add(time.Hour)),
+	}, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, "/d", true, true, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	for _, p := range []string{"/d", "/d/early.txt", "/d/sub", "/d/sub/locked.txt"} {
+		require.NotNil(t, store.getEntry(p), "%s must survive a refused recursive delete", p)
+	}
+}
+
 // Governance bypass is the only waiver the delete honors.
 func TestDeleteEntryGovernanceBypass(t *testing.T) {
 	future := time.Now().Add(time.Hour)
@@ -292,6 +315,27 @@ func TestDeleteBucketOnDropCapableStoreRefusesLockedObject(t *testing.T) {
 	err := f.DeleteEntryMetaAndData(ctx, "/buckets/b", true, false, true, false, nil, 0)
 	require.ErrorIs(t, err, ErrEntryLocked)
 	require.NotNil(t, store.getEntry("/buckets/b/locked.bin"), "a drop-whole-bucket store must not swallow the locked object")
+}
+
+// A bucket without the lock-enabled attribute can still carry entries under
+// retention, so the drop-whole-bucket path must not skip the lock walk.
+func TestDeleteUnmarkedBucketOnDropCapableStoreRefusesLockedObject(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.DirBucketsPath = "/buckets"
+	f.Store = NewFilerStoreWrapper(&bucketDropStore{store})
+	ctx := context.Background()
+
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/buckets/b", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{
+		FullPath: "/buckets/b/held.bin",
+		Attr:     Attr{Mode: 0644},
+		Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")},
+	}, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, "/buckets/b", true, true, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.NotNil(t, store.getEntry("/buckets/b/held.bin"), "an unmarked bucket drop must not swallow the locked object")
 }
 
 // An expired retention no longer locks: the delete proceeds normally.

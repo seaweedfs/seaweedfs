@@ -152,6 +152,38 @@ func entryDeleteLockError(ctx context.Context, entry *Entry) error {
 	return nil
 }
 
+// lockedDescendantError walks the subtree once, refusing the delete on the
+// first entry under an active legal hold or retention. It runs before the
+// recursive delete emits any side effect, so a refusal cannot arrive after
+// earlier descendants -- or the ancestor's remote tombstone -- are already
+// gone, and it covers the store-drop path whose DeleteFolderChildren never
+// lists the children it removes. The per-page check in the delete walk still
+// catches a lock planted between this pass and the delete.
+func (f *Filer) lockedDescendantError(ctx context.Context, entry *Entry) error {
+	lastFileName := ""
+	includeLastFile := false
+	for {
+		entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
+		if err != nil {
+			return fmt.Errorf("list folder %s: %v", entry.FullPath, err)
+		}
+		for _, sub := range entries {
+			lastFileName = sub.Name()
+			if lockErr := entryDeleteLockError(ctx, sub); lockErr != nil {
+				return lockErr
+			}
+			if sub.IsDirectory() {
+				if lockErr := f.lockedDescendantError(ctx, sub); lockErr != nil {
+					return lockErr
+				}
+			}
+		}
+		if len(entries) < PaginationSize {
+			return nil
+		}
+	}
+}
+
 // objectLockEnabledOnEntry mirrors the S3 gateway's IsObjectLockEnabled.
 func objectLockEnabledOnEntry(entry *Entry) bool {
 	enabled, found := entry.Extended[s3_constants.ExtObjectLockEnabledKey]
@@ -234,6 +266,11 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	// per entry rather than dropped wholesale with it.
 	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
+		if isRecursive && !isFromOtherCluster {
+			if lockErr := f.lockedDescendantError(ctx, entry); lockErr != nil {
+				return lockErr
+			}
+		}
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
 			// A case not handled:
@@ -352,7 +389,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 							}
 						}
 					}
-					if err != nil && !ignoreRecursiveError {
+					if err != nil && (!ignoreRecursiveError || errors.Is(err, ErrEntryLocked)) {
 						break
 					}
 					f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, sub), nil, shouldDeleteChunks, isFromOtherCluster, nil)
@@ -368,7 +405,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 						}
 					}
 				}
-				if err != nil && !ignoreRecursiveError {
+				if err != nil && (!ignoreRecursiveError || errors.Is(err, ErrEntryLocked)) {
 					return err
 				}
 			}
