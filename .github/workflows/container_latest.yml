@@ -173,7 +173,7 @@ jobs:
       - name: Free Disk Space
         run: |
           echo "Available disk space before cleanup:"
-          df -h
+          timeout 15 df -h || true
           # Remove pre-installed tools
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           # Clean package managers
@@ -185,7 +185,7 @@ jobs:
           [ -d ~/.cache/go-build ] && rm -rf ~/.cache/go-build || true
           [ -d /go/pkg ] && rm -rf /go/pkg || true
           echo "Available disk space after cleanup:"
-          df -h
+          timeout 15 df -h || true
       
       - name: Configure variant
         id: config

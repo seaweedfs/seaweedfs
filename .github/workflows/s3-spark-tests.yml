@@ -57,7 +57,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting S3 Spark Integration Tests ==="
 
           go test -v -timeout 30m . 2>&1 | tee test-output.log || {

@@ -51,7 +51,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Filer Group Tests ==="
           
           # Run tests with automatic server management

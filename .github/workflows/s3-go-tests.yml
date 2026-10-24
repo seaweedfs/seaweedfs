@@ -54,7 +54,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h . /tmp
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management
@@ -220,7 +220,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h . /tmp
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management
@@ -358,7 +358,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h . /tmp
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           make test-with-server
 
@@ -417,7 +417,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h . /tmp
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management

@@ -111,7 +111,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting S3 IAM Integration Tests (${{ matrix.test-type }}) ==="
           
           # Set WEED_BINARY to use the installed version

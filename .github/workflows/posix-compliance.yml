@@ -393,7 +393,7 @@ jobs:
         echo "" >> reports/debug/system_info.txt
         
         echo "Disk Space" >> reports/debug/system_info.txt
-        df -h >> reports/debug/system_info.txt
+        timeout 15 df -h >> reports/debug/system_info.txt || true
         echo "" >> reports/debug/system_info.txt
         
         echo "Memory Information" >> reports/debug/system_info.txt
