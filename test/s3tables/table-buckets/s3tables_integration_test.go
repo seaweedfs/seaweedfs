@@ -679,7 +679,7 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
-			"-webdav=false", // Disable WebDAV
+			"-webdav=false",    // Disable WebDAV
 			"-s3.port.lance=0", // Disable Lance
 			"-s3.port.iceberg=" + strconv.Itoa(icebergPort),
 			"-admin.ui=false",              // Disable admin UI

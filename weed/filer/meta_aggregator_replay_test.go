@@ -575,6 +575,43 @@ func TestBootstrapUpdatesExistingByCommitTime(t *testing.T) {
 	}
 }
 
+// A missing local entry has no commit time to order against: the peer copy
+// must apply even when both sides are timestamp-less — an epoch-dated entry
+// from a peer that predates EntryTsNs is still bootstrapped, while an
+// existing zero-mtime local entry keeps its place.
+func TestBootstrapCopiesMissingEntryWithoutCommitTime(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	missing := util.NewFullPath("/dir", "missing")
+	existing := util.NewFullPath("/dir", "existing")
+
+	store.entries[string(existing)] = &Entry{
+		FullPath: existing,
+		Attr:     Attr{Mtime: time.Unix(0, 0)},
+		Content:  []byte("zero-mtime local entry"),
+	}
+	for _, path := range []util.FullPath{missing, existing} {
+		entry := &Entry{
+			FullPath: path,
+			Attr:     Attr{Mtime: time.Unix(0, 0)},
+			Content:  []byte("epoch-dated peer entry"),
+		}
+		if err := f.applyTraversedEntry(context.Background(), entry, 0); err != nil {
+			t.Fatalf("applyTraversedEntry %s: %v", path, err)
+		}
+	}
+	got, err := store.FindEntry(context.Background(), missing)
+	if err != nil {
+		t.Fatalf("missing local entry must take the peer copy: %v", err)
+	}
+	if string(got.Content) != "epoch-dated peer entry" {
+		t.Fatalf("content = %q, want peer entry applied", got.Content)
+	}
+	if got, _ := store.FindEntry(context.Background(), existing); string(got.Content) != "zero-mtime local entry" {
+		t.Fatalf("content = %q, existing local entry must be kept", got.Content)
+	}
+}
+
 // A delete whose commit record failed to persist still blocks a stale
 // replayed create: the pending record stands in until the retry lands it.
 func TestPendingDeleteRecordBlocksStaleReplay(t *testing.T) {
