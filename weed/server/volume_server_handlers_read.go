@@ -149,6 +149,20 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// notModified checks If-Modified-Since only when there is no If-None-Match
+// (RFC 9110 13.2.2).
+func notModified(r *http.Request, etag string, lastModified uint64) bool {
+	if inm := r.Header.Get("If-None-Match"); inm != "" {
+		return etagListMatches(inm, etag, true)
+	}
+	ims := r.Header.Get("If-Modified-Since")
+	if ims == "" || lastModified == 0 {
+		return false
+	}
+	t, err := time.Parse(http.TimeFormat, ims)
+	return err == nil && t.Unix() >= int64(lastModified)
+}
+
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(needle.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
@@ -244,21 +258,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if n.LastModified != 0 {
 		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
-		if r.Header.Get("If-Modified-Since") != "" {
-			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if t.Unix() >= int64(n.LastModified) {
-					if readOption.IsMetaOnly {
-						if v := vs.store.GetVolume(volumeId); v != nil {
-							v.NoteMetaOnlySuccess()
-						}
-					}
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
-			}
-		}
 	}
-	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
+	if notModified(r, n.Etag(), n.LastModified) {
 		if readOption.IsMetaOnly {
 			if v := vs.store.GetVolume(volumeId); v != nil {
 				v.NoteMetaOnlySuccess()

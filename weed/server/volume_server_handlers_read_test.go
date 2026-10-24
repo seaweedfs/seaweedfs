@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInternalErrorWritesTheReadError(t *testing.T) {
@@ -57,5 +58,38 @@ func TestShouldAttemptStreamWrite(t *testing.T) {
 		if attempt != tc.wantAttempt || mustMeta != tc.wantMustMeta {
 			t.Errorf("%s: attempt %v, must be metadata only %v; want %v, %v", tc.name, attempt, mustMeta, tc.wantAttempt, tc.wantMustMeta)
 		}
+	}
+}
+
+func TestNotModifiedChecksIfNoneMatchFirst(t *testing.T) {
+	const etag = "353dd8be"
+	const lastModified = 1700000000
+	before := time.Unix(lastModified-60, 0).UTC().Format(http.TimeFormat)
+	after := time.Unix(lastModified+60, 0).UTC().Format(http.TimeFormat)
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{"matching etag", map[string]string{"If-None-Match": `"353dd8be"`}, true},
+		{"weak etag", map[string]string{"If-None-Match": `W/"353dd8be"`}, true},
+		{"etag in a list", map[string]string{"If-None-Match": `"x", "353dd8be"`}, true},
+		{"star", map[string]string{"If-None-Match": `*`}, true},
+		{"other etag", map[string]string{"If-None-Match": `"x"`}, false},
+		{"other etag ignores If-Modified-Since", map[string]string{"If-None-Match": `"x"`, "If-Modified-Since": after}, false},
+		{"not modified since", map[string]string{"If-Modified-Since": after}, true},
+		{"modified since", map[string]string{"If-Modified-Since": before}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/3,01637037d6", nil)
+			for k, v := range tt.headers {
+				r.Header.Set(k, v)
+			}
+			if got := notModified(r, etag, lastModified); got != tt.want {
+				t.Errorf("notModified = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
