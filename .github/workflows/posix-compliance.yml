@@ -58,6 +58,9 @@ jobs:
       with:
         fetch-depth: 1
     
+    - name: Clean up stale FUSE mounts
+      uses: ./.github/actions/cleanup-stale-fuse-mounts
+
     - name: Set up Go ${{ env.GO_VERSION }}
       uses: actions/setup-go@v7
       with:
