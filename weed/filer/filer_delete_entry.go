@@ -428,6 +428,14 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	// a non-recursive delete already proved the folder empty above, so sweeping the
 	// children now can only remove entries that raced in after that listing
 	if isRecursive || !listedChildren {
+		if !listedChildren && !isRecursive && !isFromOtherCluster {
+			// A bucket dropped whole sweeps children nothing has listed; a
+			// recursive caller already walked them in the preflight, but a
+			// non-recursive one has not.
+			if lockErr := f.lockedDescendantError(ctx, entry); lockErr != nil {
+				return lockErr
+			}
+		}
 		if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
 			return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 		}
