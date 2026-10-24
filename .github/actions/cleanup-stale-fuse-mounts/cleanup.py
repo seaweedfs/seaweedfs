@@ -5,6 +5,7 @@ import errno
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,11 @@ def cleanup():
         else:
             print(f"::error::Could not unmount disconnected FUSE test mount: {target}")
             failed = True
+            continue
+        # The detached mount's parent still holds the crashed run's data and
+        # logs; test_mounts only yields targets under a seaweedfs_fuse_test_*
+        # dir in a temp root, so the parent is safe to reclaim here.
+        shutil.rmtree(Path(target).parent, ignore_errors=True)
     return int(failed)
 
 

@@ -18,9 +18,10 @@ class CleanupTests(unittest.TestCase):
         with patch.object(cleanup.Path, "read_text", return_value=MOUNTINFO), \
                 patch.object(cleanup, "mounted", side_effect=mounted if isinstance(mounted, list) else None,
                              return_value=mounted) as check, \
+                patch.object(cleanup.shutil, "rmtree") as rmtree, \
                 patch.object(cleanup.subprocess, "run", side_effect=results) as run:
             status = cleanup.cleanup()
-        return status, run, check
+        return status, run, check, rmtree
 
     def result(self, status):
         return subprocess.CompletedProcess([], status)
@@ -46,31 +47,31 @@ class CleanupTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_healthy_mount_is_untouched(self):
-        status, run, _ = self.run_cleanup([self.result(0)])
+        status, run, _, _ = self.run_cleanup([self.result(0)])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 1)
 
     def test_other_probe_errors_are_untouched(self):
         for error in (errno.EACCES, errno.ENOENT, errno.EIO):
             with self.subTest(error=error):
-                status, run, _ = self.run_cleanup([self.result(error)])
+                status, run, _, _ = self.run_cleanup([self.result(error)])
                 self.assertEqual(status, 0)
                 self.assertEqual(run.call_count, 1)
 
     def test_probe_timeout_does_not_detach_a_possibly_live_mount(self):
-        status, run, _ = self.run_cleanup([subprocess.TimeoutExpired("probe", 5)])
+        status, run, _, _ = self.run_cleanup([subprocess.TimeoutExpired("probe", 5)])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 1)
 
     def test_disconnected_mount_is_lazily_unmounted(self):
-        status, run, _ = self.run_cleanup([self.result(errno.ENOTCONN), self.result(0)], [True, False])
+        status, run, _, _ = self.run_cleanup([self.result(errno.ENOTCONN), self.result(0)], [True, False])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_args_list[1].args[0], ["fusermount3", "-uz", "--", TARGET])
         self.assertEqual(run.call_args_list[0].kwargs["timeout"], 5)
         self.assertEqual(run.call_args_list[1].kwargs["timeout"], 10)
 
     def test_replaced_or_removed_mount_is_untouched(self):
-        status, run, _ = self.run_cleanup([self.result(errno.ENOTCONN)], False)
+        status, run, _, _ = self.run_cleanup([self.result(errno.ENOTCONN)], False)
         self.assertEqual(status, 0)
         self.assertEqual(run.call_count, 1)
 
@@ -82,23 +83,30 @@ class CleanupTests(unittest.TestCase):
     def test_missing_or_timed_out_helper_uses_fallback(self):
         for error in (FileNotFoundError(), subprocess.TimeoutExpired("fusermount3", 10)):
             with self.subTest(error=error):
-                status, run, _ = self.run_cleanup(
+                status, run, _, _ = self.run_cleanup(
                     [self.result(errno.ENOTCONN), error, self.result(0)], [True, True, False])
                 self.assertEqual(status, 0)
                 self.assertEqual(run.call_args.args[0], ["fusermount", "-uz", "--", TARGET])
 
     def test_failed_helpers_fall_back_to_sudo(self):
-        status, run, _ = self.run_cleanup(
+        status, run, _, _ = self.run_cleanup(
             [self.result(errno.ENOTCONN), self.result(1), self.result(1), self.result(0)],
             [True, True, True, False])
         self.assertEqual(status, 0)
         self.assertEqual(run.call_args.args[0], ["sudo", "-n", "umount", "-l", "--", TARGET])
 
     def test_cleanup_fails_when_stale_mount_remains(self):
-        status, run, _ = self.run_cleanup(
+        status, run, _, rmtree = self.run_cleanup(
             [self.result(errno.ENOTCONN), self.result(1), self.result(1), self.result(1)])
         self.assertEqual(status, 1)
         self.assertEqual(run.call_count, 4)
+        rmtree.assert_not_called()
+
+    def test_unmounted_test_dir_is_reclaimed(self):
+        status, _, _, rmtree = self.run_cleanup(
+            [self.result(errno.ENOTCONN), self.result(0)], [True, False])
+        self.assertEqual(status, 0)
+        rmtree.assert_called_once_with(Path(TARGET).parent, ignore_errors=True)
 
     def test_probe_process_reports_errno(self):
         for target, expected in ((str(Path(__file__)), 0), (str(Path(__file__) / "absent"), errno.ENOTDIR)):
