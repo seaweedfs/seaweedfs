@@ -434,7 +434,7 @@ func SyncWrite(ctx context.Context) bool {
 // syncWriteContext flags ctx when the storage rule on p asks for fsync, so the
 // store write is held to the same durability as the data path.
 func (f *Filer) syncWriteContext(ctx context.Context, p util.FullPath) context.Context {
-	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).Fsync {
+	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).GetFsync() {
 		return WithSyncWrite(ctx)
 	}
 	return ctx
