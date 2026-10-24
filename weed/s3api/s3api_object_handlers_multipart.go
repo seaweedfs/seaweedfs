@@ -265,7 +265,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxUploads)
 		return
 	}
-	keyMarker := decodeListContinuationToken(decodeMarkerEcho(multipartKeyMarker, encodingType == s3.EncodingTypeUrl))
+	keyMarker := decodeListContinuationToken(decodeEscapedEcho(multipartKeyMarker, encodingType == s3.EncodingTypeUrl, urlQueryEscape))
 	if keyMarker != "" {
 		// Marker not common with prefix is not implemented.
 		if !strings.HasPrefix(keyMarker, prefix) {

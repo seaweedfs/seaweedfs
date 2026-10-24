@@ -1397,30 +1397,21 @@ func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
 
 func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	input := p.input
-	encodingTypeUrl := input.EncodingType != nil && *input.EncodingType == s3.EncodingTypeUrl
 	output := &ListMultipartUploadsResult{
 		Bucket:         input.Bucket,
 		Delimiter:      input.Delimiter,
-		EncodingType:   input.EncodingType,
 		KeyMarker:      input.KeyMarker,
 		MaxUploads:     aws.Int64(int64(p.limit)),
 		Prefix:         input.Prefix,
 		UploadIdMarker: input.UploadIdMarker,
 		IsTruncated:    aws.Bool(false),
 	}
-	if input.KeyMarker != nil {
-		output.KeyMarker = aws.String(encodeMarkerEcho(*input.KeyMarker, encodingTypeUrl))
-	}
 	candidates := make([]multipartCandidate, len(p.top))
 	copy(candidates, p.top)
 	slices.SortFunc(candidates, compareMultipartCandidate)
 	for _, c := range candidates {
-		key := c.key
-		if encodingTypeUrl {
-			key = urlPathEscape(key)
-		}
 		upload := &s3.MultipartUpload{
-			Key:      aws.String(key),
+			Key:      aws.String(c.key),
 			UploadId: aws.String(c.entry.Name),
 		}
 		if c.entry.Attributes != nil {
@@ -1431,12 +1422,13 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	if p.more {
 		last := candidates[len(candidates)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(encodeMarkerEcho(last.key, encodingTypeUrl)), aws.String(last.entry.Name)
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.entry.Name)
 	}
 	if aws.StringValue(input.EncodingType) == s3.EncodingTypeUrl {
 		// AWS url-encodes these key-named elements when encoding-type=url is
 		// requested; without it XML 1.0 cannot carry the keys at all and the
 		// encoder replaces their characters with U+FFFD.
+		output.EncodingType = input.EncodingType
 		output.Delimiter = encodeMultipartUploadURLField(output.Delimiter)
 		output.Prefix = encodeMultipartUploadURLField(output.Prefix)
 		output.KeyMarker = encodeMultipartUploadURLField(output.KeyMarker)
@@ -1444,22 +1436,29 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		for _, upload := range output.Upload {
 			upload.Key = encodeMultipartUploadURLField(upload.Key)
 		}
+	} else {
+		output.KeyMarker = encodeListContinuationTokenField(output.KeyMarker)
+		output.NextKeyMarker = encodeListContinuationTokenField(output.NextKeyMarker)
 	}
 	return output
 }
 
-// encodeMultipartUploadURLField url-encodes key text the way ListObjects does:
-// every "/"-separated segment is query-escaped and the separators are kept, so a
-// client recovers the exact key with url.QueryUnescape.
+// urlQueryEscape url-encodes key text per segment: every "/"-separated part is
+// query-escaped and the separators are kept, so a client recovers the exact key
+// with url.QueryUnescape.
+func urlQueryEscape(key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = url.QueryEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
 func encodeMultipartUploadURLField(value *string) *string {
 	if value == nil {
 		return nil
 	}
-	segments := strings.Split(*value, "/")
-	for i, segment := range segments {
-		segments[i] = url.QueryEscape(segment)
-	}
-	return aws.String(strings.Join(segments, "/"))
+	return aws.String(urlQueryEscape(*value))
 }
 
 type ListPartsResult struct {

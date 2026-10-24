@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -177,6 +178,13 @@ func encodeListContinuationToken(key string) string {
 	return continuationTokenEncodingPrefix + base64.RawURLEncoding.EncodeToString([]byte(key))
 }
 
+func encodeListContinuationTokenField(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return aws.String(encodeListContinuationToken(*value))
+}
+
 // encodeMarkerEcho renders a decoded request marker for the response echo:
 // the token encoding keeps an XML-unsafe key legible, and urlPathEscape applies
 // the encoding-type=url form the keys in the same response already carry.
@@ -194,10 +202,14 @@ func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 // from that encoder — "a%2541" round-trips to itself, "a%41" does not — so
 // anything else stays the raw key the client sent.
 func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	return decodeEscapedEcho(marker, encodingTypeUrl, urlPathEscape)
+}
+
+func decodeEscapedEcho(marker string, encodingTypeUrl bool, escape func(string) string) string {
 	if !encodingTypeUrl {
 		return marker
 	}
-	if unescaped, err := url.PathUnescape(marker); err == nil && urlPathEscape(unescaped) == marker {
+	if unescaped, err := url.QueryUnescape(marker); err == nil && escape(unescaped) == marker {
 		return unescaped
 	}
 	return marker

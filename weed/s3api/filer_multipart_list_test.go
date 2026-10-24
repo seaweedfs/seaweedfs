@@ -168,7 +168,7 @@ func TestSelectMultipartUploadsUrlEncodesMarkersAndKeys(t *testing.T) {
 	input.KeyMarker = aws.String(decodeListContinuationToken(marker))
 	input.UploadIdMarker = out.NextUploadIdMarker
 	out = selectMultipartUploads(input, entries)
-	if *out.KeyMarker != encodeMarkerEcho("a\x01b", true) || *out.Upload[0].Key != "a%20b" || *out.NextKeyMarker != "a%20b" {
+	if *out.KeyMarker != "a%01b" || *out.Upload[0].Key != "a+b" || *out.NextKeyMarker != "a+b" {
 		t.Fatalf("page got marker %q key %q next %q", *out.KeyMarker, *out.Upload[0].Key, *out.NextKeyMarker)
 	}
 
