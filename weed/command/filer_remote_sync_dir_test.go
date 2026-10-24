@@ -2374,6 +2374,24 @@ func TestSupersededRenameInRecoversTheCurrentEntry(t *testing.T) {
 		}
 	})
 
+	// on replay the destination can already hold the copy while the renamed-from
+	// path no longer resolves to a remote; finishing must not need the source
+	t.Run("the destination holds it, the source no longer resolves: only a stamp", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/mnt/lock/a.txt": []byte("data")}, statETags: map[string]string{"/mnt/lock/a.txt": "abc"}}
+		filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+			mountedDir + "/lock/a.txt": proto.Clone(uncached).(*filer_pb.Entry),
+		}}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/gone/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none once the destination holds the content", remote.writes)
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("updates = %d, want the entry stamped", filerClient.updates)
+		}
+	})
+
 	t.Run("rewritten since: the superseding event uploads", func(t *testing.T) {
 		rewritten := &filer_pb.Entry{
 			Name:        "a.txt",

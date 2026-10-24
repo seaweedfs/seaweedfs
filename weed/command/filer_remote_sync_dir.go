@@ -810,17 +810,20 @@ func copyRenameInSource(
 	dest *remote_pb.RemoteStorageLocation,
 	storageClass string,
 ) error {
-	srcClient, srcLoc, err := renameInSource(filerClient, client, mountedDir, remoteStorageMountLocation, current, renameSrc)
-	if err != nil {
-		return err
-	}
+	// the destination check runs before the source resolves: on replay after a
+	// completed copy, the renamed-from path may no longer map to a remote, and
+	// an already-finished rename must not fail on it
 	if existing, err := client.StatFile(dest); err == nil {
 		if remote_storage.Describes(current.RemoteEntry, existing) {
 			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
 			return updateLocalEntry(filerClient, dir, current, existing)
 		}
-		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it from %s", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize, remote_storage.FormatLocation(srcLoc))
+		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize)
 	} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return err
+	}
+	srcClient, srcLoc, err := renameInSource(filerClient, client, mountedDir, remoteStorageMountLocation, current, renameSrc)
+	if err != nil {
 		return err
 	}
 	stat, err := srcClient.StatFile(srcLoc)
