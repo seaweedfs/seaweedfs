@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/require"
 )
@@ -116,4 +118,194 @@ func TestDeleteFolderKeepsSharedHardLinkChunks(t *testing.T) {
 	_, err := store.KvGet(ctx, hardLinkId)
 	require.NoError(t, err, "surviving link must keep the inode record")
 	require.Equal(t, 0, f.pendingDeletionCount())
+}
+
+func retentionEntry(mode string, until time.Time) map[string][]byte {
+	return map[string][]byte{
+		s3_constants.ExtObjectLockModeKey:     []byte(mode),
+		s3_constants.ExtRetentionUntilDateKey: []byte(strconv.FormatInt(until.Unix(), 10)),
+	}
+}
+
+func TestEntryLockedForDelete(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+
+	for _, tt := range []struct {
+		name   string
+		ext    map[string][]byte
+		bypass bool
+		locked bool
+	}{
+		{"no attributes", nil, false, false},
+		{"legal hold on", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")}, false, true},
+		{"legal hold bypass still locks", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("on")}, true, true},
+		{"legal hold off", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("OFF")}, false, false},
+		{"compliance active", retentionEntry(s3_constants.RetentionModeCompliance, future), false, true},
+		{"compliance bypass still locks", retentionEntry(s3_constants.RetentionModeCompliance, future), true, true},
+		{"compliance expired", retentionEntry(s3_constants.RetentionModeCompliance, past), false, false},
+		{"governance active", retentionEntry(s3_constants.RetentionModeGovernance, future), false, true},
+		{"governance bypass", retentionEntry(s3_constants.RetentionModeGovernance, future), true, false},
+		{"governance expired", retentionEntry(s3_constants.RetentionModeGovernance, past), false, false},
+		{"mode without date", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeCompliance)}, false, false},
+		{"unparseable date fails closed", map[string][]byte{
+			s3_constants.ExtObjectLockModeKey:     []byte(s3_constants.RetentionModeCompliance),
+			s3_constants.ExtRetentionUntilDateKey: []byte("not-a-time"),
+		}, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := &Entry{FullPath: "/buckets/b/o", Attr: Attr{Mode: 0644}, Extended: tt.ext}
+			require.Equal(t, tt.locked, entryLockedForDelete(entry, tt.bypass, now))
+		})
+	}
+}
+
+// The same leading-marker contract as ErrNonEmptyFolder keeps the wire text
+// classifiable and unforgeable.
+func TestEntryLockedClassification(t *testing.T) {
+	err := fmt.Errorf("%w: %s", ErrEntryLocked, "/buckets/b/locked.bin")
+	if !IsEntryLockedError(err) {
+		t.Errorf("expected the sentinel to be recognized: %v", err)
+	}
+	if !errors.Is(DeleteEntryError(err.Error()), ErrEntryLocked) {
+		t.Errorf("expected the wire text to classify: %v", err)
+	}
+	spoofed := "delete file /buckets/b/" + MsgFailDelLockedEntry + ": filer store delete: disk full"
+	if errors.Is(DeleteEntryError(spoofed), ErrEntryLocked) {
+		t.Errorf("expected no forgery from the entry name: %v", spoofed)
+	}
+	if IsEntryLockedError(errors.New(spoofed)) {
+		t.Errorf("expected no forgery from the entry name: %v", spoofed)
+	}
+}
+
+func TestDeleteEntryRefusesLockedObject(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	locked := &Entry{
+		FullPath: "/buckets/b/locked.bin",
+		Attr:     Attr{Mode: 0644},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, time.Now().Add(time.Hour)),
+	}
+	require.NoError(t, f.CreateEntry(ctx, locked, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, locked.FullPath, false, false, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.True(t, IsEntryLockedError(err))
+	require.True(t, IsEntryLockedError(DeleteEntryError(err.Error())))
+	require.NotNil(t, store.getEntry("/buckets/b/locked.bin"), "locked entry must survive the refused delete")
+}
+
+// A recursive delete fails at the locked descendant without removing anything.
+func TestDeleteEntryRecursiveRefusesLockedDescendant(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/d/free.txt", Attr: Attr{Mode: 0644}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{
+		FullPath: "/d/locked.txt",
+		Attr:     Attr{Mode: 0644},
+		Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")},
+	}, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, "/d", true, true, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.NotNil(t, store.getEntry("/d"), "the folder itself must survive")
+	require.NotNil(t, store.getEntry("/d/free.txt"), "unlocked siblings must survive a refused delete")
+	require.NotNil(t, store.getEntry("/d/locked.txt"))
+}
+
+// Governance bypass is the only waiver the delete honors.
+func TestDeleteEntryGovernanceBypass(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+
+	t.Run("governance locked deletes with bypass", func(t *testing.T) {
+		store := newStubFilerStore()
+		f := newTestFiler(t, store, NewFilerRemoteStorage())
+		entry := &Entry{FullPath: "/o", Attr: Attr{Mode: 0644}, Extended: retentionEntry(s3_constants.RetentionModeGovernance, future)}
+		require.NoError(t, f.CreateEntry(context.Background(), entry, nil, false, false, nil, true, 255))
+		require.NoError(t, f.DeleteEntryMetaAndData(WithBypassGovernanceRetention(context.Background()), entry.FullPath, false, false, true, false, nil, 0))
+		require.Nil(t, store.getEntry("/o"))
+	})
+
+	t.Run("compliance still refuses with bypass", func(t *testing.T) {
+		store := newStubFilerStore()
+		f := newTestFiler(t, store, NewFilerRemoteStorage())
+		entry := &Entry{FullPath: "/o", Attr: Attr{Mode: 0644}, Extended: retentionEntry(s3_constants.RetentionModeCompliance, future)}
+		require.NoError(t, f.CreateEntry(context.Background(), entry, nil, false, false, nil, true, 255))
+		require.ErrorIs(t, f.DeleteEntryMetaAndData(WithBypassGovernanceRetention(context.Background()), entry.FullPath, false, false, true, false, nil, 0), ErrEntryLocked)
+		require.NotNil(t, store.getEntry("/o"))
+	})
+}
+
+// A delete replayed from a peer cluster applies as sent: the origin already
+// enforced retention before shipping the event.
+func TestDeleteEntryClusterReplaySkipsLockCheck(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	entry := &Entry{
+		FullPath: "/locked",
+		Attr:     Attr{Mode: 0644},
+		Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")},
+	}
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, entry.FullPath, false, false, true, true, nil, 0))
+	require.Nil(t, store.getEntry("/locked"))
+}
+
+type bucketDropStore struct {
+	*stubFilerStore
+}
+
+func (s *bucketDropStore) OnBucketCreation(string)  {}
+func (s *bucketDropStore) OnBucketDeletion(string)  {}
+func (s *bucketDropStore) CanDropWholeBucket() bool { return true }
+
+// A lock-enabled bucket is walked rather than dropped whole, so its locked
+// objects still refuse the delete on a store that could drop it blindly.
+func TestDeleteBucketOnDropCapableStoreRefusesLockedObject(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.DirBucketsPath = "/buckets"
+	f.Store = NewFilerStoreWrapper(&bucketDropStore{store})
+	ctx := context.Background()
+
+	bucket := &Entry{
+		FullPath: "/buckets/b",
+		Attr:     Attr{Mode: os.ModeDir | 0755},
+		Extended: map[string][]byte{s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled)},
+	}
+	require.NoError(t, f.CreateEntry(ctx, bucket, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{
+		FullPath: "/buckets/b/locked.bin",
+		Attr:     Attr{Mode: 0644},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, time.Now().Add(time.Hour)),
+	}, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, "/buckets/b", true, false, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.NotNil(t, store.getEntry("/buckets/b/locked.bin"), "a drop-whole-bucket store must not swallow the locked object")
+}
+
+// An expired retention no longer locks: the delete proceeds normally.
+func TestDeleteEntryAllowsExpiredRetention(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	entry := &Entry{
+		FullPath: "/old",
+		Attr:     Attr{Mode: 0644},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, time.Now().Add(-time.Hour)),
+	}
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, entry.FullPath, false, false, true, false, nil, 0))
+	require.Nil(t, store.getEntry("/old"))
 }
