@@ -213,7 +213,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		// Held apart from the named resp, which the local path below writes into:
 		// a failed forward must not leave it nil.
 		var ownerResp *filer_pb.CreateEntryResponse
-		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(ctx context.Context, owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -349,7 +349,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			ConditionAltKey:    req.ConditionAltKey,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
-		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
+		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(ctx context.Context, owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				var e error
@@ -850,7 +850,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	routed := conditionIsSet(req.Condition) || len(req.ExpectedExtended) > 0
 	if !req.IsMoved && routed {
 		var ownerResp *filer_pb.UpdateEntryResponse
-		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(owner pb.ServerAddress) error {
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(ctx context.Context, owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

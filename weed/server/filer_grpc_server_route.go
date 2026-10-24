@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -44,16 +45,28 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 // already committed — and an owner unreachable from here may be partitioned
 // rather than down, still serving the key to everyone else. The ring hands the
 // key on when the cooling-off window closes, so the outage is bounded.
-func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(owner pb.ServerAddress) error) (handled bool, err error) {
+func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(ctx context.Context, owner pb.ServerAddress) error) (handled bool, err error) {
 	owner := fs.writeOwner(key)
 	if owner == "" {
 		return false, nil
 	}
-	if err := send(owner); err != nil {
+	if err := send(forwardedAuthContext(ctx), owner); err != nil {
 		glog.V(1).InfofCtx(ctx, "route %s to owner %s: %v", key, owner, err)
 		return true, err
 	}
 	return true, nil
+}
+
+// forwardedAuthContext carries the caller's authorization metadata onto the
+// owner hop so checks like the governance-bypass admin-peer check see the
+// same credential the entry filer did.
+func forwardedAuthContext(ctx context.Context) context.Context {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if auth := md.Get("authorization"); len(auth) > 0 {
+			return metadata.AppendToOutgoingContext(ctx, "authorization", auth[0])
+		}
+	}
+	return ctx
 }
 
 // entryRouteKey is the ring key for an entry's writes. It shares the S3

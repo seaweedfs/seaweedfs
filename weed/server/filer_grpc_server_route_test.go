@@ -77,7 +77,7 @@ func TestForwardToWriteOwnerAppliesLocallyWhenOwned(t *testing.T) {
 	ring := fs.filer.Dlm.LockRing
 
 	key := firstKey(t, func(key string) bool { return ring.GetPrimary(key) == "f2:8888" })
-	handled, err := fs.forwardToWriteOwner(context.Background(), key, func(pb.ServerAddress) error {
+	handled, err := fs.forwardToWriteOwner(context.Background(), key, func(context.Context, pb.ServerAddress) error {
 		t.Fatal("must not forward a key this filer owns")
 		return nil
 	})
@@ -95,7 +95,7 @@ func TestForwardToWriteOwnerNeverTriesASecondFiler(t *testing.T) {
 
 	moved := firstKey(t, func(key string) bool { return ring.PriorOwner(key) != "" })
 	var tried []pb.ServerAddress
-	handled, err := fs.forwardToWriteOwner(context.Background(), moved, func(owner pb.ServerAddress) error {
+	handled, err := fs.forwardToWriteOwner(context.Background(), moved, func(ctx context.Context, owner pb.ServerAddress) error {
 		tried = append(tried, owner)
 		return errors.New("dial tcp: connection refused")
 	})
