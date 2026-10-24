@@ -8,7 +8,7 @@
 # cap on writable volumes per volume layout (collection + replica placement +
 # ttl + disk type) that write assignments spread over; fullest picked first.
 # 0 = no limit
-max_writable_volumes = 0
+max_writable_volumes_per_layout = 0
 
 
 [master.maintenance]
