@@ -3183,6 +3183,20 @@ func (iam *IdentityAccessManagement) AuthorizeObjectWrite(r *http.Request, ident
 	return iam.authorizeObjectKeyAction(r, identity, http.MethodPut, s3_constants.ACTION_WRITE, bucket, objectKey, "")
 }
 
+// AuthorizeObjectAclWrite authorizes setting an ACL on one key the request URL
+// does not name: a POST Object upload promotes its acl form field and any
+// x-amz-grant-* fields onto the upload's ACL headers, which the PUT path only
+// applies after an s3:PutObjectAcl grant.
+func (iam *IdentityAccessManagement) AuthorizeObjectAclWrite(r *http.Request, identity *Identity, bucket, objectKey string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if bucket == "" || objectKey == "" {
+		return s3err.ErrNone
+	}
+	return iam.authorizeObjectKeyAction(r, identity, http.MethodPut, s3_constants.ACTION_WRITE_ACP, bucket, objectKey, "")
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
