@@ -1519,39 +1519,76 @@ fn not_modified_response(
     etag: &str,
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
-    // If-Modified-Since first (Go order), then If-None-Match.
+    let not_modified = || {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        resp.headers_mut()
+            .insert(header::ETAG, etag.parse().unwrap());
+        if let Some(lm) = last_modified_str {
+            resp.headers_mut()
+                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+        }
+        resp
+    };
+
+    // If-Modified-Since applies only when there is no If-None-Match (RFC 9110 13.2.2).
+    if headers.contains_key(header::IF_NONE_MATCH) {
+        let inm = headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .map(|v| v.to_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(",");
+        return etag_list_matches(&inm, etag).then(not_modified);
+    }
+
     if n.last_modified > 0
-        && let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE)
-        && let Ok(ims_str) = ims_header.to_str()
+        && let Some(ims_str) = headers
+            .get(header::IF_MODIFIED_SINCE)
+            .and_then(|v| v.to_str().ok())
     {
         // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
         if let Ok(ims_time) =
             chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
             && (n.last_modified as i64) <= ims_time.and_utc().timestamp()
         {
-            let mut resp = StatusCode::NOT_MODIFIED.into_response();
-            if let Some(lm) = last_modified_str {
-                resp.headers_mut()
-                    .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-            }
-            // Go sets ETag after the 304 paths, so a 304 has no ETag.
-            return Some(resp);
+            return Some(not_modified());
         }
-    }
-
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
-        && let Ok(inm) = if_none_match.to_str()
-        && inm == etag
-    {
-        let mut resp = StatusCode::NOT_MODIFIED.into_response();
-        if let Some(lm) = last_modified_str {
-            resp.headers_mut()
-                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-        }
-        // Go sets ETag after the 304 paths, so a 304 has no ETag.
-        return Some(resp);
     }
     None
+}
+
+/// Weak comparison against "*" or a comma-separated entity-tag list (RFC 9110 13.1.2).
+fn etag_list_matches(header: &str, etag: &str) -> bool {
+    if header.trim() == "*" {
+        return true;
+    }
+    let etag = etag.trim_matches('"');
+    split_etag_list(header).into_iter().any(|tag| {
+        let tag = tag.trim();
+        let tag = tag.strip_prefix("W/").unwrap_or(tag);
+        // Empty list elements are ignored, so padding like a trailing
+        // comma cannot match an empty opaque tag.
+        !tag.is_empty() && tag.trim_matches('"') == etag
+    })
+}
+
+/// Splits an entity-tag list on the commas between tags; a comma inside a
+/// quoted opaque tag does not split.
+fn split_etag_list(header: &str) -> Vec<&str> {
+    let mut tags = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (i, b) in header.bytes().enumerate() {
+        match b {
+            b'"' => quoted = !quoted,
+            b',' if !quoted => {
+                tags.push(&header[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    tags.push(&header[start..]);
+    tags
 }
 
 /// The 200 reply headers, and the extension, which falls back to the stored name's.
@@ -5642,6 +5679,80 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         delete_handler(State(state.clone()), request).await.status()
+    }
+
+    #[test]
+    fn test_not_modified_checks_if_none_match_first() {
+        let n = Needle {
+            last_modified: 1700000000,
+            ..Needle::default()
+        };
+        let (etag, last_modified_str) = etag_and_last_modified(&n);
+        let bare = n.etag();
+        let before = "Tue, 14 Nov 2023 22:12:20 GMT".to_string();
+        let after = "Tue, 14 Nov 2023 22:14:20 GMT".to_string();
+
+        let cases: Vec<(Vec<(axum::http::HeaderName, String)>, bool)> = vec![
+            (vec![(header::IF_NONE_MATCH, format!("\"{bare}\""))], true),
+            (vec![(header::IF_NONE_MATCH, format!("W/\"{bare}\""))], true),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\", \"{bare}\""))],
+                true,
+            ),
+            (vec![(header::IF_NONE_MATCH, "*".into())], true),
+            (vec![(header::IF_NONE_MATCH, "\"x\"".into())], false),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_NONE_MATCH, format!("\"{bare}\"")),
+                ],
+                true,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"{bare},old\""))],
+                false,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\",,\"{bare}\""))],
+                true,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (vec![(header::IF_MODIFIED_SINCE, after)], true),
+            (vec![(header::IF_MODIFIED_SINCE, before)], false),
+        ];
+        for (pairs, want) in cases {
+            let mut headers = HeaderMap::new();
+            for (name, value) in &pairs {
+                headers.append(name, value.parse().unwrap());
+            }
+            assert_eq!(
+                not_modified_response(&n, &headers, &etag, &last_modified_str).is_some(),
+                want,
+                "{pairs:?}"
+            );
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            format!("\"{bare}\"").parse().unwrap(),
+        );
+        let resp = not_modified_response(&n, &headers, &etag, &last_modified_str).unwrap();
+        assert!(resp.headers().contains_key(header::ETAG));
+        assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     }
 
     /// A GET whose needle read is parked must not hold the store lock: a
