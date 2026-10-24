@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -372,17 +373,25 @@ func arnPartitionForRegion(region string) string {
 
 // ValidateTags validates tags for S3 Tables.
 func ValidateTags(tags map[string]string) error {
-	if len(tags) > 10 {
-		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
+	return ValidateTagsWithLimit(tags, 10)
+}
+
+// ValidateTagsWithLimit validates a tag set that may hold up to maxTags tags.
+func ValidateTagsWithLimit(tags map[string]string, maxTags int) error {
+	if len(tags) > maxTags {
+		return fmt.Errorf("validate tags: %d tags more than %d", len(tags), maxTags)
 	}
 	for k, v := range tags {
-		if len(k) > 128 {
+		if len(k) == 0 {
+			return fmt.Errorf("validate tags: empty tag key")
+		}
+		if utf8.RuneCountInString(k) > 128 {
 			return fmt.Errorf("validate tags: tag key longer than 128")
 		}
 		if !tagPattern.MatchString(k) {
 			return fmt.Errorf("validate tags key %s error, incorrect key", k)
 		}
-		if len(v) > 256 {
+		if utf8.RuneCountInString(v) > 256 {
 			return fmt.Errorf("validate tags: tag value longer than 256")
 		}
 		if !tagPattern.MatchString(v) {

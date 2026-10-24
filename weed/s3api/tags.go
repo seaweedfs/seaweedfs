@@ -63,6 +63,9 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
 		}
+		if _, exists := parsedTags[decodedKey]; exists {
+			return nil, fmt.Errorf("duplicate tag key '%s'", decodedKey)
+		}
 		if !hasValue {
 			parsedTags[decodedKey] = ""
 			continue
@@ -78,4 +81,12 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 
 func ValidateTags(tags map[string]string) error {
 	return s3tables.ValidateTags(tags)
+}
+
+// maxBucketTags is how many tags a bucket's tag set can hold; an object's
+// tag set holds 10.
+const maxBucketTags = 50
+
+func ValidateBucketTags(tags map[string]string) error {
+	return s3tables.ValidateTagsWithLimit(tags, maxBucketTags)
 }

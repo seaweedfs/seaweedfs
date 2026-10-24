@@ -139,6 +139,12 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	tags := tagging.ToTags()
+	// A key may appear only once in a tag set; the map keeps one of them.
+	if len(tags) != len(tagging.TagSet.Tag) {
+		glog.Errorf("PutObjectTaggingHandler duplicate tag keys %s", r.URL)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+		return
+	}
 	err = ValidateTags(tags)
 	if err != nil {
 		glog.Errorf("PutObjectTaggingHandler ValidateTags error %s: %v", r.URL, err)

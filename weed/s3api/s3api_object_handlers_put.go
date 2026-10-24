@@ -527,6 +527,22 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	if !s3_constants.IsValidBucketName(bucket) || (object != "" && !s3_constants.IsValidObjectKey(object)) {
 		return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
 	}
+
+	// Reject invalid tags before any chunks are uploaded so a failed request
+	// leaves nothing behind on the volume servers.
+	var tagSet map[string]string
+	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
+		parsed, err := parseTagsHeader(tagging)
+		if err != nil {
+			glog.Warningf("putToFiler: invalid tagging header for %s: %v", filePath, err)
+			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
+		}
+		if err := ValidateTags(parsed); err != nil {
+			glog.Warningf("putToFiler: invalid tags (%d) for %s: %v", len(parsed), filePath, err)
+			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
+		}
+		tagSet = parsed
+	}
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -938,26 +954,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
-	// Parse and store object tags from X-Amz-Tagging header
-	// Fix for GitHub issue #7589: Tags sent during object upload were not being stored
-	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
-		parsedTags, err := url.ParseQuery(tagging)
-		if err != nil {
-			glog.Warningf("putToFiler: Invalid S3 tag format in header '%s': %v", tagging, err)
-			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
-		}
-		for key, values := range parsedTags {
-			if len(values) > 1 {
-				glog.Warningf("putToFiler: Duplicate tag key '%s' in header", key)
-				return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
-			}
-			value := ""
-			if len(values) > 0 {
-				value = values[0]
-			}
-			entry.Extended[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
-		}
-		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(parsedTags))
+	// Store the tags validated before the chunk upload
+	for key, value := range tagSet {
+		entry.Extended[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
+	}
+	if len(tagSet) > 0 {
+		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(tagSet))
 	}
 
 	storeSSEMetadata(entry, sseResult)
