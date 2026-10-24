@@ -30,6 +30,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -53,7 +56,8 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          # A stale FUSE mount can hang or fail df; keep diagnostics best effort.
+          timeout 15 df -h || true
           echo "=== Starting S3 Tables Tests ==="
           
           # Run S3 Tables integration tests
@@ -91,6 +95,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -115,7 +122,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Iceberg Catalog Tests ==="
           
           # Run Iceberg catalog integration tests using Makefile (handles build)
@@ -153,6 +160,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -186,7 +196,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Trino Iceberg Catalog Tests ==="
           
           # Run Trino + Iceberg catalog integration tests
@@ -224,6 +234,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -258,7 +271,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Dremio Iceberg Catalog Tests ==="
 
@@ -298,6 +311,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -332,7 +348,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Doris Iceberg Catalog Tests ==="
 
@@ -382,6 +398,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -418,7 +437,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting ClickHouse Iceberg Catalog Tests ==="
 
@@ -470,6 +489,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -507,7 +529,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting OLake Iceberg Catalog Tests ==="
 
@@ -570,6 +592,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -602,7 +627,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Polaris Tests ==="
 
           go test -v -timeout 20m ./test/s3tables/polaris 2>&1 | tee test/s3tables/polaris/test-output.log || {
@@ -639,6 +664,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -672,7 +700,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Spark Iceberg Catalog Tests ==="
           
           # Run Spark + Iceberg catalog integration tests
@@ -710,6 +738,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -744,7 +775,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting RisingWave Catalog Tests ==="
           
           # Run RisingWave catalog integration tests
@@ -781,6 +812,9 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -840,7 +874,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting STS Integration Tests ==="
           
           # Run STS integration tests
@@ -878,6 +912,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -901,7 +938,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Lakekeeper Integration Tests ==="
           
           # Run Lakekeeper integration tests
@@ -939,6 +976,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -973,7 +1013,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Unity Catalog Tests ==="
 
@@ -1013,6 +1053,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -1046,7 +1089,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting LanceDB Namespace Tests ==="
 
@@ -1157,6 +1200,9 @@ jobs:
           # so do not leave a token in the checkout for it to pick up.
           persist-credentials: false
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -1191,7 +1237,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting DuckDB Lance Tests ==="
 
@@ -1233,6 +1279,9 @@ jobs:
           # so do not leave a token in the checkout for it to pick up.
           persist-credentials: false
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -1266,7 +1315,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           docker info
           echo "=== Starting Spark Lance Namespace Tests ==="
 

@@ -180,6 +180,10 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Download pre-built Rust binaries
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/download-artifact@v8
@@ -219,7 +223,7 @@ jobs:
           sudo docker system prune -af --volumes
           [ -d ~/.cache/go-build ] && rm -rf ~/.cache/go-build || true
           [ -d /go/pkg ] && rm -rf /go/pkg || true
-          df -h
+          timeout 15 df -h || true
 
       - name: Docker meta
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant

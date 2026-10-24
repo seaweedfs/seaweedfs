@@ -42,6 +42,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:

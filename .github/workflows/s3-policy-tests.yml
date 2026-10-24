@@ -89,6 +89,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -108,7 +111,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           
           echo "=== Starting S3 Policy Variables Integration Tests ==="
           
@@ -199,6 +202,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -218,7 +224,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           
           echo "=== Starting S3 Policy Enforcement Tests (${{ matrix.test-case }}) ==="
           

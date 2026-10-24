@@ -1,0 +1,11 @@
+name: Clean up stale SeaweedFS test mounts
+description: Detach disconnected FUSE test mounts left by earlier jobs on a shared runner.
+runs:
+  using: composite
+  steps:
+    - name: Unmount disconnected SeaweedFS test mounts
+      if: runner.os == 'Linux' && runner.environment == 'self-hosted'
+      shell: bash
+      env:
+        CLEANUP_SCRIPT: ${{ github.action_path }}/cleanup.py
+      run: python3 "$CLEANUP_SCRIPT"

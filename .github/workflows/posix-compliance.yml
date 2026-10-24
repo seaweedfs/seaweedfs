@@ -58,6 +58,9 @@ jobs:
       with:
         fetch-depth: 1
     
+    - name: Clean up stale FUSE mounts
+      uses: ./.github/actions/cleanup-stale-fuse-mounts
+
     - name: Set up Go ${{ env.GO_VERSION }}
       uses: actions/setup-go@v7
       with:
@@ -393,7 +396,7 @@ jobs:
         echo "" >> reports/debug/system_info.txt
         
         echo "Disk Space" >> reports/debug/system_info.txt
-        df -h >> reports/debug/system_info.txt
+        timeout 15 df -h >> reports/debug/system_info.txt || true
         echo "" >> reports/debug/system_info.txt
         
         echo "Memory Information" >> reports/debug/system_info.txt
