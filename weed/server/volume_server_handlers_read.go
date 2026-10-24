@@ -259,6 +259,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if n.LastModified != 0 {
 		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
 	}
+	SetEtag(w, n.Etag())
 	if notModified(r, n.Etag(), n.LastModified) {
 		if readOption.IsMetaOnly {
 			if v := vs.store.GetVolume(volumeId); v != nil {
@@ -268,7 +269,6 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	SetEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)
