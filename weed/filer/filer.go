@@ -190,7 +190,7 @@ func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote
 	return remote_storage.GetRemoteStorage(remoteConf)
 }
 
-func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
+func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
 	if len(existingNodes) == 0 {
 		return
 	}
@@ -205,8 +205,13 @@ func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes [
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 
 	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.StreamBfs(client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
-			return f.Store.InsertEntry(context.Background(), FromPbEntry(string(parentPath), entry))
+		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
+			entry := FromPbEntry(string(parentPath), pbEntry)
+			peerTsNs := entryTsNs
+			if peerTsNs == 0 {
+				peerTsNs = entry.Attr.Mtime.UnixNano()
+			}
+			return f.applyTraversedEntry(ctx, entry, peerTsNs)
 		})
 	})
 
@@ -271,19 +276,19 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 const peerLookupTimeout = 10 * time.Second
 
 // leaderSettleTimeout bounds how long an empty peer list from the leader is
-// re-polled: a freshly elected leader has not yet received the filers'
-// reconnects, so an immediate empty answer can just mean membership has not
-// migrated yet. A persistent empty answer is then checked against the other
-// masters below before it is accepted as an empty cluster.
-const leaderSettleTimeout = 10 * time.Second
+// re-polled: a freshly elected leader may not yet have the filers' reconnects,
+// so an immediate empty answer can just mean membership has not migrated yet.
+// It must stay below the health window a fresh filer gets to start serving
+// (weed mini allows 6s) — a filerless cluster pays the whole window per start.
+const leaderSettleTimeout = 3 * time.Second
 const leaderSettleInterval = time.Second
 
 // ListExistingPeerUpdates returns the peer list to bootstrap from. The
 // leader's list is authoritative: after a leader change an old master keeps
 // its registrations until its streams end, so the longest answer is not
-// necessarily the current one. The leader's answer wins whenever it can be
-// found and queried; only when the leader is unreachable does the scan fall
-// back to the fullest answer from the other masters. It returns an error when
+// necessarily the current one. A non-empty answer from the leader wins; a
+// leader that is unreachable or reports an empty list falls back to the
+// fullest answer from the other masters. It returns an error when
 // no master answers, so a failed lookup is not mistaken for an empty cluster.
 func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate, err error) {
 	masters := f.MasterClient.ListMasters()
@@ -429,7 +434,7 @@ func SyncWrite(ctx context.Context) bool {
 // syncWriteContext flags ctx when the storage rule on p asks for fsync, so the
 // store write is held to the same durability as the data path.
 func (f *Filer) syncWriteContext(ctx context.Context, p util.FullPath) context.Context {
-	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).Fsync {
+	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).GetFsync() {
 		return WithSyncWrite(ctx)
 	}
 	return ctx

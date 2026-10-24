@@ -40,8 +40,11 @@ type VendedCredentials struct {
 //
 // The access key the caller authenticated with (from ctx) is recorded in the
 // session: a short hash of it ends the session name, so the audit log's
-// requester_arn tells apart the holders of several keys on one identity, and
-// the key id itself is carried in the session token.
+// requester_arn tells apart the holders of several keys on one identity. When
+// the caller is a stored identity holding that key, the key id is also carried
+// in the session token, binding the session to it: the session ends when the
+// key is deleted or deactivated, or its identity removed or disabled
+// (validateSTSSessionToken).
 func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error) {
 	if s3a.icebergCredentialRole == "" {
 		return nil, nil
@@ -72,6 +75,19 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 		Policy:            &policy,
 		SourceAccessKeyId: accessKey,
 	}
+	// Bind the session to the caller's key when the caller authenticated with a
+	// stored identity's key — a marker its verifier records, so a caller that
+	// signed with an STS session key or OIDC token stays unbound even when its
+	// principal names a stored identity, whose session a binding would refuse
+	// on every request. The marker survives the key being revoked between
+	// authentication and this vend: the session then dies on its first request
+	// instead of living unbound until it expires. The binding travels under
+	// its own claim — SourceAccessKeyId is audit-only for compatibility with
+	// tokens minted before the binding existed.
+	if storedKey, storedSecret := s3_constants.StoredCredentialFromContext(ctx); storedKey != "" {
+		request.BoundAccessKeyId = storedKey
+		request.BoundAccessKeyFingerprint = s3_constants.StoredCredentialFingerprint(s3a.iam.stsSigningKey(), storedKey, storedSecret)
+	}
 	if s3a.icebergCredentialDuration > 0 {
 		duration := s3a.icebergCredentialDuration
 		request.DurationSeconds = &duration
@@ -94,10 +110,17 @@ func (s3a *S3ApiServer) VendTableCredentials(ctx context.Context, principal, buc
 }
 
 func (s3a *S3ApiServer) stsService() *sts.STSService {
-	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+	if s3a.iam == nil {
 		return nil
 	}
-	provider, ok := s3a.iam.iamIntegration.(IAMManagerProvider)
+	return s3a.iam.stsService()
+}
+
+func (iam *IdentityAccessManagement) stsService() *sts.STSService {
+	if iam.iamIntegration == nil {
+		return nil
+	}
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
 	if !ok {
 		return nil
 	}
@@ -106,6 +129,13 @@ func (s3a *S3ApiServer) stsService() *sts.STSService {
 		return nil
 	}
 	return manager.GetSTSService()
+}
+
+func (iam *IdentityAccessManagement) stsSigningKey() []byte {
+	if s := iam.stsService(); s != nil && s.Config != nil {
+		return s.Config.SigningKey
+	}
+	return nil
 }
 
 // tablePrefixSessionPolicy narrows a session to one table's files plus the

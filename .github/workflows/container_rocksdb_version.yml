@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       rocksdb_version:
-        description: 'RocksDB git tag or branch to build (e.g. v10.10.1)'
+        description: 'RocksDB git tag or branch to build (e.g. v11.1.2)'
         required: true
-        default: 'v10.10.1'
+        default: 'v11.1.2'
       seaweedfs_ref:
         description: 'SeaweedFS git tag, branch, or commit to build'
         required: true
@@ -15,6 +15,11 @@ on:
         description: 'Optional Docker tag suffix (defaults to rocksdb_<rocksdb>_seaweedfs_<ref>)'
         required: false
         default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.image_tag || format('rocksdb_{0}_seaweedfs_{1}', github.event.inputs.rocksdb_version, github.event.inputs.seaweedfs_ref) }}
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read

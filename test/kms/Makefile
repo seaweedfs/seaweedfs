@@ -174,12 +174,12 @@ start-openbao-ci: ## Start OpenBao via Docker for CI
 		ghcr.io/openbao/openbao:latest \
 		bao server -dev -dev-root-token-id=$(OPENBAO_TOKEN) -dev-listen-address=0.0.0.0:8200
 	@echo "Waiting for OpenBao to be ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s $(OPENBAO_ADDR)/v1/sys/health > /dev/null 2>&1; then \
 			echo "$(GREEN)OpenBao is ready$(NC)"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
+		if [ $$i -eq 90 ]; then \
 			echo "$(RED)Timeout waiting for OpenBao$(NC)"; \
 			docker logs openbao-ci 2>&1 | tail -20; \
 			exit 1; \
@@ -213,12 +213,12 @@ start-seaweedfs-ci: check-binary ## Start weed mini with OpenBao KMS config
 		-ip=127.0.0.1 \
 		> /tmp/seaweedfs-kms-mini.log 2>&1 & echo $$! > /tmp/weed-kms-mini.pid
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "$(GREEN)S3 service is ready$(NC)"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
+		if [ $$i -eq 90 ]; then \
 			echo "$(RED)Timeout waiting for S3 service$(NC)"; \
 			echo "=== Last 50 lines of server log ==="; \
 			tail -50 /tmp/seaweedfs-kms-mini.log 2>/dev/null || echo "No server log found"; \

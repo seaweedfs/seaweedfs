@@ -207,4 +207,3 @@ func TestCreateAndListBuckets_ServiceLevel(t *testing.T) {
 	}
 	require.True(t, found, "bucket %q must appear in service-level ListBuckets", bucket)
 }
-

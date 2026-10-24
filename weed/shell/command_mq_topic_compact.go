@@ -73,7 +73,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	// read topic configuration
 	fca := filer_client.NewFilerClientAccessor(
-		[]pb.ServerAddress{commandEnv.FilerAddress()},
+		[]pb.ServerAddress{commandEnv.option.FilerAddress},
 		commandEnv.option.GrpcDialOption,
 	)
 	t := topic.NewTopic(*namespace, *topicName)

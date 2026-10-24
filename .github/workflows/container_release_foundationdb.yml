@@ -11,6 +11,11 @@ on:
         required: true
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || format('refs/tags/{0}', github.event.inputs.release_tag) || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

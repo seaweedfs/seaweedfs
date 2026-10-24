@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -168,6 +169,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
+	// Gate on a real write: a fresh mini still cannot assign a file id until
+	// its volume registers and a grow round finishes.
+	if err := f.waitForWritable(90 * time.Second); err != nil {
+		f.dumpLog("mount")
+		return fmt.Errorf("FUSE mount not writable: %v", err)
+	}
+
 	f.isSetup = true
 	return nil
 }
@@ -286,11 +294,16 @@ func (f *FuseTestFramework) dumpLog(name string) {
 	f.t.Logf("[%s log tail (%d bytes)]\n%s", name, len(data), string(data))
 }
 
-// copyLogsForCI copies SeaweedFS process logs to /tmp/seaweedfs-fuse-logs/
-// so the CI workflow can upload them as artifacts.
+// copyLogsForCI copies SeaweedFS process logs under a per-test directory in
+// /tmp/seaweedfs-fuse-logs/ so the CI workflow can upload them as artifacts.
+// Each framework instance gets its own directory: every test in the suite
+// builds one, and fixed filenames would let a later passing test overwrite
+// the logs of an earlier failing one.
 func (f *FuseTestFramework) copyLogsForCI() {
-	ciLogDir := "/tmp/seaweedfs-fuse-logs"
-	os.MkdirAll(ciLogDir, 0755)
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-logs", strings.NewReplacer("/", "_", " ", "_").Replace(f.t.Name()))
+	if err := os.MkdirAll(ciLogDir, 0755); err != nil {
+		return
+	}
 	for _, name := range []string{"mini", "mount"} {
 		src := filepath.Join(f.logDir, name+".log")
 		data, err := os.ReadFile(src)
@@ -307,6 +320,10 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 	if config.EnableDebug {
 		args = append(args, "-v=4")
 	}
+	adminPort := freePort(f.t)
+	for adminPort == f.filerPort {
+		adminPort = freePort(f.t)
+	}
 	args = append(args,
 		"mini",
 		"-dir="+f.dataDir,
@@ -316,6 +333,9 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-s3=false",
 		"-webdav=false",
 		"-admin.ui=false",
+		"-admin.port="+strconv.Itoa(adminPort),
+		"-admin.port.grpc="+strconv.Itoa(adminPort+grpcPortOffset),
+		"-admin.port.legacy=0",
 	)
 
 	proc, err := f.startProcess("mini", args)
@@ -419,6 +439,68 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout")
+}
+
+// waitForWritable probes the mount with a real write+read+remove until one
+// succeeds, covering the window where a fresh cluster cannot yet assign a
+// file id (volume not registered, grow pending, leader settle). Each attempt
+// runs off the loop because a wedged mount can hold a file op open, and one
+// attempt stays in flight until it finishes or the overall deadline passes.
+func (f *FuseTestFramework) waitForWritable(timeout time.Duration) error {
+	probe := filepath.Join(f.mountPoint, ".framework_write_probe")
+	payload := []byte("probe")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if exitErr := f.mountProcess.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v)", exitErr)
+		}
+		result := make(chan error, 1)
+		go func() {
+			if err := os.WriteFile(probe, payload, 0644); err != nil {
+				result <- err
+				return
+			}
+			data, err := os.ReadFile(probe)
+			if err != nil {
+				result <- err
+				return
+			}
+			if len(data) != len(payload) {
+				result <- fmt.Errorf("read back %d bytes, want %d", len(data), len(payload))
+				return
+			}
+			result <- os.Remove(probe)
+		}()
+		tick := time.NewTicker(500 * time.Millisecond)
+		attemptOpen := true
+		for attemptOpen {
+			select {
+			case err := <-result:
+				attemptOpen = false
+				if err == nil {
+					tick.Stop()
+					return nil
+				}
+				lastErr = err
+			case <-tick.C:
+				if exitErr := f.mountProcess.exited(); exitErr != nil {
+					tick.Stop()
+					return fmt.Errorf("mount process exited (%v)", exitErr)
+				}
+				if !time.Now().Before(deadline) {
+					tick.Stop()
+					if lastErr == nil {
+						return fmt.Errorf("write probe did not complete within timeout")
+					}
+					return fmt.Errorf("write probe failed within timeout: %v", lastErr)
+				}
+			}
+		}
+		tick.Stop()
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("write probe failed within timeout: %v", lastErr)
 }
 
 // deviceID returns the device ID of the filesystem containing path.

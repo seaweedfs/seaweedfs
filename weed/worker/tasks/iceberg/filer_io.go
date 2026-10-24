@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -162,26 +163,66 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return state, nil
 }
 
+func isFilerNotFound(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound
+}
+
+// resolveFilerPath returns the filer path that actually holds a referenced
+// file: the verbatim spelling first, then the percent-decoded one. Writers
+// may record a path with escaped segments while the S3 layer decoded the key
+// before storing the object.
+func resolveFilerPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (string, error) {
+	_, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	return fullPath, err
+}
+
+// lookupResolvedEntry returns the entry and filer path holding an
+// Iceberg-style reference under the verbatim-first rule.
+func lookupResolvedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, string, error) {
+	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: path.Dir(fullPath),
+		Name:      path.Base(fullPath),
+	})
+	if err == nil {
+		return resp.Entry, fullPath, nil
+	}
+	if !isFilerNotFound(err) {
+		return nil, "", err
+	}
+	if decoded, decErr := url.PathUnescape(icebergPath); decErr == nil && decoded != icebergPath {
+		return lookupResolvedEntry(ctx, client, bucketName, dataPath, decoded)
+	}
+	return nil, "", err
+}
+
+// addFilerPathSpellings records every filer path lookupResolvedEntry can
+// return for a reference: each successive decoding of the reference, with the
+// rest of the path left verbatim. An extra spelling only keeps a file; a
+// missing one can drop a referenced file.
+func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, icebergPath string) {
+	for spelling := icebergPath; ; {
+		filerPath, err := icebergFilerPath(bucketName, dataPath, spelling)
+		if err != nil {
+			return
+		}
+		set[filerPath] = struct{}{}
+		decoded, err := url.PathUnescape(spelling)
+		if err != nil || decoded == spelling {
+			return
+		}
+		spelling = decoded
+	}
+}
+
 // lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
 // path. dataPath is the bucket-relative directory the table's files live in.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
-	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
-	if err != nil {
-		return nil, err
-	}
-	dir, fileName := path.Dir(fullPath), path.Base(fullPath)
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      fileName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("lookup %s/%s: %w", dir, fileName, err)
-	}
-	if resp == nil || resp.Entry == nil {
-		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
-	}
-	return resp.Entry, nil
+	entry, _, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	return entry, err
 }
 
 // loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
