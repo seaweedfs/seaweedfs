@@ -207,6 +207,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" && !validateStorageClass(sc) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidStorageClass)
+		return
+	}
+
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	// If source object is empty or bucket is empty, reply back invalid copy source.
