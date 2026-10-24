@@ -594,18 +594,20 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 
 // AdmitRaftPeer pulls a master into the raft quorum, if we are the leader and
 // do not have it yet. A master that starts with no raft state cannot campaign
-// under either implementation, so this is its only way in.
-func (ms *MasterServer) AdmitRaftPeer(peerAddress pb.ServerAddress) {
+// under either implementation, so this is its only way in. The returned
+// channel resolves with the admission result, or nil when no admission ran.
+func (ms *MasterServer) AdmitRaftPeer(peerAddress pb.ServerAddress) <-chan error {
 	if ms.option.SingleMaster || peerAddress.ToHttpAddress() == ms.option.Master.ToHttpAddress() {
-		return
+		return nil
 	}
 
 	peerName, ok := ms.missingRaftPeerName(peerAddress)
 	if !ok {
-		return
+		return nil
 	}
-	if _, alreadyAdmitting := ms.raftPeerAdmissions.LoadOrStore(peerName, struct{}{}); alreadyAdmitting {
-		return
+	admission := make(chan error, 1)
+	if inFlight, alreadyAdmitting := ms.raftPeerAdmissions.LoadOrStore(peerName, admission); alreadyAdmitting {
+		return inFlight.(chan error)
 	}
 	glog.V(0).Infof("adding new raft server: %s", peerName)
 	// The join commits through raft, which waits on the other peers, so keep it
@@ -613,10 +615,15 @@ func (ms *MasterServer) AdmitRaftPeer(peerAddress pb.ServerAddress) {
 	// handler that a joining master is still blocked in.
 	go func() {
 		defer ms.raftPeerAdmissions.Delete(peerName)
+		defer close(admission)
 		if err := ms.raftAddServer(peerName, peerAddress.ToGrpcAddress(), true); err != nil {
 			glog.Warningf("failed adding raft server %s: %v", peerName, err)
+			admission <- err
+			return
 		}
+		admission <- nil
 	}()
+	return admission
 }
 
 // missingRaftPeerName returns the raft id to admit peerAddress under, and
