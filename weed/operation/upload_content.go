@@ -555,8 +555,10 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	// past it the wait is server-side commit, which the transport's response
 	// header timeout already bounds — the stall watchdog only blames a conn
 	// that is still trickling the body.
-	var bodySentAt atomic.Int64
-	req.Body = &watchdogBody{ReadCloser: req.Body, sentAt: &bodySentAt}
+	var curBodySentAt atomic.Pointer[atomic.Int64]
+	bodySentAt := &atomic.Int64{}
+	curBodySentAt.Store(bodySentAt)
+	req.Body = &watchdogBody{ReadCloser: req.Body, sentAt: bodySentAt}
 	stallFired := func() {
 		if !uploadDone.CompareAndSwap(false, true) {
 			return
@@ -576,7 +578,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			}
 		}()
 		stallTimer = time.AfterFunc(uploadStallTimeout(int64(originalDataSize)), func() {
-			if bodySentAt.Load() == 0 {
+			if curBodySentAt.Load().Load() == 0 {
 				stallFired()
 			}
 		})
@@ -602,12 +604,13 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			// "connection reset" error with a misleading "Body length 0".
 			if req.GetBody != nil {
 				if newBody, gbErr := req.GetBody(); gbErr == nil {
-					bodySentAt.Store(0)
+					bodySentAt = &atomic.Int64{}
+					curBodySentAt.Store(bodySentAt)
 					started = time.Now()
 					if stallTimer != nil && !uploadDone.Load() {
 						stallTimer.Reset(uploadStallTimeout(int64(originalDataSize)))
 					}
-					req.Body = &watchdogBody{ReadCloser: newBody, sentAt: &bodySentAt}
+					req.Body = &watchdogBody{ReadCloser: newBody, sentAt: bodySentAt}
 					resp, post_err = uploader.httpClient.Do(req)
 					defer util_http.CloseResponse(resp)
 				} else {
@@ -625,7 +628,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	// The wire time proves the host, but the mark only lands on a verified
 	// upload: a fast rejection says nothing about how the conn drains.
 	movedIn := time.Since(started)
-	if sentNs := bodySentAt.Load(); sentNs > 0 {
+	if sentNs := curBodySentAt.Load().Load(); sentNs > 0 {
 		movedIn = time.Duration(sentNs - started.UnixNano())
 	}
 
