@@ -599,6 +599,16 @@ func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *f
 	return so, nil
 }
 
+// adminPeerSigningKey is nil on servers built without a credential guard
+// (tests, embedded filers), where bypass requests are refused the same way an
+// unkeyed deployment refuses non-local ones.
+func (fs *FilerServer) adminPeerSigningKey() security.SigningKey {
+	if fs.filerGuard == nil {
+		return nil
+	}
+	return fs.filerGuard.SigningKey()
+}
+
 // applyObjectMutation applies a single mutation while the transaction's path
 // lock is held. PUT entries are expected to be fully prepared by the caller
 // (chunks resolved); mutations here are metadata-scoped. A DELETE of an absent
@@ -623,7 +633,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			ctx = filer.WithKeepRemoteObject(ctx)
 		}
 		if m.BypassGovernanceRetention {
-			if peerErr := security.CheckGrpcAdminPeer(ctx, fs.filerGuard.SigningKey()); peerErr == nil {
+			if peerErr := security.CheckGrpcAdminPeer(ctx, fs.adminPeerSigningKey()); peerErr == nil {
 				ctx = filer.WithBypassGovernanceRetention(ctx)
 			} else {
 				glog.V(1).InfofCtx(ctx, "ObjectMutation DELETE %s/%s: bypass_governance_retention ignored: %v", m.Directory, m.Name, peerErr)
@@ -1064,7 +1074,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		ctx = filer.WithKeepRemoteObject(ctx)
 	}
 	if req.BypassGovernanceRetention {
-		if peerErr := security.CheckGrpcAdminPeer(ctx, fs.filerGuard.SigningKey()); peerErr == nil {
+		if peerErr := security.CheckGrpcAdminPeer(ctx, fs.adminPeerSigningKey()); peerErr == nil {
 			ctx = filer.WithBypassGovernanceRetention(ctx)
 		} else {
 			glog.V(1).InfofCtx(ctx, "DeleteEntry %s: bypass_governance_retention ignored: %v", fullpath, peerErr)
