@@ -3,11 +3,13 @@ package command
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -34,14 +36,26 @@ func (s *kvFilerServer) KvPut(_ context.Context, req *filer_pb.KvPutRequest) (*f
 	return &filer_pb.KvPutResponse{}, nil
 }
 
+type failingKvFilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (failingKvFilerServer) KvGet(context.Context, *filer_pb.KvGetRequest) (*filer_pb.KvGetResponse, error) {
+	return &filer_pb.KvGetResponse{Error: "kv store unavailable"}, nil
+}
+
 func startKvFiler(t *testing.T) (pb.ServerAddress, grpc.DialOption) {
+	return startFiler(t, &kvFilerServer{kv: map[string][]byte{}})
+}
+
+func startFiler(t *testing.T, server filer_pb.SeaweedFilerServer) (pb.ServerAddress, grpc.DialOption) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	grpcServer := grpc.NewServer()
-	filer_pb.RegisterSeaweedFilerServer(grpcServer, &kvFilerServer{kv: map[string][]byte{}})
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, server)
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(func() { grpcServer.Stop() })
 	grpcPort := listener.Addr().(*net.TCPAddr).Port
@@ -108,5 +122,26 @@ func TestBackupOffset_DistinctDestinationsDoNotShare(t *testing.T) {
 	}
 	if got, err := getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, idB, BackupKeyPrefix, legacyB); err != nil || got != 2000 {
 		t.Fatalf("B reads (%d, %v), want (2000, nil)", got, err)
+	}
+}
+
+func TestFilerBackup_OffsetReadFailureFailsAttempt(t *testing.T) {
+	filerAddr, dial := startFiler(t, failingKvFilerServer{})
+
+	config := util.GetViper()
+	config.Set("sink.local.enabled", true)
+	config.Set("sink.local.directory", t.TempDir())
+	t.Cleanup(func() { config.Set("sink.local.enabled", false) })
+
+	options := filerBackupOptions
+	address := string(filerAddr)
+	options.filer = &address
+
+	resumeTsNs, err := doFilerBackup(dial, &options, nil, nil, nil, 1, 1, 0)
+	if err == nil || !strings.Contains(err.Error(), "kv store unavailable") {
+		t.Fatalf("doFilerBackup error = %v, want the offset read failure", err)
+	}
+	if resumeTsNs != 0 {
+		t.Fatalf("resume position = %d, want 0", resumeTsNs)
 	}
 }
