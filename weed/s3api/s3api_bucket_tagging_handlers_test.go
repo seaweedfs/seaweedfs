@@ -20,6 +20,7 @@ func TestPutBucketTaggingTagCountLimit(t *testing.T) {
 	for _, tc := range []struct {
 		tags      int
 		repeatKey bool // the last tag repeats the first tag's key
+		emptyKey  bool // the first tag has an empty key
 		wantCode  int
 	}{
 		{tags: 10, wantCode: http.StatusOK},
@@ -28,10 +29,14 @@ func TestPutBucketTaggingTagCountLimit(t *testing.T) {
 		{tags: 51, wantCode: http.StatusBadRequest},
 		{tags: 2, repeatKey: true, wantCode: http.StatusBadRequest},
 		{tags: 51, repeatKey: true, wantCode: http.StatusBadRequest},
+		{tags: 1, emptyKey: true, wantCode: http.StatusBadRequest},
 	} {
 		name := fmt.Sprintf("%d tags", tc.tags)
 		if tc.repeatKey {
 			name += " with a repeated key"
+		}
+		if tc.emptyKey {
+			name += " with an empty key"
 		}
 		t.Run(name, func(t *testing.T) {
 			filer := &fakeTxnFiler{}
@@ -43,11 +48,14 @@ func TestPutBucketTaggingTagCountLimit(t *testing.T) {
 			var body strings.Builder
 			body.WriteString("<Tagging><TagSet>")
 			for i := 0; i < tc.tags; i++ {
-				key := i
+				key := fmt.Sprintf("key%d", i)
 				if tc.repeatKey && i == tc.tags-1 {
-					key = 0
+					key = "key0"
 				}
-				fmt.Fprintf(&body, "<Tag><Key>key%d</Key><Value>value%d</Value></Tag>", key, i)
+				if tc.emptyKey && i == 0 {
+					key = ""
+				}
+				fmt.Fprintf(&body, "<Tag><Key>%s</Key><Value>value%d</Value></Tag>", key, i)
 			}
 			body.WriteString("</TagSet></Tagging>")
 

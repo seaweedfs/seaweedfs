@@ -381,6 +381,9 @@ func ValidateTagsWithLimit(tags map[string]string, maxTags int) error {
 		return fmt.Errorf("validate tags: %d tags more than %d", len(tags), maxTags)
 	}
 	for k, v := range tags {
+		if len(k) == 0 {
+			return fmt.Errorf("validate tags: empty tag key")
+		}
 		if len(k) > 128 {
 			return fmt.Errorf("validate tags: tag key longer than 128")
 		}
