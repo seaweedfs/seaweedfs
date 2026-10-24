@@ -194,6 +194,30 @@ func objectLockEnabledOnEntry(entry *Entry) bool {
 	return v == s3_constants.ObjectLockEnabled || v == "true"
 }
 
+// mayDescendantsHoldLocks reports whether the subtree under p can hold an
+// entry under retention or legal hold. The S3 gateway refuses to set either
+// outside a lock-enabled bucket, so a tree elsewhere can only carry planted
+// attributes, which the walk still refuses on sight. The pre-pass that makes
+// refusal atomic is worth its second scan only when locks genuinely apply.
+func (f *Filer) mayDescendantsHoldLocks(ctx context.Context, p util.FullPath, entry *Entry) bool {
+	if objectLockEnabledOnEntry(entry) {
+		return true
+	}
+	rel := strings.TrimPrefix(string(p), f.DirBucketsPath+"/")
+	if rel == string(p) {
+		return false
+	}
+	bucket, _, _ := strings.Cut(rel, "/")
+	if bucket == "" {
+		return false
+	}
+	bucketEntry, err := f.FindEntry(ctx, util.FullPath(f.DirBucketsPath+"/"+bucket))
+	if err != nil {
+		return !errors.Is(err, filer_pb.ErrNotFound)
+	}
+	return bucketEntry != nil && objectLockEnabledOnEntry(bucketEntry)
+}
+
 // emptyFolderDeleteContext makes deleting a folder that is empty in the filer
 // metadata-only when it is under a remote mount. A mount is populated lazily,
 // so the folder can still hold remote objects never read, and removing its
@@ -266,7 +290,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	// per entry rather than dropped wholesale with it.
 	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
-		if isRecursive && !isFromOtherCluster {
+		// The pre-pass is mandatory when the delete ends in a store-level
+		// drop that never lists the children it removes; when they are walked
+		// anyway, the per-page check already refuses a lock on sight, so the
+		// second scan only buys atomicity where locks genuinely apply.
+		childrenDroppedUnseen := isDeleteCollection && (dropsCollection || !shouldDeleteChunks) && f.Store.CanDropWholeBucket() && !objectLockEnabledOnEntry(entry)
+		if isRecursive && !isFromOtherCluster && (childrenDroppedUnseen || f.mayDescendantsHoldLocks(ctx, p, entry)) {
 			if lockErr := f.lockedDescendantError(ctx, entry); lockErr != nil {
 				return lockErr
 			}
