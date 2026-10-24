@@ -2392,6 +2392,19 @@ func TestSupersededRenameInRecoversTheCurrentEntry(t *testing.T) {
 		}
 	})
 
+	// a source key reused since the rename holds another file's bytes; copying
+	// them over the destination would stamp the wrong content
+	t.Run("a reused source key: the event fails", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/plain-remote/a.txt": []byte("data")}, statETags: map[string]string{"/plain-remote/a.txt": "replaced"}}
+		filerClient := newFilerClient(uncached)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err == nil {
+			t.Fatal("want the event to fail rather than copy unrelated bytes")
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want the replaced source left alone", remote.writes)
+		}
+	})
+
 	t.Run("rewritten since: the superseding event uploads", func(t *testing.T) {
 		rewritten := &filer_pb.Entry{
 			Name:        "a.txt",

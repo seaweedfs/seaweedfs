@@ -833,6 +833,12 @@ func copyRenameInSource(
 	if err != nil {
 		return err
 	}
+	// the stamp describes what the rename-in entry reads; a source key reused
+	// since holds another file's bytes, and copying them here would stamp the
+	// wrong content
+	if !remote_storage.Describes(current.RemoteEntry, stat) {
+		return fmt.Errorf("%s: %s no longer holds the content the entry describes", util.NewFullPath(dir, current.Name), remote_storage.FormatLocation(srcLoc))
+	}
 	reader, err := openRemoteObject(srcClient, srcLoc, stat.RemoteSize)
 	if err != nil {
 		return err
