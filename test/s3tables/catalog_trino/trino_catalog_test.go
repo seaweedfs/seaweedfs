@@ -466,6 +466,7 @@ func (env *TestEnvironment) startTrinoContainer(t *testing.T, configDir string) 
 
 	cmd := exec.Command("docker", "run", "-d",
 		"--name", containerName,
+		"--memory", "4g",
 		"--add-host", "host.docker.internal:host-gateway",
 		"-v", fmt.Sprintf("%s:/etc/trino/catalog", configDir),
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
@@ -484,7 +485,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 
 	deadline := time.Now().Add(timeout)
 	var lastOutput []byte
-	retryCount := 0
+	containerDead := false
 	for time.Now().Before(deadline) {
 		// Try system catalog query as a readiness check
 		cmd := exec.Command("docker", "exec", containerName,
@@ -495,26 +496,51 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 			return
 		} else {
 			lastOutput = output
-			outputStr := string(output)
-			if strings.Contains(outputStr, "No such container") ||
-				strings.Contains(outputStr, "is not running") {
+			if trinoContainerExited(output) {
+				containerDead = true
 				break
 			}
-			retryCount++
 		}
 		time.Sleep(1 * time.Second)
 	}
 
 	// If we can't connect to system catalog, try to at least connect to Trino server
-	cmd := exec.Command("docker", "exec", containerName, "trino", "--version")
-	if err := cmd.Run(); err == nil {
+	if output, err := exec.Command("docker", "exec", containerName, "trino", "--version").CombinedOutput(); err == nil {
 		// Trino process is running, even if catalog isn't ready yet
 		// Give it a bit more time
 		time.Sleep(5 * time.Second)
 		return
+	} else {
+		lastOutput = output
+		containerDead = containerDead || trinoContainerExited(output)
 	}
 
-	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
+	if containerDead {
+		t.Fatalf("Trino container %s exited before becoming ready\nLast output:\n%s\n%s", containerName, string(lastOutput), trinoContainerDiagnostics(containerName))
+	}
+	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s\n%s", string(lastOutput), trinoContainerDiagnostics(containerName))
+}
+
+func trinoContainerExited(output []byte) bool {
+	s := string(output)
+	return strings.Contains(s, "No such container") || strings.Contains(s, "is not running")
+}
+
+func trinoContainerDiagnostics(containerName string) string {
+	var b strings.Builder
+	if out, err := exec.Command("docker", "inspect", "-f",
+		"status={{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}}",
+		containerName).CombinedOutput(); err == nil {
+		fmt.Fprintf(&b, "docker inspect: %s\n", strings.TrimSpace(string(out)))
+	} else {
+		fmt.Fprintf(&b, "docker inspect failed: %v (%s)\n", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("docker", "logs", "--tail", "80", containerName).CombinedOutput(); err == nil {
+		fmt.Fprintf(&b, "docker logs:\n%s", string(out))
+	} else {
+		fmt.Fprintf(&b, "docker logs failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return b.String()
 }
 
 func runTrinoSQL(t *testing.T, containerName, sql string) string {
