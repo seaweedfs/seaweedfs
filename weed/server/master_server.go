@@ -54,6 +54,7 @@ type MasterOption struct {
 	FileSizeLimitMB               int
 	VolumePreallocate             bool
 	MaxParallelVacuumPerServer    int
+	MaxWritableVolumes            int
 	VacuumIntervalSeconds         int
 	VacuumDeleteEmptyAfterSeconds int
 	// PulseSeconds            int
@@ -162,6 +163,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		glog.Fatalf("create sequencer failed.")
 	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
+	ms.Topo.SetMaxWritableVolumes(ms.option.MaxWritableVolumes)
 	ms.Topo.SetGrowthFreezeConfig(
 		v.GetBool("master.volume_growth.freeze_on_topology_mismatch"),
 		v.GetDuration("master.volume_growth.state_loss_recovery_wait"))
