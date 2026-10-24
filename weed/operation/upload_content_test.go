@@ -237,6 +237,13 @@ func (c *stallingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// markHostFast arms the stall watchdog the way a recent fast upload would:
+// the recorded rate is high enough that the adaptive budget lands on
+// uploadStallMinWait for test-sized bodies.
+func markHostFast(u *Uploader, host string) {
+	u.fastUploadHosts.Store(host, fastHostMark{at: time.Now().UnixNano(), bps: 1 << 30})
+}
+
 // A host that just served a fast upload arms the stall watchdog: a request
 // parked well past the floor is riding a wedged conn, so it is cancelled and
 // the retry runs on a fresh conn without the watchdog.
@@ -246,7 +253,7 @@ func TestUploadStallWatchdogRetriesOnFreshConn(t *testing.T) {
 
 	client := &stallingHTTPClient{stalls: 1}
 	uploader := newUploader(client)
-	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+	markHostFast(uploader, "test-host:8080")
 
 	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
 		UploadUrl:   "http://test-host:8080/1,deadbeef",
@@ -307,7 +314,7 @@ func TestUploadStallWatchdogCoversResponseRead(t *testing.T) {
 
 	client := &readStallHTTPClient{stall: true}
 	uploader := newUploader(client)
-	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+	markHostFast(uploader, "test-host:8080")
 
 	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
 		UploadUrl:   "http://test-host:8080/1,deadbeef",
@@ -334,7 +341,7 @@ type rearmHTTPClient struct {
 func (c *rearmHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	if atomic.AddInt32(&c.calls, 1) == 1 {
 		<-req.Context().Done()
-		c.uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+		markHostFast(c.uploader, req.URL.Host)
 		return nil, req.Context().Err()
 	}
 	// Park past the watchdog floor like a real wedged conn: a re-armed
@@ -363,7 +370,7 @@ func TestUploadStallWatchdogStaysDisarmedOnRetry(t *testing.T) {
 
 	uploader := newUploader(nil)
 	uploader.httpClient = &rearmHTTPClient{uploader: uploader, slowFor: 60 * time.Millisecond}
-	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+	markHostFast(uploader, "test-host:8080")
 
 	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
 		UploadUrl:   "http://test-host:8080/1,deadbeef",
@@ -385,7 +392,7 @@ func TestUploadStallWatchdogRearmsForNextUpload(t *testing.T) {
 
 	client := &stallingHTTPClient{}
 	uploader := newUploader(client)
-	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+	markHostFast(uploader, "test-host:8080")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -440,7 +447,7 @@ func TestUploadStallWatchdogDialsFreshConn(t *testing.T) {
 	uploader := newUploader(&http.Client{Transport: tr})
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	uploader.fastUploadHosts.Store(host, time.Now().UnixNano())
+	markHostFast(uploader, host)
 
 	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
 		UploadUrl:   srv.URL + "/1,deadbeef",
@@ -463,7 +470,7 @@ func TestUploadStallWatchdogAllowsSlowCommit(t *testing.T) {
 
 	client := &stallingHTTPClient{slowFor: 80 * time.Millisecond}
 	uploader := newUploader(client)
-	uploader.fastUploadHosts.Store("test-host:8080", time.Now().UnixNano())
+	markHostFast(uploader, "test-host:8080")
 
 	result, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
 		UploadUrl:   "http://test-host:8080/1,deadbeef",
@@ -524,20 +531,39 @@ func TestUploadStallWatchdogKeepsUnprovenHost(t *testing.T) {
 	}
 }
 
-// Only a genuinely fast transfer marks the host: a trickle success (below the
-// healthy bar) and a too-small upload leave the host unproven.
-func TestUploadMovedHealthy(t *testing.T) {
-	if !uploadMovedHealthy(4<<20, 3*time.Second) {
-		t.Fatalf("4MiB in 3s is a healthy upload")
+// Any sizeable completed upload marks its host at the rate it proved — slow
+// or fast — because the stall budget scales off that rate. Only a too-small
+// body fails to measure.
+func TestUploadObservedBps(t *testing.T) {
+	if bps := uploadObservedBps(4<<20, 4*time.Second); bps != 1<<20 {
+		t.Fatalf("4MiB in 4s observed %d B/s, want 1MiB/s", bps)
 	}
-	if uploadMovedHealthy(4<<20, 10*time.Second) {
-		t.Fatalf("4MiB in 10s is below the healthy bar")
+	if bps := uploadObservedBps(4<<20, 3*time.Hour); bps <= 0 {
+		t.Fatalf("a slow upload still proves the rate it moved at")
 	}
-	if uploadMovedHealthy(64*1024, time.Millisecond) {
+	if bps := uploadObservedBps(64*1024, time.Millisecond); bps != 0 {
 		t.Fatalf("a small upload says nothing about host speed")
 	}
-	if uploadMovedHealthy(4<<20, 3*time.Hour) {
-		t.Fatalf("a 3-hour upload can never mark a host fast")
+	if bps := uploadObservedBps(4<<20, 0); bps != 0 {
+		t.Fatalf("a zero-duration sample is not a measurement")
+	}
+}
+
+// The stall budget scales with the rate the host last proved, so the same
+// body gets little slack on a fast link and plenty on a slow one — no fixed
+// floor fits both.
+func TestUploadStallTimeoutScalesWithMeasuredRate(t *testing.T) {
+	// 8MiB/s observed → a 64MiB body gets 8x the time it needs at that rate.
+	if d := uploadStallTimeout(64<<20, 8<<20); d != 64*time.Second {
+		t.Fatalf("stall budget = %v, want 64s", d)
+	}
+	// The same body on a 64MiB/s host gets 8s — under the floor, so clamped.
+	if d := uploadStallTimeout(64<<20, 64<<20); d != uploadStallMinWait {
+		t.Fatalf("stall budget = %v, want the min wait %v", d, uploadStallMinWait)
+	}
+	// A tiny body on a fast host cannot race its own conn.
+	if d := uploadStallTimeout(1, 1<<30); d != uploadStallMinWait {
+		t.Fatalf("stall budget = %v, want the min wait %v", d, uploadStallMinWait)
 	}
 }
 

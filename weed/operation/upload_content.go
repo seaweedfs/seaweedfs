@@ -169,11 +169,11 @@ type HTTPClient interface {
 // Uploader
 type Uploader struct {
 	httpClient HTTPClient
-	// fastUploadHosts records the last time an upload to a host ran at a
-	// healthy rate, so a later upload stalling far below it can be blamed on
+	// fastUploadHosts records the wire rate of the last sizeable upload to
+	// each host, so a later upload stalling far below it can be blamed on
 	// that one connection rather than the link and get cancelled for a retry
 	// on a fresh conn.
-	fastUploadHosts sync.Map
+	fastUploadHosts sync.Map // host:port → fastHostMark
 }
 
 func NewUploader() (*Uploader, error) {
@@ -536,6 +536,10 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	} else {
 		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
 	}
+	// bodySize is what the conn must move: originalDataSize counts bytes
+	// before compression, which would inflate both the recorded rate and the
+	// stall budget for a pre-compressed body.
+	bodySize := int64(reqReader.Len())
 	reqCtx, cancelUpload := context.WithCancel(ctx)
 	defer cancelUpload()
 
@@ -564,17 +568,17 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	bodySentAt := &atomic.Int64{}
 	curBodySentAt.Store(bodySentAt)
 	req.Body = &watchdogBody{ReadCloser: req.Body, sentAt: bodySentAt}
-	last, hostWasFast := uploader.fastUploadHosts.Load(req.URL.Host)
-	hostWasFast = hostWasFast && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory
+	mark, hostWasFast := uploader.fastUploadHosts.Load(req.URL.Host)
+	hostWasFast = hostWasFast && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, mark.(fastHostMark).at)) < fastUploadHostMemory
 	stallFired := func() {
 		if !uploadDone.CompareAndSwap(false, true) {
 			return
 		}
-		// The host was moving chunks at full rate a moment ago, so an
-		// upload still trickling past its floor rides a wedged pooled
+		// The host was moving bodies at full rate a moment ago, so an
+		// upload still trickling far below that rate rides a wedged pooled
 		// conn; cancel drops the conn so the retry dials a fresh one.
 		// CompareAndDelete leaves a newer mark a concurrent success stored.
-		uploader.fastUploadHosts.CompareAndDelete(req.URL.Host, last)
+		uploader.fastUploadHosts.CompareAndDelete(req.URL.Host, mark)
 		glog.WarningfCtx(ctx, "upload %d bytes to %s stalled on a pooled connection, retrying on a fresh one", originalDataSize, option.UploadUrl)
 		cancelUpload()
 	}
@@ -585,7 +589,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 				stallTimer.Stop()
 			}
 		}()
-		stallTimer = time.AfterFunc(uploadStallTimeout(int64(originalDataSize)), func() {
+		stallTimer = time.AfterFunc(uploadStallTimeout(bodySize, mark.(fastHostMark).bps), func() {
 			if curBodySentAt.Load().Load() == 0 {
 				stallFired()
 			}
@@ -616,7 +620,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 					curBodySentAt.Store(bodySentAt)
 					started = time.Now()
 					if stallTimer != nil && !uploadDone.Load() {
-						stallTimer.Reset(uploadStallTimeout(int64(originalDataSize)))
+						stallTimer.Reset(uploadStallTimeout(bodySize, mark.(fastHostMark).bps))
 					}
 					req.Body = &watchdogBody{ReadCloser: newBody, sentAt: bodySentAt}
 					resp, post_err = uploader.httpClient.Do(req)
@@ -645,8 +649,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	var ret UploadResult
 	etag := getEtag(resp)
 	if resp.StatusCode == http.StatusNoContent {
-		if uploadMovedHealthy(int64(originalDataSize), movedIn) {
-			uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+		if bps := uploadObservedBps(bodySize, movedIn); bps > 0 {
+			uploader.fastUploadHosts.Store(req.URL.Host, fastHostMark{at: time.Now().UnixNano(), bps: bps})
 		}
 		ret.ETag = etag
 		ret.ContentMd5 = resp.Header.Get("Content-MD5")
@@ -677,8 +681,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)}
 	}
-	if uploadMovedHealthy(int64(originalDataSize), movedIn) {
-		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+	if bps := uploadObservedBps(bodySize, movedIn); bps > 0 {
+		uploader.fastUploadHosts.Store(req.URL.Host, fastHostMark{at: time.Now().UnixNano(), bps: bps})
 	}
 	ret.ETag = etag
 	ret.ContentMd5 = resp.Header.Get("Content-MD5")
@@ -693,28 +697,49 @@ func getEtag(r *http.Response) (etag string) {
 	return
 }
 
-const uploadHealthyBps = int64(1 << 20) // marks a host as able to drain chunks quickly
+// uploadRateMinBytes is the smallest body whose measured rate can mark a
+// host: smaller uploads are dominated by round-trip and commit overhead, not
+// wire speed.
+const uploadRateMinBytes = int64(256 << 10)
 
 var (
-	uploadStallBps       = int64(256 << 10)
-	uploadStallMinWait   = 10 * time.Second
-	fastUploadHostMemory = time.Minute
+	// uploadStallSlowFactor is how far below the host's last observed rate an
+	// upload may run before its conn is presumed wedged: at 8, a host that
+	// just moved a body at 8MiB/s tolerates down to 1MiB/s.
+	uploadStallSlowFactor = int64(8)
+	uploadStallMinWait    = 10 * time.Second
+	fastUploadHostMemory  = time.Minute
 )
 
-// uploadStallTimeout is the most an upload to a recently-fast host may take
-// before its connection is presumed wedged; a healthy pooled conn moves the
-// body orders of magnitude faster.
-func uploadStallTimeout(size int64) time.Duration {
-	if d := time.Duration(size/uploadStallBps) * time.Second; d > uploadStallMinWait {
-		return d
+// fastHostMark remembers the wire rate of a host's last sizeable upload, so a
+// later upload running far below it blames the pooled conn rather than the
+// link — no fixed rate fits every deployment's links.
+type fastHostMark struct {
+	at  int64 // UnixNano
+	bps int64 // wire bytes/sec measured elapsed-to-response
+}
+
+// uploadStallTimeout is the most an upload may take on a conn whose host last
+// proved bps: the time the body needs at an uploadStallSlowFactor of that
+// rate, with a floor so a fast conn is not raced on small bodies.
+func uploadStallTimeout(size, bps int64) time.Duration {
+	if bps > 0 {
+		if d := time.Duration(size/bps) * time.Duration(uploadStallSlowFactor) * time.Second; d > uploadStallMinWait {
+			return d
+		}
 	}
 	return uploadStallMinWait
 }
 
-// uploadMovedHealthy keeps tiny uploads and genuinely slow links from marking a
-// host fast: the mark is what lets a later stall blame the conn, not the link.
-func uploadMovedHealthy(size int64, elapsed time.Duration) bool {
-	return size >= 256*1024 && elapsed > 0 && float64(size)/elapsed.Seconds() >= float64(uploadHealthyBps)
+// uploadObservedBps returns the wire rate a completed upload proved on its
+// host, or 0 when the body was too small to measure. Elapsed-to-response can
+// only understate the link's speed, which keeps the mark — and the stall
+// budget derived from it — conservative.
+func uploadObservedBps(size int64, elapsed time.Duration) int64 {
+	if size < uploadRateMinBytes || elapsed <= 0 {
+		return 0
+	}
+	return int64(float64(size) / elapsed.Seconds())
 }
 
 // watchdogBody records when the transport drains the request body: before that
