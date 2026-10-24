@@ -1289,6 +1289,16 @@ func (m *ObjectMutation) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.BypassGovernanceRetention {
+		i--
+		if m.BypassGovernanceRetention {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x78
+	}
 	if m.KeepRemoteObject {
 		i--
 		if m.KeepRemoteObject {
@@ -2486,6 +2496,16 @@ func (m *DeleteEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.BypassGovernanceRetention {
+		i--
+		if m.BypassGovernanceRetention {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x58
+	}
 	if m.KeepRemoteObject {
 		i--
 		if m.KeepRemoteObject {
@@ -2658,6 +2678,16 @@ func (m *AtomicRenameEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, err
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.FailIfTargetExists {
+		i--
+		if m.FailIfTargetExists {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
 	}
 	if len(m.Signatures) > 0 {
 		var pksize2 int
@@ -7108,6 +7138,9 @@ func (m *ObjectMutation) SizeVT() (n int) {
 	if m.KeepRemoteObject {
 		n += 2
 	}
+	if m.BypassGovernanceRetention {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -7548,6 +7581,9 @@ func (m *DeleteEntryRequest) SizeVT() (n int) {
 	if m.KeepRemoteObject {
 		n += 2
 	}
+	if m.BypassGovernanceRetention {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -7598,6 +7634,9 @@ func (m *AtomicRenameEntryRequest) SizeVT() (n int) {
 			l += protohelpers.SizeOfVarint(uint64(e))
 		}
 		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
+	}
+	if m.FailIfTargetExists {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -13106,6 +13145,26 @@ func (m *ObjectMutation) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.KeepRemoteObject = bool(v != 0)
+		case 15:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BypassGovernanceRetention", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.BypassGovernanceRetention = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -16157,6 +16216,26 @@ func (m *DeleteEntryRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.KeepRemoteObject = bool(v != 0)
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BypassGovernanceRetention", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.BypassGovernanceRetention = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -16531,6 +16610,26 @@ func (m *AtomicRenameEntryRequest) UnmarshalVT(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field Signatures", wireType)
 			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FailIfTargetExists", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.FailIfTargetExists = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

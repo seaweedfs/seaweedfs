@@ -355,6 +355,7 @@ message ObjectMutation {
     bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
     bool remove_empty_parent = 13;         // DELETE: also remove the parent directory when the delete leaves it empty (best-effort)
     bool keep_remote_object = 14;          // DELETE: leave the object on the mounted remote storage
+    bool bypass_governance_retention = 15; // DELETE: skip governance-mode retention guard (legal hold / compliance still refuse)
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
@@ -522,6 +523,10 @@ message DeleteEntryRequest {
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
     bool keep_remote_object = 10;
+    // Caller asserts governance-retention bypass authority (e.g. the S3 gateway
+    // after s3:BypassGovernanceRetention). Only governance-mode retention yields;
+    // legal hold and compliance retention still refuse the delete.
+    bool bypass_governance_retention = 11;
 }
 
 message DeleteEntryResponse {
