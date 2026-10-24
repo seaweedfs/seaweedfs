@@ -618,6 +618,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		if m.KeepRemoteObject {
 			ctx = filer.WithKeepRemoteObject(ctx)
 		}
+		if m.BypassGovernanceRetention {
+			ctx = filer.WithBypassGovernanceRetention(ctx)
+		}
 		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
 		if err != nil && err != filer_pb.ErrNotFound {
 			return err
@@ -1051,6 +1054,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	if req.KeepRemoteObject {
 		ctx = filer.WithKeepRemoteObject(ctx)
+	}
+	if req.BypassGovernanceRetention {
+		ctx = filer.WithBypassGovernanceRetention(ctx)
 	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
