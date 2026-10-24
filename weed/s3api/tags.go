@@ -63,6 +63,9 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
 		}
+		if _, exists := parsedTags[decodedKey]; exists {
+			return nil, fmt.Errorf("duplicate tag key '%s'", decodedKey)
+		}
 		if !hasValue {
 			parsedTags[decodedKey] = ""
 			continue

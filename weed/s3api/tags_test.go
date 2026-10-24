@@ -63,6 +63,18 @@ func TestParseTagsHeader(t *testing.T) {
 			expectError: true,
 		},
 		{
+			name:        "duplicate key",
+			input:       "key1=value1&key1=value2",
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name:        "encoded duplicate key",
+			input:       "key1=value1&%6bey1=value2",
+			expected:    nil,
+			expectError: true,
+		},
+		{
 			name:  "plus signs and equals in values",
 			input: "formula=a%2Bb%3Dc&normal=test",
 			expected: map[string]string{
