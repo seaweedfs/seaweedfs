@@ -152,7 +152,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 // notModified checks If-Modified-Since only when there is no If-None-Match
 // (RFC 9110 13.2.2).
 func notModified(r *http.Request, etag string, lastModified uint64) bool {
-	if inm := r.Header.Get("If-None-Match"); inm != "" {
+	if inm := strings.Join(r.Header.Values("If-None-Match"), ","); inm != "" {
 		return etagListMatches(inm, etag, true)
 	}
 	ims := r.Header.Get("If-Modified-Since")
