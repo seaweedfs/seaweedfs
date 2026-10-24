@@ -131,7 +131,10 @@ func TestFilerBackup_OffsetReadFailureFailsAttempt(t *testing.T) {
 	config := util.GetViper()
 	config.Set("sink.local.enabled", true)
 	config.Set("sink.local.directory", t.TempDir())
-	t.Cleanup(func() { config.Set("sink.local.enabled", false) })
+	t.Cleanup(func() {
+		config.Set("sink.local.enabled", false)
+		config.Set("sink.local.directory", "")
+	})
 
 	options := filerBackupOptions
 	address := string(filerAddr)
