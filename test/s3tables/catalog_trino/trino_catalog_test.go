@@ -484,7 +484,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 
 	deadline := time.Now().Add(timeout)
 	var lastOutput []byte
-	retryCount := 0
+	containerDead := false
 	for time.Now().Before(deadline) {
 		// Try system catalog query as a readiness check
 		cmd := exec.Command("docker", "exec", containerName,
@@ -498,9 +498,9 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 			outputStr := string(output)
 			if strings.Contains(outputStr, "No such container") ||
 				strings.Contains(outputStr, "is not running") {
+				containerDead = true
 				break
 			}
-			retryCount++
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -514,7 +514,23 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 		return
 	}
 
+	if containerDead {
+		t.Fatalf("Trino container %s exited before becoming ready\n%s", containerName, trinoContainerDiagnostics(containerName))
+	}
 	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
+}
+
+func trinoContainerDiagnostics(containerName string) string {
+	var b strings.Builder
+	if out, err := exec.Command("docker", "inspect", "-f",
+		"status={{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}}",
+		containerName).CombinedOutput(); err == nil {
+		fmt.Fprintf(&b, "docker inspect: %s\n", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("docker", "logs", "--tail", "80", containerName).CombinedOutput(); err == nil {
+		fmt.Fprintf(&b, "docker logs:\n%s", string(out))
+	}
+	return b.String()
 }
 
 func runTrinoSQL(t *testing.T, containerName, sql string) string {
