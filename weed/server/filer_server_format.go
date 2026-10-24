@@ -200,7 +200,11 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusInternalServerError, uploadErr)
 		return
 	}
-	if expectedMd5 := mediaPart.Header.Get("Content-Md5"); expectedMd5 != "" {
+	expectedMd5 := mediaPart.Header.Get("Content-Md5")
+	if expectedMd5 == "" {
+		expectedMd5 = r.Header.Get("Content-Md5")
+	}
+	if expectedMd5 != "" {
 		if md5bytes := md5Hash.Sum(nil); util.Base64Encode(md5bytes) != expectedMd5 && fmt.Sprintf("%x", md5bytes) != expectedMd5 {
 			cleanup()
 			writeJsonError(w, r, http.StatusBadRequest, errors.New(constants.ErrMsgBadDigest))
