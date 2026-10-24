@@ -65,6 +65,7 @@ type MasterOption struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
+	SingleMaster            bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
 	VolumeGrowthDisabled    bool
@@ -105,6 +106,7 @@ type MasterServer struct {
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
+	option.SingleMaster = len(peers) <= 1
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
@@ -596,7 +598,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 // do not have it yet. A master that starts with no raft state cannot campaign
 // under either implementation, so this is its only way in.
 func (ms *MasterServer) AdmitRaftPeer(peerAddress pb.ServerAddress) {
-	if peerAddress.ToHttpAddress() == ms.option.Master.ToHttpAddress() {
+	if ms.option.SingleMaster || peerAddress.ToHttpAddress() == ms.option.Master.ToHttpAddress() {
 		return
 	}
 
