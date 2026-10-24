@@ -633,12 +633,12 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, &uploadStatusError{StatusCode: 0, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
-	// The wire time proves the host, but the mark only lands on a verified
-	// upload: a fast rejection says nothing about how the conn drains.
+	// Rate is bounded by elapsed-to-response: the server cannot answer before
+	// the body lands, so this can only understate link speed — a drain-time
+	// reading mistakes kernel-buffer absorption for wire speed and would mark
+	// a slow link fast. The mark still only lands on a verified upload: a
+	// fast rejection says nothing about how the conn drains.
 	movedIn := time.Since(started)
-	if sentNs := curBodySentAt.Load().Load(); sentNs > 0 {
-		movedIn = time.Duration(sentNs - started.UnixNano())
-	}
 
 	// print("-")
 
