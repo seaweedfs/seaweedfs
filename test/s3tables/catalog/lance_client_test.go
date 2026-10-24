@@ -2,11 +2,13 @@ package catalog
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 // TestLanceNamespaceRealClient drives the namespace with the Lance client rather
@@ -58,6 +60,9 @@ func TestLanceNamespaceRealClient(t *testing.T) {
 
 	t.Logf("Running Lance client test against %s", namespaceURL)
 	if err := cmd.Run(); err != nil {
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("Lance client image cannot run on this CPU: %v", err)
+		}
 		t.Errorf("Lance client test failed: %v", err)
 	}
 }

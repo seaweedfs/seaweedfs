@@ -272,6 +272,9 @@ func (env *environment) runClient(t *testing.T, bucket string) {
 	out, err := cmd.CombinedOutput()
 	t.Logf("LanceDB client output:\n%s", out)
 	if err != nil {
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("LanceDB client image cannot run on this CPU: %v", err)
+		}
 		t.Fatalf("the LanceDB client failed: %v", err)
 	}
 	if !strings.Contains(string(out), "PASS") {
