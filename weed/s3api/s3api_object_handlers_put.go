@@ -946,6 +946,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			glog.Warningf("putToFiler: Invalid S3 tag format in header '%s': %v", tagging, err)
 			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
 		}
+		tagSet := make(map[string]string, len(parsedTags))
 		for key, values := range parsedTags {
 			if len(values) > 1 {
 				glog.Warningf("putToFiler: Duplicate tag key '%s' in header", key)
@@ -955,9 +956,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if len(values) > 0 {
 				value = values[0]
 			}
+			tagSet[key] = value
+		}
+		if err := ValidateTags(tagSet); err != nil {
+			glog.Warningf("putToFiler: Invalid tags in header '%s': %v", tagging, err)
+			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
+		}
+		for key, value := range tagSet {
 			entry.Extended[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
-		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(parsedTags))
+		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(tagSet))
 	}
 
 	storeSSEMetadata(entry, sseResult)
