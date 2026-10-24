@@ -1531,13 +1531,13 @@ fn not_modified_response(
     };
 
     // If-Modified-Since applies only when there is no If-None-Match (RFC 9110 13.2.2).
-    let inm = headers
-        .get_all(header::IF_NONE_MATCH)
-        .iter()
-        .map(|v| v.to_str().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join(",");
-    if !inm.is_empty() {
+    if headers.contains_key(header::IF_NONE_MATCH) {
+        let inm = headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .map(|v| v.to_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(",");
         return etag_list_matches(&inm, etag).then(not_modified);
     }
 
@@ -5719,6 +5719,13 @@ mod tests {
             (
                 vec![
                     (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "".into()),
                     (header::IF_MODIFIED_SINCE, after.clone()),
                 ],
                 false,
