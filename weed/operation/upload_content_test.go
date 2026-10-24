@@ -436,6 +436,35 @@ func TestUploadStallWatchdogAllowsSlowCommit(t *testing.T) {
 	}
 }
 
+// A fast rejection proves nothing about how the conn drains, so it must not
+// mark the host fast and arm the watchdog for the next upload.
+func TestUploadStallWatchdogIgnoresFailedWrites(t *testing.T) {
+	uploader := newUploader(&rejectHTTPClient{})
+	_, err := uploader.UploadData(context.Background(), make([]byte, 300*1024), &UploadOption{
+		UploadUrl:   "http://test-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	if err == nil {
+		t.Fatalf("rejected upload should fail")
+	}
+	if _, ok := uploader.fastUploadHosts.Load("test-host:8080"); ok {
+		t.Fatalf("a failed upload must not mark the host fast")
+	}
+}
+
+type rejectHTTPClient struct{}
+
+func (c *rejectHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	return &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":"volume is read only"}`)),
+	}, nil
+}
+
 // Without a recent fast upload the watchdog stays off: a chronically slow link
 // is the link, not a conn, and must not get its uploads cancelled.
 func TestUploadStallWatchdogKeepsUnprovenHost(t *testing.T) {

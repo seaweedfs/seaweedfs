@@ -622,8 +622,11 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, &uploadStatusError{StatusCode: 0, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
-	if uploadMovedHealthy(int64(originalDataSize), time.Since(started)) {
-		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+	// The wire time proves the host, but the mark only lands on a verified
+	// upload: a fast rejection says nothing about how the conn drains.
+	movedIn := time.Since(started)
+	if sentNs := bodySentAt.Load(); sentNs > 0 {
+		movedIn = time.Duration(sentNs - started.UnixNano())
 	}
 
 	// print("-")
@@ -631,6 +634,9 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	var ret UploadResult
 	etag := getEtag(resp)
 	if resp.StatusCode == http.StatusNoContent {
+		if uploadMovedHealthy(int64(originalDataSize), movedIn) {
+			uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
+		}
 		ret.ETag = etag
 		ret.ContentMd5 = resp.Header.Get("Content-MD5")
 		return &ret, nil
@@ -659,6 +665,9 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if ret.Error != "" {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)}
+	}
+	if uploadMovedHealthy(int64(originalDataSize), movedIn) {
+		uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
 	}
 	ret.ETag = etag
 	ret.ContentMd5 = resp.Header.Get("Content-MD5")
