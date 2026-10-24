@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -160,10 +162,12 @@ func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
 	}
 
 	pushFails.Store(false)
-	topo.releaseResolvedQuarantine(v1.Id)
-	if !isWritable(t, topo, v1) {
-		t.Fatal("the retried release must return the surviving copy to writable")
-	}
+	reported := v1
+	reported.ReadOnly = true
+	topo.enforceQuarantine(dn1, reported)
+	require.Eventually(t, func() bool {
+		return !topo.isQuarantined(dn1, v1.Id) && isWritable(t, topo, v1)
+	}, 5*time.Second, time.Millisecond, "the next volume report must retry the release")
 }
 
 func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {

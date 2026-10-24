@@ -136,6 +136,7 @@ type quarantinedVolume struct {
 type quarantinedVolumeState struct {
 	reported bool
 	enforced bool
+	retry    bool
 }
 
 type quarantinePushLock struct {
@@ -221,6 +222,16 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 		return vi
 	}
 	state := v.(quarantinedVolumeState)
+	if state.retry {
+		// A failed writable push re-armed this record; hand the release pass
+		// one retry per report. Clearing it first keeps a surviving conflict
+		// on the normal enforce path afterwards.
+		state.retry = false
+		t.quarantinedVolumeIds.Store(q, state)
+		t.quarantineLock.Unlock()
+		go t.releaseResolvedQuarantine(vi.Id)
+		return vi
+	}
 	if !state.enforced {
 		state.reported = vi.ReadOnly
 	}
@@ -924,8 +935,8 @@ func (t *Topology) releaseResolvedQuarantine(vid needle.VolumeId) {
 }
 
 // restoreQuarantineRecord re-adds a released record after a failed writable
-// push so a later release pass retries it. An existing record keeps its
-// reported flag; the server is known read-only, so only enforced is set.
+// push so the next volume report retries the release. An existing record keeps its
+// reported flag; the server is known read-only, so enforced and retry are set.
 // A record restored from scratch also gets its layout read-only mark back:
 // the release pass cleared it with the record, and leaving it cleared would
 // advertise a writable replica the server still holds read-only.
@@ -933,9 +944,10 @@ func (t *Topology) restoreQuarantineRecord(dn *DataNode, vid needle.VolumeId) {
 	t.quarantineLock.Lock()
 	defer t.quarantineLock.Unlock()
 	key := quarantinedVolume{dn.Id(), vid}
-	if cur, ok := t.quarantinedVolumeIds.LoadOrStore(key, quarantinedVolumeState{enforced: true}); ok {
+	if cur, ok := t.quarantinedVolumeIds.LoadOrStore(key, quarantinedVolumeState{enforced: true, retry: true}); ok {
 		state := cur.(quarantinedVolumeState)
 		state.enforced = true
+		state.retry = true
 		t.quarantinedVolumeIds.Store(key, state)
 		return
 	}
