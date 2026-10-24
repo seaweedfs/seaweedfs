@@ -32,7 +32,25 @@ class CleanupTests(unittest.TestCase):
         rows += MOUNTINFO.replace(TARGET, "/mnt/production")
         rows += MOUNTINFO.replace(TARGET, "/tmp/seaweedfs_fuse_test_123/data")
         rows += MOUNTINFO.replace(TARGET, "/home/user/seaweedfs_fuse_test_123/mount")
+        rows += MOUNTINFO.replace(TARGET, "/tmp/seaweedfs/data")
         self.assertEqual(list(cleanup.test_mounts(rows)), [("42", TARGET)])
+
+    def test_all_test_mount_layouts_are_candidates(self):
+        targets = (
+            "/tmp/seaweedfs_fuse_test_123/mount",
+            "/tmp/seaweedfs_fuse_failover_456/mount0",
+            "/tmp/seaweedfs_fuse_failover_456/mount1",
+            "/var/tmp/seaweedfs_fuse_p2p_test_789/mount2",
+            "/tmp/seaweedfs/mount",
+        )
+        rows = "".join(
+            MOUNTINFO.replace("42", str(40 + i)).replace(TARGET, target)
+            for i, target in enumerate(targets)
+        )
+        self.assertEqual(
+            list(cleanup.test_mounts(rows)),
+            [(str(40 + i), target) for i, target in enumerate(targets)],
+        )
 
     def test_mountinfo_paths_are_unescaped_once(self):
         target = "/tmp/seaweedfs_fuse_test_space and\\slash/mount"

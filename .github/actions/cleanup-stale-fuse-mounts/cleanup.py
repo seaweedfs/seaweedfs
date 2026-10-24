@@ -22,9 +22,15 @@ def test_mounts(mountinfo):
         # mountinfo escapes whitespace and backslashes with octal sequences.
         target = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
         path = Path(target)
-        if (path.name == "mount" and path.parent.name.startswith("seaweedfs_fuse_test_")
-                and str(path.parent.parent) in roots):
-            yield fields[0], target
+        # Test mounts are a mount* leaf under a seaweedfs_fuse_* scratch dir
+        # (seaweedfs_fuse_test_*/mount, seaweedfs_fuse_failover_*/mount0, ...)
+        # or the posix-compliance workflow's fixed /tmp/seaweedfs/mount.
+        if (not path.name.startswith("mount")
+                or str(path.parent.parent) not in roots
+                or not (path.parent.name.startswith("seaweedfs_fuse")
+                        or path.parent.name == "seaweedfs")):
+            continue
+        yield fields[0], target
 
 
 def mounted(mount_id, target):
@@ -67,8 +73,8 @@ def cleanup():
             failed = True
             continue
         # The detached mount's parent still holds the crashed run's data and
-        # logs; test_mounts only yields targets under a seaweedfs_fuse_test_*
-        # dir in a temp root, so the parent is safe to reclaim here.
+        # logs; test_mounts only yields targets under a SeaweedFS test dir in
+        # a temp root, so the parent is safe to reclaim here.
         shutil.rmtree(Path(target).parent, ignore_errors=True)
     return int(failed)
 
