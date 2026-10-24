@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -90,9 +91,7 @@ func (h *Handler) expireSnapshots(
 	// Resolve kept file paths for consistent comparison
 	keptFilerPaths := make(map[string]struct{}, len(keptFiles))
 	for f := range keptFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, f); err == nil {
-			keptFilerPaths[filerPath] = struct{}{}
-		}
+		addFilerPathSpellings(keptFilerPaths, bucketName, dataPath, f)
 	}
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
@@ -118,11 +117,18 @@ func (h *Handler) expireSnapshots(
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
+	tableBase := path.Join(s3tables.TablesPath, bucketName, dataPath) + "/"
 	deletedCount := 0
 	for filePath := range expiredFiles {
-		resolved, err := icebergFilerPath(bucketName, dataPath, filePath)
+		resolved, err := resolveFilerPath(ctx, filerClient, bucketName, dataPath, filePath)
 		if err != nil {
-			glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			if !isFilerNotFound(err) {
+				glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
+			}
+			continue
+		}
+		if !strings.HasPrefix(resolved, tableBase) {
+			glog.Warningf("iceberg maintenance: refusing to delete %s outside table path", resolved)
 			continue
 		}
 		if _, stillReferenced := keptFilerPaths[resolved]; stillReferenced {
@@ -357,9 +363,11 @@ func collectOrphanCandidates(
 
 	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
-		if filerPath, err := icebergFilerPath(bucketName, dataPath, ref); err == nil {
-			referencedFilerPaths[filerPath] = struct{}{}
-		}
+		// Writers percent-escape partition directory names (e.g. "a=1" stored
+		// as "a%3D1" in the manifest path), but the S3 layer decodes the key
+		// before it lands on the filer. Match every spelling the resolver can
+		// return, or a live file is counted as an orphan and deleted.
+		addFilerPathSpellings(referencedFilerPaths, bucketName, dataPath, ref)
 	}
 
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, dataPath)

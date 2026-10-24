@@ -574,6 +574,9 @@ SELECT 'Iceberg extension loaded successfully' as result;
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("DuckDB output: %s", output)
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", err)
+		}
 		// Check for expected errors in certain CI environments
 		outputStr := string(output)
 		if strings.Contains(outputStr, "iceberg extension is not available") ||

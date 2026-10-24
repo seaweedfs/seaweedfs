@@ -358,10 +358,10 @@ func (dn *DataNode) matchesLocation(option *VolumeGrowOption) bool {
 
 func (dn *DataNode) GetTopology() *Topology {
 	p := dn.Parent()
-	for p.Parent() != nil {
+	for p != nil && p.Parent() != nil {
 		p = p.Parent()
 	}
-	t := p.(*Topology)
+	t, _ := p.(*Topology)
 	return t
 }
 

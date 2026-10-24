@@ -413,10 +413,12 @@ func TestIsMetadataOnlyUpdate(t *testing.T) {
 }
 
 // stubFilerClient serves one entry; nil means not found. A non-nil err fails
-// every lookup instead.
+// every lookup instead. entries, when set, answers lookups by "dir/name"
+// before entry is consulted.
 type stubFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	entry     *filer_pb.Entry
+	entries   map[string]*filer_pb.Entry
 	err       error
 	updateErr error
 	lookups   int
@@ -424,10 +426,13 @@ type stubFilerClient struct {
 	updated   *filer_pb.UpdateEntryRequest
 }
 
-func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+func (c *stubFilerClient) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	c.lookups++
 	if c.err != nil {
 		return nil, c.err
+	}
+	if c.entries != nil {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entries[req.Directory+"/"+req.Name]}, nil
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
@@ -2017,6 +2022,354 @@ func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 	}
 }
 
+// TestReshapeCrossMountRename covers an update event with a path outside
+// the mount. The subscription delivers a rename when either path is under
+// the mount, and an update of the /etc/remote directory entry itself through
+// the daemon's /etc/remote prefix; processUpdateEvent then sliced the mount
+// prefix off both paths, which panics on a path shorter than the mount (seen
+// on a replay: "slice bounds out of range [20:11]" on the 11-byte
+// /etc/remote, every restart dying on the same event) and names a key in the
+// wrong tree on a longer one.
+func TestReshapeCrossMountRename(t *testing.T) {
+	const mount = "/buckets/mount"
+	chunked := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, Chunks: []*filer_pb.FileChunk{{FileId: "3,01", Size: 7}}}
+	}
+	event := func(oldDir, oldName, newDir, newName string, oldEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		if oldEntry == nil {
+			oldEntry = chunked(oldName)
+		}
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory:         oldDir,
+			TsNs:              42,
+			EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry, NewParentPath: newDir, NewEntry: chunked(newName), Signatures: []int32{7}},
+		}
+	}
+
+	t.Run("into the mount from a shorter path is a create of the new entry", func(t *testing.T) {
+		resp := event("/plain", "in.txt", mount+"/lock", "in.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsCreate(got) {
+			t.Fatalf("got %+v inMount=%v, want a create", got, inMount)
+		}
+		if got.Directory != mount+"/lock" || got.EventNotification.NewParentPath != mount+"/lock" || got.EventNotification.NewEntry.Name != "in.txt" {
+			t.Errorf("create at %s/%s (dir %s), want %s/in.txt", got.EventNotification.NewParentPath, got.EventNotification.NewEntry.Name, got.Directory, mount+"/lock")
+		}
+		if got.TsNs != 42 || len(got.EventNotification.Signatures) != 1 {
+			t.Errorf("timestamp and signatures must carry over: %+v", got)
+		}
+	})
+
+	t.Run("into the mount from a longer path outside it is a create, not a key in the wrong tree", func(t *testing.T) {
+		resp := event("/buckets/other/deeper/tree", "x.txt", mount, "x.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsCreate(got) || got.EventNotification.NewParentPath != mount {
+			t.Fatalf("got %+v inMount=%v, want a create under %s", got, inMount, mount)
+		}
+	})
+
+	t.Run("out of the mount is a delete of the old entry", func(t *testing.T) {
+		resp := event(mount+"/lock", "out.txt", "/plain", "out.txt", nil)
+		got, inMount := reshapeCrossMountRename(mount, resp)
+		if !inMount || !filer_pb.IsDelete(got) {
+			t.Fatalf("got %+v inMount=%v, want a delete", got, inMount)
+		}
+		if got.Directory != mount+"/lock" || got.EventNotification.OldEntry.Name != "out.txt" {
+			t.Errorf("delete of %s/%s, want %s/out.txt", got.Directory, got.EventNotification.OldEntry.Name, mount+"/lock")
+		}
+	})
+
+	t.Run("out of the mount keeps the object of a remote-only entry", func(t *testing.T) {
+		remoteOnly := &filer_pb.Entry{Name: "out.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 7, RemoteMtime: 1786096669}}
+		resp := event(mount+"/lock", "out.txt", "/plain", "out.txt", remoteOnly)
+		if got, inMount := reshapeCrossMountRename(mount, resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("both paths inside is the update itself", func(t *testing.T) {
+		resp := event(mount+"/a", "x.txt", mount+"/b", "y.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount, resp); !inMount || got != resp {
+			t.Fatalf("got %+v inMount=%v, want the same event", got, inMount)
+		}
+	})
+
+	t.Run("an update of the /etc/remote directory entry itself is not the mount's event", func(t *testing.T) {
+		dirEntry := &filer_pb.Entry{Name: "remote", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory:         "/etc",
+			EventNotification: &filer_pb.EventNotification{OldEntry: dirEntry, NewParentPath: "/etc", NewEntry: dirEntry},
+		}
+		if got, inMount := reshapeCrossMountRename("/buckets/c4x-storage", resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("neither path inside is not the mount's event", func(t *testing.T) {
+		resp := event("/plain", "x.txt", "/buckets/mounted-not", "x.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount, resp); inMount || got != nil {
+			t.Fatalf("got %+v inMount=%v, want the event dropped", got, inMount)
+		}
+	})
+
+	t.Run("a trailing slash on the mount flag changes nothing", func(t *testing.T) {
+		resp := event("/plain", "in.txt", mount, "in.txt", nil)
+		if got, inMount := reshapeCrossMountRename(mount+"/", resp); !inMount || !filer_pb.IsCreate(got) {
+			t.Fatalf("got %+v inMount=%v, want a create", got, inMount)
+		}
+	})
+}
+
+// TestRenameIntoMountUploadsDespiteTheOldStamp covers a file synced at a path
+// under the mount, renamed out (which deleted its remote object), and renamed
+// back in: the entry still carries the RemoteEntry the first sync stamped, so
+// shouldSendToRemote would skip the create the reshape made, leaving the new
+// key without an object. A reshaped create must send unconditionally.
+func TestRenameIntoMountUploadsDespiteTheOldStamp(t *testing.T) {
+	const mountedDir = "/buckets/mount"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+	newEntry := &filer_pb.Entry{
+		Name:        "back.txt",
+		Content:     []byte("payload"),
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+		RemoteEntry: stamp,
+	}
+	resp, inMount := reshapeCrossMountRename(mountedDir, &filer_pb.SubscribeMetadataResponse{
+		Directory: "/plain",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "back.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: stamp},
+			NewParentPath: mountedDir + "/lock",
+			NewEntry:      newEntry,
+		},
+	})
+	if !inMount || !filer_pb.IsCreate(resp) {
+		t.Fatalf("reshape = %+v inMount=%v, want a create", resp, inMount)
+	}
+	if shouldSendToRemote(resp.EventNotification.NewEntry) {
+		t.Fatal("precondition: the stamp the rename carried should fail shouldSendToRemote")
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp, true, "/plain/back.txt"); err != nil {
+		t.Fatal(err)
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/lock/back.txt"}
+	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+		t.Fatalf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+	}
+
+	// a plain create keeps trusting the stamp
+	remote = &recordingRemote{}
+	if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want the stamped create skipped", remote.writes)
+	}
+}
+
+// TestRenameIntoMountWritesAnEmptyFile: a rename into the mount is reshaped
+// to a create with mustSend, and an empty entry has no data for the HasData
+// gate; the new key still takes a zero-byte object. A remote-only entry holds
+// nothing local to send and is skipped as before.
+func TestRenameIntoMountWritesAnEmptyFile(t *testing.T) {
+	const mountedDir = "/buckets/mount"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	renameIn := func(entry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		resp, inMount := reshapeCrossMountRename(mountedDir, &filer_pb.SubscribeMetadataResponse{
+			Directory:         "/plain",
+			EventNotification: &filer_pb.EventNotification{OldEntry: entry, NewParentPath: mountedDir + "/lock", NewEntry: entry},
+		})
+		if !inMount || !filer_pb.IsCreate(resp) {
+			t.Fatalf("reshape = %+v inMount=%v, want a create", resp, inMount)
+		}
+		return resp
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/lock/empty.txt"}
+
+	t.Run("an empty entry writes a zero-byte object", func(t *testing.T) {
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		if filer.HasData(entry) {
+			t.Fatal("precondition: an empty entry carries no data")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true, "/plain/empty.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+		}
+	})
+
+	t.Run("a remote-only entry still skips", func(t *testing.T) {
+		stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 7}, RemoteEntry: stamp}
+		if !isRemoteOnly(entry) {
+			t.Fatal("precondition: the entry should be remote-only")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true, "/plain/empty.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none for a remote-only entry", remote.writes)
+		}
+	})
+
+	// a stamped entry truncated to zero is not remote-only content: its stamp
+	// describes bytes the file no longer holds, so the new key takes a
+	// zero-byte object
+	t.Run("a truncated stamped entry writes a zero-byte object", func(t *testing.T) {
+		stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 7, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: stamp}
+		if !isRemoteOnly(entry) || isDroppedLocalCopy(entry) {
+			t.Fatal("precondition: a truncated stamped entry reports remote-only but is not a dropped copy")
+		}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), true, "/plain/empty.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+		}
+	})
+
+	// an ordinary create of an empty entry is unchanged: no object
+	t.Run("a plain empty create still writes nothing", func(t *testing.T) {
+		entry := &filer_pb.Entry{Name: "empty.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: entry}
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn(entry), false, ""); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want the empty create skipped", remote.writes)
+		}
+	})
+}
+
+// TestSupersededRenameInRecoversTheCurrentEntry covers a rename into the
+// mount whose create event the sync reaches only after remote.uncache dropped
+// the moved file's chunks: the upload is superseded, and skipping it leaves
+// the destination object missing once the source side's delete runs.
+func TestSupersededRenameInRecoversTheCurrentEntry(t *testing.T) {
+	const mountedDir = "/buckets/mount"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/mnt"}
+	srcMountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/plain-remote"}
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 4, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
+	// the entry as the rename logged it: local chunks plus the stamp earned
+	// under the source mount
+	eventEntry := &filer_pb.Entry{
+		Name:        "a.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 4},
+		Chunks:      []*filer_pb.FileChunk{{FileId: "1,01111111", Size: 4}},
+		RemoteEntry: stamp,
+	}
+	// the entry as remote.uncache left it: the chunks are gone and the stamp
+	// still describes the source mount's object
+	uncached := &filer_pb.Entry{
+		Name:        "a.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669, FileSize: 4},
+		RemoteEntry: stamp,
+	}
+	mappingContent, err := proto.Marshal(&remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{
+		mountedDir: mountLoc,
+		"/plain":   srcMountLoc,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappingEntry := &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE, Content: mappingContent}
+	renameIn := &filer_pb.SubscribeMetadataResponse{
+		Directory:         mountedDir + "/lock",
+		EventNotification: &filer_pb.EventNotification{NewParentPath: mountedDir + "/lock", NewEntry: eventEntry},
+	}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/mnt/lock/a.txt"}
+
+	newFilerClient := func(entry *filer_pb.Entry) *stubFilerClient {
+		return &stubFilerClient{entries: map[string]*filer_pb.Entry{
+			mountedDir + "/lock/a.txt":                                       proto.Clone(entry).(*filer_pb.Entry),
+			filer.DirectoryEtcRemote + "/" + filer.REMOTE_STORAGE_MOUNT_FILE: mappingEntry,
+		}}
+	}
+
+	t.Run("uncached meanwhile: the source object is copied and the entry stamped", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/plain-remote/a.txt": []byte("data")}}
+		filerClient := newFilerClient(uncached)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], dest) {
+			t.Fatalf("writes = %+v, want the source copied to %s", remote.writes, remote_storage.FormatLocation(dest))
+		}
+		if string(remote.written[0]) != "data" {
+			t.Errorf("written = %q, want the source object's bytes", remote.written[0])
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("updates = %d, want the entry stamped with the copy", filerClient.updates)
+		}
+	})
+
+	t.Run("the destination already holds it: only a stamp", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/mnt/lock/a.txt": []byte("data")}, statETags: map[string]string{"/mnt/lock/a.txt": "abc"}}
+		filerClient := newFilerClient(uncached)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none once the destination holds the content", remote.writes)
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("updates = %d, want the entry stamped", filerClient.updates)
+		}
+	})
+
+	t.Run("no object on either side: the event fails", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{}}
+		filerClient := newFilerClient(uncached)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err == nil {
+			t.Fatal("want the event to fail and hold the offset")
+		}
+	})
+
+	t.Run("a pending marker under the mount names the source", func(t *testing.T) {
+		marked := proto.Clone(uncached).(*filer_pb.Entry)
+		marked.Extended = map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte(mountedDir + "/lock/old.txt")}
+		remote := &recordingRemote{objects: map[string][]byte{"/mnt/lock/old.txt": []byte("data")}}
+		filerClient := newFilerClient(marked)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], dest) {
+			t.Fatalf("writes = %+v, want the marked source copied to %s", remote.writes, remote_storage.FormatLocation(dest))
+		}
+	})
+
+	t.Run("rewritten since: the superseding event uploads", func(t *testing.T) {
+		rewritten := &filer_pb.Entry{
+			Name:        "a.txt",
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096700, FileSize: 4},
+			Chunks:      []*filer_pb.FileChunk{{FileId: "2,02222222", Size: 4}},
+			RemoteEntry: stamp,
+		}
+		remote := &recordingRemote{}
+		filerClient := newFilerClient(rewritten)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want the rewrite's own event to upload", remote.writes)
+		}
+	})
+}
+
 func TestIsSystemPath(t *testing.T) {
 	tests := []struct {
 		dir      string
@@ -2086,4 +2439,3 @@ func TestRemoteSyncSkipsSystemFolder(t *testing.T) {
 		t.Fatalf("expected 0 remote deletes for system path, got %d deletes", len(remote.deletes))
 	}
 }
-
