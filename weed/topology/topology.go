@@ -208,6 +208,43 @@ func (t *Topology) lockQuarantinePush(q quarantinedVolume) func() {
 	}
 }
 
+// takeQuarantineRetryLocked disarms a pending release retry and reports
+// whether one was armed. The caller holds quarantineLock.
+func (t *Topology) takeQuarantineRetryLocked(q quarantinedVolume) bool {
+	v, ok := t.quarantinedVolumeIds.Load(q)
+	if !ok {
+		return false
+	}
+	state := v.(quarantinedVolumeState)
+	if !state.retry {
+		return false
+	}
+	state.retry = false
+	t.quarantinedVolumeIds.Store(q, state)
+	return true
+}
+
+// retryPendingQuarantineReleases re-runs the release pass for every record a
+// failed writable push re-armed. The retry in enforceQuarantine only fires
+// while a heartbeat keeps carrying the volume, and an idle replica drops out
+// of the delta reports once its stored flag matches the server's, so pending
+// retries also run off the leader pulse.
+func (t *Topology) retryPendingQuarantineReleases() {
+	vids := make(map[needle.VolumeId]struct{})
+	t.quarantineLock.Lock()
+	t.quarantinedVolumeIds.Range(func(key, _ any) bool {
+		q := key.(quarantinedVolume)
+		if t.takeQuarantineRetryLocked(q) {
+			vids[q.vid] = struct{}{}
+		}
+		return true
+	})
+	t.quarantineLock.Unlock()
+	for vid := range vids {
+		go t.releaseResolvedQuarantine(vid)
+	}
+}
+
 // enforceQuarantine keeps the latest reported read-only flag for a quarantined
 // copy so a later release restores the server's true state. The stored report
 // keeps the server's flag: quarantine lives at the layout level, and folding
@@ -221,17 +258,15 @@ func (t *Topology) enforceQuarantine(dn *DataNode, vi storage.VolumeInfo) storag
 		t.quarantineLock.Unlock()
 		return vi
 	}
-	state := v.(quarantinedVolumeState)
-	if state.retry {
+	if t.takeQuarantineRetryLocked(q) {
 		// A failed writable push re-armed this record; hand the release pass
 		// one retry per report. Clearing it first keeps a surviving conflict
 		// on the normal enforce path afterwards.
-		state.retry = false
-		t.quarantinedVolumeIds.Store(q, state)
 		t.quarantineLock.Unlock()
 		go t.releaseResolvedQuarantine(vi.Id)
 		return vi
 	}
+	state := v.(quarantinedVolumeState)
 	if !state.enforced {
 		state.reported = vi.ReadOnly
 	}
