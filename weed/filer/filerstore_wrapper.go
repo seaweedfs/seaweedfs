@@ -400,46 +400,39 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc)
 	}
 
-	var notPrefixed []*Entry
-	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) (bool, error) {
-		notPrefixed = append(notPrefixed, entry)
-		return true, nil
-	})
-	if err != nil {
-		return
-	}
-
+	// lastFileName must stay at the last name delivered to eachEntryFunc; the
+	// raw scan cursor runs ahead over non-matching names and cannot be returned.
 	count := int64(0)
-	for count < limit && len(notPrefixed) > 0 {
-		for _, entry := range notPrefixed {
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				res, resErr := eachEntryFunc(entry)
-
-				if resErr != nil {
-					err = fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.Name(), resErr)
-					return
-				}
-
-				if !res {
-					return
-				}
-				if count >= limit {
-					break
-				}
-			}
+	scanName, scanInclusive := startFileName, includeStartFile
+	for count < limit {
+		var page []*Entry
+		if scanName, err = actualStore.ListDirectoryEntries(ctx, dirPath, scanName, scanInclusive, limit, func(entry *Entry) (bool, error) {
+			page = append(page, entry)
+			return true, nil
+		}); err != nil {
+			return
 		}
-		if count < limit && (lastFileName < prefix || strings.HasPrefix(lastFileName, prefix)) {
-			notPrefixed = notPrefixed[:0]
-			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) (bool, error) {
-				notPrefixed = append(notPrefixed, entry)
-				return true, nil
-			})
-			if err != nil {
+		scanInclusive = false
+		if len(page) == 0 {
+			return
+		}
+		for _, entry := range page {
+			if !strings.HasPrefix(entry.Name(), prefix) {
+				continue
+			}
+			count++
+			res, resErr := eachEntryFunc(entry)
+			if resErr != nil {
+				err = fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.Name(), resErr)
 				return
 			}
-		} else {
-			break
+			lastFileName = entry.Name()
+			if !res || count >= limit {
+				return
+			}
+		}
+		if scanName >= prefix && !strings.HasPrefix(scanName, prefix) {
+			return
 		}
 	}
 	return
