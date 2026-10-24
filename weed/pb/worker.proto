@@ -381,6 +381,7 @@ message ErasureCodingTaskConfig {
   repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
   string replica_placement = 6;     // EC shard replica placement (e.g. "020"); empty falls back to master default replication
   bool strict_placement = 7;        // fail planning instead of relaxing placement constraints
+  int32 free_slots_deadband = 8;    // Place free-volume-slot deadband; |ΔfreeSlots| ≤ M×dataShards ranks by liveShards; 0 = strict
 }
 
 // BalanceTaskConfig contains balance-specific configuration
