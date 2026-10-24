@@ -128,7 +128,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
 	v.SetDefault("master.volume_growth.freeze_on_topology_mismatch", true)
 	v.SetDefault("master.volume_growth.state_loss_recovery_wait", "0s")
-	v.SetDefault("master.max_writable_volumes_per_layout", 0)
+	v.SetDefault("master.max_writable_volumes_per_layout", option.MaxWritableVolumes)
 	option.MaxWritableVolumes = v.GetInt("master.max_writable_volumes_per_layout")
 
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
