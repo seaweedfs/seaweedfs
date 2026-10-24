@@ -92,6 +92,10 @@ pub struct WriteQueue {
     /// Submissions accepted, for tests asserting which writes route here.
     #[cfg(test)]
     submits: Arc<std::sync::atomic::AtomicU64>,
+    /// Times a worker armed the straggler window, for tests that must land a
+    /// write inside an already-open batch.
+    #[cfg(test)]
+    windows_armed: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl WriteQueue {
@@ -111,6 +115,8 @@ impl WriteQueue {
             sync_batch,
             #[cfg(test)]
             submits: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            #[cfg(test)]
+            windows_armed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -118,6 +124,12 @@ impl WriteQueue {
     #[cfg(test)]
     pub fn submits_for_test(&self) -> u64 {
         self.submits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many batch windows workers have armed so far.
+    #[cfg(test)]
+    fn windows_armed_for_test(&self) -> u64 {
+        self.windows_armed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Sender for the volume's worker, spawning one on first use.
@@ -135,6 +147,8 @@ impl WriteQueue {
                         io_permits: self.io_permits.clone(),
                         workers: self.workers.clone(),
                         sync_batch: self.sync_batch,
+                        #[cfg(test)]
+                        windows_armed: self.windows_armed.clone(),
                     }
                     .run(),
                 );
@@ -220,6 +234,8 @@ struct VolumeWriteWorker {
     io_permits: Arc<Semaphore>,
     workers: Arc<Mutex<HashMap<VolumeId, mpsc::Sender<WriteRequest>>>>,
     sync_batch: SyncBatchOption,
+    #[cfg(test)]
+    windows_armed: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl VolumeWriteWorker {
@@ -286,8 +302,12 @@ impl VolumeWriteWorker {
                         // a drained queue flushes right away once it holds enough
                         break;
                     }
-                    let deadline = *window_deadline
-                        .get_or_insert_with(|| tokio::time::Instant::now() + sync.wait);
+                    let deadline = *window_deadline.get_or_insert_with(|| {
+                        #[cfg(test)]
+                        self.windows_armed
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tokio::time::Instant::now() + sync.wait
+                    });
                     match tokio::time::timeout_at(deadline, self.rx.recv()).await {
                         Ok(Some(req)) => req,
                         Ok(None) | Err(_) => break,
@@ -839,13 +859,21 @@ mod tests {
         queue.submit(VolumeId(1), needle(1), true).await.unwrap();
         assert!(start.elapsed() >= Duration::from_secs(30));
 
-        // Both submits land before the runtime can go idle, so the second is
-        // already queued when the first write's window is armed: they share
-        // one batch and complete at its deadline, not two windows apart.
+        // Wait for the worker to take the second write and open its batch
+        // window, so the straggler provably lands inside an open batch
+        // instead of arriving during the initial drain.
+        let armed = queue.windows_armed_for_test();
         let second = tokio::spawn({
             let queue = queue.clone();
             async move { queue.submit(VolumeId(1), needle(2), true).await }
         });
+        for _ in 0..10_000 {
+            if queue.windows_armed_for_test() > armed {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(queue.windows_armed_for_test() > armed);
         let third = tokio::spawn({
             let queue = queue.clone();
             async move { queue.submit(VolumeId(1), needle(3), true).await }
