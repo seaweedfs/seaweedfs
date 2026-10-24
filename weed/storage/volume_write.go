@@ -708,6 +708,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 			}
 			currentRequests := make([]*needle.AsyncRequest, 0, syncBatchMaxRequests)
 			currentBytesToWrite := int64(0)
+			var batchDeadline time.Time
 			var batchWait <-chan time.Time
 			for {
 				var request *needle.AsyncRequest
@@ -735,6 +736,10 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				if currentBytesToWrite >= syncBatchMaxBytes || len(currentRequests) >= syncBatchMaxRequests {
 					break
 				}
+				// a refilled queue must not outwait the armed deadline
+				if !batchDeadline.IsZero() && !time.Now().Before(batchDeadline) {
+					break
+				}
 				if len(requests) > 0 {
 					continue
 				}
@@ -746,6 +751,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				// open for stragglers, armed once per batch so the added
 				// latency stays bounded by Wait
 				if batchWait == nil {
+					batchDeadline = time.Now().Add(syncBatch.Wait)
 					batchWait = time.After(syncBatch.Wait)
 				}
 			}
