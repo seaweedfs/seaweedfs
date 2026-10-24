@@ -23,7 +23,7 @@ use seaweed_volume::server::request_id::GrpcRequestIdLayer;
 use seaweed_volume::server::volume_server::{
     RuntimeMetricsConfig, VolumeServerState, build_metrics_router,
 };
-use seaweed_volume::server::write_queue::WriteQueue;
+use seaweed_volume::server::write_queue::{self, WriteQueue};
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
 
@@ -436,7 +436,17 @@ async fn run(
     // The write queue is always on: durable (fsync) uploads go through it so
     // a batch shares one .dat/.idx sync, the way Go's per-volume async writer
     // group-commits. Non-fsync writes stay on the synchronous path.
-    let wq = WriteQueue::new(state.clone(), 128);
+    let min_bytes = usize::try_from(config.fsync_min_batch_bytes)
+        .map_err(|_| "fsyncMinBatchBytes exceeds this platform's maximum usize value")?;
+    let wq = WriteQueue::new(
+        state.clone(),
+        128,
+        write_queue::SyncBatchOption {
+            min_bytes,
+            min_requests: config.fsync_min_batch_requests,
+            wait: config.fsync_batch_wait,
+        },
+    );
     let _ = state.write_queue.set(wq);
 
     // Set initial metric gauges for concurrent limits and max volumes
