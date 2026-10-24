@@ -54,7 +54,8 @@ func (c *commandEcEncode) Help() string {
 	per node (the data-center digit is not used for EC). For example
 	-shardReplicaPlacement=021 requests at most 1 shard per node and 2 per rack.
 	Only when the final placement meets these limits does losing one rack cost
-	at most 2 shards; the command does not guarantee that the limits are met.
+	at most 2 shards, so the encode fails (and keeps the original volumes)
+	when the cluster cannot honor them.
 
 	The -collection parameter is a comma-separated list of collection names, with
 	"*" and "?" wildcards, and regex patterns:

@@ -79,14 +79,14 @@ start-server: check-deps
 		echo $$! > weed-server.pid
 	
 	@echo "Waiting for S3 server to be ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if echo | nc -z localhost $(S3_PORT); then \
 			echo "S3 server is ready!"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
-	echo "❌ Server failed to start within 30 seconds"; \
+	echo "❌ Server failed to start within 90 seconds"; \
 	if [ -f weed-server.log ]; then \
 		cat weed-server.log; \
 	fi; \
