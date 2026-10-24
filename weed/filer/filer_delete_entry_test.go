@@ -397,3 +397,52 @@ func TestDeleteEntryAllowsExpiredRetention(t *testing.T) {
 	require.NoError(t, f.DeleteEntryMetaAndData(ctx, entry.FullPath, false, false, true, false, nil, 0))
 	require.Nil(t, store.getEntry("/old"))
 }
+
+// Retention and legal hold stamped on a multipart upload directory are
+// bookkeeping for the finished object, not a lock on the staging entry:
+// finalize, abort, and s3.clean.uploads all remove it. The gateway's
+// bucket-lock scan skips .uploads for the same reason.
+func TestDeleteEntryAllowsLockedMultipartStaging(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.DirBucketsPath = "/buckets"
+	ctx := context.Background()
+	future := time.Now().Add(time.Hour)
+
+	upload := &Entry{
+		FullPath: "/buckets/b/.uploads/upload-id",
+		Attr:     Attr{Mode: os.ModeDir | 0755},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, future),
+	}
+	require.NoError(t, f.CreateEntry(ctx, upload, nil, false, false, nil, true, 255))
+	part := &Entry{
+		FullPath: "/buckets/b/.uploads/upload-id/0001_part",
+		Attr:     Attr{Mode: 0644},
+		Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")},
+	}
+	require.NoError(t, f.CreateEntry(ctx, part, nil, false, false, nil, true, 255))
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, upload.FullPath, true, false, true, false, nil, 0))
+	require.Nil(t, store.getEntry(string(upload.FullPath)))
+	require.Nil(t, store.getEntry(string(part.FullPath)))
+}
+
+// The .uploads carve-out stops at the bucket's first path segment: an object
+// key that nests the name deeper still holds real lock attributes.
+func TestDeleteEntryRefusesLockedObjectUnderNestedUploadsName(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.DirBucketsPath = "/buckets"
+	ctx := context.Background()
+
+	entry := &Entry{
+		FullPath: "/buckets/b/dir/.uploads/x",
+		Attr:     Attr{Mode: 0644},
+		Extended: retentionEntry(s3_constants.RetentionModeCompliance, time.Now().Add(time.Hour)),
+	}
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, entry.FullPath, false, false, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.NotNil(t, store.getEntry(string(entry.FullPath)))
+}

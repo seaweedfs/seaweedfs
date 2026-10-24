@@ -145,11 +145,29 @@ func entryLockedForDelete(entry *Entry, bypassGovernance bool, now time.Time) bo
 	return time.Unix(timestamp, 0).After(now)
 }
 
-func entryDeleteLockError(ctx context.Context, entry *Entry) error {
+func (f *Filer) entryDeleteLockError(ctx context.Context, entry *Entry) error {
+	if f.multipartStagingPath(entry.FullPath) {
+		return nil
+	}
 	if entryLockedForDelete(entry, BypassesGovernanceRetention(ctx), time.Now()) {
 		return fmt.Errorf("%w: %s", ErrEntryLocked, entry.FullPath)
 	}
 	return nil
+}
+
+// multipartStagingPath reports whether p is a bucket's .uploads dir or inside
+// it. createMultipartUpload stamps the object's requested retention and legal
+// hold on the upload directory so the completed object inherits them, but the
+// staging area is bookkeeping, not a locked object: finalize, abort, and
+// s3.clean.uploads all have to be able to remove it, and the gateway's
+// bucket-lock scan skips it for the same reason.
+func (f *Filer) multipartStagingPath(p util.FullPath) bool {
+	rel := strings.TrimPrefix(string(p), f.DirBucketsPath+"/")
+	if rel == string(p) {
+		return false
+	}
+	_, rest, found := strings.Cut(rel, "/")
+	return found && (rest == s3_constants.MultipartUploadsFolder || strings.HasPrefix(rest, s3_constants.MultipartUploadsFolder+"/"))
 }
 
 // lockedDescendantError walks the subtree once, refusing the delete on the
@@ -169,7 +187,7 @@ func (f *Filer) lockedDescendantError(ctx context.Context, entry *Entry) error {
 		}
 		for _, sub := range entries {
 			lastFileName = sub.Name()
-			if lockErr := entryDeleteLockError(ctx, sub); lockErr != nil {
+			if lockErr := f.entryDeleteLockError(ctx, sub); lockErr != nil {
 				return lockErr
 			}
 			if sub.IsDirectory() {
@@ -278,7 +296,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	// in force (e.g. an expired-elsewhere retention, or a governance bypass
 	// the peer observed before shipping the event).
 	if !isFromOtherCluster {
-		if lockErr := entryDeleteLockError(ctx, entry); lockErr != nil {
+		if lockErr := f.entryDeleteLockError(ctx, entry); lockErr != nil {
 			return lockErr
 		}
 	}
@@ -398,7 +416,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			// error -- ignoreRecursiveError must not waive a lock.
 			if isRecursive && !isFromOtherCluster {
 				for _, sub := range entries {
-					if lockErr := entryDeleteLockError(ctx, sub); lockErr != nil {
+					if lockErr := f.entryDeleteLockError(ctx, sub); lockErr != nil {
 						f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
 						return lockErr
 					}
@@ -485,7 +503,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
 	if !isFromOtherCluster {
-		if lockErr := entryDeleteLockError(ctx, entry); lockErr != nil {
+		if lockErr := f.entryDeleteLockError(ctx, entry); lockErr != nil {
 			return lockErr
 		}
 	}
