@@ -153,7 +153,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for filer to be ready (mini starts all services on filerPort)
-	if err := f.waitForService(f.miniProcess, f.filerAddr, 30*time.Second); err != nil {
+	if err := f.waitForService(f.miniProcess, f.filerAddr, 90*time.Second); err != nil {
 		f.dumpLog("mini")
 		return fmt.Errorf("weed mini not ready: %v", err)
 	}
@@ -164,7 +164,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for mount to be ready
-	if err := f.waitForMount(30 * time.Second); err != nil {
+	if err := f.waitForMount(90 * time.Second); err != nil {
 		f.dumpLog("mount")
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}

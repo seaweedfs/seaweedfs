@@ -27,6 +27,12 @@ func TestMatchesWildcard(t *testing.T) {
 		{"Pattern with regex special chars", "test[abc]", "test[abc]", true},
 		{"Pattern with dots", "test.txt", "test.txt", true},
 		{"Pattern with dots and wildcard", "*.txt", "test.txt", true},
+		{"Star in target at pattern star offset", "a/*", "a/*b", true},
+		{"Star in target equals pattern", "a/*", "a/*", true},
+		{"Star in target past pattern star offset", "a/*", "a/x*y", true},
+		{"Question mark matches literal star", "a/?c", "a/*c", true},
+		{"Star in target is not a wildcard", "ab*", "a*b", false},
+		{"ARN pattern with star in key", "arn:aws:s3:::bucket/finance/*", "arn:aws:s3:::bucket/finance/*star.txt", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
