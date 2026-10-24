@@ -519,11 +519,12 @@ func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]stri
 		mode = ecbalancer.PlaceStrict
 	}
 	res, err := snap.Place(metric.VolumeID, metric.Collection, need, ecbalancer.Constraints{
-		DiskType:         metric.DiskType,
-		DiskTypePolicy:   ecbalancer.DiskTypePrefer,
-		PreferredTags:    ecConfig.PreferredTags,
-		ReplicaPlacement: rp,
-		Ratio:            func(string) (int, int) { return dataShards, parityShards },
+		DiskType:          metric.DiskType,
+		DiskTypePolicy:    ecbalancer.DiskTypePrefer,
+		PreferredTags:     ecConfig.PreferredTags,
+		ReplicaPlacement:  rp,
+		Ratio:             func(string) (int, int) { return dataShards, parityShards },
+		FreeSlotsDeadband: ecConfig.FreeSlotsDeadband,
 	}, mode)
 	if err != nil {
 		return nil, nil, err
