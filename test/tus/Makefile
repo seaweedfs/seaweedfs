@@ -111,12 +111,12 @@ start-seaweedfs: check-binary
 			echo "$(GREEN)Filer is ready$(NC)"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
+		if [ $$i -eq 90 ]; then \
 			echo "$(RED)Filer failed to start within 90 seconds$(NC)"; \
 			$(MAKE) debug-logs; \
 			exit 1; \
 		fi; \
-		echo "Waiting for filer... ($$i/30)"; \
+		echo "Waiting for filer... ($$i/90)"; \
 		sleep 1; \
 	done
 	

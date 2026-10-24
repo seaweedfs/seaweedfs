@@ -81,7 +81,7 @@ start-seaweedfs: check-binary
 			echo "$(GREEN)S3 service is ready$(NC)"; \
 			break; \
 		fi; \
-		echo "Waiting for S3 service... ($$i/30)"; \
+		echo "Waiting for S3 service... ($$i/90)"; \
 		sleep 1; \
 	done
 	@sleep 2

@@ -179,7 +179,7 @@ start-openbao-ci: ## Start OpenBao via Docker for CI
 			echo "$(GREEN)OpenBao is ready$(NC)"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
+		if [ $$i -eq 90 ]; then \
 			echo "$(RED)Timeout waiting for OpenBao$(NC)"; \
 			docker logs openbao-ci 2>&1 | tail -20; \
 			exit 1; \
@@ -218,7 +218,7 @@ start-seaweedfs-ci: check-binary ## Start weed mini with OpenBao KMS config
 			echo "$(GREEN)S3 service is ready$(NC)"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
+		if [ $$i -eq 90 ]; then \
 			echo "$(RED)Timeout waiting for S3 service$(NC)"; \
 			echo "=== Last 50 lines of server log ==="; \
 			tail -50 /tmp/seaweedfs-kms-mini.log 2>/dev/null || echo "No server log found"; \
