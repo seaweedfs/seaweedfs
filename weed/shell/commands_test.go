@@ -116,6 +116,23 @@ func TestFilerDiscoveryReturnsEmptyAtDeadline(t *testing.T) {
 	}
 }
 
+func TestFilerDiscoveryRetriesAfterEmptyResult(t *testing.T) {
+	srv := &fakeDiscoveryServer{}
+	addr := startFakeDiscoveryMaster(t, srv)
+	srv.leader = addr
+
+	ce, cancel := discoveryEnv(addr, 1500*time.Millisecond)
+	defer cancel()
+
+	if got := ce.FilerAddress(); got != "" {
+		t.Fatalf("expected no filer, got %q", got)
+	}
+	srv.filers.Store(1)
+	if got := ce.FilerAddress(); got != "127.0.0.1:8800" {
+		t.Fatalf("expected the late-registered filer on retry, got %q", got)
+	}
+}
+
 func TestFilerDiscoveryStopsOnNonTransientError(t *testing.T) {
 	srv := &fakeDiscoveryServer{}
 	addr := startFakeDiscoveryMaster(t, srv)

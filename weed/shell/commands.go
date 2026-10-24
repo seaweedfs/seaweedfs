@@ -46,7 +46,7 @@ type CommandEnv struct {
 	noLock       bool
 	forceNoLock  bool
 	verbose      bool
-	filerOnce    sync.Once
+	filerMu      sync.Mutex
 }
 
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
@@ -157,8 +157,12 @@ func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.Seawe
 
 // FilerAddress returns the discovered or configured filer, running discovery
 // on first use so commands that never need a filer skip the wait entirely.
+// A failed or empty discovery is not cached: each later call retries until a
+// filer registers, so a long-lived shell can still find one.
 func (ce *CommandEnv) FilerAddress() pb.ServerAddress {
-	ce.filerOnce.Do(ce.discoverFiler)
+	ce.filerMu.Lock()
+	defer ce.filerMu.Unlock()
+	ce.discoverFiler()
 	return ce.option.FilerAddress
 }
 
