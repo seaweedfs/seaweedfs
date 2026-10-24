@@ -4,6 +4,12 @@
 #    /etc/seaweedfs/master.toml
 # this file is read by master
 
+[master]
+# cap on volume copies vacuuming in parallel within one rack, on top of the
+# -maxParallelVacuumPerServer flag's per-server cap; 0 = no limit
+max_parallel_vacuum_per_rack = 0
+
+
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
 # Scripts are skipped while an admin server is connected.
