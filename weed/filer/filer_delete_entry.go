@@ -374,8 +374,10 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 			for _, sub := range entries {
 				lastFileName = sub.Name()
+				var subTombstoneTs int64
 				if !keepsRemoteObject(ctx) {
-					f.noteRemoteDeletion(sub.FullPath, sub.IsDirectory(), time.Now().UnixNano())
+					subTombstoneTs = time.Now().UnixNano()
+					f.noteRemoteDeletion(sub.FullPath, sub.IsDirectory(), subTombstoneTs)
 				}
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
@@ -406,6 +408,11 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					}
 				}
 				if err != nil && (!ignoreRecursiveError || errors.Is(err, ErrEntryLocked)) {
+					// the delete is abandoned: the tombstones noted for this
+					// subtree and this level would hide children that still
+					// exist
+					f.unnoteRemoteDeletion(sub.FullPath, subTombstoneTs)
+					f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
 					return err
 				}
 			}
