@@ -5,18 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
+	MsgFailDelLockedEntry    = "fail to delete locked entry"
 )
 
 // ErrNonEmptyFolder is a non-recursive delete refused because the folder still
@@ -25,12 +28,20 @@ const (
 // chose, cannot forge one.
 var ErrNonEmptyFolder = errors.New(MsgFailDelNonEmptyFolder)
 
+// ErrEntryLocked is a delete refused because the entry carries an active legal
+// hold or an unexpired retention. It follows ErrNonEmptyFolder's leading-marker
+// rule for the same reason.
+var ErrEntryLocked = errors.New(MsgFailDelLockedEntry)
+
 // DeleteEntryError turns the text of DeleteEntryResponse.Error back into an
 // error carrying the condition the filer reported. Call it on the response
 // field, before formatting a path around it.
 func DeleteEntryError(msg string) error {
 	if strings.HasPrefix(msg, MsgFailDelNonEmptyFolder) {
 		return &deleteEntryError{msg: msg, cause: ErrNonEmptyFolder}
+	}
+	if strings.HasPrefix(msg, MsgFailDelLockedEntry) {
+		return &deleteEntryError{msg: msg, cause: ErrEntryLocked}
 	}
 	return errors.New(msg)
 }
@@ -43,6 +54,14 @@ func IsNonEmptyFolderError(err error) bool {
 		return false
 	}
 	return errors.Is(err, ErrNonEmptyFolder) || strings.HasPrefix(err.Error(), MsgFailDelNonEmptyFolder)
+}
+
+// IsEntryLockedError is the ErrEntryLocked counterpart of IsNonEmptyFolderError.
+func IsEntryLockedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrEntryLocked) || strings.HasPrefix(err.Error(), MsgFailDelLockedEntry)
 }
 
 type deleteEntryError struct {
@@ -78,6 +97,69 @@ func WithKeepRemoteObject(ctx context.Context) context.Context {
 
 func keepsRemoteObject(ctx context.Context) bool {
 	return ctx.Value(keepRemoteObjectKey{}) != nil
+}
+
+type bypassGovernanceRetentionKey struct{}
+
+// WithBypassGovernanceRetention records that the caller is authorized to drop
+// governance-mode retention on this delete -- the S3 gateway sets it after
+// s3:BypassGovernanceRetention. Legal hold and compliance retention refuse
+// the delete regardless.
+func WithBypassGovernanceRetention(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bypassGovernanceRetentionKey{}, true)
+}
+
+// BypassesGovernanceRetention reports whether ctx carries the governance-bypass
+// assertion WithBypassGovernanceRetention plants.
+func BypassesGovernanceRetention(ctx context.Context) bool {
+	return ctx.Value(bypassGovernanceRetentionKey{}) != nil
+}
+
+// entryLockedForDelete mirrors the S3 gateway's EntryHasActiveLock on the
+// entry's extended attributes, except a governance bypass skips only
+// governance-mode retention. An unparseable retention date fails closed.
+func entryLockedForDelete(entry *Entry, bypassGovernance bool, now time.Time) bool {
+	ext := entry.Extended
+	if ext == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(string(ext[s3_constants.ExtLegalHoldKey])), s3_constants.LegalHoldOn) {
+		return true
+	}
+	mode := strings.ToUpper(strings.TrimSpace(string(ext[s3_constants.ExtObjectLockModeKey])))
+	if mode != s3_constants.RetentionModeCompliance && mode != s3_constants.RetentionModeGovernance {
+		return false
+	}
+	if bypassGovernance && mode == s3_constants.RetentionModeGovernance {
+		return false
+	}
+	dateBytes, found := ext[s3_constants.ExtRetentionUntilDateKey]
+	if !found {
+		return false
+	}
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(dateBytes)), 10, 64)
+	if err != nil {
+		glog.Warningf("unparseable retention date %q on %s, treating as locked: %v", dateBytes, entry.FullPath, err)
+		return true
+	}
+	return time.Unix(timestamp, 0).After(now)
+}
+
+func entryDeleteLockError(ctx context.Context, entry *Entry) error {
+	if entryLockedForDelete(entry, BypassesGovernanceRetention(ctx), time.Now()) {
+		return fmt.Errorf("%w: %s", ErrEntryLocked, entry.FullPath)
+	}
+	return nil
+}
+
+// objectLockEnabledOnEntry mirrors the S3 gateway's IsObjectLockEnabled.
+func objectLockEnabledOnEntry(entry *Entry) bool {
+	enabled, found := entry.Extended[s3_constants.ExtObjectLockEnabledKey]
+	if !found {
+		return false
+	}
+	v := string(enabled)
+	return v == s3_constants.ObjectLockEnabled || v == "true"
 }
 
 // emptyFolderDeleteContext makes deleting a folder that is empty in the filer
@@ -131,6 +213,15 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
 		return nil
 	}
+	// A cluster replaying a delete the origin already authorized must not
+	// second-guess it: the entry's lock state here may legitimately still be
+	// in force (e.g. an expired-elsewhere retention, or a governance bypass
+	// the peer observed before shipping the event).
+	if !isFromOtherCluster {
+		if lockErr := entryDeleteLockError(ctx, entry); lockErr != nil {
+			return lockErr
+		}
+	}
 	if !isRecursive && entry.IsDirectory() {
 		ctx = f.emptyFolderDeleteContext(ctx, p)
 	}
@@ -154,7 +245,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		})
 		if err != nil {
 			glog.V(2).InfofCtx(ctx, "delete directory %s: %v", p, err)
-			if errors.Is(err, ErrNonEmptyFolder) {
+			if errors.Is(err, ErrNonEmptyFolder) || errors.Is(err, ErrEntryLocked) {
 				return err
 			}
 			return fmt.Errorf("delete directory %s: %v", p, err)
@@ -164,6 +255,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	// delete the file or folder
 	err = f.doDeleteEntryMetaAndData(ctx, entry, shouldDeleteChunks, isFromOtherCluster, signatures)
 	if err != nil {
+		if errors.Is(err, ErrEntryLocked) {
+			return err
+		}
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
@@ -208,7 +302,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	var chunksToDelete []*filer_pb.FileChunk
 	lastFileName := ""
 	includeLastFile := false
-	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
+	// A lock-enabled bucket must be walked even when the store could drop it
+	// whole: entries under active retention or legal hold refuse the delete.
+	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket() || objectLockEnabledOnEntry(entry)
 	if listedChildren {
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
@@ -223,6 +319,20 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 				// only for first iteration in the loop
 				glog.V(2).InfofCtx(ctx, "deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
 				return fmt.Errorf("%w: %s", ErrNonEmptyFolder, entry.FullPath)
+			}
+
+			// Refuse before any side effect of this page (events, remote
+			// deletes, the folder-children sweep): a locked entry anywhere in
+			// it fails the whole delete rather than slipping through the
+			// store-level drop the walk ends in. Refusal is not a recursive
+			// error -- ignoreRecursiveError must not waive a lock.
+			if isRecursive && !isFromOtherCluster {
+				for _, sub := range entries {
+					if lockErr := entryDeleteLockError(ctx, sub); lockErr != nil {
+						f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
+						return lockErr
+					}
+				}
 			}
 
 			for _, sub := range entries {
@@ -288,6 +398,12 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shouldDeleteChunks bool, isFromOtherCluster bool, signatures []int32) (err error) {
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
+
+	if !isFromOtherCluster {
+		if lockErr := entryDeleteLockError(ctx, entry); lockErr != nil {
+			return lockErr
+		}
+	}
 
 	if !isFromOtherCluster && !keepsRemoteObject(ctx) {
 		if _, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry); remoteDeletionErr != nil {
