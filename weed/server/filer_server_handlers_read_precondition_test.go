@@ -50,6 +50,36 @@ func TestCheckPreconditionsETagLists(t *testing.T) {
 	}
 }
 
+func TestCheckPreconditionsPresentButEmptyHeaders(t *testing.T) {
+	entry := &filer.Entry{Attr: filer.Attr{Mtime: time.Unix(1700000000, 0), Md5: []byte{0xb1, 0x94}}}
+	before := time.Unix(1700000000-60, 0).UTC().Format(http.TimeFormat)
+	after := time.Unix(1700000000+60, 0).UTC().Format(http.TimeFormat)
+
+	// An empty If-Match line is still an If-Match: it matches nothing, and
+	// If-Unmodified-Since stays ignored.
+	r := httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
+	r.Header.Set("If-Match", "")
+	r.Header.Set("If-Unmodified-Since", after)
+	if w := httptest.NewRecorder(); !checkPreconditions(w, r, entry) || w.Code != http.StatusPreconditionFailed {
+		t.Errorf("empty If-Match -> %d, want 412", w.Code)
+	}
+
+	// An empty If-None-Match line matches nothing and suppresses
+	// If-Modified-Since, so the request proceeds.
+	r = httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
+	r.Header.Set("If-None-Match", "")
+	r.Header.Set("If-Modified-Since", after)
+	if checkPreconditions(httptest.NewRecorder(), r, entry) {
+		t.Error("empty If-None-Match with matching If-Modified-Since -> 304, want 200")
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
+	r.Header.Set("If-Modified-Since", before)
+	if checkPreconditions(httptest.NewRecorder(), r, entry) {
+		t.Error("old If-Modified-Since alone -> 304, want 200")
+	}
+}
+
 func TestCheckPreconditionsIgnoresEmptyETagListElements(t *testing.T) {
 	entry := &filer.Entry{
 		Attr:   filer.Attr{Mtime: time.Unix(1700000000, 0)},

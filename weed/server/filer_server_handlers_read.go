@@ -50,10 +50,10 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	}
 	w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
 
-	ifMatchETagHeader := strings.Join(r.Header.Values("If-Match"), ",")
+	ifMatchValues := r.Header.Values("If-Match")
 	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
-	if ifMatchETagHeader != "" {
-		if !etagListMatches(ifMatchETagHeader, etag, false) {
+	if len(ifMatchValues) != 0 {
+		if !etagListMatches(strings.Join(ifMatchValues, ","), etag, false) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return true
 		}
@@ -66,10 +66,10 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	}
 
-	ifNoneMatchETagHeader := strings.Join(r.Header.Values("If-None-Match"), ",")
+	ifNoneMatchValues := r.Header.Values("If-None-Match")
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
-	if ifNoneMatchETagHeader != "" {
-		if etagListMatches(ifNoneMatchETagHeader, etag, true) {
+	if len(ifNoneMatchValues) != 0 {
+		if etagListMatches(strings.Join(ifNoneMatchValues, ","), etag, true) {
 			SetEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
