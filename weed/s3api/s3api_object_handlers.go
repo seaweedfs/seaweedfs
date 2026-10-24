@@ -800,6 +800,30 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 	return result, false // request not handled
 }
 
+// writeDeleteMarkerResponse answers a GET or HEAD that resolved to a delete
+// marker as S3 does: x-amz-delete-marker and the marker's version id, with
+// 404 NoSuchKey for the current version and 405 MethodNotAllowed when the
+// marker itself was requested by versionId. Anonymous reads never get a
+// delete marker (authorizeAnonymousObjectRead), so they keep the plain miss.
+func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http.Request, bucket string, entry *filer_pb.Entry, markerVersionId, requestedVersionId string) {
+	if isAnonymousObjectRead(r) {
+		s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+		return
+	}
+	w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+	if markerVersionId != "" {
+		w.Header().Set("x-amz-version-id", markerVersionId)
+	}
+	if requestedVersionId == "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
+	if entry.Attributes != nil {
+		w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrMethodNotAllowed)
+}
+
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -954,7 +978,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, entry, targetVersionId, versionId)
 				return
 			}
 		}
@@ -2631,7 +2655,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, entry, targetVersionId, versionId)
 				return
 			}
 		}
