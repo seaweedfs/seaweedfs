@@ -343,6 +343,46 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 	}
 }
 
+func TestProcessRangeRequestIfRange(t *testing.T) {
+	data := []byte("0123456789")
+	const etag = `"v2"`
+	const lastModified = "Sat, 24 Oct 2026 22:01:04 GMT"
+	tests := []struct {
+		ifRange  string
+		wantCode int
+		wantBody string
+	}{
+		{"", http.StatusPartialContent, "01"},
+		{etag, http.StatusPartialContent, "01"},
+		{lastModified, http.StatusPartialContent, "01"},
+		{`"v1"`, http.StatusOK, "0123456789"},
+		{`W/"v2"`, http.StatusOK, "0123456789"},
+		{"Sat, 24 Oct 2026 22:01:03 GMT", http.StatusOK, "0123456789"},
+		{"not a date", http.StatusOK, "0123456789"},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test.txt", nil)
+		r.Header.Set("Range", "bytes=0-1")
+		if tt.ifRange != "" {
+			r.Header.Set("If-Range", tt.ifRange)
+		}
+		w := httptest.NewRecorder()
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Last-Modified", lastModified)
+		if err := ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+			return func(writer io.Writer) error {
+				_, err := writer.Write(data[offset : offset+size])
+				return err
+			}, nil
+		}); err != nil {
+			t.Errorf("If-Range %q: %v", tt.ifRange, err)
+		}
+		if w.Code != tt.wantCode || w.Body.String() != tt.wantBody {
+			t.Errorf("If-Range %q: got %d %q, want %d %q", tt.ifRange, w.Code, w.Body.String(), tt.wantCode, tt.wantBody)
+		}
+	}
+}
+
 // /submit must reject at the limit its master was given, not at a hardcoded
 // 256MB: weed server hands -volume.fileSizeLimitMB down to the master, and an
 // upload the volume server would store must not be turned away here (#6748).
