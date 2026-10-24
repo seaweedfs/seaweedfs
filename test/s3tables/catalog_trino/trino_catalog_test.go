@@ -466,6 +466,7 @@ func (env *TestEnvironment) startTrinoContainer(t *testing.T, configDir string) 
 
 	cmd := exec.Command("docker", "run", "-d",
 		"--name", containerName,
+		"--memory", "4g",
 		"--add-host", "host.docker.internal:host-gateway",
 		"-v", fmt.Sprintf("%s:/etc/trino/catalog", configDir),
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
