@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -25,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
@@ -567,18 +569,12 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 		u.Concurrency = s.uploadConcurrency()
 	})
 
-	// process tagging
-	tags := ""
 	var awsTags *string
 	// openstack swift doesn't support s3 object tagging
 	if s.conf.S3SupportTagging {
-		for k, v := range entry.Extended {
-			if len(tags) > 0 {
-				tags = tags + "&"
-			}
-			tags = tags + k + "=" + string(v)
+		if tagging := toTagging(entry.Extended); len(tagging.TagSet) > 0 {
+			awsTags = aws.String(s3TaggingHeader(tagging.TagSet))
 		}
-		awsTags = aws.String(tags)
 	}
 
 	// Upload the file to S3.
@@ -609,14 +605,23 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 
 }
 
+// toTagging maps the entry's extended attributes to the remote object's tag
+// set. Only X-Amz-Tagging-* attributes are S3 tags; the rest of Extended is
+// Seaweed-internal metadata whose values are not legal tag values.
 func toTagging(attributes map[string][]byte) *s3.Tagging {
 	tagging := &s3.Tagging{}
 	for k, v := range attributes {
+		if !strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
+			continue
+		}
 		tagging.TagSet = append(tagging.TagSet, &s3.Tag{
-			Key:   aws.String(k),
+			Key:   aws.String(k[len(s3_constants.AmzObjectTaggingPrefix):]),
 			Value: aws.String(string(v)),
 		})
 	}
+	sort.Slice(tagging.TagSet, func(i, j int) bool {
+		return aws.StringValue(tagging.TagSet[i].Key) < aws.StringValue(tagging.TagSet[j].Key)
+	})
 	return tagging
 }
 
