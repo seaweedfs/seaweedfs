@@ -108,7 +108,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	marker := decodeListContinuationToken(continuationToken.string)
 	if !continuationToken.set {
-		marker = startAfter
+		marker = decodeMarkerEcho(startAfter, encodingTypeUrl)
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
@@ -153,6 +153,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	}
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
+		responseV2.StartAfter = urlPathEscape(startAfter)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)

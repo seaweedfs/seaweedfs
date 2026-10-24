@@ -19,6 +19,7 @@ type listV2TestPage struct {
 	XMLName               xml.Name `xml:"ListBucketResult"`
 	IsTruncated           bool     `xml:"IsTruncated"`
 	NextContinuationToken string   `xml:"NextContinuationToken"`
+	StartAfter            string   `xml:"StartAfter"`
 	Contents              []struct {
 		Key string `xml:"Key"`
 	} `xml:"Contents"`
@@ -214,6 +215,33 @@ func TestDecodeMarkerEchoKeepsNonCanonicalRawKey(t *testing.T) {
 	assert.Equal(t, "a%41", decodeMarkerEcho("a%41", true))
 	assert.Equal(t, "a%2G", decodeMarkerEcho("a%2G", true))
 	assert.Equal(t, "a%20b", decodeMarkerEcho("a%20b", false))
+}
+
+// Under encoding-type=url AWS encodes the StartAfter echo the same as the
+// listed keys; a client resuming from the emitted form lands on the raw key.
+func TestListObjectsV2UrlStartAfterEchoAndResume(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a b", "a b0", "a c", "b"})
+
+	result := listV2Page(t, s3a, url.Values{"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {"a b"}})
+	assert.Equal(t, urlPathEscape("a b"), result.StartAfter)
+
+	var got []string
+	for _, content := range result.Contents {
+		key, err := url.QueryUnescape(content.Key)
+		require.NoError(t, err)
+		got = append(got, key)
+	}
+	assert.Equal(t, []string{"a b0", "a c", "b"}, got)
+
+	// Echoing the emitted form back resumes at the same raw key.
+	result = listV2Page(t, s3a, url.Values{"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {result.StartAfter}})
+	got = nil
+	for _, content := range result.Contents {
+		key, err := url.QueryUnescape(content.Key)
+		require.NoError(t, err)
+		got = append(got, key)
+	}
+	assert.Equal(t, []string{"a b0", "a c", "b"}, got)
 }
 
 // A url-encoded marker that is not the canonical urlPathEscape form of any key
