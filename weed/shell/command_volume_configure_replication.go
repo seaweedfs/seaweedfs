@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -33,6 +34,9 @@ func (c *commandVolumeConfigureReplication) Help() string {
 
 	This command changes a volume replication value. It should be followed by "volume.fix.replication".
 
+	Up to -maxParallelization volume servers are configured at a time, one volume at a time on each,
+	and replicas of the same volume on different servers take turns.
+
 `
 }
 
@@ -46,6 +50,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
 	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
+	maxParallelization := configureReplicationCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	if err = configureReplicationCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -75,6 +80,19 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 		return err
 	}
 
+	return configureReplicationOnVolumeServers(commandEnv, topologyInfo, volumeFilter, replicaPlacement.String(), *maxParallelization)
+}
+
+func configureReplicationOnVolumeServers(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeFilter func(*master_pb.VolumeInformationMessage) bool, replication string, maxParallelization int) error {
+	type serverVolumes struct {
+		addr      pb.ServerAddress
+		volumeIds []uint32
+	}
+	var servers []serverVolumes
+	// VolumeConfigure unmounts and remounts the volume, so replicas take turns
+	// to keep at least one of them serving.
+	volumeLocks := make(map[uint32]*sync.Mutex)
+
 	// find all data nodes with volumes that needs replication change
 	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		var targetVolumeIds []uint32
@@ -82,33 +100,45 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 			for _, v := range diskInfo.VolumeInfos {
 				if volumeFilter(v) {
 					targetVolumeIds = append(targetVolumeIds, v.Id)
+					if volumeLocks[v.Id] == nil {
+						volumeLocks[v.Id] = &sync.Mutex{}
+					}
 				}
 			}
 		}
-		if len(targetVolumeIds) == 0 {
-			return
-		}
-		err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dn), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			for _, targetVolumeId := range targetVolumeIds {
-				resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
-					VolumeId:    targetVolumeId,
-					Replication: replicaPlacement.String(),
-				})
-				if configureErr != nil {
-					return configureErr
-				}
-				if resp.Error != "" {
-					return errors.New(resp.Error)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return
+		if len(targetVolumeIds) > 0 {
+			servers = append(servers, serverVolumes{pb.NewServerAddressFromDataNode(dn), targetVolumeIds})
 		}
 	})
 
-	return err
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, server := range servers {
+		ewg.Add(func() error {
+			err := operation.WithVolumeServerClient(false, server.addr, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				for _, targetVolumeId := range server.volumeIds {
+					volumeLocks[targetVolumeId].Lock()
+					resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
+						VolumeId:    targetVolumeId,
+						Replication: replication,
+					})
+					volumeLocks[targetVolumeId].Unlock()
+					if configureErr != nil {
+						return configureErr
+					}
+					if resp.Error != "" {
+						return errors.New(resp.Error)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("volume server %s: %w", server.addr, err)
+			}
+			return nil
+		})
+	}
+
+	return ewg.Wait()
 }
 
 func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) (func(message *master_pb.VolumeInformationMessage) bool, error) {
