@@ -518,7 +518,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 	if containerDead {
 		t.Fatalf("Trino container %s exited before becoming ready\nLast output:\n%s\n%s", containerName, string(lastOutput), trinoContainerDiagnostics(containerName))
 	}
-	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
+	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s\n%s", string(lastOutput), trinoContainerDiagnostics(containerName))
 }
 
 func trinoContainerExited(output []byte) bool {
