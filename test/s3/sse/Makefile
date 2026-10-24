@@ -106,7 +106,7 @@ start-seaweedfs: check-binary
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \
@@ -347,7 +347,7 @@ start-seaweedfs-ci: check-binary
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \
@@ -491,7 +491,7 @@ test-volume-encryption: build-weed
 		-ip=127.0.0.1 \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \
