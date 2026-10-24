@@ -23,8 +23,14 @@ runs:
 
         bin=$(command -v fusermount3 || true)
         if [ -z "$bin" ]; then
-          echo "no fusermount3 in PATH" >&2
-          exit 1
+          # Self-hosted runners are not guaranteed to carry fuse3.
+          sudo apt-get update
+          sudo apt-get install -y fuse3
+          bin=$(command -v fusermount3 || true)
+          if [ -z "$bin" ]; then
+            echo "no fusermount3 in PATH after installing fuse3" >&2
+            exit 1
+          fi
         fi
         if can_mount "$bin"; then
           ls -l "$bin"
