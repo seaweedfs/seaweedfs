@@ -156,10 +156,12 @@ type configureReplicationGate struct {
 	mu        sync.Mutex
 	active    int
 	maxActive int
+	calls     int
 }
 
 func (s *configureReplicationGateServer) VolumeConfigure(_ context.Context, _ *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
 	s.gate.mu.Lock()
+	s.gate.calls++
 	s.gate.active++
 	if s.gate.active > s.gate.maxActive {
 		s.gate.maxActive = s.gate.active
@@ -217,5 +219,8 @@ func TestConfigureReplicationOnVolumeServersRunsServersInParallelUpToTheLimit(t 
 	defer gate.mu.Unlock()
 	if gate.maxActive != maxParallelization {
 		t.Errorf("at most %d servers ran together, expected %d", gate.maxActive, maxParallelization)
+	}
+	if gate.calls != servers {
+		t.Errorf("%d servers ran, expected %d", gate.calls, servers)
 	}
 }
