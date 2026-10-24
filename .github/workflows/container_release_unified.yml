@@ -25,7 +25,7 @@ on:
       rocksdb_version:
         description: 'RocksDB git tag to use when variant=rocksdb'
         required: false
-        default: 'v10.10.1'
+        default: 'v11.1.2'
 
 permissions:
   contents: read
@@ -282,7 +282,7 @@ jobs:
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
-            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.10.1') || '' }}
+            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v11.1.2') || '' }}
 
       - name: Export digest
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
