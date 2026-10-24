@@ -113,7 +113,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg", "Admin"})
 	env.masterPort = ports[0]
 	env.filerPort = ports[1]
 	env.s3Port = ports[2]
@@ -134,8 +134,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.logFile = logFile
 
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
-	env.masterProcess = exec.Command(
-		"weed", "mini",
+	miniArgs := append([]string{"mini",
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -144,7 +143,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	)
+	}, testutil.MiniAdminArgs(ports[4])...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0")
+	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Stdout = logFile
 	env.masterProcess.Stderr = logFile
 	env.masterProcess.Env = append(os.Environ(),
@@ -193,6 +194,7 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to start RisingWave container: %v\n%s", err, string(output))
 	}
+	env.checkRisingWaveContainer(t)
 
 	// Start a sidecar postgres container for running psql commands
 	sidecarName := "seaweed-risingwave-sidecar-" + randomString(8)
@@ -204,6 +206,7 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 		"sleep", "infinity",
 	)
 	if output, err := sidecarCmd.CombinedOutput(); err != nil {
+		env.checkRisingWaveContainer(t)
 		t.Fatalf("failed to start postgres sidecar: %v\n%s", err, string(output))
 	}
 
@@ -219,6 +222,7 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	env.t.Logf(">>> Waiting for RisingWave to be ready (timeout %v)...\n", timeout)
 	for time.Now().Before(deadline) {
+		env.checkRisingWaveContainer(env.t)
 		if output, err := runPostgresClientSQL(env.postgresSidecar, "SELECT 1;"); err == nil {
 			env.t.Logf(">>> RisingWave is ready.\n")
 			return true
@@ -228,6 +232,26 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 		time.Sleep(5 * time.Second)
 	}
 	return false
+}
+
+func (env *TestEnvironment) checkRisingWaveContainer(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}", env.risingwaveContainer).CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect RisingWave container: %v\n%s", err, out)
+	}
+	state := strings.Fields(string(out))
+	if len(state) != 3 {
+		t.Fatalf("unexpected RisingWave container state: %s", out)
+	}
+	if state[0] == "true" {
+		return
+	}
+	if state[1] == "132" && state[2] == "false" {
+		t.Skip("RisingWave image exited with illegal instruction on this CPU")
+	}
+	logs, _ := exec.Command("docker", "logs", env.risingwaveContainer).CombinedOutput()
+	t.Fatalf("RisingWave container exited before it became ready (code %s, OOM killed: %s):\n%s", state[1], state[2], logs)
 }
 
 func runPostgresClientSQL(containerName, sql string) ([]byte, error) {

@@ -415,11 +415,7 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 
 func NewChunkStreamReaderFromFiler(ctx context.Context, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrl []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
-
-	return doNewChunkStreamReader(ctx, lookupFileIdFn, chunks)
+	return doNewChunkStreamReader(ctx, masterClient.GetLookupFileIdFunction(), chunks)
 }
 
 // NewChunkStreamReaderFromLookup creates a ChunkStreamReader from a lookup function.

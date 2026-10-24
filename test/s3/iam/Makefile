@@ -81,7 +81,7 @@ start-services: ## Start SeaweedFS services for testing
 wait-for-services: ## Wait for all services to be ready
 	@echo "Waiting for services to be ready..."
 	@echo "Checking S3 API server..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "OK S3 API server is ready"; \
 			exit 0; \

@@ -207,9 +207,15 @@ fn read_needle_for_get(
     if request.try_meta_first(plan.size()) {
         plan.read_meta(&mut n)?;
         if n.cookie != cookie {
+            // The meta read answered the request.
+            plan.note_meta_only_success();
             return Ok(None);
         }
         if request.served_from_source(&n) {
+            if request.is_head {
+                // HEAD ends here; no payload read will record the success.
+                plan.note_meta_only_success();
+            }
             let info = plan.into_stream_info(&n);
             return Ok(Some((n, Some(info))));
         }
@@ -237,6 +243,9 @@ struct StreamingBody {
     hold_read_lock_for_stream: bool,
     _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
     io_unavailable: Arc<crate::storage::volume::IoUnavailable>,
+    /// Chunk read failures feed the volume's io-error streak, and finishing
+    /// the stream clears it — Go readNeedleDataInto parity.
+    io_errors: Arc<crate::storage::io_error::IoErrorTracker>,
     /// Pending chunk read; it hands `buf` back with the result.
     pending: Option<tokio::task::JoinHandle<(bytes::BytesMut, std::io::Result<bytes::Bytes>)>>,
     /// Chunk buffer, reclaimed once the previous frame has been written out.
@@ -298,12 +307,18 @@ impl http_body::Body for StreamingBody {
                                             ),
                                         )));
                                     }
+                                    // Hyper may not poll again once Content-Length is
+                                    // satisfied, so the read's success is recorded here.
+                                    self.io_errors.check_read_write_error(None);
                                 }
                                 return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(
                                     chunk,
                                 ))));
                             }
-                            Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
+                            Ok(Err(e)) => {
+                                self.io_errors.check_read_write_error(Some(&e));
+                                return std::task::Poll::Ready(Some(Err(e)));
+                            }
                             Err(e) => {
                                 return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
                             }
@@ -314,6 +329,7 @@ impl http_body::Body for StreamingBody {
 
             let total = self.data_size as usize;
             if self.pos >= total {
+                self.io_errors.check_read_write_error(None);
                 return std::task::Poll::Ready(None);
             }
 
@@ -1105,6 +1121,10 @@ async fn get_or_head_handler_inner(
 
     let (etag, last_modified_str) = etag_and_last_modified(&n);
     if let Some(resp) = not_modified_response(&n, &headers, &etag, &last_modified_str) {
+        // A request that ends here was answered by the meta read alone.
+        if let Some(io_errors) = strategy.io_errors() {
+            io_errors.check_read_write_error(None);
+        }
         return resp;
     }
 
@@ -1196,6 +1216,19 @@ enum ReadStrategy {
 struct ReadPlan {
     needle: Needle,
     strategy: ReadStrategy,
+}
+
+impl ReadStrategy {
+    /// The tracker a terminal meta read reports success to, when the reply
+    /// is served from the data file.
+    fn io_errors(&self) -> Option<&Arc<crate::storage::io_error::IoErrorTracker>> {
+        match self {
+            ReadStrategy::Stream(info)
+            | ReadStrategy::HeadFromMeta(info)
+            | ReadStrategy::RangeFromSource(info) => Some(&info.io_errors),
+            ReadStrategy::Buffered => None,
+        }
+    }
 }
 
 /// The 401 reply for a bad read JWT; Go checks it before NewVolumeId, so a
@@ -1486,39 +1519,76 @@ fn not_modified_response(
     etag: &str,
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
-    // If-Modified-Since first (Go order), then If-None-Match.
+    let not_modified = || {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        resp.headers_mut()
+            .insert(header::ETAG, etag.parse().unwrap());
+        if let Some(lm) = last_modified_str {
+            resp.headers_mut()
+                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+        }
+        resp
+    };
+
+    // If-Modified-Since applies only when there is no If-None-Match (RFC 9110 13.2.2).
+    if headers.contains_key(header::IF_NONE_MATCH) {
+        let inm = headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .map(|v| v.to_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(",");
+        return etag_list_matches(&inm, etag).then(not_modified);
+    }
+
     if n.last_modified > 0
-        && let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE)
-        && let Ok(ims_str) = ims_header.to_str()
+        && let Some(ims_str) = headers
+            .get(header::IF_MODIFIED_SINCE)
+            .and_then(|v| v.to_str().ok())
     {
         // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
         if let Ok(ims_time) =
             chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
             && (n.last_modified as i64) <= ims_time.and_utc().timestamp()
         {
-            let mut resp = StatusCode::NOT_MODIFIED.into_response();
-            if let Some(lm) = last_modified_str {
-                resp.headers_mut()
-                    .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-            }
-            // Go sets ETag after the 304 paths, so a 304 has no ETag.
-            return Some(resp);
+            return Some(not_modified());
         }
-    }
-
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
-        && let Ok(inm) = if_none_match.to_str()
-        && inm == etag
-    {
-        let mut resp = StatusCode::NOT_MODIFIED.into_response();
-        if let Some(lm) = last_modified_str {
-            resp.headers_mut()
-                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-        }
-        // Go sets ETag after the 304 paths, so a 304 has no ETag.
-        return Some(resp);
     }
     None
+}
+
+/// Weak comparison against "*" or a comma-separated entity-tag list (RFC 9110 13.1.2).
+fn etag_list_matches(header: &str, etag: &str) -> bool {
+    if header.trim() == "*" {
+        return true;
+    }
+    let etag = etag.trim_matches('"');
+    split_etag_list(header).into_iter().any(|tag| {
+        let tag = tag.trim();
+        let tag = tag.strip_prefix("W/").unwrap_or(tag);
+        // Empty list elements are ignored, so padding like a trailing
+        // comma cannot match an empty opaque tag.
+        !tag.is_empty() && tag.trim_matches('"') == etag
+    })
+}
+
+/// Splits an entity-tag list on the commas between tags; a comma inside a
+/// quoted opaque tag does not split.
+fn split_etag_list(header: &str) -> Vec<&str> {
+    let mut tags = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (i, b) in header.bytes().enumerate() {
+        match b {
+            b'"' => quoted = !quoted,
+            b',' if !quoted => {
+                tags.push(&header[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    tags.push(&header[start..]);
+    tags
 }
 
 /// The 200 reply headers, and the extension, which falls back to the stored name's.
@@ -1722,6 +1792,7 @@ fn stream_response(
         data_file_access_control: info.data_file_access_control,
         hold_read_lock_for_stream: !state.has_slow_read,
         io_unavailable: info.io_unavailable,
+        io_errors: info.io_errors,
         pending: None,
         buf: bytes::BytesMut::new(),
         state: tracking_state,
@@ -2121,9 +2192,21 @@ fn handle_range_request_from_source(
             return Ok(Vec::new());
         }
         let mut buf = vec![0u8; length as usize];
-        info.source
-            .read_exact_at(&mut buf, info.data_file_offset + start as u64)?;
-        Ok(buf)
+        match info
+            .source
+            .read_exact_at(&mut buf, info.data_file_offset + start as u64)
+        {
+            // A finished range read clears the streak a failed meta read
+            // counted, like readNeedleDataInto's terminal report.
+            Ok(()) => {
+                info.io_errors.check_read_write_error(None);
+                Ok(buf)
+            }
+            Err(e) => {
+                info.io_errors.check_read_write_error(Some(&e));
+                Err(e)
+            }
+        }
     };
 
     if ranges.len() == 1 {
@@ -5225,6 +5308,7 @@ mod tests {
             hold_read_lock_for_stream: true,
             _held_read_lease: None,
             io_unavailable: Arc::default(),
+            io_errors: Arc::default(),
             pending: None,
             buf: bytes::BytesMut::new(),
             state: None,
@@ -5597,6 +5681,80 @@ mod tests {
         delete_handler(State(state.clone()), request).await.status()
     }
 
+    #[test]
+    fn test_not_modified_checks_if_none_match_first() {
+        let n = Needle {
+            last_modified: 1700000000,
+            ..Needle::default()
+        };
+        let (etag, last_modified_str) = etag_and_last_modified(&n);
+        let bare = n.etag();
+        let before = "Tue, 14 Nov 2023 22:12:20 GMT".to_string();
+        let after = "Tue, 14 Nov 2023 22:14:20 GMT".to_string();
+
+        let cases: Vec<(Vec<(axum::http::HeaderName, String)>, bool)> = vec![
+            (vec![(header::IF_NONE_MATCH, format!("\"{bare}\""))], true),
+            (vec![(header::IF_NONE_MATCH, format!("W/\"{bare}\""))], true),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\", \"{bare}\""))],
+                true,
+            ),
+            (vec![(header::IF_NONE_MATCH, "*".into())], true),
+            (vec![(header::IF_NONE_MATCH, "\"x\"".into())], false),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_NONE_MATCH, format!("\"{bare}\"")),
+                ],
+                true,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"{bare},old\""))],
+                false,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\",,\"{bare}\""))],
+                true,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (vec![(header::IF_MODIFIED_SINCE, after)], true),
+            (vec![(header::IF_MODIFIED_SINCE, before)], false),
+        ];
+        for (pairs, want) in cases {
+            let mut headers = HeaderMap::new();
+            for (name, value) in &pairs {
+                headers.append(name, value.parse().unwrap());
+            }
+            assert_eq!(
+                not_modified_response(&n, &headers, &etag, &last_modified_str).is_some(),
+                want,
+                "{pairs:?}"
+            );
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            format!("\"{bare}\"").parse().unwrap(),
+        );
+        let resp = not_modified_response(&n, &headers, &etag, &last_modified_str).unwrap();
+        assert!(resp.headers().contains_key(header::ETAG));
+        assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    }
+
     /// A GET whose needle read is parked must not hold the store lock: a
     /// writer, here a real append to the same volume, must get through.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5769,6 +5927,44 @@ mod tests {
         let missing = format!("/1,{:x}{:08x}", ID + 1, TEST_COOKIE);
         let (status, _, _) = send_read(&state, Method::GET, &missing, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A ranged read served from the data file reports its outcome to the
+    /// io-error streak, like readNeedleDataInto: a finished range clears the
+    /// count a failed meta read left.
+    #[test]
+    fn test_range_from_source_reports_to_io_error_streak() {
+        use std::io::Write;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(tmp.path().join("1.dat"))
+            .unwrap();
+        let data: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        (&file).write_all(&data).unwrap();
+
+        let io_errors = Arc::new(crate::storage::io_error::IoErrorTracker::default());
+        let eio = crate::storage::volume::media_error_for_test();
+        io_errors.check_read_write_error(Some(&eio));
+        io_errors.check_read_write_error(Some(&eio));
+        assert_eq!(io_errors.get_io_error_state().1, 2);
+
+        let info = crate::storage::volume::NeedleStreamInfo {
+            source: crate::storage::volume::NeedleStreamSource::Local(file),
+            data_file_offset: 0,
+            data_size: data.len() as u32,
+            data_file_access_control: Arc::default(),
+            io_unavailable: Arc::default(),
+            io_errors: io_errors.clone(),
+            needle_id: NeedleId(1),
+            checksum: 0,
+        };
+        let resp = handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None);
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(io_errors.get_io_error_state().1, 0);
     }
 
     /// Range is read as Go reads it: a byte its parseRange cannot parse is a
@@ -7223,6 +7419,7 @@ mod tests {
                 .set(crate::server::write_queue::WriteQueue::new(
                     state.clone(),
                     128,
+                    crate::server::write_queue::SyncBatchOption::default(),
                 ))
                 .is_ok()
         );

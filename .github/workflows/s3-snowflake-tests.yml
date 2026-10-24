@@ -60,6 +60,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Java
@@ -67,7 +68,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'maven'
+          cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
 
       - name: Install SeaweedFS
         run: |

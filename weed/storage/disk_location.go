@@ -58,6 +58,7 @@ type DiskLocation struct {
 
 	isDiskSpaceLow    atomic.Bool
 	isDiskUnavailable atomic.Bool
+	syncBatch         SyncBatchOption
 	closeCh           chan struct{}
 }
 
@@ -119,6 +120,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
+		syncBatch:              DefaultSyncBatchOption,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)

@@ -12,13 +12,14 @@ import (
 // Config extends BaseConfig with erasure coding specific settings
 type Config struct {
 	base.BaseConfig
-	QuietForSeconds  int      `json:"quiet_for_seconds"`
-	FullnessRatio    float64  `json:"fullness_ratio"`
-	CollectionFilter string   `json:"collection_filter"`
-	MinSizeMB        int      `json:"min_size_mb"`
-	PreferredTags    []string `json:"preferred_tags"`
-	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
-	StrictPlacement  bool     `json:"strict_placement"`  // fail planning instead of relaxing placement constraints
+	QuietForSeconds   int      `json:"quiet_for_seconds"`
+	FullnessRatio     float64  `json:"fullness_ratio"`
+	CollectionFilter  string   `json:"collection_filter"`
+	MinSizeMB         int      `json:"min_size_mb"`
+	PreferredTags     []string `json:"preferred_tags"`
+	ReplicaPlacement  string   `json:"replica_placement"`   // e.g. "020"; empty falls back to the master default replication
+	StrictPlacement   bool     `json:"strict_placement"`    // fail planning instead of relaxing placement constraints
+	FreeSlotsDeadband int      `json:"free_slots_deadband"` // Place volume-slot M; |ΔfreeSlots| ≤ M×dataShards is a tie, then liveShards; 0 = strict
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -184,6 +185,22 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "checkbox",
 				CSSClasses:   "form-check-input",
 			},
+			{
+				Name:         "free_slots_deadband",
+				JSONName:     "free_slots_deadband",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				MaxValue:     100000,
+				Required:     false,
+				DisplayName:  "Free Volume Deadband (M)",
+				Description:  "Treat |Δfree volume slots| ≤ M as a Place tie and rank by liveShards instead",
+				HelpText:     "0 (default) keeps strict freeSlots ranking. A positive M is volume slots; Place applies M × data shards (10+4 → ×10).",
+				Placeholder:  "0",
+				Unit:         config.UnitCount,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -199,13 +216,14 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
 		TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
 			ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-				FullnessRatio:    float64(c.FullnessRatio),
-				QuietForSeconds:  int32(c.QuietForSeconds),
-				MinVolumeSizeMb:  int32(c.MinSizeMB),
-				CollectionFilter: c.CollectionFilter,
-				PreferredTags:    preferredTagsCopy,
-				ReplicaPlacement: c.ReplicaPlacement,
-				StrictPlacement:  c.StrictPlacement,
+				FullnessRatio:     float64(c.FullnessRatio),
+				QuietForSeconds:   int32(c.QuietForSeconds),
+				MinVolumeSizeMb:   int32(c.MinSizeMB),
+				CollectionFilter:  c.CollectionFilter,
+				PreferredTags:     preferredTagsCopy,
+				ReplicaPlacement:  c.ReplicaPlacement,
+				StrictPlacement:   c.StrictPlacement,
+				FreeSlotsDeadband: int32(c.FreeSlotsDeadband),
 			},
 		},
 	}
@@ -231,6 +249,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 		c.ReplicaPlacement = ecConfig.ReplicaPlacement
 		c.StrictPlacement = ecConfig.StrictPlacement
+		c.FreeSlotsDeadband = int(ecConfig.FreeSlotsDeadband)
 	}
 
 	return nil

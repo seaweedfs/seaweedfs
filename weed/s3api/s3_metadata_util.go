@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -52,25 +51,16 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 
 	// Object tagging
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
-		// Use url.ParseQuery for robust parsing and automatic URL decoding
-		parsedTags, err := url.ParseQuery(tags)
+		tagSet, err := parseTagsHeader(tags)
 		if err != nil {
-			// Return proper S3 error instead of silently dropping tags
-			glog.Warningf("Invalid S3 tag format in header '%s': %v", tags, err)
+			glog.Warningf("Invalid S3 tagging header: %v", err)
 			return nil, s3err.ErrInvalidTag
 		}
-
-		// Validate: S3 spec does not allow duplicate tag keys
-		for key, values := range parsedTags {
-			if len(values) > 1 {
-				glog.Warningf("Duplicate tag key '%s' in header '%s'", key, tags)
-				return nil, s3err.ErrInvalidTag
-			}
-			// Tag value can be an empty string but not nil
-			value := ""
-			if len(values) > 0 {
-				value = values[0]
-			}
+		if err := ValidateTags(tagSet); err != nil {
+			glog.Warningf("Invalid tags (%d): %v", len(tagSet), err)
+			return nil, s3err.ErrInvalidTag
+		}
+		for key, value := range tagSet {
 			metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
 	}

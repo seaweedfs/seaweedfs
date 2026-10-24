@@ -18,6 +18,9 @@ package s3_constants
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -355,6 +358,7 @@ const (
 	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
 	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
 	contextKeyAccessKeyId         contextKey = "s3-access-key-id"
+	contextKeyStoredAccessKeyId   contextKey = "s3-stored-access-key-id"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -365,10 +369,37 @@ const (
 // holder installed before authentication is shared across all copies, so the
 // name written by the inner handler is readable by the outer middleware.
 type identityHolder struct {
-	name          atomic.Pointer[string]
-	principalArn  atomic.Pointer[string]
-	identityClaim atomic.Pointer[string]
-	accessKeyId   atomic.Pointer[string]
+	name             atomic.Pointer[string]
+	principalArn     atomic.Pointer[string]
+	identityClaim    atomic.Pointer[string]
+	accessKeyId      atomic.Pointer[string]
+	storedCredential atomic.Pointer[storedCredential]
+}
+
+// storedCredential is the stored-identity credential a request authenticated
+// with: the access key id and its secret, so a credential vendor can bind
+// what it mints to this exact credential instance.
+type storedCredential struct {
+	accessKeyId string
+	secretKey   string
+}
+
+// StoredCredentialFingerprint identifies one credential instance. The key id
+// alone cannot: an operator can delete a key and re-create it under the same
+// id with a different secret. The fingerprint travels inside the vended
+// session token, so it is keyed with a server-held key — an unkeyed hash of
+// the secret would hand the token holder an offline guessing oracle.
+func StoredCredentialFingerprint(fingerprintKey []byte, accessKeyId, secretKey string) string {
+	if len(fingerprintKey) == 0 {
+		return ""
+	}
+	h := hmac.New(sha256.New, fingerprintKey)
+	h.Write([]byte("seaweedfs-stored-credential"))
+	h.Write([]byte{0})
+	h.Write([]byte(accessKeyId))
+	h.Write([]byte{0})
+	h.Write([]byte(secretKey))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -552,6 +583,70 @@ func AccessKeyIdFromContext(ctx context.Context) string {
 		}
 	}
 	return ""
+}
+
+// SetStoredAccessKeyIdInContext records the stored-identity credential the
+// request authenticated with — set by an authenticator that verified the
+// credential against the identity store, so a credential vendor can tell the
+// caller apart from an STS session or OIDC user holding a key the store never
+// issued.
+func SetStoredAccessKeyIdInContext(ctx context.Context, accessKeyId, secretKey string) context.Context {
+	if accessKeyId == "" {
+		return ctx
+	}
+	sc := storedCredential{accessKeyId, secretKey}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedCredential.Store(&sc)
+	}
+	return context.WithValue(ctx, contextKeyStoredAccessKeyId, sc)
+}
+
+// RecordStoredAccessKeyId stores the stored-credential marker into the
+// request's identity holder: a verifier calls it when the credential that
+// matched resolves to a key held by a configured identity. A no-op without a
+// holder (EnsureIdentityHolder) or without a key.
+func RecordStoredAccessKeyId(ctx context.Context, accessKeyId, secretKey string) {
+	if ctx == nil || accessKeyId == "" {
+		return
+	}
+	sc := storedCredential{accessKeyId, secretKey}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.storedCredential.Store(&sc)
+	}
+}
+
+// StoredAccessKeyIdFromContext retrieves the stored-identity access key id the
+// request authenticated with, or "" when it authenticated another way (STS
+// session, OIDC bearer, anonymous).
+func StoredAccessKeyIdFromContext(ctx context.Context) string {
+	sc, _ := storedCredentialFromContext(ctx)
+	return sc.accessKeyId
+}
+
+// StoredCredentialFromContext retrieves the stored-identity access key id and
+// secret the request authenticated with, or "", "" when it authenticated
+// another way (STS session, OIDC bearer, anonymous).
+func StoredCredentialFromContext(ctx context.Context) (string, string) {
+	sc, ok := storedCredentialFromContext(ctx)
+	if !ok {
+		return "", ""
+	}
+	return sc.accessKeyId, sc.secretKey
+}
+
+func storedCredentialFromContext(ctx context.Context) (storedCredential, bool) {
+	if ctx == nil {
+		return storedCredential{}, false
+	}
+	if sc, ok := ctx.Value(contextKeyStoredAccessKeyId).(storedCredential); ok && sc.accessKeyId != "" {
+		return sc, true
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if sc := h.storedCredential.Load(); sc != nil && sc.accessKeyId != "" {
+			return *sc, true
+		}
+	}
+	return storedCredential{}, false
 }
 
 // IgnoreSessionTokenInContext marks the request's session token as tolerated

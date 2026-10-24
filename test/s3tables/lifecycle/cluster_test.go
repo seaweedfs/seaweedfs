@@ -99,6 +99,7 @@ type environment struct {
 	s3GrpcPort     int
 	icebergPort    int
 	lancePort      int
+	adminPort      int
 
 	weedCancel context.CancelFunc
 	weedCmd    *exec.Cmd
@@ -138,6 +139,10 @@ func newEnvironment() (*environment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
+	adminPorts, err := testutil.AllocateMiniPorts(1)
+	if err != nil {
+		return nil, fmt.Errorf("allocate admin port: %w", err)
+	}
 	return &environment{
 		weedBinary:     weedBinary,
 		rootDir:        seaweedDir,
@@ -153,6 +158,7 @@ func newEnvironment() (*environment, error) {
 		s3GrpcPort:     ports[7],
 		icebergPort:    ports[8],
 		lancePort:      ports[9],
+		adminPort:      adminPorts[0],
 	}, nil
 }
 
@@ -166,7 +172,7 @@ func (env *environment) start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -180,7 +186,9 @@ func (env *environment) start() error {
 		"-s3.config", iamConfigPath,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(env.adminPort)...)
+	miniArgs = append(miniArgs, "-webdav=false")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -1067,10 +1067,10 @@ func TestOIDCProviderJTICleanup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check cache size is 1
-	assert.Equal(t, int64(1), provider.jtiCount.Load())
+	assert.Equal(t, int64(1), provider.jti.count.Load())
 
 	// Verify entry exists and check its expiration includes clock skew
-	val, ok := provider.jtiStore.Load("cleanup-test-jti")
+	val, ok := provider.jti.store.Load("cleanup-test-jti")
 	require.True(t, ok, "JTI entry should exist")
 	entry := val.(*jtiEntry)
 
@@ -1088,21 +1088,21 @@ func TestOIDCProviderJTICleanup(t *testing.T) {
 	// both the entry and the count must actually be cleared
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	cleanupDone := make(chan struct{})
-	go provider.cleanupExpiredJTIs(cleanupCtx, cleanupDone, 20*time.Millisecond)
+	go provider.jti.cleanupLoop(cleanupCtx, cleanupDone, 20*time.Millisecond)
 	defer func() {
 		cleanupCancel()
 		<-cleanupDone
 	}()
 
-	provider.jtiStore.Store("expired-cleanup-jti", &jtiEntry{
+	provider.jti.store.Store("expired-cleanup-jti", &jtiEntry{
 		subject:   "expired-user",
 		expiresAt: time.Now().Add(-time.Minute),
 	})
-	provider.jtiCount.Add(1)
+	provider.jti.count.Add(1)
 
 	require.Eventually(t, func() bool {
-		_, stillThere := provider.jtiStore.Load("expired-cleanup-jti")
-		return !stillThere && provider.jtiCount.Load() == 1 // only the valid entry remains
+		_, stillThere := provider.jti.store.Load("expired-cleanup-jti")
+		return !stillThere && provider.jti.count.Load() == 1 // only the valid entry remains
 	}, 2*time.Second, 10*time.Millisecond, "periodic cleanup should evict the expired entry")
 }
 
@@ -1124,7 +1124,7 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 
 	// First initialization
 	require.NoError(t, provider.Initialize(config))
-	require.NotNil(t, provider.jtiCleanupCancel, "First cleanup cancel should be set")
+	require.NotNil(t, provider.jti.cleanupCancel, "First cleanup cancel should be set")
 
 	// Create and validate a token to ensure JTI protection is working
 	token1 := createTestJWT(t, privateKey, jwt.MapClaims{
@@ -1140,7 +1140,7 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 
 	// Second initialization should not cause errors
 	require.NoError(t, provider.Initialize(config))
-	require.NotNil(t, provider.jtiCleanupCancel, "Second cleanup cancel should be set")
+	require.NotNil(t, provider.jti.cleanupCancel, "Second cleanup cancel should be set")
 
 	// The JTI cache survives re-initialization, so the consumed token is
 	// still detected as a replay rather than being usable again
@@ -1150,7 +1150,7 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 
 	// Third initialization to ensure it works multiple times
 	require.NoError(t, provider.Initialize(config))
-	require.NotNil(t, provider.jtiCleanupCancel, "Third cleanup cancel should be set")
+	require.NotNil(t, provider.jti.cleanupCancel, "Third cleanup cancel should be set")
 
 	// Verify JTI replay protection still works after re-initialization
 	token2 := createTestJWT(t, privateKey, jwt.MapClaims{
@@ -1201,16 +1201,16 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 			subject:   fmt.Sprintf("expired-user-%d", i),
 			expiresAt: time.Now().Add(-time.Hour), // Already expired
 		}
-		provider.jtiStore.Store(jti, entry)
-		provider.jtiCount.Add(1)
+		provider.jti.store.Store(jti, entry)
+		provider.jti.count.Add(1)
 	}
 
-	assert.Equal(t, int64(5), provider.jtiCount.Load(), "Should have 5 expired entries")
+	assert.Equal(t, int64(5), provider.jti.count.Load(), "Should have 5 expired entries")
 
 	// Perform eager cleanup - should remove all expired entries
-	provider.performEagerCleanup()
+	provider.jti.performEagerCleanup()
 
-	assert.Equal(t, int64(0), provider.jtiCount.Load(),
+	assert.Equal(t, int64(0), provider.jti.count.Load(),
 		"All expired entries should be removed by eager cleanup")
 
 	// Now test that adding valid tokens works after cleanup
@@ -1228,7 +1228,7 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 	}
 
 	// Should have 9 valid entries now (90% of capacity, triggers eager cleanup warning)
-	assert.Equal(t, int64(9), provider.jtiCount.Load(), "Should have 9 valid entries")
+	assert.Equal(t, int64(9), provider.jti.count.Load(), "Should have 9 valid entries")
 
 	// 10th token should succeed (at capacity but not over)
 	token10 := createTestJWT(t, privateKey, jwt.MapClaims{
@@ -1282,11 +1282,11 @@ func TestOIDCProviderConcurrentCleanupNoNegativeCount(t *testing.T) {
 			subject:   fmt.Sprintf("user-%d", i),
 			expiresAt: time.Now().Add(-time.Hour), // Already expired
 		}
-		provider.jtiStore.Store(jti, entry)
-		provider.jtiCount.Add(1)
+		provider.jti.store.Store(jti, entry)
+		provider.jti.count.Add(1)
 	}
 
-	initialCount := provider.jtiCount.Load()
+	initialCount := provider.jti.count.Load()
 	assert.Equal(t, int64(50), initialCount, "Should have 50 expired entries")
 
 	// Run multiple concurrent cleanups
@@ -1297,14 +1297,14 @@ func TestOIDCProviderConcurrentCleanupNoNegativeCount(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			provider.performEagerCleanup()
+			provider.jti.performEagerCleanup()
 		}()
 	}
 
 	wg.Wait()
 
 	// Counter should be 0 (all entries removed), never negative
-	finalCount := provider.jtiCount.Load()
+	finalCount := provider.jti.count.Load()
 	assert.Equal(t, int64(0), finalCount,
 		"Counter should be 0 after concurrent cleanups, got %d", finalCount)
 	assert.GreaterOrEqual(t, finalCount, int64(0),
@@ -1312,7 +1312,7 @@ func TestOIDCProviderConcurrentCleanupNoNegativeCount(t *testing.T) {
 
 	// Verify store is actually empty
 	storeCount := 0
-	provider.jtiStore.Range(func(key, value interface{}) bool {
+	provider.jti.store.Range(func(key, value interface{}) bool {
 		storeCount++
 		return true
 	})

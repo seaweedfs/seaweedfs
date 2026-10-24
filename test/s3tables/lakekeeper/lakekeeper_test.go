@@ -205,7 +205,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.weedCancel = cancel
 
 	// Start weed mini with both S3 config (standard IAM) and IAM config (advanced IAM/STS)
-	cmd := exec.CommandContext(ctx, env.weedBinary, "-v", "4", "mini",
+	miniArgs := append([]string{"-v", "4", "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -220,7 +220,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0", "-s3.port.iceberg=0")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

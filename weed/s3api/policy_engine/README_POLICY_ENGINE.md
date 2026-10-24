@@ -125,6 +125,7 @@ Support for all AWS condition operators:
 - **Boolean**: `Bool`
 - **ARN**: `ArnEquals`, `ArnLike`
 - **Null**: `Null`
+- **Set qualifiers**: `ForAllValues:` and `ForAnyValue:` before any of the above, for multi-valued keys such as `s3:RequestObjectTagKeys`
 
 ### 4. Condition Keys
 
@@ -357,6 +358,7 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 | `aws:CurrentTime` | Time-based access control |
 | `s3:ExistingObjectTag/<key>` | Tag-based access control for existing objects |
 | `s3:RequestObjectTag/<key>` | Tag conditions on the tags a PUT request sets |
+| `s3:RequestObjectTagKeys` | The set of tag keys a PUT request sets |
 | Wildcard Patterns | Support for `*` and `?` in actions and resources |
 | Principal Matching | `*`, account IDs, and user ARNs |
 
@@ -364,7 +366,6 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 
 | Feature | GitHub Issue |
 |---------|--------------|
-| `s3:RequestObjectTagKeys` | Check which tag keys are in request |
 | `s3:x-amz-content-sha256` | Content hash condition |
 | `s3:x-amz-server-side-encryption` | SSE condition |
 | `s3:x-amz-storage-class` | Storage class condition |

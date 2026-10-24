@@ -22,9 +22,8 @@ import (
 )
 
 const (
-	brokerHealthCheckTimeout  = 5 * time.Second
-	brokerHealthCheckAttempts = 3
-	brokerHealthCheckBackoff  = 250 * time.Millisecond
+	brokerHealthCheckTimeout = 5 * time.Second
+	brokerHealthCheckBackoff = 250 * time.Millisecond
 )
 
 // NewBrokerClientWithFilerAccessor creates a client with a shared filer accessor
@@ -102,14 +101,17 @@ func (bc *BrokerClient) Close() error {
 	return bc.conn.Close()
 }
 
-// HealthCheck verifies the broker connection is working
+// HealthCheck verifies the broker connection is working. A freshly announced
+// broker may still be acquiring its balancer lock, so keep retrying for the
+// same window cluster discovery waits out.
 func (bc *BrokerClient) HealthCheck() error {
 	if bc.client == nil {
 		return fmt.Errorf("broker client not connected")
 	}
 
+	deadline := time.Now().Add(clusterNodeDiscoveryTimeout)
 	var lastErr error
-	for attempt := 1; attempt <= brokerHealthCheckAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		ctx, cancel := context.WithTimeout(bc.ctx, brokerHealthCheckTimeout)
 		_, err := bc.client.FindBrokerLeader(ctx, &mq_pb.FindBrokerLeaderRequest{})
 		cancel()
@@ -117,17 +119,18 @@ func (bc *BrokerClient) HealthCheck() error {
 			return nil
 		}
 		lastErr = err
-		if attempt == brokerHealthCheckAttempts {
+		if !time.Now().Before(deadline) {
 			break
 		}
+		backoff := min(time.Duration(attempt)*brokerHealthCheckBackoff, time.Second)
 		select {
 		case <-bc.ctx.Done():
 			return bc.ctx.Err()
-		case <-time.After(time.Duration(attempt) * brokerHealthCheckBackoff):
+		case <-time.After(backoff):
 		}
 	}
 
-	return fmt.Errorf("broker health check failed after %d attempts: %v", brokerHealthCheckAttempts, lastErr)
+	return fmt.Errorf("broker health check failed after %v: %v", clusterNodeDiscoveryTimeout, lastErr)
 }
 
 // GetPartitionRangeInfo gets comprehensive range information from SeaweedMQ broker's native range manager

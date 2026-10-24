@@ -1340,11 +1340,11 @@ async fn non_ascii_fid_and_ttl_are_rejected_not_panicked() {
 
 #[tokio::test]
 async fn write_queue_upload_returns_same_etag_as_direct_write() {
-    use seaweed_volume::server::write_queue::WriteQueue;
+    use seaweed_volume::server::write_queue::{SyncBatchOption, WriteQueue};
 
     let (direct_state, _direct_tmp) = test_state();
     let (queued_state, _queued_tmp) = test_state();
-    let wq = WriteQueue::new(queued_state.clone(), 128);
+    let wq = WriteQueue::new(queued_state.clone(), 128, SyncBatchOption::default());
     let _ = queued_state.write_queue.set(wq);
 
     let compressible = "seaweedfs ".repeat(200).into_bytes();

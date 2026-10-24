@@ -30,6 +30,11 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.event.inputs.image_tag || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
   security-events: write
@@ -94,6 +99,7 @@ jobs:
           echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -164,10 +170,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Free Disk Space
         run: |
           echo "Available disk space before cleanup:"
-          df -h
+          timeout 15 df -h || true
           # Remove pre-installed tools
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           # Clean package managers
@@ -179,7 +188,7 @@ jobs:
           [ -d ~/.cache/go-build ] && rm -rf ~/.cache/go-build || true
           [ -d /go/pkg ] && rm -rf /go/pkg || true
           echo "Available disk space after cleanup:"
-          df -h
+          timeout 15 df -h || true
       
       - name: Configure variant
         id: config

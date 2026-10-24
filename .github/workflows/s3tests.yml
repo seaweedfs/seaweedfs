@@ -25,8 +25,8 @@ on:
       - '.github/workflows/s3tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -44,6 +44,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -57,9 +58,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -396,6 +397,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -409,9 +411,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -566,6 +568,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -579,9 +582,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
@@ -691,6 +694,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Run SeaweedFS Custom S3 Copy tests
@@ -793,6 +797,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -806,9 +811,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15

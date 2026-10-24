@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
@@ -438,6 +439,92 @@ func TestRouting_BucketRouteMatchesAnyHost(t *testing.T) {
 			}
 			if match.MatchErr != nil {
 				t.Fatalf("route matched but reported error: %v", match.MatchErr)
+			}
+		})
+	}
+}
+
+// TestRouting_BucketRootPreflightUsesBucketCORS is a regression test: a
+// path-style preflight for the bucket root without a trailing
+// slash must be evaluated against the bucket CORS rules like /bucket/, not
+// answered from the global AllowedOrigins. Service-level paths keep the
+// global answer, and virtual-host routing is unchanged.
+func TestRouting_BucketRootPreflightUsesBucketCORS(t *testing.T) {
+	const (
+		bucket        = "cors-bucket"
+		allowedOrigin = "https://app.example.com"
+		foreignOrigin = "https://untrusted.example"
+	)
+	pathStyleBucketPaths := []string{"/" + bucket, "/" + bucket + "/", "/" + bucket + "?list-type=2", "/" + bucket + "/key"}
+
+	cases := []struct {
+		name         string
+		domainName   string
+		host         string
+		bucketPaths  []string // evaluated against the bucket CORS rules
+		servicePaths []string // answered from the global AllowedOrigins
+	}{
+		{
+			name:         "path-style",
+			host:         "10.0.0.5:8333",
+			bucketPaths:  pathStyleBucketPaths,
+			servicePaths: []string{"/", "/status", "/healthz", "/readyz"},
+		},
+		{
+			name:         "path-style domain",
+			domainName:   "s3.example.com,api.s3.example.com",
+			host:         "api.s3.example.com",
+			bucketPaths:  pathStyleBucketPaths,
+			servicePaths: []string{"/status", "/healthz", "/readyz"},
+		},
+		{
+			name:        "virtual-host domain",
+			domainName:  "s3.example.com,api.s3.example.com",
+			host:        bucket + ".s3.example.com",
+			bucketPaths: []string{"/", "/?list-type=2", "/key", "/status"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := setupRoutingTestServer(t)
+			s3a.option.DomainName = tc.domainName
+			s3a.option.AllowedOrigins = []string{"*"}
+			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+			s3a.bucketConfigCache.Set(bucket, &BucketConfig{
+				Name: bucket,
+				CORS: &cors.CORSConfiguration{CORSRules: []cors.CORSRule{{
+					AllowedOrigins: []string{allowedOrigin},
+					AllowedMethods: []string{http.MethodGet, http.MethodPut},
+					AllowedHeaders: []string{"*"},
+				}}},
+			})
+			router := mux.NewRouter()
+			s3a.registerRouter(router)
+
+			preflight := func(path, origin string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodOptions, "http://"+tc.host+path, nil)
+				req.Header.Set("Origin", origin)
+				req.Header.Set("Access-Control-Request-Method", http.MethodPut)
+				rr := httptest.NewRecorder()
+				router.ServeHTTP(rr, req)
+				return rr
+			}
+
+			for _, path := range tc.bucketPaths {
+				rr := preflight(path, foreignOrigin)
+				assert.Equal(t, http.StatusForbidden, rr.Code, "foreign origin on %s", path)
+				assert.Empty(t, rr.Header().Get("Access-Control-Allow-Origin"), "foreign origin on %s", path)
+
+				rr = preflight(path, allowedOrigin)
+				assert.Equal(t, http.StatusOK, rr.Code, "allowed origin on %s", path)
+				assert.Equal(t, allowedOrigin, rr.Header().Get("Access-Control-Allow-Origin"), "allowed origin on %s", path)
+			}
+
+			for _, path := range tc.servicePaths {
+				rr := preflight(path, foreignOrigin)
+				assert.Equal(t, http.StatusOK, rr.Code, "service-level %s", path)
+				assert.Equal(t, "*", rr.Header().Get("Access-Control-Allow-Origin"), "service-level %s", path)
 			}
 		})
 	}

@@ -448,12 +448,12 @@ func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, 
 	result := &S3ListObjectVersionsResult{
 		Name:                bucket,
 		Prefix:              prefix,
-		KeyMarker:           keyMarker,
+		KeyMarker:           encodeListContinuationToken(keyMarker),
 		VersionIdMarker:     versionIdMarker,
 		MaxKeys:             maxKeys,
 		Delimiter:           delimiter,
 		IsTruncated:         isTruncated,
-		NextKeyMarker:       nextKeyMarker,
+		NextKeyMarker:       encodeListContinuationToken(nextKeyMarker),
 		NextVersionIdMarker: nextVersionIdMarker,
 		Entries:             make([]VersionListEntry, 0, len(combinedList)),
 	}
@@ -1906,7 +1906,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	prefix := strings.TrimPrefix(originalPrefix, "/")
 	// Note: prefix is used for filtering relative to bucket root, so no leading slash needed
 
-	keyMarker := query.Get("key-marker")
+	keyMarker := decodeListContinuationToken(query.Get("key-marker"))
 	versionIdMarker := query.Get("version-id-marker")
 	delimiter := query.Get("delimiter")
 

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -70,8 +73,8 @@ func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 		Metadata:       in.Metadata,
 		Name:           in.Name,
 		Prefix:         in.Prefix,
-		Marker:         in.Marker,
-		NextMarker:     in.NextMarker,
+		Marker:         encodeMarkerEcho(in.Marker, in.EncodingType == s3.EncodingTypeUrl),
+		NextMarker:     encodeMarkerEcho(in.NextMarker, in.EncodingType == s3.EncodingTypeUrl),
 		MaxKeys:        in.MaxKeys,
 		Delimiter:      in.Delimiter,
 		IsTruncated:    in.IsTruncated,
@@ -104,9 +107,10 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	marker := continuationToken.string
+	startAfterKey := decodeMarkerEcho(startAfter, encodingTypeUrl)
+	marker := decodeListContinuationToken(continuationToken.string)
 	if !continuationToken.set {
-		marker = startAfter
+		marker = startAfterKey
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
@@ -145,16 +149,128 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		IsTruncated:           response.IsTruncated,
 		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
 		MaxKeys:               uint16(response.MaxKeys),
-		NextContinuationToken: response.NextMarker,
+		NextContinuationToken: encodeListContinuationToken(response.NextMarker),
 		Prefix:                response.Prefix,
 		StartAfter:            startAfter,
 	}
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
+		responseV2.StartAfter = urlPathEscape(startAfterKey)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
 	writeSuccessResponseXML(w, r, responseV2)
+}
+
+// continuationTokenEncodingPrefix tags a NextContinuationToken whose payload is the
+// base64url encoding of the raw key. XML 1.0 cannot carry control characters, and the
+// XML encoder replaces them with U+FFFD, so a token holding such a key would resume
+// past a mangled name and skip every key sorting between the two. Keys that are valid
+// XML text still travel as the bare key, so the token is unchanged for them.
+const continuationTokenEncodingPrefix = "base64:"
+
+func encodeListContinuationToken(key string) string {
+	if key == "" {
+		return ""
+	}
+	if isXMLText(key) && !strings.HasPrefix(key, continuationTokenEncodingPrefix) {
+		return key
+	}
+	return continuationTokenEncodingPrefix + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func encodeListContinuationTokenField(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return aws.String(encodeListContinuationToken(*value))
+}
+
+// encodeMarkerEcho renders a decoded request marker for the response echo:
+// the token encoding keeps an XML-unsafe key legible, and urlPathEscape applies
+// the encoding-type=url form the keys in the same response already carry.
+func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	marker = encodeListContinuationToken(marker)
+	if encodingTypeUrl {
+		marker = urlPathEscape(marker)
+	}
+	return marker
+}
+
+// decodeMarkerEcho reverses the wire encoding on a marker the client echoes
+// back: under encoding-type=url the emitted echo was urlPathEscape'd. Only a
+// value that is the canonical escaped form of its unescape could have come
+// from that encoder — "a%2541" round-trips to itself, "a%41" does not — so
+// anything else stays the raw key the client sent.
+func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	return decodeEscapedEcho(marker, encodingTypeUrl, urlPathEscape)
+}
+
+func decodeEscapedEcho(marker string, encodingTypeUrl bool, escape func(string) string) string {
+	if !encodingTypeUrl {
+		return marker
+	}
+	if unescaped, err := url.QueryUnescape(marker); err == nil && escape(unescaped) == marker {
+		return unescaped
+	}
+	return marker
+}
+
+func decodeListContinuationToken(token string) string {
+	key, ok := strings.CutPrefix(token, continuationTokenEncodingPrefix)
+	if !ok {
+		return token
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil {
+		// Not a token this server wrote; resume at the token as the raw key.
+		return token
+	}
+	decodedKey := string(decoded)
+	// encodeListContinuationToken only writes a token for a key that cannot
+	// travel bare, so a decoded key that could have stayed bare — valid XML
+	// text without the prefix — means the input was a legacy raw-key token,
+	// not something to decode.
+	if isXMLText(decodedKey) && !strings.HasPrefix(decodedKey, continuationTokenEncodingPrefix) {
+		return token
+	}
+	// A decoded key that could not travel bare makes the token ambiguous
+	// ("base64:AQ" reads as both the encoded form of "\x01" and a literal
+	// legacy key). The encoded reading wins: preferring the raw one would
+	// resume past real entries for every token this server writes, while a
+	// legacy token aliasing the encoded form only re-lists keys.
+	return decodedKey
+}
+
+// isXMLText reports whether s survives an XML 1.0 round trip unchanged, i.e. the
+// encoder does not replace any of its characters with U+FFFD.
+func isXMLText(s string) bool {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return false
+		}
+		if !isXMLChar(r) {
+			return false
+		}
+		i += size
+	}
+	return true
+}
+
+// isXMLChar follows the XML 1.0 Char production the encoding/xml encoder enforces.
+func isXMLChar(r rune) bool {
+	switch {
+	case r == 0x9 || r == 0xA || r == 0xD:
+		return true
+	case r >= 0x20 && r <= 0xD7FF:
+		return true
+	case r >= 0xE000 && r <= 0xFFFD:
+		return true
+	case r >= 0x10000 && r <= 0x10FFFF:
+		return true
+	}
+	return false
 }
 
 func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
@@ -163,9 +279,9 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, listMarker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, marker, delimiter, maxKeys)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, listMarker, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -181,8 +297,8 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
-	requestMarker := marker
-	marker = adjustMarkerForDelimiter(marker, originalPrefix, delimiter)
+	requestMarker := decodeListContinuationToken(decodeMarkerEcho(listMarker, encodingTypeUrl))
+	marker := adjustMarkerForDelimiter(requestMarker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
 		bucket:          bucket,

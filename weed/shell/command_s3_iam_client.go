@@ -28,7 +28,7 @@ func (ce *CommandEnv) withIamClient(fn func(ctx context.Context, client iam_pb.S
 		ctx, cancel := context.WithTimeout(iamAdminAuthContext(context.Background()), iamRequestTimeout)
 		defer cancel()
 		return fn(ctx, iam_pb.NewSeaweedIdentityAccessManagementClient(conn))
-	}, ce.option.FilerAddress.ToGrpcAddress(), false, ce.option.GrpcDialOption)
+	}, ce.FilerAddress().ToGrpcAddress(), false, ce.option.GrpcDialOption)
 }
 
 func iamAdminAuthContext(ctx context.Context) context.Context {

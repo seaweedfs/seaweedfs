@@ -116,7 +116,7 @@ func setup(topologyLayout string) *Topology {
 					}
 					if vi.ReplicaPlacement != nil {
 						vl := topo.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, needle.EMPTY_TTL, types.HardDriveType)
-						vl.RegisterVolume(&vi, server)
+						vl.RegisterVolume(&vi, server, nil)
 						vl.setVolumeWritable(vi.Id)
 					}
 					server.AddOrUpdateVolume(vi)

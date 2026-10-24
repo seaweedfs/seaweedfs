@@ -2659,6 +2659,16 @@ func (m *AtomicRenameEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, err
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.FailIfTargetExists {
+		i--
+		if m.FailIfTargetExists {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
 	if len(m.Signatures) > 0 {
 		var pksize2 int
 		for _, num := range m.Signatures {
@@ -4911,6 +4921,18 @@ func (m *FilerConf_PathConf) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.InodeIndex {
+		i--
+		if m.InodeIndex {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x88
+	}
 	if m.WormRetentionTimeSeconds != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.WormRetentionTimeSeconds))
 		i--
@@ -4984,9 +5006,9 @@ func (m *FilerConf_PathConf) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x38
 	}
-	if m.Fsync {
+	if m.Fsync != nil {
 		i--
-		if m.Fsync {
+		if *m.Fsync {
 			dAtA[i] = 1
 		} else {
 			dAtA[i] = 0
@@ -7599,6 +7621,9 @@ func (m *AtomicRenameEntryRequest) SizeVT() (n int) {
 		}
 		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
 	}
+	if m.FailIfTargetExists {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -8501,7 +8526,7 @@ func (m *FilerConf_PathConf) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.Fsync {
+	if m.Fsync != nil {
 		n += 2
 	}
 	if m.VolumeGrowthCount != 0 {
@@ -8536,6 +8561,9 @@ func (m *FilerConf_PathConf) SizeVT() (n int) {
 	}
 	if m.WormRetentionTimeSeconds != 0 {
 		n += 2 + protohelpers.SizeOfVarint(uint64(m.WormRetentionTimeSeconds))
+	}
+	if m.InodeIndex {
+		n += 3
 	}
 	n += len(m.unknownFields)
 	return n
@@ -16531,6 +16559,26 @@ func (m *AtomicRenameEntryRequest) UnmarshalVT(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field Signatures", wireType)
 			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FailIfTargetExists", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.FailIfTargetExists = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -22263,7 +22311,8 @@ func (m *FilerConf_PathConf) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
-			m.Fsync = bool(v != 0)
+			b := bool(v != 0)
+			m.Fsync = &b
 		case 7:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field VolumeGrowthCount", wireType)
@@ -22497,6 +22546,26 @@ func (m *FilerConf_PathConf) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 17:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InodeIndex", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.InodeIndex = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

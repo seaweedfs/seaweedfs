@@ -507,8 +507,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	} else {
 		s3ApiServer.client = &http.Client{
 			Transport: &http.Transport{
-				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", option.LocalFilerSocket)
+				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+					conn, err := (&net.Dialer{}).DialContext(ctx, "unix", option.LocalFilerSocket)
+					if err != nil {
+						return util.OutboundDialContext(ctx, "tcp", addr)
+					}
+					return conn, nil
 				},
 			},
 		}
@@ -943,6 +947,17 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// Object path pattern with (?s) flag to match newlines in object keys
 	const objectPath = "/{object:(?s).+}"
 
+	// CORS preflight for service-level requests, answered from the global
+	// AllowedOrigins rather than a bucket's CORS configuration
+	serviceOptionsHandler := func(w http.ResponseWriter, r *http.Request) {
+		if s3a.handleCORSOriginValidation(w, r) {
+			writeSuccessResponseEmpty(w, r)
+		}
+	}
+	// A path-style bucket router would take the health probe paths as bucket
+	// names, so their preflight is registered ahead of each one
+	const healthProbePath = "/{probe:status|healthz|readyz}"
+
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
@@ -950,6 +965,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// Register path-style domains
 		for _, domain := range pathStyleDomains {
+			apiRouter.Host(domain).Methods(http.MethodOptions).Path(healthProbePath).HandlerFunc(serviceOptionsHandler)
 			routers = append(routers, apiRouter.Host(domain).PathPrefix("/{bucket}").Subrouter())
 			apiRouter.Host(domain).
 				Methods(http.MethodGet).
@@ -967,6 +983,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// arrive via an IP, an unlisted hostname, or a reverse proxy that rewrites
 	// the Host header still match bucket routes. Host-specific routers above
 	// take precedence because they were registered first.
+	apiRouter.Methods(http.MethodOptions).Path(healthProbePath).HandlerFunc(serviceOptionsHandler)
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
 	// Get CORS middleware instance with caching
@@ -982,8 +999,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Use(corsMiddleware.Handler)
 
 		// Bucket-specific OPTIONS handler for CORS preflight requests
-		// Use PathPrefix to catch all bucket-level preflight routes including /bucket/object
-		bucket.PathPrefix("/").Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
+		// No path matcher, so it also catches the path-style bucket root (/bucket),
+		// which PathPrefix("/") would miss, as well as /bucket/ and /bucket/object
+		bucket.Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
 
 		// each case should follow the next rule:
 		// - requesting object with query must precede any other methods
@@ -1218,9 +1236,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				return
 			}
 
-			if s3a.handleCORSOriginValidation(w, r) {
-				writeSuccessResponseEmpty(w, r)
-			}
+			serviceOptionsHandler(w, r)
 		})
 
 	// STS API endpoint for AssumeRoleWithWebIdentity

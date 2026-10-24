@@ -109,11 +109,19 @@ func Route(ctx context.Context, snap *engine.Snapshot, ev *reader.Event, now tim
 	// EXP_DM can fire on two version-folder events: the marker create
 	// (sole survivor immediately) and a noncurrent hard-delete that
 	// leaves only the marker behind. Both reach routeSoleSurvivorMarker.
+	// A stamped version-file write is also the latest for its logical key
+	// at write time — the versioned layout emits no bare-key event the
+	// regular path could see, so ExpirationDays must schedule here or it
+	// only ever fires via a cold-start / rule-change recovery walk.
 	if versioned && isVersionFolderPath(ev.Key) {
-		if !hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
-			return nil
+		var matches []Match
+		if isVersionFileWrite(ev.NewEntry) {
+			matches = routeVersionFileExpiration(snap, ev, keys)
 		}
-		return routeSoleSurvivorMarker(ctx, snap, ev, keys, lister)
+		if hasActiveEventDrivenAction(snap, keys, s3lifecycle.ActionKindExpiredDeleteMarker) {
+			matches = append(matches, routeSoleSurvivorMarker(ctx, snap, ev, keys, lister)...)
+		}
+		return matches
 	}
 
 	if ev.NewEntry == nil {
@@ -511,6 +519,71 @@ func emitNoncurrentMatches(snap *engine.Snapshot, ev *reader.Event, keys []s3lif
 			Bucket:    ev.Bucket,
 			ObjectKey: info.Key,
 			VersionID: versionID,
+			Identity:  identity,
+		})
+	}
+	return matches
+}
+
+// isVersionFileWrite reports whether the event's new entry is a genuine
+// version-file write: a non-marker file carrying ExtVersionIdKey. The
+// version id stamp is what separates it from a literal user file under a
+// *.versions/ parent.
+func isVersionFileWrite(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.IsDirectory || isDeleteMarkerEntry(entry) {
+		return false
+	}
+	return len(entry.Extended[s3_constants.ExtVersionIdKey]) > 0
+}
+
+// routeVersionFileExpiration schedules current-version expiration from a
+// version-file write. The file is the latest at write time, and VersionID
+// stays empty so the dispatcher resolves the latest at due time — a
+// fresher PUT meanwhile resolves to STALE_IDENTITY there, and that PUT's
+// own event carried its own schedule. A write that turns out to be an
+// older version's metadata update no-ops the same way.
+func routeVersionFileExpiration(snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey) []Match {
+	logical, ok := logicalKeyFromVersionPath(ev.Key)
+	if !ok {
+		return nil
+	}
+	entry := ev.NewEntry
+	if entry.Attributes == nil {
+		return nil
+	}
+	info := &s3lifecycle.ObjectInfo{
+		Key:      logical,
+		ModTime:  time.Unix(entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)),
+		Size:     int64(entry.Attributes.FileSize),
+		IsLatest: true,
+	}
+	if tags := extractTags(entry.Extended); len(tags) > 0 {
+		info.Tags = tags
+	}
+	eventTime := time.Unix(0, ev.TsNs)
+	identity := buildIdentityFromEntry(entry)
+	var matches []Match
+	for _, key := range keys {
+		action := snap.Action(key)
+		if action == nil || !action.IsActive() || action.Mode != engine.ModeEventDriven {
+			continue
+		}
+		dueTime := s3lifecycle.ComputeDueAt(action.Rule, key.ActionKind, info)
+		if dueTime.IsZero() {
+			continue
+		}
+		res := s3lifecycle.EvaluateAction(action.Rule, key.ActionKind, info, dueTime)
+		if res.Action == s3lifecycle.ActionNone {
+			continue
+		}
+		matches = append(matches, Match{
+			Key:       key,
+			Action:    action,
+			Result:    res,
+			EventTs:   eventTime,
+			DueTime:   dueTime,
+			Bucket:    ev.Bucket,
+			ObjectKey: logical,
 			Identity:  identity,
 		})
 	}

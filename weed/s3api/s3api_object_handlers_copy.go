@@ -70,6 +70,14 @@ func isValidDirective(value string) bool {
 	return value == "" || value == DirectiveCopy || value == DirectiveReplace
 }
 
+// copyChangesStorageClass reports whether a copy request asks for a storage
+// class other than the source object's. That makes copying an object onto
+// itself a change AWS accepts, even with the COPY directive.
+func (s3a *S3ApiServer) copyChangesStorageClass(h http.Header, src *filer_pb.Entry) bool {
+	sc := h.Get(s3_constants.AmzStorageClass)
+	return sc != "" && sc != s3a.getStorageClassFromExtended(src.Extended)
+}
+
 // hasPrefixFold reports whether s starts with prefix, ignoring case.
 func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
@@ -196,6 +204,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" && !validateStorageClass(sc) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidStorageClass)
+		return
+	}
+
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	// If source object is empty or bucket is empty, reply back invalid copy source.
@@ -266,9 +279,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	sameDestination := srcBucket == dstBucket && srcObject == dstObject
+	changesStorageClass := s3a.copyChangesStorageClass(r.Header, entry)
 	// A self-copy into a versioned bucket writes a new version instead of overwriting in
 	// place, so it is not the no-op AWS rejects. It is how an earlier version is restored.
-	if sameDestination && !(replaceMeta || replaceTagging) && srcVersioningState != s3_constants.VersioningEnabled {
+	if sameDestination && !(replaceMeta || replaceTagging || changesStorageClass) && srcVersioningState != s3_constants.VersioningEnabled {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
@@ -300,7 +314,16 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	replacesSource := copyReplacesSourceEntry(sameDestination, dstVersioningState, srcVersionId)
 
-	if replacesSource && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+	// A self-copy that only changes the storage class updates the object in
+	// place and has to keep its encryption as stored. The direct strategy
+	// compares only KMS key IDs, so SSE-KMS requests stay rejected too.
+	if replacesSource && changesStorageClass && !(replaceMeta || replaceTagging) &&
+		(IsSSEKMSRequest(r) || !s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject)) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
+		return
+	}
+
+	if replacesSource && (replaceMeta || replaceTagging || changesStorageClass) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
 		// Bind the entire self-copy update to the snapshot read on each attempt.
