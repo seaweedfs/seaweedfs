@@ -110,3 +110,28 @@ func BenchmarkInsertEntry(b *testing.B) {
 		store.InsertEntry(ctx, entry)
 	}
 }
+
+func TestListDirectoryPrefixedEntries_StartBelowPrefix(t *testing.T) {
+	store := &LevelDBStore{}
+	store.initialize(t.TempDir())
+	defer store.Shutdown()
+
+	ctx := context.Background()
+	for _, name := range []string{"item-a", "item-a.versions", "item-b.versions"} {
+		if err := store.InsertEntry(ctx, &filer.Entry{FullPath: util.FullPath("/d/" + name)}); err != nil {
+			t.Fatalf("insert %s: %v", name, err)
+		}
+	}
+
+	var names []string
+	_, err := store.ListDirectoryPrefixedEntries(ctx, util.FullPath("/d"), "item", true, 100, "item-b", func(entry *filer.Entry) (bool, error) {
+		names = append(names, entry.Name())
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(names) != 1 || names[0] != "item-b.versions" {
+		t.Fatalf("want [item-b.versions], got %v", names)
+	}
+}
