@@ -53,7 +53,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifMatchETagHeader := r.Header.Get("If-Match")
 	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
 	if ifMatchETagHeader != "" {
-		if util.CanonicalizeETag(etag) != util.CanonicalizeETag(ifMatchETagHeader) {
+		if !etagListMatches(ifMatchETagHeader, etag, false) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return true
 		}
@@ -69,7 +69,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifNoneMatchETagHeader := r.Header.Get("If-None-Match")
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
 	if ifNoneMatchETagHeader != "" {
-		if util.CanonicalizeETag(etag) == util.CanonicalizeETag(ifNoneMatchETagHeader) {
+		if etagListMatches(ifNoneMatchETagHeader, etag, true) {
 			SetEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
@@ -84,6 +84,28 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	}
 
+	return false
+}
+
+// etagListMatches reports whether an If-Match or If-None-Match value, "*" or a
+// list of entity tags, matches etag (RFC 9110 13.1.1, 13.1.2). If-Match uses the
+// strong comparison, so a weak tag never matches; If-None-Match the weak one.
+func etagListMatches(header, etag string, weak bool) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	for _, tag := range strings.Split(header, ",") {
+		tag = strings.TrimSpace(tag)
+		if strings.HasPrefix(tag, "W/") {
+			if !weak {
+				continue
+			}
+			tag = tag[len("W/"):]
+		}
+		if util.CanonicalizeETag(tag) == util.CanonicalizeETag(etag) {
+			return true
+		}
+	}
 	return false
 }
 
