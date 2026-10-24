@@ -1,15 +1,23 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func TestValidateRetention(t *testing.T) {
@@ -856,4 +864,81 @@ func TestStoreObjectLockConfigurationClearsStaleYears(t *testing.T) {
 // Helper function to create a time pointer
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+// retentionTestFiler serves the two filer calls a lock write needs: the lookup
+// that resolves the version and the create that persists the updated entry.
+type retentionTestFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+
+	mu      sync.Mutex
+	entries map[string]*filer_pb.Entry
+	created []string
+}
+
+func (f *retentionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(entry).(*filer_pb.Entry)}, nil
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{}, nil
+}
+
+func (f *retentionTestFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, req.Directory+"/"+req.Entry.Name)
+	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func newRetentionTestServer(t *testing.T, f *retentionTestFiler) *S3ApiServer {
+	t.Helper()
+	addr := startFakeFiler(t, f)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	return &S3ApiServer{
+		option: &S3ApiServerOption{
+			Filers:         []pb.ServerAddress{addr},
+			GrpcDialOption: dialOption,
+			BucketsPath:    "/buckets",
+		},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{addr}, dialOption, ""),
+	}
+}
+
+// A "null" version id resolves to the pre-versioning entry under the plain
+// object key, the same place getSpecificObjectVersion reads it from. Writing
+// the lock under .versions/v_null leaves the real entry unlocked.
+func TestNullVersionLockWritesToPlainEntry(t *testing.T) {
+	f := &retentionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b/key": {Name: "key", Chunks: []*filer_pb.FileChunk{{FileId: "1,0000000000000001"}}},
+	}}
+	s3a := newRetentionTestServer(t, f)
+
+	retainUntil := time.Now().Add(24 * time.Hour).Truncate(time.Second)
+	err := s3a.setObjectRetention("b", "key", "null", &ObjectRetention{
+		Mode:            s3_constants.RetentionModeCompliance,
+		RetainUntilDate: &retainUntil,
+	}, false)
+	if err != nil {
+		t.Fatalf("setObjectRetention: %v", err)
+	}
+	if len(f.created) != 1 || f.created[0] != "/buckets/b/key" {
+		t.Fatalf("retention write landed on %v, want /buckets/b/key", f.created)
+	}
+	if got := string(f.entries["/buckets/b/key"].Extended[s3_constants.ExtObjectLockModeKey]); got != s3_constants.RetentionModeCompliance {
+		t.Fatalf("plain entry lock mode = %q, want COMPLIANCE", got)
+	}
+
+	f.created = nil
+	if err := s3a.setObjectLegalHold("b", "key", "null", &ObjectLegalHold{Status: "ON"}); err != nil {
+		t.Fatalf("setObjectLegalHold: %v", err)
+	}
+	if len(f.created) != 1 || f.created[0] != "/buckets/b/key" {
+		t.Fatalf("legal hold write landed on %v, want /buckets/b/key", f.created)
+	}
+	if got := string(f.entries["/buckets/b/key"].Extended[s3_constants.ExtLegalHoldKey]); got != "ON" {
+		t.Fatalf("plain entry legal hold = %q, want ON", got)
+	}
 }
