@@ -256,6 +256,95 @@ func TestListDirectoryEntriesDeletesLogicallyExpiredEntries(t *testing.T) {
 	}
 }
 
+func TestListDirectoryEntriesSkipsMissingAndExpiredMembersInOrder(t *testing.T) {
+	for _, keyPrefix := range []string{"", "sw:"} {
+		t.Run("keyPrefix="+keyPrefix, func(t *testing.T) {
+			store, dir := newTestStore(t, keyPrefix)
+
+			insertTestEntry(t, store, dir.Child("a"), 0)
+			insertTestEntry(t, store, dir.Child("b"), 0)
+			insertLogicallyExpiredTestEntry(t, store, dir.Child("c"))
+			insertTestEntry(t, store, dir.Child("d"), 0)
+
+			if err := store.Client.Del(context.Background(), store.getKey(string(dir.Child("b")))).Err(); err != nil {
+				t.Fatalf("drop value key: %v", err)
+			}
+
+			if names := listNames(t, store, dir); fmt.Sprint(names) != "[a d]" {
+				t.Fatalf("listed %v, want [a d]", names)
+			}
+
+			if members := indexMembers(t, store, dir); fmt.Sprint(members) != "[a d]" {
+				t.Fatalf("directory index holds %v, want [a d]", members)
+			}
+		})
+	}
+}
+
+func TestListDirectoryEntriesAcrossFetchBatches(t *testing.T) {
+	store, dir := newTestStore(t, "")
+
+	var want []string
+	for i := 0; i < listFetchBatchSize+2; i++ {
+		name := fmt.Sprintf("f%04d", i)
+		insertTestEntry(t, store, dir.Child(name), 0)
+		if i != listFetchBatchSize {
+			want = append(want, name)
+		}
+	}
+
+	// the first member of the second batch
+	missing := dir.Child(fmt.Sprintf("f%04d", listFetchBatchSize))
+	if err := store.Client.Del(context.Background(), store.getKey(string(missing))).Err(); err != nil {
+		t.Fatalf("drop value key: %v", err)
+	}
+
+	var names []string
+	if _, err := store.ListDirectoryEntries(context.Background(), dir, "", true, 1000, func(entry *filer.Entry) (bool, error) {
+		names = append(names, entry.Name())
+		return true, nil
+	}); err != nil {
+		t.Fatalf("ListDirectoryEntries %s: %v", dir, err)
+	}
+	if fmt.Sprint(names) != fmt.Sprint(want) {
+		t.Fatalf("listed %v, want %v", names, want)
+	}
+
+	if members := indexMembers(t, store, dir); fmt.Sprint(members) != fmt.Sprint(want) {
+		t.Fatalf("directory index holds %v, want %v", members, want)
+	}
+}
+
+func TestListDirectoryEntriesStopsAtUnreadableMember(t *testing.T) {
+	store, dir := newTestStore(t, "")
+	ctx := context.Background()
+
+	insertTestEntry(t, store, dir.Child("a"), 0)
+	insertTestEntry(t, store, dir.Child("b"), 0)
+	insertTestEntry(t, store, dir.Child("c"), 0)
+
+	// a value of the wrong type makes its GET fail with something other than redis.Nil
+	key := store.getKey(string(dir.Child("b")))
+	if err := store.Client.Del(ctx, key).Err(); err != nil {
+		t.Fatalf("drop value key: %v", err)
+	}
+	if err := store.Client.HSet(ctx, key, "f", "v").Err(); err != nil {
+		t.Fatalf("plant hash: %v", err)
+	}
+
+	var names []string
+	lastFileName, err := store.ListDirectoryEntries(ctx, dir, "", true, 100, func(entry *filer.Entry) (bool, error) {
+		names = append(names, entry.Name())
+		return true, nil
+	})
+	if err == nil {
+		t.Fatal("ListDirectoryEntries returned no error for an unreadable member")
+	}
+	if fmt.Sprint(names) != "[a]" || lastFileName != "b" {
+		t.Fatalf("listed %v up to %q, want [a] up to \"b\"", names, lastFileName)
+	}
+}
+
 func TestDeleteExpiredEntryKeepsRecreatedValue(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
