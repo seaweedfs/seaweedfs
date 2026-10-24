@@ -2352,6 +2352,28 @@ func TestSupersededRenameInRecoversTheCurrentEntry(t *testing.T) {
 		}
 	})
 
+	// a truncate since the rename leaves the entry chunkless under the old
+	// stamp: remote-only but not a dropped copy, so the source object no
+	// longer holds its content and the truncate's own event must upload
+	t.Run("truncated since: the superseding event uploads", func(t *testing.T) {
+		truncated := &filer_pb.Entry{
+			Name:        "a.txt",
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096700, FileSize: 0},
+			RemoteEntry: stamp,
+		}
+		if !isRemoteOnly(truncated) || isDroppedLocalCopy(truncated) {
+			t.Fatal("precondition: a truncated stamped entry is remote-only but not a dropped copy")
+		}
+		remote := &recordingRemote{objects: map[string][]byte{"/plain-remote/a.txt": []byte("data")}}
+		filerClient := newFilerClient(truncated)
+		if err := processCreateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, renameIn, true, "/plain/a.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want the truncate's own event to upload", remote.writes)
+		}
+	})
+
 	t.Run("rewritten since: the superseding event uploads", func(t *testing.T) {
 		rewritten := &filer_pb.Entry{
 			Name:        "a.txt",

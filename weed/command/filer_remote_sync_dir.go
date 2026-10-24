@@ -770,7 +770,9 @@ func recoverSupersededCreate(
 	if current == nil || current.IsDirectory {
 		return nil
 	}
-	if isRemoteOnly(current) {
+	if isDroppedLocalCopy(current) {
+		// a remote-only entry that is not a dropped copy (a truncate left it
+		// chunkless under the old stamp) is left to its own update event
 		return copyRenameInSource(filerClient, client, mountedDir, remoteStorageMountLocation, dir, current, renameSrc, dest, storageClass)
 	}
 	if shouldSendToRemote(current) {
