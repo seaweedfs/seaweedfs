@@ -337,7 +337,13 @@ func (c *rearmHTTPClient) Do(req *http.Request) (*http.Response, error) {
 		c.uploader.fastUploadHosts.Store(req.URL.Host, time.Now().UnixNano())
 		return nil, req.Context().Err()
 	}
-	time.Sleep(c.slowFor)
+	// Park past the watchdog floor like a real wedged conn: a re-armed
+	// watchdog must cancel this attempt instead of the sleep masking it.
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case <-time.After(c.slowFor):
+	}
 	if req.Body != nil {
 		_, _ = io.Copy(io.Discard, req.Body)
 	}
