@@ -359,6 +359,29 @@ func TestDeleteUnmarkedBucketNonRecursiveRefusesLockedObject(t *testing.T) {
 	require.NotNil(t, store.getEntry("/buckets/b/held.bin"), "a non-recursive unmarked bucket drop must not swallow the locked object")
 }
 
+// A recursive delete rooted at the buckets dir reaches each bucket only
+// mid-walk, so the pre-pass has to know the subtree holds buckets whose
+// children the store would drop unseen.
+func TestDeleteBucketsRootRecursiveRefusesLockedObject(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.DirBucketsPath = "/buckets"
+	f.Store = NewFilerStoreWrapper(&bucketDropStore{store})
+	ctx := context.Background()
+
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/buckets", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: "/buckets/b", Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255))
+	require.NoError(t, f.CreateEntry(ctx, &Entry{
+		FullPath: "/buckets/b/held.bin",
+		Attr:     Attr{Mode: 0644},
+		Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte("ON")},
+	}, nil, false, false, nil, true, 255))
+
+	err := f.DeleteEntryMetaAndData(ctx, "/buckets", true, true, true, false, nil, 0)
+	require.ErrorIs(t, err, ErrEntryLocked)
+	require.NotNil(t, store.getEntry("/buckets/b/held.bin"), "an unseen bucket drop must not swallow the locked object")
+}
+
 // An expired retention no longer locks: the delete proceeds normally.
 func TestDeleteEntryAllowsExpiredRetention(t *testing.T) {
 	store := newStubFilerStore()

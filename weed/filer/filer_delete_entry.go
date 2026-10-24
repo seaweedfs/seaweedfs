@@ -205,7 +205,11 @@ func (f *Filer) mayDescendantsHoldLocks(ctx context.Context, p util.FullPath, en
 	}
 	rel := strings.TrimPrefix(string(p), f.DirBucketsPath+"/")
 	if rel == string(p) {
-		return false
+		// The subtree can also hold locks by containing the buckets dir
+		// itself: deleting it or an ancestor drops each bucket's children
+		// unseen mid-walk.
+		dir := strings.TrimSuffix(string(p), "/")
+		return dir == f.DirBucketsPath || strings.HasPrefix(f.DirBucketsPath, dir+"/")
 	}
 	bucket, _, _ := strings.Cut(rel, "/")
 	if bucket == "" {
