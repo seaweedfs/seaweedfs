@@ -150,6 +150,22 @@ func (v *VolumeServerOptions) setDiskIOProbeDefaults() {
 	}
 }
 
+// syncBatchOption resolves the fsync batch window, defaulting each field so
+// commands or embedders that leave the option pointers unset still start.
+func (v *VolumeServerOptions) syncBatchOption() storage.SyncBatchOption {
+	option := storage.DefaultSyncBatchOption
+	if v.fsyncMinBatchBytes != nil {
+		option.MinBytes = *v.fsyncMinBatchBytes
+	}
+	if v.fsyncMinBatchRequests != nil {
+		option.MinRequests = *v.fsyncMinBatchRequests
+	}
+	if v.fsyncBatchWait != nil {
+		option.Wait = *v.fsyncBatchWait
+	}
+	return option
+}
+
 func (v *VolumeServerOptions) applyDiskIOProbeConfig() {
 	v.setDiskIOProbeDefaults()
 
@@ -466,11 +482,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ldbTimeout,
 		*v.allowUntrustedRemoteEndpoints,
 		diskProbeConfig,
-		storage.SyncBatchOption{
-			MinBytes:    *v.fsyncMinBatchBytes,
-			MinRequests: *v.fsyncMinBatchRequests,
-			Wait:        *v.fsyncBatchWait,
-		},
+		v.syncBatchOption(),
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
