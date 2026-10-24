@@ -445,8 +445,14 @@ jobs:
         run: |
           set -euo pipefail
           for f in *; do
+            # Each saved digest is an OCI index (image + attestation manifests);
+            # scan and attest the image manifest a same-platform pull resolves.
             ref="${{ env.IMAGE }}@sha256:${f}"
-            syft "$ref" -o "spdx-json=/tmp/sbom-${f}.spdx.json"
+            image=$(crane manifest "$ref" | jq -r '
+              [.manifests[]? | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest"
+                and (.platform.os // "unknown") != "unknown") | .digest][0] // empty')
+            ref="${{ env.IMAGE }}@${image:-sha256:${f}}"
+            syft "registry:${ref}" -o "spdx-json=/tmp/sbom-${f}.spdx.json"
             cosign attest --yes \
               --predicate "/tmp/sbom-${f}.spdx.json" \
               --type spdxjson \
