@@ -108,6 +108,21 @@ func TestListObjectsV2ContinuationTokenWithXMLUnsafeKeys(t *testing.T) {
 	}
 }
 
+// The StartAfter echo is the wire encoding of the decoded key, so a client
+// that feeds the echo back lands on the same resume point instead of
+// drifting to the literal escape text.
+func TestListObjectsV2StartAfterEchoStable(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a b", "c"})
+	for _, sent := range []string{"a%20b", "a b"} {
+		result := listV2Page(t, s3a, url.Values{
+			"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {sent},
+		})
+		assert.Equal(t, "a%20b", result.StartAfter, "start-after %q", sent)
+		require.Len(t, result.Contents, 1)
+		assert.Equal(t, "c", result.Contents[0].Key)
+	}
+}
+
 // A token for a key that XML carries unchanged stays the bare key.
 func TestListObjectsV2ContinuationTokenUnchangedForNormalKeys(t *testing.T) {
 	keys := []string{"a\x01b", "a\x02b", "a\x1fb", "a b", "b", "c"}
