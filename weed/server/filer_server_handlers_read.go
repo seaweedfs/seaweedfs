@@ -102,6 +102,11 @@ func etagListMatches(header, etag string, weak bool) bool {
 			}
 			tag = tag[len("W/"):]
 		}
+		// Empty list elements are ignored, so padding like a trailing
+		// comma cannot match an empty opaque tag.
+		if tag == "" {
+			continue
+		}
 		if util.CanonicalizeETag(tag) == util.CanonicalizeETag(etag) {
 			return true
 		}

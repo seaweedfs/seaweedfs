@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestCheckPreconditionsETagLists(t *testing.T) {
@@ -32,6 +33,40 @@ func TestCheckPreconditionsETagLists(t *testing.T) {
 		{"If-Match", []string{`W/` + etag}, http.StatusPreconditionFailed},
 		{"If-Match", []string{`"x"`}, http.StatusPreconditionFailed},
 		{"If-Match", []string{`"b194,old"`}, http.StatusPreconditionFailed},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
+		for _, v := range tt.values {
+			r.Header.Add(tt.header, v)
+		}
+		w := httptest.NewRecorder()
+		got := http.StatusOK
+		if checkPreconditions(w, r, entry) {
+			got = w.Code
+		}
+		if got != tt.want {
+			t.Errorf("%s: %q -> %d, want %d", tt.header, tt.values, got, tt.want)
+		}
+	}
+}
+
+func TestCheckPreconditionsIgnoresEmptyETagListElements(t *testing.T) {
+	entry := &filer.Entry{
+		Attr:   filer.Attr{Mtime: time.Unix(1700000000, 0)},
+		Remote: &filer_pb.RemoteEntry{RemoteSize: 1},
+	}
+
+	tests := []struct {
+		header string
+		values []string
+		want   int
+	}{
+		{"If-None-Match", []string{`"x",`}, http.StatusOK},
+		{"If-None-Match", []string{`"x",,"y"`}, http.StatusOK},
+		{"If-None-Match", []string{`""`}, http.StatusNotModified},
+		{"If-None-Match", []string{`W/""`}, http.StatusNotModified},
+		{"If-Match", []string{`"x",`}, http.StatusPreconditionFailed},
+		{"If-Match", []string{`""`}, http.StatusOK},
 	}
 	for _, tt := range tests {
 		r := httptest.NewRequest(http.MethodGet, "/d/f.txt", nil)
