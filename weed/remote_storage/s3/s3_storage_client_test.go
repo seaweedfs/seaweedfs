@@ -423,7 +423,8 @@ func TestS3WriteFileSendsOnlyTagAttributes(t *testing.T) {
 		},
 	}
 
-	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	require.NoError(t, err)
 
 	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
 	require.Equal(t, "a%20b=x%3Dy", rt.uploadReq.Header.Get("X-Amz-Tagging"))
@@ -441,7 +442,8 @@ func TestS3WriteFileOmitsTaggingWhenNoTagAttributes(t *testing.T) {
 		Extended: map[string][]byte{"Seaweed-X-Amz-Acl": []byte(`[{"Permission":"FULL_CONTROL"}]`)},
 	}
 
-	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	require.NoError(t, err)
 
 	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
 	require.Empty(t, rt.uploadReq.Header.Get("X-Amz-Tagging"))
