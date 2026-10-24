@@ -61,7 +61,7 @@ func setupWithLimit(t testing.TB, topologyLayout string, volumeSizeLimit uint64)
 					}
 					if vi.ReplicaPlacement != nil {
 						vl := topo.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, needle.EMPTY_TTL, types.HardDriveType)
-						vl.RegisterVolume(&vi, server)
+						vl.RegisterVolume(&vi, server, nil)
 						vl.setVolumeWritable(vi.Id)
 					}
 					server.AddOrUpdateVolume(vi)

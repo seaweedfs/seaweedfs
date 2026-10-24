@@ -1,7 +1,12 @@
 package topology
 
 import (
+	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -104,8 +109,102 @@ func TestQuarantineReleasedWhenConflictResolves(t *testing.T) {
 
 	topo.UnRegisterVolumeLayout(v2, dn2)
 
+	// Registration flags duplicates asynchronously, so a flag that was still
+	// in flight when the conflict resolved releases the surviving copy only
+	// once it settles. Wait for that release instead of reading once.
+	deadline := time.Now().Add(5 * time.Second)
+	for !isWritable(t, topo, v1) {
+		if time.Now().After(deadline) {
+			t.Fatal("the surviving copy must be released once the conflict is gone")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestFailedReleasePushRestoresQuarantineMark(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+
+	var pushFails atomic.Bool
+	topo.QuarantineVolumeFn = func(dn *DataNode, vid needle.VolumeId, readOnly bool) error {
+		if !readOnly && pushFails.Load() {
+			return errors.New("volume server unreachable")
+		}
+		return nil
+	}
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	// Registrations flag duplicates asynchronously; let them settle so no
+	// late mark can land after the release assertions below.
+	topo.duplicateFlagChecks.Wait()
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// the conflict resolves while the surviving copy is unreachable: the
+	// writable push fails, so the record and the layout read-only mark must
+	// both come back instead of advertising a writable replica the server
+	// still holds read-only
+	pushFails.Store(true)
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	if !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("a failed writable push must keep the quarantine record for the retry")
+	}
+	if isWritable(t, topo, v1) {
+		t.Fatal("the layout must not advertise a replica the server still holds read-only")
+	}
+
+	pushFails.Store(false)
+	// An idle replica drops out of the delta reports once its stored flag
+	// matches the server's, so the release pass retries off the leader pulse
+	// rather than waiting for the volume to be reported again.
+	topo.retryPendingQuarantineReleases()
+	require.Eventually(t, func() bool {
+		return !topo.isQuarantined(dn1, v1.Id) && isWritable(t, topo, v1)
+	}, 5*time.Second, time.Millisecond, "the pending release must retry without another volume report")
+}
+
+func TestQuarantineKeptWhenReplicaUnreadable(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	dn1 := NewDataNode("server1")
+	dn2 := NewDataNode("server2")
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.duplicateFlagChecks.Wait()
+	topo.flagDuplicateVolumeId(v2, dn2)
+
+	// the surviving copy drops out of its node's disk map while the lookup
+	// index still holds it; its layout key is then unknown, so the release
+	// pass must keep the mark rather than assume the conflict resolved
+	dn1.UpdateVolumes(nil)
+	topo.UnRegisterVolumeLayout(v2, dn2)
+
+	if !topo.isQuarantined(dn1, v1.Id) {
+		t.Fatal("an unreadable replica must not lose its quarantine record")
+	}
+	if isWritable(t, topo, v1) {
+		t.Fatal("a replica whose conflict cannot be ruled out must stay read-only")
+	}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.duplicateFlagChecks.Wait()
 	if !isWritable(t, topo, v1) {
-		t.Fatal("the surviving copy must be released once the conflict is gone")
+		t.Fatal("once readable again and sole, the copy must be released to writable")
 	}
 }
 
@@ -131,6 +230,47 @@ func TestQuarantineSurvivesResync(t *testing.T) {
 
 	if isWritable(t, topo, v2) {
 		t.Fatal("resync must not clear the quarantine")
+	}
+}
+
+func TestQuarantineSurvivesReplicaRejoin(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+	dn3 := NewDataNode("server3")
+	dn3.Ip = "10.0.0.3"
+	dn3.Port = 8080
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "b", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn3.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v1, dn2)
+	topo.RegisterVolumeLayout(v2, dn3)
+	topo.flagDuplicateVolumeId(v2, dn3)
+
+	// a replica dropped from the lookup index re-registers through the
+	// self-heal path; rebuilding location flags from reported state must
+	// not lift the quarantine on any copy
+	vl := topo.FindVolumeLayout(v1.Collection, v1.ReplicaPlacement, v1.Ttl, types.ToDiskType(v1.DiskType))
+	vl.SetVolumeUnavailable(dn1, v1.Id)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 7, Collection: "a", ReplicaPlacement: uint32(rp.Byte()), Version: 3,
+	}}, dn1)
+
+	if isWritable(t, topo, v1) {
+		t.Fatal("a re-registering replica must not clear the quarantine on the surviving copies")
+	}
+	if isWritable(t, topo, v2) {
+		t.Fatal("the conflicting copy must stay quarantined too")
 	}
 }
 
