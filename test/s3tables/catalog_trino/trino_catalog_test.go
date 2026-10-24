@@ -516,7 +516,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 	}
 
 	if containerDead {
-		t.Fatalf("Trino container %s exited before becoming ready\n%s", containerName, trinoContainerDiagnostics(containerName))
+		t.Fatalf("Trino container %s exited before becoming ready\nLast output:\n%s\n%s", containerName, string(lastOutput), trinoContainerDiagnostics(containerName))
 	}
 	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
 }
@@ -527,9 +527,13 @@ func trinoContainerDiagnostics(containerName string) string {
 		"status={{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}}",
 		containerName).CombinedOutput(); err == nil {
 		fmt.Fprintf(&b, "docker inspect: %s\n", strings.TrimSpace(string(out)))
+	} else {
+		fmt.Fprintf(&b, "docker inspect failed: %v (%s)\n", err, strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("docker", "logs", "--tail", "80", containerName).CombinedOutput(); err == nil {
 		fmt.Fprintf(&b, "docker logs:\n%s", string(out))
+	} else {
+		fmt.Fprintf(&b, "docker logs failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return b.String()
 }
