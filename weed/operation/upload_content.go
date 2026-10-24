@@ -65,9 +65,8 @@ type UploadOption struct {
 	GenUploadUrl      func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
 	FilerJwt          security.FilerJwtProvider        // credential for proxy chunk URLs; nil → process-wide jwt.filer_signing
 
-	// stallWatchdogDisarmed turns the stall watchdog off for the rest of this
-	// upload's attempts once it has fired: a conn it killed says nothing about
-	// the next conn, and a re-armed watchdog could burn every retry.
+	// stallWatchdogDisarmed turns the watchdog off for this upload's later
+	// attempts once it fired: a re-arm could burn every retry.
 	stallWatchdogDisarmed bool
 }
 
@@ -552,6 +551,23 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 
 	var uploadDone atomic.Bool
 	defer uploadDone.Store(true)
+	// bodySentAt marks when the transport finished draining the request body;
+	// past it the wait is server-side commit, which the transport's response
+	// header timeout already bounds — the stall watchdog only blames a conn
+	// that is still trickling the body.
+	var bodySentAt atomic.Int64
+	req.Body = &watchdogBody{ReadCloser: req.Body, sentAt: &bodySentAt}
+	stallFired := func() {
+		if !uploadDone.CompareAndSwap(false, true) {
+			return
+		}
+		// The host was moving chunks at full rate a moment ago, so an
+		// upload still trickling past its floor rides a wedged pooled
+		// conn; cancel drops the conn so the retry dials a fresh one.
+		uploader.fastUploadHosts.Delete(req.URL.Host)
+		glog.WarningfCtx(ctx, "upload %d bytes to %s stalled on a pooled connection, retrying on a fresh one", originalDataSize, option.UploadUrl)
+		cancelUpload()
+	}
 	var stallTimer *time.Timer
 	if last, ok := uploader.fastUploadHosts.Load(req.URL.Host); ok && !option.stallWatchdogDisarmed && time.Since(time.Unix(0, last.(int64))) < fastUploadHostMemory {
 		defer func() {
@@ -560,13 +576,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			}
 		}()
 		stallTimer = time.AfterFunc(uploadStallTimeout(int64(originalDataSize)), func() {
-			if uploadDone.CompareAndSwap(false, true) {
-				// The host was moving chunks at full rate a moment ago, so an
-				// upload still trickling past its floor rides a wedged pooled
-				// conn; cancel drops the conn so the retry dials a fresh one.
-				uploader.fastUploadHosts.Delete(req.URL.Host)
-				glog.WarningfCtx(ctx, "upload %d bytes to %s stalled on a pooled connection, retrying on a fresh one", originalDataSize, option.UploadUrl)
-				cancelUpload()
+			if bodySentAt.Load() == 0 {
+				stallFired()
 			}
 		})
 	}
@@ -591,7 +602,12 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			// "connection reset" error with a misleading "Body length 0".
 			if req.GetBody != nil {
 				if newBody, gbErr := req.GetBody(); gbErr == nil {
-					req.Body = newBody
+					bodySentAt.Store(0)
+					started = time.Now()
+					if stallTimer != nil && !uploadDone.Load() {
+						stallTimer.Reset(uploadStallTimeout(int64(originalDataSize)))
+					}
+					req.Body = &watchdogBody{ReadCloser: newBody, sentAt: &bodySentAt}
 					resp, post_err = uploader.httpClient.Do(req)
 					defer util_http.CloseResponse(resp)
 				} else {
@@ -620,7 +636,15 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		return &ret, nil
 	}
 
+	if stallTimer != nil {
+		// The header timeout does not cover the response body: keep the
+		// watchdog armed for the read so a conn that wedges mid-reply gets
+		// cancelled for a fresh retry.
+		respStallTimer := time.AfterFunc(uploadStallMinWait, stallFired)
+		defer respStallTimer.Stop()
+	}
 	resp_body, ra_err := io.ReadAll(resp.Body)
+	uploadDone.Store(true)
 	if ra_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, &uploadStatusError{StatusCode: resp.StatusCode, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
@@ -671,4 +695,19 @@ func uploadStallTimeout(size int64) time.Duration {
 // host fast: the mark is what lets a later stall blame the conn, not the link.
 func uploadMovedHealthy(size int64, elapsed time.Duration) bool {
 	return size >= 256*1024 && elapsed > 0 && float64(size)/elapsed.Seconds() >= float64(uploadHealthyBps)
+}
+
+// watchdogBody records when the transport drains the request body: before that
+// a stuck send blames the conn; after it the wait is the server's.
+type watchdogBody struct {
+	io.ReadCloser
+	sentAt *atomic.Int64
+}
+
+func (b *watchdogBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.sentAt.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
