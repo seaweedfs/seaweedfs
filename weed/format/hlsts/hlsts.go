@@ -281,7 +281,7 @@ func renderPlaylist(name string, info *playlistInfo, jwt string) []byte {
 	}
 	for i, durationMs := range info.DurationsMs {
 		fmt.Fprintf(&out, "#EXTINF:%.3f,\n", float64(durationMs)/1000)
-		fmt.Fprintf(&out, "%s?%s=%s&seq=%d%s\n", escapedName, format.ViewParam, FormatName, int64(i)+info.MediaSequence, credential)
+		fmt.Fprintf(&out, "./%s?%s=%s&seq=%d%s\n", escapedName, format.ViewParam, FormatName, int64(i)+info.MediaSequence, credential)
 	}
 	out.WriteString("#EXT-X-ENDLIST\n")
 	return []byte(out.String())
