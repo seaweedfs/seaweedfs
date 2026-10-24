@@ -1,6 +1,7 @@
 package ec
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
@@ -528,4 +530,126 @@ func TestCollectSourceFreeVolumeCountsRefundsClearedShards(t *testing.T) {
 	counts = collectSourceFreeVolumeCounts(newTopo(), []needle.VolumeId{3}, skipped)
 	assert.Equal(t, 1, counts["3-127.0.0.1:8110"],
 		"no refund on a node the sweep skipped as unreachable")
+}
+
+func TestEcShardPlacementViolations(t *testing.T) {
+	node := func(id string, shardBits uint32) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					MaxVolumeCount: 10,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 1, EcIndexBits: shardBits, DiskId: 0},
+					},
+				},
+			},
+		}
+	}
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+					node("n1:8080", 0b0011), // shards 0,1
+					node("n2:8080", 0b0100), // shard 2
+				}},
+				{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{
+					node("n3:8080", 0b1000), // shard 3
+				}},
+			},
+		}},
+	}
+	vid := needle.VolumeId(1)
+	violationsOf := func(topo *master_pb.TopologyInfo, rp *super_block.ReplicaPlacement) []string {
+		return ecShardPlacementViolations(vid, CollectEcShardBitsByNode(topo, vid), ecShardRackByNode(topo), rp)
+	}
+
+	// No caps requested: nothing to violate.
+	assert.Empty(t, violationsOf(topo, nil))
+	assert.Empty(t, violationsOf(topo, &super_block.ReplicaPlacement{}))
+
+	// Node cap: n1 holds 2 shards, over the requested 1 per node.
+	violations := violationsOf(topo, &super_block.ReplicaPlacement{SameRackCount: 1})
+	assert.Len(t, violations, 1)
+	assert.Contains(t, violations[0], "per node")
+
+	// Rack cap: rack1 holds 3 shards, over the requested 2 per rack; the
+	// same-named rack in another dc is a different failure domain.
+	topo2 := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{Id: "dc1", RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+					node("n1:8080", 0b0111), // shards 0,1,2
+				}},
+			}},
+			{Id: "dc2", RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+					node("n9:8080", 0b1000), // shard 3
+				}},
+			}},
+		},
+	}
+	violations = violationsOf(topo2, &super_block.ReplicaPlacement{DiffRackCount: 2})
+	assert.Len(t, violations, 1)
+	assert.Contains(t, violations[0], "dc1:rack1")
+
+	// Caps that fit the layout: no violations.
+	assert.Empty(t, violationsOf(topo, &super_block.ReplicaPlacement{SameRackCount: 2, DiffRackCount: 3}))
+}
+
+func TestVerifyEcShardsBeforeDeletePlacement(t *testing.T) {
+	oldAttempts, oldInterval := verifyEcShardAttempts, verifyEcShardRetryInterval
+	verifyEcShardAttempts, verifyEcShardRetryInterval = 2, time.Millisecond
+	t.Cleanup(func() {
+		verifyEcShardAttempts, verifyEcShardRetryInterval = oldAttempts, oldInterval
+	})
+
+	vid := needle.VolumeId(1)
+	topologyWith := func(nodeShards map[string]uint32) *master_pb.TopologyInfo {
+		var nodes []*master_pb.DataNodeInfo
+		for id, bits := range nodeShards {
+			si := erasure_coding.NewShardsInfo()
+			for sid := 0; sid < erasure_coding.TotalShardsCount; sid++ {
+				if bits&(1<<sid) != 0 {
+					si.Set(erasure_coding.NewShardInfo(erasure_coding.ShardId(sid), 1))
+				}
+			}
+			nodes = append(nodes, &master_pb.DataNodeInfo{
+				Id: id,
+				DiskInfos: map[string]*master_pb.DiskInfo{"": {
+					MaxVolumeCount: 100,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+						Id:          uint32(vid),
+						EcIndexBits: si.Bitmap(),
+						ShardSizes:  si.SizesInt64(),
+						EncodeTsNs:  1,
+					}},
+				}},
+			})
+		}
+		return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id:        "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: nodes}},
+		}}}
+	}
+	envWith := func(topo *master_pb.TopologyInfo) *Env {
+		return &Env{FetchTopology: func(delay time.Duration) (*master_pb.TopologyInfo, uint64, error) {
+			return topo, 0, nil
+		}}
+	}
+	rp := &super_block.ReplicaPlacement{SameRackCount: 1}
+
+	// One shard per node: the requested cap is met, deletion is allowed.
+	onePerNode := map[string]uint32{}
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		onePerNode[fmt.Sprintf("n%d:8080", i)] = 1 << i
+	}
+	assert.NoError(t, verifyEcShardsBeforeDelete(envWith(topologyWith(onePerNode)), []needle.VolumeId{vid}, types.HardDriveType, false, rp))
+
+	// All 14 shards on one node: over the cap, so the gate refuses to let the
+	// source volume be deleted.
+	err := verifyEcShardsBeforeDelete(envWith(topologyWith(map[string]uint32{"n1:8080": 0x3FFF})), []needle.VolumeId{vid}, types.HardDriveType, false, rp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "does not meet the requested replica placement limits")
 }
