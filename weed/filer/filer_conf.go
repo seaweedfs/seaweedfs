@@ -255,7 +255,49 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 		Worm:                     worm,
 		WormGracePeriodSeconds:   src.WormGracePeriodSeconds,
 		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
+		InodeIndex:               src.InodeIndex,
 	}
+}
+
+// MatchInodeIndexRule reports whether an inode_index rule covers path. Unlike
+// MatchStorageRule it requires the rule's location to end at a path boundary,
+// so a rule on /exports does not index /exports2 or /exports_old.
+func (fc *FilerConf) MatchInodeIndexRule(path string) bool {
+	active := false
+	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if !value.InodeIndex {
+			return true
+		}
+		rulePath := strings.TrimSuffix(string(key), "/")
+		if path == rulePath || strings.HasPrefix(path, rulePath+"/") {
+			active = true
+			return false
+		}
+		return true
+	})
+	return active
+}
+
+// InodeIndexActiveUnder reports whether entries inside dirPath may carry inode
+// index rows: either dirPath itself is covered by an inode_index rule, or such
+// a rule applies to a subtree inside dirPath.
+func (fc *FilerConf) InodeIndexActiveUnder(dirPath string) bool {
+	if fc.MatchInodeIndexRule(dirPath) {
+		return true
+	}
+	prefix := dirPath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	active := false
+	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if value.InodeIndex && (string(key) == dirPath || strings.HasPrefix(string(key), prefix)) {
+			active = true
+			return false
+		}
+		return true
+	})
+	return active
 }
 
 // ApplyBucketQuotaReadOnly sets read-only when usedSize exceeds quota and clears it
@@ -535,6 +577,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 		// copy the value: a is often a scratch conf while b is a live trie entry
 		a.Worm = proto.Bool(*b.Worm)
 	}
+	a.InodeIndex = b.InodeIndex || a.InodeIndex
 	if b.WormRetentionTimeSeconds > 0 {
 		a.WormRetentionTimeSeconds = b.WormRetentionTimeSeconds
 	}

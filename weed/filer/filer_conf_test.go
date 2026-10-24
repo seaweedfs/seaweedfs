@@ -206,6 +206,7 @@ func TestClonePathConf(t *testing.T) {
 		Worm:                     proto.Bool(true),
 		WormGracePeriodSeconds:   3600,
 		WormRetentionTimeSeconds: 86400,
+		InodeIndex:               true,
 	}
 
 	clone := ClonePathConf(src)
