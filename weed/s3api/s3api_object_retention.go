@@ -213,6 +213,49 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 	return entry, nil
 }
 
+// getObjectEntryForUpdate resolves the entry a metadata update targets and the
+// filer path it is written under. It applies the same version resolution as
+// getSpecificObjectVersion - "null" names the plain pre-versioning entry, not a
+// .versions file - so the write lands on the entry that was read.
+func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string) (entry *filer_pb.Entry, entryPath string, err error) {
+	entryPath = object
+	if versionId != "" {
+		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
+		}
+		if versionId != "null" {
+			entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+		}
+		return entry, entryPath, nil
+	}
+
+	versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
+	if vErr != nil {
+		return nil, "", fmt.Errorf("error checking versioning: %w", vErr)
+	}
+	if !versioningEnabled {
+		entry, err = s3a.fetchObjectEntryRequired(bucket, object)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
+		}
+		return entry, entryPath, nil
+	}
+
+	entry, err = s3a.getLatestObjectVersion(bucket, object)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
+	}
+	if entry.Extended != nil {
+		if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+			if storedVersionId := string(versionIdBytes); storedVersionId != "null" && isValidVersionID(storedVersionId) {
+				entryPath = object + ".versions/" + s3a.getVersionFileName(storedVersionId)
+			}
+		}
+	}
+	return entry, entryPath, nil
+}
+
 // ====================================================================
 // RETENTION OPERATIONS
 // ====================================================================
@@ -254,47 +297,9 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 
 // setObjectRetention sets object retention configuration
 func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, retention *ObjectRetention, bypassGovernance bool) error {
-	var entry *filer_pb.Entry
-	var err error
-	var entryPath string
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
-		}
-		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %w", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
-			}
-			// Extract version ID from entry metadata
-			entryPath = object // default to regular object path
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					versionId = string(versionIdBytes)
-					// A stored version id must be a valid path segment before it can
-					// name a .versions file; otherwise fall back to the regular object.
-					if versionId != "null" && isValidVersionID(versionId) {
-						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-					}
-				}
-			}
-		} else {
-			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
-			}
-			entryPath = object
-		}
+	entry, entryPath, err := s3a.getObjectEntryForUpdate(bucket, object, versionId)
+	if err != nil {
+		return err
 	}
 
 	// Check if object is already under retention
@@ -399,47 +404,9 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 
 // setObjectLegalHold sets object legal hold configuration
 func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, legalHold *ObjectLegalHold) error {
-	var entry *filer_pb.Entry
-	var err error
-	var entryPath string
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
-		}
-		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %w", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
-			}
-			// Extract version ID from entry metadata
-			entryPath = object // default to regular object path
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					versionId = string(versionIdBytes)
-					// A stored version id must be a valid path segment before it can
-					// name a .versions file; otherwise fall back to the regular object.
-					if versionId != "null" && isValidVersionID(versionId) {
-						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-					}
-				}
-			}
-		} else {
-			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
-			}
-			entryPath = object
-		}
+	entry, entryPath, err := s3a.getObjectEntryForUpdate(bucket, object, versionId)
+	if err != nil {
+		return err
 	}
 
 	// Update legal hold metadata
