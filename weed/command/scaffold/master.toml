@@ -5,8 +5,10 @@
 # this file is read by master
 
 [master]
-# cap on volume copies vacuuming in parallel within one rack, on top of the
-# -maxParallelVacuumPerServer flag's per-server cap; 0 = no limit
+# cap on volumes vacuuming in parallel on one volume server; overrides the
+# -maxParallelVacuumPerServer flag (default 1) when set; 0 = no limit
+# max_parallel_vacuum_per_server = 1
+# cap on volume copies vacuuming in parallel within one rack; 0 = no limit
 max_parallel_vacuum_per_rack = 0
 
 
