@@ -102,6 +102,13 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecConf.StrictPlacement = v.GetBool(k)
 		ecChanged = true
 	}
+	if k := "maintenance.erasure_coding.free_slots_deadband"; v.IsSet(k) {
+		ecConf.FreeSlotsDeadband = v.GetInt(k)
+		if ecConf.FreeSlotsDeadband < 0 {
+			ecConf.FreeSlotsDeadband = 0
+		}
+		ecChanged = true
+	}
 
 	if !maintenanceChanged && !vacuumChanged && !balanceChanged && !ecChanged {
 		return nil
@@ -223,12 +230,13 @@ var pluginConfigSections = []pluginConfigSection{
 		jobType: "erasure_coding",
 		prefix:  "maintenance.erasure_coding",
 		workerKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
-			"fullness_ratio":    doubleValue,
-			"quiet_for_seconds": int64Value,
-			"min_size_mb":       int64Value,
-			"preferred_tags":    stringListValue,
-			"replica_placement": stringValue,
-			"strict_placement":  boolValue,
+			"fullness_ratio":      doubleValue,
+			"quiet_for_seconds":   int64Value,
+			"min_size_mb":         int64Value,
+			"preferred_tags":      stringListValue,
+			"replica_placement":   stringValue,
+			"strict_placement":    boolValue,
+			"free_slots_deadband": int64Value,
 		},
 		// workers read collection_filter from the admin values, not the worker values
 		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{

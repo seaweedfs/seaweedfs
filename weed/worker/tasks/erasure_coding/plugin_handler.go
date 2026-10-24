@@ -98,7 +98,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "erasure-coding-worker",
 			Title:       "Erasure Coding Worker Config",
-			Description: "Worker-side detection thresholds.",
+			Description: "Worker-side detection and shard placement.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "thresholds",
@@ -133,6 +133,13 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
+					},
+				},
+				{
+					SectionId:   "placement",
+					Title:       "Shard Placement",
+					Description: "Where EC shards go: disk tags, replica-placement caps, Place ranking.",
+					Fields: []*plugin_pb.ConfigField{
 						{
 							Name:        "preferred_tags",
 							Label:       "Preferred Tags",
@@ -148,6 +155,14 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Placeholder: "020",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "free_slots_deadband",
+							Label:       "Free Volume Deadband (M)",
+							Description: "Nodes whose free volume slots differ by at most M are a tie; then fewer live shards wins. Applied as M × data shards (10+4 → ×10). 0 = always pick more free slots.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
 						{
 							Name:        "strict_placement",
@@ -178,6 +193,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"strict_placement": {
 					Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
 				},
+				"free_slots_deadband": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
+				},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -204,6 +222,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"preferred_tags": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+			},
+			"free_slots_deadband": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 			},
 		},
 	}
@@ -639,6 +660,12 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	taskConfig.ReplicaPlacement = strings.TrimSpace(pluginworker.ReadStringConfig(values, "replica_placement", taskConfig.ReplicaPlacement))
 
 	taskConfig.StrictPlacement = pluginworker.ReadBoolConfig(values, "strict_placement", taskConfig.StrictPlacement)
+
+	deadband := pluginworker.ReadIntConfig(values, "free_slots_deadband", taskConfig.FreeSlotsDeadband)
+	if deadband < 0 {
+		deadband = 0
+	}
+	taskConfig.FreeSlotsDeadband = deadband
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig: taskConfig,

@@ -2,6 +2,7 @@ package ecbalancer
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"testing"
 
@@ -912,5 +913,184 @@ func TestPlace10Plus4ImbalanceTiebreak(t *testing.T) {
 				assertLiveGapFrozen(t, beforeDisk, after, gotDisk)
 			}
 		})
+	}
+}
+
+func TestVolumeDeadbandToShardSlots(t *testing.T) {
+	if got := volumeDeadbandToShardSlots(0, 10); got != 0 {
+		t.Fatalf("M=0 → %d, want 0", got)
+	}
+	if got := volumeDeadbandToShardSlots(1, 10); got != 10 {
+		t.Fatalf("M=1 at 10+4 → %d, want 10", got)
+	}
+	if got := volumeDeadbandToShardSlots(1, 8); got != 8 {
+		t.Fatalf("M=1 at 8+4 → %d, want 8", got)
+	}
+	if got := volumeDeadbandToShardSlots(50, 10); got != 500 {
+		t.Fatalf("M=50 at 10+4 → %d, want 500", got)
+	}
+	if got := volumeDeadbandToShardSlots(-3, 10); got != 0 {
+		t.Fatalf("negative M → %d, want 0", got)
+	}
+}
+
+func TestAbsIntDiff(t *testing.T) {
+	if got := absIntDiff(105, 100); got != 5 {
+		t.Fatalf("absIntDiff(105, 100)=%d, want 5", got)
+	}
+	if got := absIntDiff(100, 105); got != 5 {
+		t.Fatalf("absIntDiff(100, 105)=%d, want 5", got)
+	}
+	if got := absIntDiff(100, 100); got != 0 {
+		t.Fatalf("absIntDiff(100, 100)=%d, want 0", got)
+	}
+	if got := absIntDiff(math.MaxInt, math.MaxInt-5); got != 5 {
+		t.Fatalf("absIntDiff(MaxInt, MaxInt-5)=%d, want 5", got)
+	}
+	if got := absIntDiff(math.MaxInt-5, math.MaxInt); got != 5 {
+		t.Fatalf("absIntDiff(MaxInt-5, MaxInt)=%d, want 5", got)
+	}
+	if got := absIntDiff(math.MinInt+5, math.MinInt); got != 5 {
+		t.Fatalf("absIntDiff(MinInt+5, MinInt)=%d, want 5", got)
+	}
+	if got := absIntDiff(math.MinInt, math.MinInt+5); got != 5 {
+		t.Fatalf("absIntDiff(MinInt, MinInt+5)=%d, want 5", got)
+	}
+}
+
+func placeFirstShardNode(t *testing.T, topo *Topology, m int) string {
+	t.Helper()
+	res, err := topo.Place(1, "c1", []int{0}, Constraints{FreeSlotsDeadband: m}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place M=%d: %v", m, err)
+	}
+	d, ok := res.Destinations[0]
+	if !ok {
+		t.Fatal("missing shard 0")
+	}
+	return d.Node
+}
+
+// TestFreeSlotsDeadbandDefersToLiveShards: two nodes, empty this-volume.
+// b has slightly more freeSlots but more live shards. M=0 follows freeSlots
+// (b); M=1 volume (×10 shard slots at 10+4) covers the gap and follows
+// liveShards (a). Sorted-id would always pick a.
+func TestFreeSlotsDeadbandDefersToLiveShards(t *testing.T) {
+	build := func() *Topology {
+		topo := NewTopology()
+		a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+		a.AddDisk(0, "", 100, 10)
+		b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 105)
+		b.AddDisk(0, "", 105, 50)
+		return topo
+	}
+	if got := placeFirstShardNode(t, build(), 0); got != "b:8081" {
+		t.Fatalf("M=0: got %s, want b (strict freeSlots)", got)
+	}
+	if got := placeFirstShardNode(t, build(), 1); got != "a:8080" {
+		t.Fatalf("M=1 volume: got %s, want a (liveShards remainder)", got)
+	}
+}
+
+// TestFreeSlotsDeadbandZeroExactTieUsesLiveShards: equal freeSlots, M=0
+// remainder is liveShards, not the lower sorted id.
+func TestFreeSlotsDeadbandZeroExactTieUsesLiveShards(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+	a.AddDisk(0, "", 100, 50)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 100)
+	b.AddDisk(0, "", 100, 10)
+	if got := placeFirstShardNode(t, topo, 0); got != "b:8081" {
+		t.Fatalf("equal freeSlots M=0: got %s, want b (lower liveShards)", got)
+	}
+}
+
+// TestFreeSlotsDeadbandStillHonorsLargeGap: gap above M still follows freeSlots
+// even if that node is fatter on liveShards.
+func TestFreeSlotsDeadbandStillHonorsLargeGap(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+	a.AddDisk(0, "", 100, 10)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 200)
+	b.AddDisk(0, "", 200, 80)
+	if got := placeFirstShardNode(t, topo, 1); got != "b:8081" {
+		t.Fatalf("M=1 volume gap=100 shards: got %s, want b (freeSlots still wins)", got)
+	}
+}
+
+// TestFreeSlotsDeadbandScalesWithRatio: M=1 volume is 8 shard slots at 8+4
+// and 10 at default 10+4. Gap of 9 shards: 8+4 still follows freeSlots; 10+4
+// ties and follows liveShards.
+func TestFreeSlotsDeadbandScalesWithRatio(t *testing.T) {
+	build := func() *Topology {
+		topo := NewTopology()
+		a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+		a.AddDisk(0, "", 100, 10)
+		b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 109)
+		b.AddDisk(0, "", 109, 50)
+		return topo
+	}
+	place := func(topo *Topology, ratio func(string) (int, int)) string {
+		t.Helper()
+		res, err := topo.Place(1, "c1", []int{0}, Constraints{FreeSlotsDeadband: 1, Ratio: ratio}, PlaceStrict)
+		if err != nil {
+			t.Fatalf("Place: %v", err)
+		}
+		d, ok := res.Destinations[0]
+		if !ok {
+			t.Fatal("missing shard 0")
+		}
+		return d.Node
+	}
+	if got := place(build(), func(string) (int, int) { return 8, 4 }); got != "b:8081" {
+		t.Fatalf("8+4 M=1 gap=9: got %s, want b (deadband 8, freeSlots)", got)
+	}
+	if got := place(build(), nil); got != "a:8080" {
+		t.Fatalf("10+4 M=1 gap=9: got %s, want a (deadband 10, liveShards)", got)
+	}
+}
+
+func rackExtraTopo(thinFree, thinLive, fatFree, fatLive int) *Topology {
+	topo := NewTopology()
+	add := func(rack, id string, free, live int) {
+		n := topo.AddNode(id, "dc1", rack, free)
+		n.AddDisk(0, "", free, live)
+	}
+	add("dc1:rack0", "thin:8080", thinFree, thinLive)
+	add("dc1:rack1", "fat1:8080", fatFree, fatLive)
+	add("dc1:rack2", "fat2:8080", fatFree, fatLive)
+	add("dc1:rack3", "fat3:8080", fatFree, fatLive)
+	return topo
+}
+
+func place104PerRack(t *testing.T, topo *Topology, m int) map[string]int {
+	t.Helper()
+	res, err := topo.Place(1, "c1", allShards(), Constraints{FreeSlotsDeadband: m}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place M=%d: %v", m, err)
+	}
+	got := map[string]int{}
+	for _, d := range res.Destinations {
+		got[d.Rack]++
+	}
+	return got
+}
+
+// TestRackDeadbandDefersToLiveShards: 10+4 extras are 4+4+3+3. Thin rack has
+// fewer freeSlots (gap 5) but fewer liveShards. M=1 volume is 10 shard slots,
+// so the gap is a tie and extras go to the thinner live rack.
+func TestRackDeadbandDefersToLiveShards(t *testing.T) {
+	got := place104PerRack(t, rackExtraTopo(100, 10, 105, 50), 1)
+	if got["rack0"] != 4 {
+		t.Fatalf("M=1 gap=5: thin rack0 got %d, want 4 (liveShards remainder); per-rack %v", got["rack0"], got)
+	}
+}
+
+// TestRackDeadbandStillHonorsLargeGap: same thin-vs-fat live, but freeSlots
+// gap 100 is above M=1 (10 shard slots), so extras still follow freeSlots.
+func TestRackDeadbandStillHonorsLargeGap(t *testing.T) {
+	got := place104PerRack(t, rackExtraTopo(100, 10, 200, 50), 1)
+	if got["rack0"] != 3 {
+		t.Fatalf("M=1 gap=100: thin rack0 got %d, want 3 (freeSlots still wins); per-rack %v", got["rack0"], got)
 	}
 }

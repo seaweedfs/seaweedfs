@@ -1284,7 +1284,8 @@ func volumeShardCount(node *Node, vk volKey) int {
 }
 
 // nodeLiveShardCount is the disk-level EC shard cardinality (master EcShards),
-// not the UI "EC volumes" count (len of the volume map).
+// not the UI "EC volumes" count (len of the volume map). Place uses it as the
+// remainder after even-this-volume and freeSlots (with deadband).
 func nodeLiveShardCount(n *Node) int {
 	if n == nil {
 		return 0

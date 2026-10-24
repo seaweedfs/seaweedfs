@@ -12,13 +12,14 @@ import (
 // Config extends BaseConfig with erasure coding specific settings
 type Config struct {
 	base.BaseConfig
-	QuietForSeconds  int      `json:"quiet_for_seconds"`
-	FullnessRatio    float64  `json:"fullness_ratio"`
-	CollectionFilter string   `json:"collection_filter"`
-	MinSizeMB        int      `json:"min_size_mb"`
-	PreferredTags    []string `json:"preferred_tags"`
-	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
-	StrictPlacement  bool     `json:"strict_placement"`  // fail planning instead of relaxing placement constraints
+	QuietForSeconds   int      `json:"quiet_for_seconds"`
+	FullnessRatio     float64  `json:"fullness_ratio"`
+	CollectionFilter  string   `json:"collection_filter"`
+	MinSizeMB         int      `json:"min_size_mb"`
+	PreferredTags     []string `json:"preferred_tags"`
+	ReplicaPlacement  string   `json:"replica_placement"`   // e.g. "020"; empty falls back to the master default replication
+	StrictPlacement   bool     `json:"strict_placement"`    // fail planning instead of relaxing placement constraints
+	FreeSlotsDeadband int      `json:"free_slots_deadband"` // Place volume-slot M; |ΔfreeSlots| ≤ M×dataShards is a tie, then liveShards; 0 = strict
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -183,6 +184,22 @@ func GetConfigSpec() base.ConfigSpec {
 				HelpText:     "When enabled, a volume is only encoded if every shard can be placed within the per-disk, anti-affinity, replica-placement and per-rack caps, so the configured resilience is preserved. When disabled (default), unsatisfiable constraints are relaxed and noted in the log",
 				InputType:    "checkbox",
 				CSSClasses:   "form-check-input",
+			},
+			{
+				Name:         "free_slots_deadband",
+				JSONName:     "free_slots_deadband",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				MaxValue:     100000,
+				Required:     false,
+				DisplayName:  "Free Volume Deadband (M)",
+				Description:  "Treat |Δfree volume slots| ≤ M as a Place tie and rank by liveShards instead",
+				HelpText:     "0 (default) keeps strict freeSlots ranking. A positive M is volume slots; Place applies M × data shards (10+4 → ×10). Worker plugin config; not stored in TaskPolicy proto.",
+				Placeholder:  "0",
+				Unit:         config.UnitCount,
+				InputType:    "number",
+				CSSClasses:   "form-control",
 			},
 		},
 	}
