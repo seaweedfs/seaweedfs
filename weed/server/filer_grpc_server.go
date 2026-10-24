@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -622,7 +623,11 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			ctx = filer.WithKeepRemoteObject(ctx)
 		}
 		if m.BypassGovernanceRetention {
-			ctx = filer.WithBypassGovernanceRetention(ctx)
+			if peerErr := security.CheckGrpcAdminPeer(ctx, fs.filerGuard.SigningKey()); peerErr == nil {
+				ctx = filer.WithBypassGovernanceRetention(ctx)
+			} else {
+				glog.V(1).InfofCtx(ctx, "ObjectMutation DELETE %s/%s: bypass_governance_retention ignored: %v", m.Directory, m.Name, peerErr)
+			}
 		}
 		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
 		if err != nil && err != filer_pb.ErrNotFound {
@@ -1059,7 +1064,11 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		ctx = filer.WithKeepRemoteObject(ctx)
 	}
 	if req.BypassGovernanceRetention {
-		ctx = filer.WithBypassGovernanceRetention(ctx)
+		if peerErr := security.CheckGrpcAdminPeer(ctx, fs.filerGuard.SigningKey()); peerErr == nil {
+			ctx = filer.WithBypassGovernanceRetention(ctx)
+		} else {
+			glog.V(1).InfofCtx(ctx, "DeleteEntry %s: bypass_governance_retention ignored: %v", fullpath, peerErr)
+		}
 	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)

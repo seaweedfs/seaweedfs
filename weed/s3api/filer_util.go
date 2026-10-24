@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -163,13 +164,18 @@ func deleteObjectEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 }
 
 func doDeleteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
+	bypass := filer.BypassesGovernanceRetention(ctx)
+	if bypass {
+		// the filer honors the flag only for an authenticated admin peer
+		ctx, _ = credential.WithS3InternalAdminAuth(ctx)
+	}
 	request := &filer_pb.DeleteEntryRequest{
 		Directory:                 parentDirectoryPath,
 		Name:                      entryName,
 		IsDeleteData:              isDeleteData,
 		IsRecursive:               isRecursive,
 		IgnoreRecursiveError:      true,
-		BypassGovernanceRetention: filer.BypassesGovernanceRetention(ctx),
+		BypassGovernanceRetention: bypass,
 	}
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)

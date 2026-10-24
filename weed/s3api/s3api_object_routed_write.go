@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -167,10 +168,18 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	if req.RequestId == "" {
 		req.RequestId = uuid.NewString()
 	}
+	txnCtx := context.Background()
+	for _, m := range req.Mutations {
+		if m.BypassGovernanceRetention {
+			// the filer honors the flag only for an authenticated admin peer
+			txnCtx, _ = credential.WithS3InternalAdminAuth(txnCtx)
+			break
+		}
+	}
 	var resp *filer_pb.ObjectTransactionResponse
 	txn := func(client filer_pb.SeaweedFilerClient) error {
 		var e error
-		resp, e = client.ObjectTransaction(context.Background(), req)
+		resp, e = client.ObjectTransaction(txnCtx, req)
 		return e
 	}
 	if s3a.filerClient == nil {
