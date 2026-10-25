@@ -84,6 +84,12 @@ impl NamespaceClient {
             fallback.get("aws_access_key_id"),
             fallback.get("aws_secret_access_key"),
         ) {
+            if !protected_transport(&self.base_url) {
+                tracing::warn!(
+                    "catalog url {} exposes the x-api-key credential in cleartext",
+                    self.base_url
+                );
+            }
             self.api_key = Some(format!("{access}:{secret}"));
         }
         self
@@ -143,6 +149,25 @@ impl NamespaceClient {
     }
 }
 
+/// A catalog url protects the api key when the hop is TLS or never leaves the
+/// host; anything else sends it where the network can read it.
+fn protected_transport(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    if url.scheme() == "https" {
+        return true;
+    }
+    match url.host_str() {
+        Some("localhost") => true,
+        Some(host) => host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback()),
+        None => false,
+    }
+}
+
 fn encode_id(id: &[String]) -> String {
     if id.is_empty() {
         DELIMITER.to_string()
@@ -158,4 +183,28 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
         .filter(|part| !part.is_empty())
         .map(|part| part.to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protected_transport;
+
+    #[test]
+    fn protected_transport_covers_tls_and_loopback() {
+        for url in [
+            "https://catalog.internal:8443",
+            "http://127.0.0.1:8080",
+            "http://localhost",
+            "http://[::1]:8080",
+        ] {
+            assert!(protected_transport(url), "{url} should be protected");
+        }
+        for url in [
+            "http://catalog.internal",
+            "http://127.0.0.1.evil.test",
+            "not a url",
+        ] {
+            assert!(!protected_transport(url), "{url} should warn");
+        }
+    }
 }
