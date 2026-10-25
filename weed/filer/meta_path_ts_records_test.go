@@ -308,3 +308,50 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 		t.Fatalf("generation = %d, want %d past the mid-check bump", got, newTs+61)
 	}
 }
+
+// TestPathCommitGenDelayedMarkerRead: a sync that read the off marker before
+// a later off period was consumed must not bump for its stale read — the
+// generation the later marker produced keeps its records.
+func TestPathCommitGenDelayedMarkerRead(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+
+	// a later off period has already been consumed: its generation holds
+	// records now
+	markerY := uint64(time.Now().UnixNano())
+	genY := markerY + 1
+	genValue := make([]byte, 16)
+	util.Uint64toBytes(genValue, markerY)
+	util.Uint64toBytes(genValue[8:], genY)
+	if err := store.KvPut(ctx, []byte(metaPathGenKey), genValue); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+
+	// this sync reads an earlier marker, then a concurrent consumer clears
+	// it before the sync's check — the hook drops the marker on the re-read
+	markerX := make([]byte, 8)
+	util.Uint64toBytes(markerX, markerY-100)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), markerX); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	markerReads := 0
+	store.kvGetHook = func(key []byte) {
+		if string(key) == metaPathOffKey {
+			markerReads++
+			if markerReads == 2 {
+				delete(store.kv, metaPathOffKey)
+			}
+		}
+	}
+	f := newReplayTestFiler(store)
+	if err := f.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	store.kvGetHook = nil
+	if got := f.pathCommitGen.Load(); got != genY {
+		t.Fatalf("generation = %d, want the stored %d — the stale marker read must not bump", got, genY)
+	}
+	if storeHasKey(store, metaPathOffKey) {
+		t.Fatal("off marker back in the store")
+	}
+}
