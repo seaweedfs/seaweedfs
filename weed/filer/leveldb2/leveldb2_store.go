@@ -239,7 +239,7 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 
 	directoryPrefix, partitionId := genDirectoryKeyPrefix(dirPath, prefix, store.dbCount)
 	lastFileStart := directoryPrefix
-	if startFileName != "" {
+	if startFileName > prefix {
 		lastFileStart, _ = genDirectoryKeyPrefix(dirPath, startFileName, store.dbCount)
 	}
 
