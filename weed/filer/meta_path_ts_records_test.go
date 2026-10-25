@@ -31,6 +31,15 @@ func storeHasKey(store *stubFilerStore, key string) bool {
 	return found
 }
 
+func storeGetUint64(store *stubFilerStore, key string) uint64 {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if v := store.kv[key]; len(v) >= 8 {
+		return util.BytesToUint64(v)
+	}
+	return 0
+}
+
 // TestPathCommitRecordsWrittenByDefault: with the option unset, a delete
 // records both the change and the delete.
 func TestPathCommitRecordsWrittenByDefault(t *testing.T) {
@@ -102,15 +111,16 @@ func TestPathCommitRecordsBackOn(t *testing.T) {
 	}
 	store.entries[string(path)] = &Entry{FullPath: path, Attr: Attr{Mtime: now}, Content: []byte("changed while off")}
 	off.noteCommittedEvent(overwriteEvent("/dir", "file", now.UnixNano(), "changed while off"))
+	offTs := storeGetUint64(store, metaPathOffKey)
 
 	// records back on, as a filer starting with them on
 	backOn := newReplayTestFiler(store)
 	if err := backOn.syncPathCommitGen(ctx); err != nil {
 		t.Fatalf("syncPathCommitGen: %v", err)
 	}
-	if backOn.pathCommitGen.Load() != 1 || storeHasKey(store, metaPathOffKey) {
-		t.Fatalf("generation = %d, off marker kept = %v; want 1 and the marker cleared",
-			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey))
+	if backOn.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want %d and the marker cleared",
+			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
 	}
 	if err := backOn.Replay(overwriteEvent("/dir", "file", now.Add(-30*time.Minute).UnixNano(), "older peer write")); err != nil {
 		t.Fatalf("Replay: %v", err)
@@ -167,12 +177,87 @@ func TestPathCommitRecordsMarkerFailures(t *testing.T) {
 	if !storeHasKey(store, metaPathOffKey) {
 		t.Fatal("off marker cleared although the bump was not stored")
 	}
+	offTs := storeGetUint64(store, metaPathOffKey)
 	store.setKvPutErr(nil)
 	if err := backOn.syncPathCommitGen(ctx); err != nil {
 		t.Fatalf("syncPathCommitGen: %v", err)
 	}
-	if backOn.pathCommitGen.Load() != 1 || storeHasKey(store, metaPathOffKey) {
-		t.Fatalf("generation = %d, off marker kept = %v; want 1 and the marker cleared",
-			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey))
+	if backOn.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want %d and the marker cleared",
+			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
+	}
+}
+
+// TestPathCommitGenConsumedTogether: filers racing on the same off marker
+// land on one generation — the marker's own timestamp — a marker older than
+// the stored generation is cleaned rather than consumed again, and a bump
+// landing mid-check is adopted rather than counted past.
+func TestPathCommitGenConsumedTogether(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+
+	off := newReplayTestFiler(store)
+	off.pathCommitRecordsOff = true
+	if err := off.markPathCommitRecordsOff(ctx); err != nil {
+		t.Fatalf("markPathCommitRecordsOff: %v", err)
+	}
+	offTs := storeGetUint64(store, metaPathOffKey)
+	if offTs == 0 {
+		t.Fatal("empty off marker")
+	}
+
+	// two filers consume the marker back to back: both take its timestamp
+	for i, name := range []string{"first", "second"} {
+		filer := newReplayTestFiler(store)
+		if err := filer.syncPathCommitGen(ctx); err != nil {
+			t.Fatalf("%s syncPathCommitGen: %v", name, err)
+		}
+		if got := filer.pathCommitGen.Load(); got != offTs {
+			t.Fatalf("%s generation = %d, want the consumed marker %d (iteration %d)", name, got, offTs, i)
+		}
+	}
+
+	// a marker older than the stored generation is dropped without a bump
+	stale := make([]byte, 8)
+	util.Uint64toBytes(stale, offTs-1)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), stale); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	third := newReplayTestFiler(store)
+	if err := third.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	if third.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want %d and the stale marker dropped",
+			third.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
+	}
+
+	// a fresh marker consumed while this sync is mid-check: the stored value
+	// is adopted, not counted past — the hook lands the concurrent bump on
+	// the second generation read
+	newTs := offTs + 100
+	fresh := make([]byte, 8)
+	util.Uint64toBytes(fresh, newTs)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), fresh); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	reads := 0
+	store.kvGetHook = func(key []byte) {
+		if string(key) == metaPathGenKey {
+			reads++
+			if reads == 2 {
+				won := make([]byte, 8)
+				util.Uint64toBytes(won, newTs+1)
+				store.kv[metaPathGenKey] = won
+			}
+		}
+	}
+	fourth := newReplayTestFiler(store)
+	if err := fourth.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	store.kvGetHook = nil
+	if got := fourth.pathCommitGen.Load(); got != newTs+1 {
+		t.Fatalf("generation = %d, want the concurrently stored %d", got, newTs+1)
 	}
 }
