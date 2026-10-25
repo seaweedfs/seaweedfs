@@ -175,6 +175,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.Topo.SetGrowthFreezeConfig(
 		v.GetBool("master.volume_growth.freeze_on_topology_mismatch"),
 		v.GetDuration("master.volume_growth.state_loss_recovery_wait"))
+	if str := strings.TrimSpace(v.GetString("master.volume_growth.allocation_deferral")); str != "" {
+		ms.Topo.SetAllocationDeferral(v.GetDuration("master.volume_growth.allocation_deferral"))
+	}
 	ms.Topo.QuarantineVolumeFn = func(dn *topology.DataNode, vid needle.VolumeId, readOnly bool) error {
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

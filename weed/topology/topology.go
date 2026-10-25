@@ -98,6 +98,7 @@ type Topology struct {
 	stateLossRecoveryWait   atomic.Int64
 	allocationNotBefore     atomic.Int64
 	allocationEvidenceSince atomic.Int64
+	allocationDeferral      atomic.Int64
 	topologyInitPending     atomic.Bool
 
 	reportedTopologyIdsLock    sync.Mutex
@@ -324,6 +325,8 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 	t.chanFullVolumes = make(chan storage.VolumeInfo)
 	t.chanCrowdedVolumes = make(chan storage.VolumeInfo)
+
+	t.allocationDeferral.Store(-1)
 
 	t.Configuration = &Configuration{}
 	t.dataNodeIndex = make(map[string]*DataNode)
@@ -1589,6 +1592,21 @@ func (t *Topology) DeferAllocation(d time.Duration) {
 // last such signal, so a cluster with nothing left to report stops waiting.
 func (t *Topology) NoteAllocationEvidence() {
 	t.allocationEvidenceSince.Store(time.Now().UnixNano())
+}
+
+// SetAllocationDeferral overrides the post-mint allocation hold: zero disables
+// it, a positive duration sets the cap, negative restores the warmup window.
+func (t *Topology) SetAllocationDeferral(d time.Duration) {
+	t.allocationDeferral.Store(int64(d))
+}
+
+// AllocationDeferralDuration returns the configured post-mint hold, or one
+// warmup window when unset.
+func (t *Topology) AllocationDeferralDuration() time.Duration {
+	if d := t.allocationDeferral.Load(); d >= 0 {
+		return time.Duration(d)
+	}
+	return t.WarmupDuration()
 }
 
 func (t *Topology) allocationDelay() time.Duration {

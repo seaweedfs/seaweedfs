@@ -170,3 +170,23 @@ func TestAllocationDelayExtendedByEvidence(t *testing.T) {
 		t.Fatal("fresh evidence should extend the deferral")
 	}
 }
+
+func TestAllocationDeferralDuration(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+
+	if d := topo.AllocationDeferralDuration(); d != topo.WarmupDuration() {
+		t.Fatalf("unset deferral should default to the warmup window, got %v", d)
+	}
+	topo.SetAllocationDeferral(0)
+	if d := topo.AllocationDeferralDuration(); d != 0 {
+		t.Fatalf("zero deferral should disable the hold, got %v", d)
+	}
+	topo.SetAllocationDeferral(2 * time.Second)
+	if d := topo.AllocationDeferralDuration(); d != 2*time.Second {
+		t.Fatalf("configured deferral should win, got %v", d)
+	}
+	topo.SetAllocationDeferral(-1)
+	if d := topo.AllocationDeferralDuration(); d != topo.WarmupDuration() {
+		t.Fatalf("negative deferral should restore the default, got %v", d)
+	}
+}
