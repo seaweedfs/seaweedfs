@@ -320,7 +320,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) (retErr error) {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -415,6 +415,14 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Remote:          remoteEntry,
 		Quota:           entry.Quota,
 	}
+	defer func() {
+		// A failed move emits no covering event for the inserted entry's
+		// stamp — release it; on success the rename event adopts it.
+		if retErr != nil {
+			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
+		}
+	}()
+
 	if deferredCopy {
 		// a pending entry renamed again still reads its original source
 		newEntry.Extended = maps.Clone(newEntry.Extended)
@@ -433,7 +441,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		if newEntry.FullPath.IsLongerFileName(fs.filer.MaxFilenameLength) {
 			return filer_pb.ErrEntryNameTooLong
 		}
+		fs.filer.StampEntryCommitTsNs(newEntry)
 		if createErr := fs.filer.Store.InsertEntryKnownAbsent(filer.WithSuppressedMetadataEvents(ctx), newEntry); createErr != nil {
+			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 			return fmt.Errorf("insert entry %s: %v", newEntry.FullPath, createErr)
 		}
 	} else {

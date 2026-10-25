@@ -684,8 +684,12 @@ type Entry struct {
 	RemoteEntry        *RemoteEntry           `protobuf:"bytes,10,opt,name=remote_entry,json=remoteEntry,proto3" json:"remote_entry,omitempty"`
 	Quota              int64                  `protobuf:"varint,11,opt,name=quota,proto3" json:"quota,omitempty"` // for bucket only. Positive/Negative means enabled/disabled.
 	WormEnforcedAtTsNs int64                  `protobuf:"varint,12,opt,name=worm_enforced_at_ts_ns,json=wormEnforcedAtTsNs,proto3" json:"worm_enforced_at_ts_ns,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// filer-local commit timestamp of the version stored here: the meta log
+	// event's ts_ns for the mutation that produced this entry, or 0 for
+	// entries written before the field existed
+	CommitTsNs    int64 `protobuf:"varint,6,opt,name=commit_ts_ns,json=commitTsNs,proto3" json:"commit_ts_ns,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Entry) Reset() {
@@ -791,6 +795,13 @@ func (x *Entry) GetQuota() int64 {
 func (x *Entry) GetWormEnforcedAtTsNs() int64 {
 	if x != nil {
 		return x.WormEnforcedAtTsNs
+	}
+	return 0
+}
+
+func (x *Entry) GetCommitTsNs() int64 {
+	if x != nil {
+		return x.CommitTsNs
 	}
 	return 0
 }
@@ -7300,7 +7311,7 @@ const file_filer_proto_rawDesc = "" +
 	"\vremote_size\x18\x05 \x01(\x03R\n" +
 	"remoteSize\x12;\n" +
 	"\x17remote_content_encoding\x18\x06 \x01(\tH\x00R\x15remoteContentEncoding\x88\x01\x01B\x1a\n" +
-	"\x18_remote_content_encoding\"\x89\x04\n" +
+	"\x18_remote_content_encoding\"\xab\x04\n" +
 	"\x05Entry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fis_directory\x18\x02 \x01(\bR\visDirectory\x12+\n" +
@@ -7316,7 +7327,9 @@ const file_filer_proto_rawDesc = "" +
 	"\fremote_entry\x18\n" +
 	" \x01(\v2\x15.filer_pb.RemoteEntryR\vremoteEntry\x12\x14\n" +
 	"\x05quota\x18\v \x01(\x03R\x05quota\x122\n" +
-	"\x16worm_enforced_at_ts_ns\x18\f \x01(\x03R\x12wormEnforcedAtTsNs\x1a;\n" +
+	"\x16worm_enforced_at_ts_ns\x18\f \x01(\x03R\x12wormEnforcedAtTsNs\x12 \n" +
+	"\fcommit_ts_ns\x18\x06 \x01(\x03R\n" +
+	"commitTsNs\x1a;\n" +
 	"\rExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"D\n" +

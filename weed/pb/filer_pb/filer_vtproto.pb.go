@@ -389,6 +389,11 @@ func (m *Entry) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x3a
 	}
+	if m.CommitTsNs != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.CommitTsNs))
+		i--
+		dAtA[i] = 0x30
+	}
 	if len(m.Extended) > 0 {
 		for k := range m.Extended {
 			v := m.Extended[k]
@@ -6702,6 +6707,9 @@ func (m *Entry) SizeVT() (n int) {
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
 	}
+	if m.CommitTsNs != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.CommitTsNs))
+	}
 	l = len(m.HardLinkId)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
@@ -10230,6 +10238,25 @@ func (m *Entry) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Extended[mapkey] = mapvalue
 			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CommitTsNs", wireType)
+			}
+			m.CommitTsNs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CommitTsNs |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		case 7:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field HardLinkId", wireType)

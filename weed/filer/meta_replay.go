@@ -58,20 +58,20 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			return err
 		}
 		glog.V(4).Infof("deleting %v", oldPath)
+		// Record the delete before the insert too: if the insert fails and
+		// the event is retried later, the path sits deleted in between —
+		// without the tombstone a stale peer create could resurrect it in
+		// the gap.
+		f.notePathChange(oldPath, resp.TsNs, true)
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
-		// Record the commit before the insert too: if the insert fails and
-		// the event is retried later, the path sits deleted in between —
-		// without the record a stale peer create could resurrect it in the
-		// gap. The entry still exists afterward, so no delete record.
-		f.notePathChange(oldPath, resp.TsNs, false)
 		glog.V(4).Infof("creating %v", newPath)
 		newEntry := FromPbEntry(dir, message.NewEntry)
+		newEntry.CommitTsNs = resp.TsNs
 		if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 			return err
 		}
-		f.notePathChange(oldPath, resp.TsNs, false)
 		return nil
 	}
 
@@ -113,10 +113,10 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		if !newer {
 			glog.V(4).Infof("creating %v", newPath)
 			newEntry := FromPbEntry(dir, message.NewEntry)
+			newEntry.CommitTsNs = resp.TsNs
 			if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
-			f.notePathChange(newPath, resp.TsNs, false)
 		}
 	}
 

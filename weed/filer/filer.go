@@ -121,12 +121,6 @@ type Filer struct {
 	// repair goroutine so failures neither strand a record nor pile on.
 	metaTsPending   sync.Map
 	metaTsRepairing sync.Map
-	// pathCommitRecordsOff skips the per-path commit records
-	// (meta_path_ts.go) until a peer filer with its own store is observed.
-	// pathCommitGen is the records' generation: bumped when they are turned
-	// on, so records from before an off period are not used.
-	pathCommitRecordsOff atomic.Bool
-	pathCommitGen        atomic.Uint64
 	// flushCtx is the context metadata-log flushes append under. It stays
 	// live for the process lifetime and is cancelled once during Shutdown,
 	// bounding every retry - in-flight and queued alike - to one deadline.
@@ -374,10 +368,6 @@ func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 
 	isFresh = f.setOrLoadFilerStoreSignature(store)
 
-	// Before serving: mark the store while no peer with its own store is
-	// known, or adopt the records' generation once one is.
-	f.initPathCommitRecords()
-
 	// Recover deletions that were pending when a previous process died, and keep
 	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
 	// A failed ledger read leaves writes blocked until a snapshot retries and
@@ -493,8 +483,21 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 		}
 	*/
 
+	emitted := false
+	stamped := false
+	defer func() {
+		// Aborts before the event emission release the stamp this call
+		// made — a stamp the entry already carried is a concurrent
+		// mutation's and stays in flight for its own event.
+		if !emitted && stamped {
+			f.releaseEntryCommitTsNs(entry.CommitTsNs)
+		}
+	}()
+
 	if oldEntry == nil {
 		f.ensureEntryInode(entry)
+		f.stampEntryCommitTsNs(entry)
+		stamped = true
 
 		glog.V(4).InfofCtx(ctx, "InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
@@ -527,6 +530,8 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
+		f.stampEntryCommitTsNs(entry)
+		stamped = true
 		if err := f.UpdateEntry(ctx, oldEntry, entry, isFromOtherCluster); err != nil {
 			if errors.Is(err, filer_pb.ErrExistingIsDirectory) || errors.Is(err, filer_pb.ErrExistingIsFile) {
 				glog.V(2).InfofCtx(ctx, "update entry %s: %v", entry.FullPath, err)
@@ -538,6 +543,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	}
 
 	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster, signatures)
+	emitted = true
 
 	f.deleteChunksIfNotNew(ctx, oldEntry, entry)
 
@@ -602,16 +608,18 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
+		f.stampEntryCommitTsNs(dirEntry)
 		mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
 		if mkdirErr != nil {
+			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 			if fEntry, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound || fEntry == nil {
 				glog.V(3).InfofCtx(ctx, "mkdir %s: %v", dirPath, mkdirErr)
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
+		} else if !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
+			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		} else {
-			if !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
-				f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
-			}
+			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 		}
 
 	} else if !dirEntry.IsDirectory() {
@@ -631,7 +639,9 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			dirEntry.Extended = make(map[string][]byte)
 		}
 		dirEntry.Extended[s3_constants.SeaweedFSPrefixObject] = []byte("true")
+		f.stampEntryCommitTsNs(dirEntry)
 		if updateErr := f.Store.UpdateEntry(ctx, dirEntry); updateErr != nil {
+			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
 		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
@@ -683,7 +693,9 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 		narrowed := existing.ShallowClone()
 		narrowed.Mode = existing.Mode&^restorableModeBits | kept
 		glog.V(1).InfofCtx(ctx, "restore directory %s: narrowing %v to %v", dirPath, existing.Mode, narrowed.Mode)
+		f.stampEntryCommitTsNs(narrowed)
 		if err := f.UpdateEntry(ctx, existing, narrowed, false); err != nil {
+			f.releaseEntryCommitTsNs(narrowed.CommitTsNs)
 			return err
 		}
 		f.NotifyUpdateEvent(ctx, existing, narrowed, false, false, nil)
@@ -708,7 +720,9 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 		UserName: attrs.UserName, GroupNames: attrs.GroupNames,
 	}}
 	f.ensureEntryInode(dirEntry)
+	f.stampEntryCommitTsNs(dirEntry)
 	if err := f.Store.InsertEntry(ctx, dirEntry); err != nil {
+		f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 		return fmt.Errorf("restore directory %s: %v", dirPath, err)
 	}
 	f.NotifyUpdateEvent(ctx, nil, dirEntry, false, false, nil)

@@ -475,13 +475,6 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {
-		// The commit records order events replayed from peers with their
-		// own store; until now they were never read and were not written.
-		// Failing to turn them on aborts the subscribe: replaying without
-		// ordering would let stale events win, and the reconnect retries.
-		if err := f.enablePathCommitRecords(ctx); err != nil {
-			return lastTsNs, fmt.Errorf("enable per-path commit records: %w", err)
-		}
 		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
 		} else if errors.Is(err, ErrKvNotFound) {
@@ -812,6 +805,7 @@ func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs 
 			return nil
 		}
 	}
+	entry.CommitTsNs = peerTsNs
 	if insertErr := f.Store.InsertEntry(ctx, entry); insertErr != nil {
 		// Entry already exists (root dir, or partial previous bootstrap);
 		// the lock kept the check above current, so the peer commit is newer.
@@ -822,7 +816,6 @@ func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs 
 			return fmt.Errorf("update entry %s: %w", entry.FullPath, updateErr)
 		}
 	}
-	f.notePathChange(entry.FullPath, peerTsNs, false)
 	return nil
 }
 

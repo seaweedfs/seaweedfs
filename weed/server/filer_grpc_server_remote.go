@@ -318,7 +318,9 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	// this skips meta data log events
 
+	fs.filer.StampEntryCommitTsNs(newEntry)
 	if err := fs.filer.Store.UpdateEntry(context.Background(), newEntry); err != nil {
+		fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 		fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		return nil, err
 	}

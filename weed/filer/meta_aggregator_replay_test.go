@@ -324,9 +324,9 @@ func TestReplayAppliesWhenCommitRecordIsOlderThanFutureMtime(t *testing.T) {
 		FullPath: path,
 		Attr:     Attr{Mtime: now.Add(time.Hour)}, // future mtime, e.g. client-set or kept from a rename source
 		Content:  []byte("old destination"),
+		// The last committed change predates the event.
+		CommitTsNs: now.Add(-time.Minute).UnixNano(),
 	}
-	// The last committed change predates the event.
-	f.notePathChange(path, now.Add(-time.Minute).UnixNano(), false)
 
 	event := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/a",
@@ -372,9 +372,9 @@ func TestReplaySerializesWithEntryLock(t *testing.T) {
 	store.entries[string(path)] = &Entry{FullPath: path, Attr: Attr{Mtime: now}}
 
 	// A local mutation holding the path lock; a replay started behind it
-	// sees the recorded commit and skips.
+	// sees the entry's commit stamp and skips.
 	held := f.EntryLockTable.AcquireLock("test local write", path, util.ExclusiveLock)
-	f.notePathChange(path, now.UnixNano(), false)
+	store.entries[string(path)].CommitTsNs = now.UnixNano()
 
 	done := make(chan error, 1)
 	go func() {
@@ -427,8 +427,8 @@ func TestReplicateMetadataChangeAbortsOnStop(t *testing.T) {
 func TestMetaPathKeyFixedSizeForLongPaths(t *testing.T) {
 	path := util.NewFullPath("/", string(make([]rune, 600)))
 	for _, p := range []util.FullPath{"/a", path} {
-		if got := len(metaPathKey(metaPathTsPrefix, p)); got != len(metaPathTsPrefix)+16 {
-			t.Fatalf("metaPathKey(%d-byte path) = %d bytes, want %d", len(p), got, len(metaPathTsPrefix)+16)
+		if got := len(metaPathKey(metaPathDelPrefix, p)); got != len(metaPathDelPrefix)+16 {
+			t.Fatalf("metaPathKey(%d-byte path) = %d bytes, want %d", len(p), got, len(metaPathDelPrefix)+16)
 		}
 	}
 }
@@ -555,11 +555,11 @@ func TestBootstrapUpdatesExistingByCommitTime(t *testing.T) {
 	path := util.NewFullPath("/dir", "file")
 
 	store.entries[string(path)] = &Entry{
-		FullPath: path,
-		Attr:     Attr{Mtime: now.Add(time.Hour)}, // future mtime, e.g. client-set
-		Content:  []byte("old local write"),
+		FullPath:   path,
+		Attr:       Attr{Mtime: now.Add(time.Hour)}, // future mtime, e.g. client-set
+		Content:    []byte("old local write"),
+		CommitTsNs: now.Add(-time.Minute).UnixNano(),
 	}
-	f.notePathChange(path, now.Add(-time.Minute).UnixNano(), false)
 
 	entry := &Entry{
 		FullPath: path,
@@ -669,25 +669,23 @@ func TestPendingCommitRecordRepairs(t *testing.T) {
 	t.Fatal("pending record was not repaired")
 }
 
-// CommitTsNs reports the recorded commit time over the entry mtime, and a
-// still-pending record over both.
-func TestCommitTsNsPrefersRecordAndPending(t *testing.T) {
+// CommitTsNs reports the commit timestamp stamped on the entry, or the
+// fallback when the entry predates stamping or is gone.
+func TestCommitTsNsFromEntry(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
 	path := util.NewFullPath("/dir", "file")
 
 	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 7 {
-		t.Fatalf("no record: CommitTsNs = %d, %v; want fallback 7", got, err)
+		t.Fatalf("no entry: CommitTsNs = %d, %v; want fallback 7", got, err)
 	}
-	f.notePathChange(path, 50, false)
+	store.entries[string(path)] = &Entry{FullPath: path, CommitTsNs: 50}
 	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 50 {
-		t.Fatalf("recorded: CommitTsNs = %d, %v; want 50", got, err)
+		t.Fatalf("stamped: CommitTsNs = %d, %v; want 50", got, err)
 	}
-	pending := &metaTsPendingRec{}
-	pending.changeTsNs.Store(80)
-	f.metaTsPending.Store(string(path), pending)
-	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 80 {
-		t.Fatalf("pending: CommitTsNs = %d, %v; want 80", got, err)
+	store.entries[string(path)].CommitTsNs = 0
+	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 7 {
+		t.Fatalf("unstamped: CommitTsNs = %d, %v; want fallback 7", got, err)
 	}
 }
 
@@ -701,9 +699,9 @@ func TestPendingCommitRecordDischargedByNewerWrite(t *testing.T) {
 	path := util.NewFullPath("/dir", "file")
 
 	store.setKvPutErr(errors.New("kv store unreachable"))
-	f.notePathChange(path, 100, false)
+	f.notePathChange(path, 100, true)
 	store.setKvPutErr(nil)
-	f.notePathChange(path, 200, false)
+	f.notePathChange(path, 200, true)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -712,15 +710,14 @@ func TestPendingCommitRecordDischargedByNewerWrite(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathTsPrefix, path))
+	ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path))
 	if err != nil || !found || ts != 200 {
-		t.Fatalf("MpTs after repair = %v, %v, %v; want 200", ts, found, err)
+		t.Fatalf("MpDl after repair = %v, %v, %v; want 200", ts, found, err)
 	}
 }
 
-// A failed delete record keeps its own time even when a later failed change
-// merges into the pending record: the repair must not stamp the delete at
-// the newer change's time.
+// A failed delete record keeps its own time: a newer delete the pending
+// record merges must not stamp the record at the older delete's time.
 func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
 	store := newStubFilerStore()
 	store.setKvPutErr(errors.New("kv store unreachable"))
@@ -730,7 +727,7 @@ func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
 	path := util.NewFullPath("/dir", "file")
 
 	f.notePathChange(path, 100, true)
-	f.notePathChange(path, 200, false)
+	f.notePathChange(path, 200, true)
 	store.setKvPutErr(nil)
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -740,11 +737,8 @@ func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathTsPrefix, path)); err != nil || !found || ts != 200 {
-		t.Fatalf("MpTs = %v, %v, %v; want 200", ts, found, err)
-	}
-	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path)); err != nil || !found || ts != 100 {
-		t.Fatalf("MpDl = %v, %v, %v; want 100", ts, found, err)
+	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path)); err != nil || !found || ts != 200 {
+		t.Fatalf("MpDl = %v, %v, %v; want 200", ts, found, err)
 	}
 }
 
