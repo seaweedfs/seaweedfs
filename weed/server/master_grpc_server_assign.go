@@ -199,27 +199,15 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		if dn == nil {
 			continue
 		}
-		var replicas []*master_pb.Location
-		for _, r := range dnList.Rest() {
-			replicas = append(replicas, &master_pb.Location{
-				Url:        r.Url(),
-				PublicUrl:  r.PublicUrl,
-				GrpcPort:   uint32(r.GrpcPort),
-				DataCenter: r.GetDataCenterId(),
-			})
+		return assignResponse(fid, count, dnList, ms.guard), nil
+	}
+	// The last in-loop pick can predate the growth it triggered concluding:
+	// growth registers its volumes before clearing the pending flag, so pick
+	// once more before shedding.
+	if fid, count, dnList, _, err := ms.Topo.PickForWrite(req.Count, option, vl, req.ExpectedDataSize); err == nil {
+		if dnList.Head() != nil {
+			return assignResponse(fid, count, dnList, ms.guard), nil
 		}
-		return &master_pb.AssignResponse{
-			Fid: fid,
-			Location: &master_pb.Location{
-				Url:        dn.Url(),
-				PublicUrl:  dn.PublicUrl,
-				GrpcPort:   uint32(dn.GrpcPort),
-				DataCenter: dn.GetDataCenterId(),
-			},
-			Count:    count,
-			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), fid)),
-			Replicas: replicas,
-		}, nil
 	}
 	// The initiator timed out with its growth still pending: shed retryably
 	// rather than failing the write that growth is about to satisfy.
@@ -233,6 +221,31 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
 	}
 	return nil, lastErr
+}
+
+func assignResponse(fid string, count uint64, dnList *topology.VolumeLocationList, guard *security.Guard) *master_pb.AssignResponse {
+	var replicas []*master_pb.Location
+	for _, r := range dnList.Rest() {
+		replicas = append(replicas, &master_pb.Location{
+			Url:        r.Url(),
+			PublicUrl:  r.PublicUrl,
+			GrpcPort:   uint32(r.GrpcPort),
+			DataCenter: r.GetDataCenterId(),
+		})
+	}
+	dn := dnList.Head()
+	return &master_pb.AssignResponse{
+		Fid: fid,
+		Location: &master_pb.Location{
+			Url:        dn.Url(),
+			PublicUrl:  dn.PublicUrl,
+			GrpcPort:   uint32(dn.GrpcPort),
+			DataCenter: dn.GetDataCenterId(),
+		},
+		Count:    count,
+		Auth:     string(security.GenJwtForVolumeServer(guard.SigningKey(), guard.ExpiresAfterSec(), fid)),
+		Replicas: replicas,
+	}
 }
 
 // describeDiskLayout names the disk layout an assign targets. The empty disk
