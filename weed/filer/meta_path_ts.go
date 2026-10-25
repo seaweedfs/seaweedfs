@@ -156,6 +156,14 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 		if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil {
 			return fmt.Errorf("clear the off marker: %w", err)
 		}
+		// A concurrent bumper may have landed a higher generation between the
+		// read above and this store; adopting it converges restarting filers on
+		// one generation instead of writing records under different keys.
+		if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(v) >= 8 {
+			if stored := util.BytesToUint64(v); stored > gen {
+				gen = stored
+			}
+		}
 		glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", gen)
 	}
 	f.pathCommitGen.Store(gen)
