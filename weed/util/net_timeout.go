@@ -154,7 +154,7 @@ func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, e
 	return
 }
 
-func NewIpAndLocalListeners(host string, port int, timeout time.Duration, listenOnLocalhost *bool) (ipListener net.Listener, localListener net.Listener, err error) {
+func NewIpAndLocalListeners(host string, port int, timeout time.Duration, listenOnLocalhost ...*bool) (ipListener net.Listener, localListener net.Listener, err error) {
 	listener, err := net.Listen("tcp", JoinHostPort(host, port))
 	if err != nil {
 		return
@@ -165,7 +165,7 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration, listen
 		Timeout:  timeout,
 	}
 
-	if (listenOnLocalhost == nil || *listenOnLocalhost) && host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
+	if (len(listenOnLocalhost) == 0 || listenOnLocalhost[0] == nil || *listenOnLocalhost[0]) && host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
 			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
