@@ -307,3 +307,97 @@ preferred_tags = ["fast,SSD"]
 		t.Errorf("preferred_tags = %v, want [fast ssd]", got)
 	}
 }
+
+func TestApplyMaintenanceConfigFromTomlMaxShardTransfers(t *testing.T) {
+	dir := t.TempDir()
+	cp := NewConfigPersistence(dir)
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+fullness_ratio = 0.9
+`)); err != nil {
+		t.Fatalf("apply fullness: %v", err)
+	}
+	ec := erasure_coding.LoadConfigFromPersistence(cp)
+	if ec.MaxShardTransfers != nil {
+		t.Fatalf("absent key persisted as %d, want unset", *ec.MaxShardTransfers)
+	}
+	if ec.FullnessRatio != 0.9 {
+		t.Fatalf("fullness_ratio = %v, want 0.9", ec.FullnessRatio)
+	}
+
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+max_shard_transfers = 0
+`)); err != nil {
+		t.Fatalf("apply 0: %v", err)
+	}
+	ec = erasure_coding.LoadConfigFromPersistence(cp)
+	if ec.MaxShardTransfers == nil || *ec.MaxShardTransfers != 0 {
+		t.Fatalf("0: got %v, want sequential 0", ec.MaxShardTransfers)
+	}
+
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+max_shard_transfers = 4
+`)); err != nil {
+		t.Fatalf("apply 4: %v", err)
+	}
+	ec = erasure_coding.LoadConfigFromPersistence(cp)
+	if ec.MaxShardTransfers == nil || *ec.MaxShardTransfers != 4 {
+		t.Fatalf("4: got %v, want 4", ec.MaxShardTransfers)
+	}
+
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+max_shard_transfers = -3
+`)); err != nil {
+		t.Fatalf("apply negative: %v", err)
+	}
+	ec = erasure_coding.LoadConfigFromPersistence(cp)
+	if ec.MaxShardTransfers == nil || *ec.MaxShardTransfers != 0 {
+		t.Fatalf("negative: got %v, want sequential 0", ec.MaxShardTransfers)
+	}
+}
+
+func TestApplyPluginConfigFromTomlMaxShardTransfers(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "erasure_coding",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := s.ApplyPluginConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+replica_placement = "020"
+`)); err != nil {
+		t.Fatalf("apply placement: %v", err)
+	}
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("erasure_coding")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	if _, ok := cfg.WorkerConfigValues["max_shard_transfers"]; ok {
+		t.Fatal("absent max_shard_transfers was written into worker config")
+	}
+
+	if err := s.ApplyPluginConfigFromToml(tomlConfig(t, `
+[maintenance.erasure_coding]
+max_shard_transfers = 0
+`)); err != nil {
+		t.Fatalf("apply 0: %v", err)
+	}
+	cfg, err = s.GetPlugin().LoadJobTypeConfig("erasure_coding")
+	if err != nil || cfg == nil {
+		t.Fatalf("load 0: %v %v", cfg, err)
+	}
+	got, ok := cfg.WorkerConfigValues["max_shard_transfers"]
+	if !ok {
+		t.Fatal("max_shard_transfers = 0 missing from worker config")
+	}
+	if got.GetInt64Value() != 0 {
+		t.Fatalf("max_shard_transfers = %d, want 0", got.GetInt64Value())
+	}
+}

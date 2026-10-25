@@ -111,6 +111,16 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		}
 		ecChanged = true
 	}
+	if k := "maintenance.erasure_coding.max_shard_transfers"; v.IsSet(k) {
+		n := v.GetInt(k)
+		if n < 0 {
+			n = 0
+		} else if n > math.MaxInt32 {
+			n = math.MaxInt32
+		}
+		ecConf.MaxShardTransfers = &n
+		ecChanged = true
+	}
 
 	if !maintenanceChanged && !vacuumChanged && !balanceChanged && !ecChanged {
 		return nil
@@ -239,6 +249,7 @@ var pluginConfigSections = []pluginConfigSection{
 			"replica_placement":   stringValue,
 			"strict_placement":    boolValue,
 			"free_slots_deadband": int64Value,
+			"max_shard_transfers": int64Value,
 		},
 		// workers read collection_filter from the admin values, not the worker values
 		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{

@@ -2974,14 +2974,15 @@ func (x *VacuumTaskConfig) GetMinIntervalSeconds() int32 {
 // ErasureCodingTaskConfig contains EC-specific configuration
 type ErasureCodingTaskConfig struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	FullnessRatio     float64                `protobuf:"fixed64,1,opt,name=fullness_ratio,json=fullnessRatio,proto3" json:"fullness_ratio,omitempty"`              // Minimum fullness ratio to trigger EC (0.0-1.0)
-	QuietForSeconds   int32                  `protobuf:"varint,2,opt,name=quiet_for_seconds,json=quietForSeconds,proto3" json:"quiet_for_seconds,omitempty"`       // Minimum quiet time before EC
-	MinVolumeSizeMb   int32                  `protobuf:"varint,3,opt,name=min_volume_size_mb,json=minVolumeSizeMb,proto3" json:"min_volume_size_mb,omitempty"`     // Minimum volume size for EC
-	CollectionFilter  string                 `protobuf:"bytes,4,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`       // Only process volumes from specific collections
-	PreferredTags     []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`                // Disk tags to prioritize for EC shard placement
-	ReplicaPlacement  string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`       // EC shard replica placement (e.g. "020"); empty falls back to master default replication
-	StrictPlacement   bool                   `protobuf:"varint,7,opt,name=strict_placement,json=strictPlacement,proto3" json:"strict_placement,omitempty"`         // fail planning instead of relaxing placement constraints
-	FreeSlotsDeadband int32                  `protobuf:"varint,8,opt,name=free_slots_deadband,json=freeSlotsDeadband,proto3" json:"free_slots_deadband,omitempty"` // Place free-volume-slot deadband; |ΔfreeSlots| ≤ M×dataShards ranks by liveShards; 0 = strict
+	FullnessRatio     float64                `protobuf:"fixed64,1,opt,name=fullness_ratio,json=fullnessRatio,proto3" json:"fullness_ratio,omitempty"`                    // Minimum fullness ratio to trigger EC (0.0-1.0)
+	QuietForSeconds   int32                  `protobuf:"varint,2,opt,name=quiet_for_seconds,json=quietForSeconds,proto3" json:"quiet_for_seconds,omitempty"`             // Minimum quiet time before EC
+	MinVolumeSizeMb   int32                  `protobuf:"varint,3,opt,name=min_volume_size_mb,json=minVolumeSizeMb,proto3" json:"min_volume_size_mb,omitempty"`           // Minimum volume size for EC
+	CollectionFilter  string                 `protobuf:"bytes,4,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`             // Only process volumes from specific collections
+	PreferredTags     []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`                      // Disk tags to prioritize for EC shard placement
+	ReplicaPlacement  string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`             // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+	StrictPlacement   bool                   `protobuf:"varint,7,opt,name=strict_placement,json=strictPlacement,proto3" json:"strict_placement,omitempty"`               // fail planning instead of relaxing placement constraints
+	FreeSlotsDeadband int32                  `protobuf:"varint,8,opt,name=free_slots_deadband,json=freeSlotsDeadband,proto3" json:"free_slots_deadband,omitempty"`       // Place free-volume-slot deadband; |ΔfreeSlots| ≤ M×dataShards ranks by liveShards; 0 = strict
+	MaxShardTransfers *int32                 `protobuf:"varint,9,opt,name=max_shard_transfers,json=maxShardTransfers,proto3,oneof" json:"max_shard_transfers,omitempty"` // unset = no global cap (one in-flight per dest disk); 0 = sequential; N>0 = global cap
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -3068,6 +3069,13 @@ func (x *ErasureCodingTaskConfig) GetStrictPlacement() bool {
 func (x *ErasureCodingTaskConfig) GetFreeSlotsDeadband() int32 {
 	if x != nil {
 		return x.FreeSlotsDeadband
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskConfig) GetMaxShardTransfers() int32 {
+	if x != nil && x.MaxShardTransfers != nil {
+		return *x.MaxShardTransfers
 	}
 	return 0
 }
@@ -4301,7 +4309,7 @@ const file_worker_proto_rawDesc = "" +
 	"\x10VacuumTaskConfig\x12+\n" +
 	"\x11garbage_threshold\x18\x01 \x01(\x01R\x10garbageThreshold\x12/\n" +
 	"\x14min_volume_age_hours\x18\x02 \x01(\x05R\x11minVolumeAgeHours\x120\n" +
-	"\x14min_interval_seconds\x18\x03 \x01(\x05R\x12minIntervalSeconds\"\xf5\x02\n" +
+	"\x14min_interval_seconds\x18\x03 \x01(\x05R\x12minIntervalSeconds\"\xc2\x03\n" +
 	"\x17ErasureCodingTaskConfig\x12%\n" +
 	"\x0efullness_ratio\x18\x01 \x01(\x01R\rfullnessRatio\x12*\n" +
 	"\x11quiet_for_seconds\x18\x02 \x01(\x05R\x0fquietForSeconds\x12+\n" +
@@ -4310,7 +4318,9 @@ const file_worker_proto_rawDesc = "" +
 	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\x12+\n" +
 	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\x12)\n" +
 	"\x10strict_placement\x18\a \x01(\bR\x0fstrictPlacement\x12.\n" +
-	"\x13free_slots_deadband\x18\b \x01(\x05R\x11freeSlotsDeadband\"\x9b\x01\n" +
+	"\x13free_slots_deadband\x18\b \x01(\x05R\x11freeSlotsDeadband\x123\n" +
+	"\x13max_shard_transfers\x18\t \x01(\x05H\x00R\x11maxShardTransfers\x88\x01\x01B\x16\n" +
+	"\x14_max_shard_transfers\"\x9b\x01\n" +
 	"\x11BalanceTaskConfig\x12/\n" +
 	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
 	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\x12+\n" +
@@ -4585,6 +4595,7 @@ func file_worker_proto_init() {
 		(*TaskPolicy_ReplicationConfig)(nil),
 		(*TaskPolicy_EcBalanceConfig)(nil),
 	}
+	file_worker_proto_msgTypes[31].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

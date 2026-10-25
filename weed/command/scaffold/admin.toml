@@ -69,6 +69,9 @@
 # volume-slot deadband for shard placement: nodes whose free volume slots differ by at
 # most this much tie and fewer live shards wins; applied times data shards (0 = strict)
 # free_slots_deadband = 0
+# shard copy concurrency. Leave unset for one in-flight copy per destination disk.
+# 0 sends shards sequentially. A positive N is a global cap, still one per disk.
+# max_shard_transfers = 4
 # max retry attempts for a failed erasure coding job
 # retry_limit = 1
 # seconds to wait between retry attempts

@@ -2272,6 +2272,105 @@ templ Plugin(page string, initialJob string, lane string) {
                 return input;
             }
 
+            function shardTransferParallelOn(nativeValue) {
+                if (nativeValue === null || nativeValue === undefined || nativeValue === '') {
+                    return true;
+                }
+                var n = parseInt(nativeValue, 10);
+                if (Number.isNaN(n)) {
+                    return true;
+                }
+                return n !== 0;
+            }
+
+            function shardTransferMaxText(nativeValue) {
+                if (nativeValue === null || nativeValue === undefined || nativeValue === '') {
+                    return '';
+                }
+                var n = parseInt(nativeValue, 10);
+                if (Number.isNaN(n) || n <= 0) {
+                    return '';
+                }
+                return String(n);
+            }
+
+            // Presentation of the single persisted max_shard_transfers value.
+            // Unchecked stores 0. Checked with an empty max omits the key.
+            function renderShardTransferControls(scope, field, nativeValue) {
+                var parallelOn = shardTransferParallelOn(nativeValue);
+                var wrapper = document.createElement('div');
+                wrapper.className = 'mb-3 plugin-field';
+                wrapper.dataset.scope = scope;
+                wrapper.dataset.fieldName = field.name;
+                wrapper.dataset.fieldType = normalizeEnum(field.field_type);
+                wrapper.dataset.widget = 'SHARD_TRANSFERS';
+
+                var checkWrap = document.createElement('div');
+                checkWrap.className = 'form-check form-switch mb-2';
+                var box = document.createElement('input');
+                box.type = 'checkbox';
+                box.className = 'form-check-input';
+                box.id = toInputID(scope, field.name) + '-parallel';
+                box.checked = parallelOn;
+                var boxLabel = document.createElement('label');
+                boxLabel.className = 'form-check-label';
+                boxLabel.setAttribute('for', box.id);
+                boxLabel.textContent = 'Parallel shard distribution';
+                checkWrap.appendChild(box);
+                checkWrap.appendChild(boxLabel);
+                wrapper.appendChild(checkWrap);
+
+                var numberLabel = document.createElement('label');
+                numberLabel.className = 'form-label';
+                numberLabel.setAttribute('for', toInputID(scope, field.name));
+                numberLabel.textContent = 'Max transfers';
+                wrapper.appendChild(numberLabel);
+
+                var input = document.createElement('input');
+                input.type = 'number';
+                input.min = '1';
+                input.step = '1';
+                input.className = 'form-control';
+                input.id = toInputID(scope, field.name);
+                input.placeholder = 'no global cap';
+                input.value = shardTransferMaxText(nativeValue);
+                input.disabled = !parallelOn;
+                wrapper.appendChild(input);
+
+                box.addEventListener('change', function() {
+                    input.disabled = !box.checked;
+                });
+
+                var help = document.createElement('div');
+                help.className = 'form-text';
+                help.textContent = field.description || 'Unchecked sends shards sequentially. Checked with an empty max uses one in-flight copy per destination disk. A number is a global cap, still one copy per disk.';
+                wrapper.appendChild(help);
+                return wrapper;
+            }
+
+            function collectShardTransferValue(scope) {
+                var box = document.getElementById(toInputID(scope, 'max_shard_transfers') + '-parallel');
+                var input = document.getElementById(toInputID(scope, 'max_shard_transfers'));
+                if (!box || !input) {
+                    return null;
+                }
+                if (!box.checked) {
+                    return { int64_value: '0' };
+                }
+                var raw = String(input.value || '').trim();
+                if (raw === '') {
+                    return null;
+                }
+                if (!/^\d+$/.test(raw)) {
+                    throw new Error('Invalid int64 value for field Max transfers');
+                }
+                var n = parseInt(raw, 10);
+                if (n <= 0) {
+                    return { int64_value: '0' };
+                }
+                return { int64_value: String(n) };
+            }
+
             function renderConfigForm(scope, rootID, form) {
                 var root = document.getElementById(rootID);
                 if (!root) {
@@ -2320,6 +2419,11 @@ templ Plugin(page string, initialJob string, lane string) {
 
                         var configValue = resolveFieldConfigValue(scope, field);
                         var nativeValue = configValueToNative(configValue);
+
+                        if (field.name === 'max_shard_transfers') {
+                            sectionBody.appendChild(renderShardTransferControls(scope, field, nativeValue));
+                            continue;
+                        }
 
                         var wrapper = document.createElement('div');
                         wrapper.className = 'mb-3 plugin-field';
@@ -2437,6 +2541,14 @@ templ Plugin(page string, initialJob string, lane string) {
                     for (var f = 0; f < fields.length; f++) {
                         var field = fields[f] || {};
                         if (!field.name) {
+                            continue;
+                        }
+
+                        if (field.name === 'max_shard_transfers') {
+                            var shardCap = collectShardTransferValue(scope);
+                            if (shardCap !== null) {
+                                out[field.name] = shardCap;
+                            }
                             continue;
                         }
 
