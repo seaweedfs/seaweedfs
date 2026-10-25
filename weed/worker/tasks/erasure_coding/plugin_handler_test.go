@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +172,13 @@ func TestDeriveErasureCodingWorkerConfigMaxShardTransfers(t *testing.T) {
 	})
 	if cfg.TaskConfig.MaxShardTransfers == nil || *cfg.TaskConfig.MaxShardTransfers != 0 {
 		t.Fatalf("negative: got %v, want 0", cfg.TaskConfig.MaxShardTransfers)
+	}
+
+	cfg = deriveErasureCodingWorkerConfig(map[string]*plugin_pb.ConfigValue{
+		"max_shard_transfers": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: math.MaxInt32 + 1}},
+	})
+	if cfg.TaskConfig.MaxShardTransfers == nil || *cfg.TaskConfig.MaxShardTransfers != math.MaxInt32 {
+		t.Fatalf("above int32: got %v, want clamp to %d", cfg.TaskConfig.MaxShardTransfers, int64(math.MaxInt32))
 	}
 }
 

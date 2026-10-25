@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -701,11 +702,15 @@ func maxShardTransfersFromValues(values map[string]*plugin_pb.ConfigValue) *int 
 	if !ok || value == nil {
 		return nil
 	}
-	n := pluginworker.ReadIntConfig(values, "max_shard_transfers", 0)
+	n := pluginworker.ReadInt64Config(values, "max_shard_transfers", 0)
 	if n < 0 {
 		n = 0
 	}
-	return &n
+	if n > math.MaxInt32 {
+		n = math.MaxInt32
+	}
+	v := int(n)
+	return &v
 }
 
 func buildErasureCodingProposal(
