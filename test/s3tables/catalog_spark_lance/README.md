@@ -41,6 +41,7 @@ deployment uses whatever address the gateway answers on:
 spark.sql.catalog.lance                        org.lance.spark.LanceNamespaceSparkCatalog
 spark.sql.catalog.lance.impl                   rest
 spark.sql.catalog.lance.uri                    http://seaweed:9101
+spark.sql.catalog.lance.headers.x-api-key      <access-key>:<secret-key>
 spark.sql.catalog.lance.storage.aws_endpoint   http://seaweed:8333
 spark.sql.catalog.lance.storage.allow_http     true
 spark.sql.catalog.lance.storage.aws_access_key_id      …

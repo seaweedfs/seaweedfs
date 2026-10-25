@@ -49,7 +49,8 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 }
 
 // defaultAllowFor reports whether the open-by-default fallback applies: only for
-// trusted tooling or unauthenticated/anonymous access. An authenticated principal
+// trusted tooling or when no principal was resolved at all. A resolved identity
+// — the configured anonymous identity included — is scoped by its grant and
 // must pass an explicit check.
 func (h *S3TablesHandler) defaultAllowFor(r *http.Request) bool {
 	if h.trusted {
@@ -60,10 +61,7 @@ func (h *S3TablesHandler) defaultAllowFor(r *http.Request) bool {
 	}
 	// The Manager path forwards only the identity name, so a name alone (no
 	// identity object) still counts as an authenticated principal.
-	if s3_constants.GetIdentityFromContext(r) == nil && s3_constants.GetIdentityNameFromContext(r) == "" {
-		return true
-	}
-	return isAnonymousIdentity(r)
+	return s3_constants.GetIdentityFromContext(r) == nil && s3_constants.GetIdentityNameFromContext(r) == ""
 }
 
 func isAnonymousIdentity(r *http.Request) bool {

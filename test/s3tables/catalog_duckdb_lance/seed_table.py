@@ -53,7 +53,13 @@ def main():
         "aws_region": "us-east-1",
     }
 
-    ns = ln.connect("rest", {"uri": args.namespace_url})
+    ns = ln.connect(
+        "rest",
+        {
+            "uri": args.namespace_url,
+            "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+        },
+    )
     ns.create_namespace(ln.CreateNamespaceRequest(id=[args.bucket], mode="EXIST_OK"))
     ns.create_namespace(
         ln.CreateNamespaceRequest(id=[args.bucket, args.namespace], mode="EXIST_OK")
