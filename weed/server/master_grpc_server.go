@@ -236,7 +236,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
-		if len(heartbeat.Volumes) > 0 {
+		// A HasNoVolumes report still carries the reporter's LastSeenTopologyId;
+		// skipping it would let an EC-only veteran's stale id miss the mismatch
+		// freeze before the hold release below.
+		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 			ms.Topo.CheckReportedTopologyId(heartbeat.LastSeenTopologyId)
 		}
 		if dn == nil {
