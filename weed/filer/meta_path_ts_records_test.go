@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -554,5 +555,76 @@ func TestPathCommitGenDelayedMarkerRead(t *testing.T) {
 	}
 	if storeHasKey(store, metaPathOffKey) {
 		t.Fatal("off marker back in the store")
+	}
+}
+
+// A failed generation read is an error, not a guess: a restarted filer
+// that cannot see the stored generation would run on 0 and read records
+// every bump had fenced, and a sync mid-bump would write blind over a
+// value a racing bumper may have stored.
+func TestPathCommitGenReadFailure(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+
+	on := newReplayTestFiler(store)
+	on.pathCommitRecordsOff.Store(true)
+	if err := on.enablePathCommitRecords(ctx); err != nil {
+		t.Fatalf("enablePathCommitRecords: %v", err)
+	}
+	stored := on.pathCommitGen.Load()
+
+	failGenRead := func(n int) {
+		reads := 0
+		store.kvGetHook = func(key []byte) {
+			if string(key) == metaPathGenKey {
+				reads++
+				if reads == n {
+					store.kvGetErr = errors.New("store down")
+				}
+			}
+		}
+	}
+
+	// restart with the latch set and no off marker: the read after the
+	// loop is the only one, and its failure must not start the filer on 0
+	restarted := newReplayTestFiler(store)
+	failGenRead(1)
+	if err := restarted.syncPathCommitGen(ctx); err == nil {
+		t.Fatal("syncPathCommitGen ignored a failed generation read")
+	}
+	store.kvGetHook, store.kvGetErr = nil, nil
+	if restarted.pathCommitGen.Load() != 0 {
+		t.Fatalf("generation = %d after the failed read, want 0", restarted.pathCommitGen.Load())
+	}
+	if err := restarted.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	if restarted.pathCommitGen.Load() != stored {
+		t.Fatalf("generation = %d, want the stored %d", restarted.pathCommitGen.Load(), stored)
+	}
+
+	// a live off marker takes the sync past the first generation read;
+	// the second one failing must stop the write, not guess
+	offMarker := make([]byte, 8)
+	util.Uint64toBytes(offMarker, stored+1000)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), offMarker); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	before, err := store.KvGet(ctx, []byte(metaPathGenKey))
+	if err != nil {
+		t.Fatalf("KvGet: %v", err)
+	}
+	bumper := newReplayTestFiler(store)
+	failGenRead(2)
+	if err := bumper.syncPathCommitGen(ctx); err == nil {
+		t.Fatal("syncPathCommitGen wrote past a failed generation read")
+	}
+	store.kvGetHook, store.kvGetErr = nil, nil
+	after, err := store.KvGet(ctx, []byte(metaPathGenKey))
+	if err != nil {
+		t.Fatalf("KvGet: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("the stored generation changed although its read failed")
 	}
 }
