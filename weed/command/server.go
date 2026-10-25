@@ -220,7 +220,9 @@ func init() {
 	sftpOptions.trustedUserCAKeysFile = cmdServer.Flag.String("sftp.trustedUserCAKeysFile", "", "path to a file with trusted user CA public keys (OpenSSH authorized_keys format); required when 'certificate' is in -sftp.authMethods")
 	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
+	sftpOptions.ipBindLocalhost = cmdServer.Flag.Bool("sftp.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
+	iamOptions.ipBindLocalhost = cmdServer.Flag.Bool("iam.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	iamOptions.selfServiceRequiresGrant = s3Options.iamSelfServiceRequiresGrant
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
@@ -321,13 +323,13 @@ func runServer(cmd *Command, args []string) bool {
 	}
 	if !*serverIpBindLocalhost {
 		*s3Options.ipBindLocalhost = false
+		*sftpOptions.ipBindLocalhost = false
+		*iamOptions.ipBindLocalhost = false
 	}
 	if sftpOptions.bindIp == nil || *sftpOptions.bindIp == "" {
 		sftpOptions.bindIp = serverBindIp
 	}
-	sftpOptions.ipBindLocalhost = serverIpBindLocalhost
 	iamOptions.ip = serverBindIp
-	iamOptions.ipBindLocalhost = serverIpBindLocalhost
 	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
