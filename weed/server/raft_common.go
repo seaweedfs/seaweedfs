@@ -65,7 +65,7 @@ func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persis
 		} else {
 			glog.V(0).Infof("TopologyId generated: %s", topologyId)
 		}
-		topo.DeferAllocation(topo.WarmupDuration())
+		topo.DeferAllocation(topo.AllocationDeferralDuration())
 		break
 	}
 }

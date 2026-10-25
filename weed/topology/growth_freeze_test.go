@@ -144,3 +144,50 @@ func TestAllocationDelay(t *testing.T) {
 		t.Fatalf("expired deferral should not delay: %v", wait)
 	}
 }
+
+func TestAllocationDelayEarlyRelease(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 1, false)
+
+	topo.DeferAllocation(time.Minute)
+	wait := topo.allocationDelay()
+	if wait <= 0 || wait > 2*time.Second {
+		t.Fatalf("quiet window should bound the deferral near two pulses, got %v", wait)
+	}
+
+	time.Sleep(2100 * time.Millisecond)
+	if wait := topo.allocationDelay(); wait > 0 {
+		t.Fatalf("two quiet pulses should release the deferral early, got %v", wait)
+	}
+}
+
+func TestAllocationDelayExtendedByEvidence(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 1, false)
+
+	topo.DeferAllocation(time.Minute)
+	time.Sleep(1100 * time.Millisecond)
+	topo.NoteAllocationEvidence()
+	time.Sleep(1200 * time.Millisecond)
+	if wait := topo.allocationDelay(); wait <= 0 {
+		t.Fatal("evidence should extend the deferral past the original quiet deadline")
+	}
+}
+
+func TestAllocationDeferralDuration(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+
+	if d := topo.AllocationDeferralDuration(); d != topo.WarmupDuration() {
+		t.Fatalf("unset deferral should default to the warmup window, got %v", d)
+	}
+	topo.SetAllocationDeferral(0)
+	if d := topo.AllocationDeferralDuration(); d != 0 {
+		t.Fatalf("zero deferral should disable the hold, got %v", d)
+	}
+	topo.SetAllocationDeferral(2 * time.Second)
+	if d := topo.AllocationDeferralDuration(); d != 2*time.Second {
+		t.Fatalf("configured deferral should win, got %v", d)
+	}
+	topo.SetAllocationDeferral(-1)
+	if d := topo.AllocationDeferralDuration(); d != topo.WarmupDuration() {
+		t.Fatalf("negative deferral should restore the default, got %v", d)
+	}
+}

@@ -261,6 +261,16 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The last in-loop pick can predate the growth it triggered concluding:
+	// growth registers its volumes before clearing the pending flag, so pick
+	// once more before shedding.
+	if fid, count, dnList, _, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize); err == nil {
+		if dn := dnList.Head(); dn != nil {
+			ms.maybeAddJwtAuthorization(w, fid, true)
+			writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
+			return
+		}
+	}
 	// See Assign: initiator that timed out with growth still pending stays retryable.
 	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
 		w.Header().Set("Retry-After", "1")

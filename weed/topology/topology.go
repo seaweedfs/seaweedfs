@@ -92,12 +92,14 @@ type Topology struct {
 	lastPersistedTopologyId   atomic.Value
 	lastPersistedGrowthFrozen atomic.Bool
 
-	growthFrozen          atomic.Bool
-	growthFrozenAt        atomic.Int64
-	freezeOnMismatch      atomic.Bool
-	stateLossRecoveryWait atomic.Int64
-	allocationNotBefore   atomic.Int64
-	topologyInitPending   atomic.Bool
+	growthFrozen            atomic.Bool
+	growthFrozenAt          atomic.Int64
+	freezeOnMismatch        atomic.Bool
+	stateLossRecoveryWait   atomic.Int64
+	allocationNotBefore     atomic.Int64
+	allocationEvidenceSince atomic.Int64
+	allocationDeferral      atomic.Int64
+	topologyInitPending     atomic.Bool
 
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
@@ -323,6 +325,8 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 	t.chanFullVolumes = make(chan storage.VolumeInfo)
 	t.chanCrowdedVolumes = make(chan storage.VolumeInfo)
+
+	t.allocationDeferral.Store(-1)
 
 	t.Configuration = &Configuration{}
 	t.dataNodeIndex = make(map[string]*DataNode)
@@ -621,6 +625,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	}
 	if wait := t.allocationDelay(); wait > 0 {
 		glog.V(0).Infof("deferring volume id allocation for %v", wait)
+	}
+	for wait := t.allocationDelay(); wait > 0; wait = t.allocationDelay() {
+		if wait > 500*time.Millisecond {
+			wait = 500 * time.Millisecond
+		}
 		time.Sleep(wait)
 		if t.IsGrowthFrozen() {
 			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
@@ -1577,11 +1586,43 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 // mints a fresh topology id: on a rebuilt master that window gives veteran
 // servers a pulse to raise the bound or trip the freeze.
 func (t *Topology) DeferAllocation(d time.Duration) {
-	t.allocationNotBefore.Store(time.Now().Add(d).UnixNano())
+	now := time.Now()
+	t.allocationNotBefore.Store(now.Add(d).UnixNano())
+	t.allocationEvidenceSince.Store(now.UnixNano())
+}
+
+// NoteAllocationEvidence records a heartbeat signal that could still carry
+// prior cluster state — a server joining or reporting held volumes, a raised
+// id bound, or a foreign topology id. The deferral lifts two pulses after the
+// last such signal, so a cluster with nothing left to report stops waiting.
+func (t *Topology) NoteAllocationEvidence() {
+	t.allocationEvidenceSince.Store(time.Now().UnixNano())
+}
+
+// SetAllocationDeferral overrides the post-mint allocation hold: zero disables
+// it, a positive duration sets the cap, negative restores the warmup window.
+func (t *Topology) SetAllocationDeferral(d time.Duration) {
+	t.allocationDeferral.Store(int64(d))
+}
+
+// AllocationDeferralDuration returns the configured post-mint hold, or one
+// warmup window when unset.
+func (t *Topology) AllocationDeferralDuration() time.Duration {
+	if d := t.allocationDeferral.Load(); d >= 0 {
+		return time.Duration(d)
+	}
+	return t.WarmupDuration()
 }
 
 func (t *Topology) allocationDelay() time.Duration {
-	return time.Until(time.Unix(0, t.allocationNotBefore.Load()))
+	deadline := t.allocationNotBefore.Load()
+	if deadline == 0 {
+		return 0
+	}
+	if quietUntil := t.allocationEvidenceSince.Load() + 2*int64(t.pulse)*int64(time.Second); quietUntil < deadline {
+		deadline = quietUntil
+	}
+	return time.Until(time.Unix(0, deadline))
 }
 
 // SetMaxVolumeIdFile mirrors the allocation bound to a file outside raft, so
