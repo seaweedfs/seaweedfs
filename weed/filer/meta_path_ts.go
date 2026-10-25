@@ -72,7 +72,7 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 // a stale replayed change resurrect the path while the store is unreachable.
 // Ordering reads consult the pending record until the retry lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
-	if f.Store == nil || !deleted {
+	if f.Store == nil || !deleted || f.skipDeleteTombstones {
 		return
 	}
 	ctx := context.Background()

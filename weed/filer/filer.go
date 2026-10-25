@@ -61,8 +61,13 @@ type Filer struct {
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
-	metaLogTargetCollection       string
-	metaLogTargetReplication      string
+	metaLogTargetCollection  string
+	metaLogTargetReplication string
+	// skipDeleteTombstones stops writing MpDl records on deletes. Without
+	// them a dedicated-store peer replaying a stale event can resurrect a
+	// deleted path — safe only when no peer replication can ever happen.
+	// Set via viper: filer.options.deleteTombstones = false.
+	skipDeleteTombstones          bool
 	DefaultDiskType               string
 	MetaAggregator                *MetaAggregator
 	Signature                     int32
@@ -170,6 +175,11 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	v.SetDefault("filer.options.metaLog.replication", "")
 	f.metaLogTargetCollection = v.GetString("filer.options.metaLog.collection")
 	f.metaLogTargetReplication = v.GetString("filer.options.metaLog.replication")
+	v.SetDefault("filer.options.deleteTombstones", true)
+	f.skipDeleteTombstones = !v.GetBool("filer.options.deleteTombstones")
+	if f.skipDeleteTombstones {
+		glog.V(0).Infof("delete tombstones disabled: a dedicated-store peer replaying stale events can resurrect deleted paths")
+	}
 	if f.metaLogTargetCollection != "" {
 		glog.V(0).Infof("system metadata logs will be stored in collection %q", f.metaLogTargetCollection)
 	}

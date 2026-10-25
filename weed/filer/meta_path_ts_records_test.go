@@ -104,3 +104,16 @@ func TestEventWithoutPreStampStillEmits(t *testing.T) {
 		t.Fatalf("stamp leaked: %d", got)
 	}
 }
+
+// With filer.options.deleteTombstones=false no tombstone is written: deleted
+// paths may reappear under a stale peer replay — the operator's tradeoff.
+func TestDeleteTombstonesSkipped(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.skipDeleteTombstones = true
+
+	f.noteCommittedEvent(deleteEvent("/dir", "file", time.Now().UnixNano()))
+	if len(store.kv) != 0 {
+		t.Fatalf("tombstone written despite opt-out: %v", store.kv)
+	}
+}
