@@ -29,6 +29,8 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 
 func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
 	if metadataEventsSuppressed(ctx) {
+		// The entry's stamp stays in flight for the covering event the
+		// caller emits itself (the rename handler does).
 		return nil
 	}
 
@@ -44,6 +46,10 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	// println("fullpath:", fullpath)
 
 	if strings.HasPrefix(fullpath, SystemLogDir) {
+		// No event covers this write: release its stamp.
+		if newEntry != nil {
+			f.metaLogInflight.release(newEntry.CommitTsNs)
+		}
 		return nil
 	}
 	foundSelf := false
@@ -56,7 +62,7 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		signatures = append(signatures, f.Signature)
 	}
 
-	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
+	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures, f.stampOf(newEntry))
 	// Clear the stamp after the buffer append below - deliberately also on
 	// append failure (see the metaLogInflight comment).
 	defer f.metaLogInflight.done(event.TsNs)
@@ -71,10 +77,6 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	f.logMetaEvent(ctx, event)
-	// Record the commit timestamp so a peer replay ordered by the entry lock
-	// this mutation may still be under sees the local change, including as a
-	// tombstone after the entry itself is gone.
-	f.noteCommittedEvent(event)
 	if sink := metadataEventSinkFromContext(ctx); sink != nil {
 		sink.Record(event)
 	}
@@ -125,6 +127,28 @@ func (t *metaLogInflight) stamp() int64 {
 
 // done removes a stamp once the event has been appended to the buffer.
 func (t *metaLogInflight) done(tsNs int64) {
+	t.Lock()
+	defer t.Unlock()
+	if t.stamped[tsNs] <= 1 {
+		delete(t.stamped, tsNs)
+	} else {
+		t.stamped[tsNs]--
+	}
+}
+
+// inFlight reports whether tsNs is a pre-commit stamp still awaiting its
+// buffer append — how an event adopts the stamp an entry carries.
+func (t *metaLogInflight) inFlight(tsNs int64) bool {
+	t.Lock()
+	defer t.Unlock()
+	return t.stamped[tsNs] > 0
+}
+
+// release drops a stamp whose event will never be appended.
+func (t *metaLogInflight) release(tsNs int64) {
+	if tsNs == 0 {
+		return
+	}
 	t.Lock()
 	defer t.Unlock()
 	if t.stamped[tsNs] <= 1 {
@@ -197,7 +221,41 @@ func (f *Filer) DoneMetaLogInflightForTest(tsNs int64) {
 	f.metaLogInflight.done(tsNs)
 }
 
-func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
+// stampEntryCommitTsNs assigns the mutation's event timestamp to the entry
+// pre-write so the emitted event and stored version carry the same commit
+// time. The stamp stays in flight until the event appends; a write no event
+// covers must release it via releaseEntryCommitTsNs.
+func (f *Filer) stampEntryCommitTsNs(entry *Entry) int64 {
+	tsNs := f.metaLogInflight.stamp()
+	entry.CommitTsNs = tsNs
+	return tsNs
+}
+
+// releaseEntryCommitTsNs drops a stamp no event will adopt.
+func (f *Filer) releaseEntryCommitTsNs(tsNs int64) {
+	f.metaLogInflight.release(tsNs)
+}
+
+// StampEntryCommitTsNs/ReleaseEntryCommitTsNs expose the lifecycle to the
+// filer server's mutation paths.
+func (f *Filer) StampEntryCommitTsNs(entry *Entry) int64 {
+	return f.stampEntryCommitTsNs(entry)
+}
+
+func (f *Filer) ReleaseEntryCommitTsNs(tsNs int64) {
+	f.metaLogInflight.release(tsNs)
+}
+
+// stampOf returns the event's timestamp: the entry's in-flight stamp, or a
+// fresh one for events with no newly stamped entry (deletes).
+func (f *Filer) stampOf(newEntry *Entry) int64 {
+	if newEntry != nil && f.metaLogInflight.inFlight(newEntry.CommitTsNs) {
+		return newEntry.CommitTsNs
+	}
+	return f.metaLogInflight.stamp()
+}
+
+func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32, tsNs int64) *filer_pb.SubscribeMetadataResponse {
 	if oldEntry == nil && newEntry == nil {
 		return nil
 	}
@@ -224,7 +282,7 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 			Signatures:         signatures,
 		},
 		// In flight until appended to the local log buffer (see metaLogInflight).
-		TsNs: f.metaLogInflight.stamp(),
+		TsNs: tsNs,
 	}
 }
 

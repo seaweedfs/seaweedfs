@@ -532,3 +532,30 @@ func TestAtomicRenameEntrySkipsDescendantTargetLookups(t *testing.T) {
 		t.Fatalf("event count = %d, want 3", got)
 	}
 }
+
+// The stamps queued rename events carry are released when the rename fails:
+// left in flight they would pin the delivered watermark below the aborted
+// rename forever.
+func TestAtomicRenameReleasesQueuedStampsOnCommitFailure(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/dir"] = newDirectoryEntry("/dir", 100)
+	store.entries["/dir/a.txt"] = newFileEntry("/dir/a.txt", 101)
+	store.entries["/dir/b.txt"] = newFileEntry("/dir/b.txt", 102)
+	store.commitErr = errors.New("commit failed")
+
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/",
+		OldName:      "dir",
+		NewDirectory: "/",
+		NewName:      "dstdir",
+	})
+	if err == nil {
+		t.Fatal("expected commit failure")
+	}
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: a leaked stamp still caps the claim", got, now)
+	}
+}

@@ -57,21 +57,20 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		if err != nil || newer {
 			return err
 		}
+		newEntry := FromPbEntry(dir, message.NewEntry)
+		newEntry.CommitTsNs = resp.TsNs
+		if message.OldEntry.IsDirectory {
+			glog.V(4).Infof("updating %v", newPath)
+			return f.updateExistingEntry(ctx, oldPath, newEntry)
+		}
 		glog.V(4).Infof("deleting %v", oldPath)
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
-		// Record the commit before the insert too: if the insert fails and
-		// the event is retried later, the path sits deleted in between —
-		// without the record a stale peer create could resurrect it in the
-		// gap. The entry still exists afterward, so no delete record.
-		f.notePathChange(oldPath, resp.TsNs, false)
 		glog.V(4).Infof("creating %v", newPath)
-		newEntry := FromPbEntry(dir, message.NewEntry)
 		if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 			return err
 		}
-		f.notePathChange(oldPath, resp.TsNs, false)
 		return nil
 	}
 
@@ -98,10 +97,6 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 					return err
 				}
 			}
-			// The origin deleted the directory even when a newer descendant
-			// keeps its entry here — recording the delete fences stale child
-			// creates that would otherwise resurrect under it.
-			f.notePathChange(oldPath, resp.TsNs, true)
 		}
 	}
 
@@ -113,14 +108,66 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		if !newer {
 			glog.V(4).Infof("creating %v", newPath)
 			newEntry := FromPbEntry(dir, message.NewEntry)
+			newEntry.CommitTsNs = resp.TsNs
 			if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
-			f.notePathChange(newPath, resp.TsNs, false)
 		}
 	}
 
 	return nil
+}
+
+// updateExistingEntry applies a same-path update without deleting the row in
+// between: the path never sits absent, so a failed retry cannot leave it
+// unordered — a tombstone would instead read as a subtree delete that
+// suppresses a directory's children. UpdateEntry goes on a present row and
+// InsertEntry on an absent one (InsertEntry is not an upsert on stores
+// configured without upsert support, and UpdateEntry touches no row that is
+// not there).
+//
+// A peer filer sharing the store can still delete the row between the find
+// and the update — the UPDATE then changes zero rows yet reports success,
+// silently dropping the replay while its subscription offset advances. The
+// write is verified by re-reading the entry, and each pass re-checks the
+// recorded commit order so a newer peer change wins instead of being
+// resurrected over.
+func (f *Filer) updateExistingEntry(ctx context.Context, path util.FullPath, newEntry *Entry) error {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			newer, err := f.replayBlockedByLocal(ctx, path, newEntry.CommitTsNs)
+			if err != nil {
+				return err
+			}
+			if newer {
+				return nil
+			}
+		}
+		if _, findErr := f.Store.FindEntry(ctx, path); findErr == nil {
+			if err := f.Store.UpdateEntry(ctx, newEntry); err != nil {
+				return err
+			}
+			if _, err := f.Store.FindEntry(ctx, path); err == nil {
+				return nil
+			} else if !errors.Is(err, filer_pb.ErrNotFound) {
+				return err
+			} else {
+				lastErr = err
+			}
+		} else if errors.Is(findErr, filer_pb.ErrNotFound) {
+			// An insert colliding with a racing peer create retries as an
+			// update on the next pass.
+			if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
+				lastErr = err
+			} else {
+				return nil
+			}
+		} else {
+			return findErr
+		}
+	}
+	return fmt.Errorf("update %s: %w", path, lastErr)
 }
 
 // deleteReplayedFolderChildren removes local entries under dir, and queues
@@ -263,7 +310,6 @@ func (f *Filer) deleteSweptChild(ctx context.Context, sub *Entry, message *filer
 	if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
 		return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
 	}
-	f.notePathChange(sub.FullPath, tsNs, true)
 	// chunks of a hard-linked child belong to the shared inode record; free
 	// them only once that record is gone. A directory entry can still carry
 	// chunks of its own — an S3 child promotes an existing file to a

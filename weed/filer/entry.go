@@ -48,6 +48,9 @@ type Entry struct {
 	Remote             *filer_pb.RemoteEntry
 	Quota              int64
 	WORMEnforcedAtTsNs int64
+	// CommitTsNs is the meta log event timestamp of the mutation that
+	// produced this version. Zero for pre-field versions; they order by mtime.
+	CommitTsNs int64
 }
 
 func (entry *Entry) Size() uint64 {
@@ -76,6 +79,8 @@ func (entry *Entry) ShallowClone() *Entry {
 	newEntry.Content = entry.Content
 	newEntry.Remote = entry.Remote
 	newEntry.Quota = entry.Quota
+	newEntry.WORMEnforcedAtTsNs = entry.WORMEnforcedAtTsNs
+	newEntry.CommitTsNs = entry.CommitTsNs
 
 	return newEntry
 }
@@ -109,6 +114,7 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 	message.RemoteEntry = entry.Remote
 	message.Quota = entry.Quota
 	message.WormEnforcedAtTsNs = entry.WORMEnforcedAtTsNs
+	message.CommitTsNs = entry.CommitTsNs
 }
 
 func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
@@ -122,6 +128,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.Quota = message.Quota
 	fsEntry.FileSize = FileSize(message)
 	fsEntry.WORMEnforcedAtTsNs = message.WormEnforcedAtTsNs
+	fsEntry.CommitTsNs = message.CommitTsNs
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {

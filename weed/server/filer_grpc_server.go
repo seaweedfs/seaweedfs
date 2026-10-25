@@ -668,7 +668,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		if m.TouchMtime {
 			newEntry.Attr.Mtime = time.Now()
 		}
+		fs.filer.StampEntryCommitTsNs(newEntry)
 		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry, fromOtherCluster); err != nil {
+			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 			return err
 		}
 		// Emit the metadata event so the update replicates and subscribers see it,
@@ -773,7 +775,9 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		}
 	}
 
+	fs.filer.StampEntryCommitTsNs(pointer)
 	if err := fs.filer.UpdateEntry(ctx, oldPointer, pointer, fromOtherCluster); err != nil {
+		fs.filer.ReleaseEntryCommitTsNs(pointer.CommitTsNs)
 		return err
 	}
 	// Replicate the recomputed pointer to peer filers and subscribers. Without
@@ -803,7 +807,9 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 			priorEntry.Extended = make(map[string][]byte)
 		}
 		priorEntry.Extended[rc.DemoteKey] = rc.DemoteValue
+		fs.filer.StampEntryCommitTsNs(priorEntry)
 		if err := fs.filer.UpdateEntry(ctx, oldPrior, priorEntry, fromOtherCluster); err != nil {
+			fs.filer.ReleaseEntryCommitTsNs(priorEntry.CommitTsNs)
 			return err
 		}
 		fs.filer.NotifyUpdateEvent(ctx, oldPrior, priorEntry, false, fromOtherCluster, signatures)
@@ -899,6 +905,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
+	fs.filer.StampEntryCommitTsNs(newEntry)
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry, req.IsFromOtherCluster); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
@@ -906,6 +913,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		resp.MetadataEvent = eventSink.Last()
 
 	} else {
+		fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
