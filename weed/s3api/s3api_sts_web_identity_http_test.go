@@ -174,6 +174,25 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 		})
 	}
 
+	// Kubernetes workload identity re-presents the same projected token until
+	// ~80% of its lifetime, so one token must exchange more than once.
+	t.Run("the same token exchanges twice", func(t *testing.T) {
+		form := url.Values{
+			"Action":           {"AssumeRoleWithWebIdentity"},
+			"Version":          {"2011-06-15"},
+			"RoleArn":          {trustedRoleArn},
+			"RoleSessionName":  {"web-session-reuse"},
+			"WebIdentityToken": {signOIDCToken(t, "oidc-user-1")},
+		}
+		for attempt := 1; attempt <= 2; attempt++ {
+			req := httptest.NewRequest(http.MethodPost, "http://sts.seaweedfs.test/", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			handlers.HandleSTSRequest(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, "attempt %d: %s", attempt, rec.Body.String())
+		}
+	})
+
 	t.Run("inline session policy is reported in PackedPolicySize", func(t *testing.T) {
 		sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::bucket/*"]}]}`
 		form := url.Values{
