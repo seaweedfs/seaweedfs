@@ -457,15 +457,17 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 		t.Fatalf("Ping filer expected InvalidArgument, got %s: %v", got, err)
 	}
 
+	// Volume-server targets are not tracked peers either, so they are
+	// rejected at admission the same way filer targets are.
 	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
 		TargetType: cluster.VolumeServerType,
 		Target:     "127.0.0.1:1.1",
 	})
 	if err == nil {
-		t.Fatalf("Ping volume server target should fail when target is unreachable")
+		t.Fatalf("Ping volume server target should be rejected by admission")
 	}
-	if !strings.Contains(err.Error(), "ping volumeServer") {
-		t.Fatalf("Ping volume server unreachable error mismatch: %v", err)
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("Ping volume server expected InvalidArgument, got %s: %v", got, err)
 	}
 }
 
