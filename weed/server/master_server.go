@@ -70,6 +70,10 @@ type MasterOption struct {
 	TelemetryUrl            string
 	TelemetryEnabled        bool
 	VolumeGrowthDisabled    bool
+	// ReleaseAllocOnFirstReport lifts the post-mint allocation hold as soon as
+	// one full volume-server inventory has been applied, for setups whose
+	// embedded volume server is the only possible reporter (weed mini).
+	ReleaseAllocOnFirstReport bool
 }
 
 type MasterServer struct {
@@ -181,6 +185,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		} else {
 			ms.Topo.SetAllocationDeferral(d)
 		}
+	}
+	if option.ReleaseAllocOnFirstReport {
+		ms.Topo.ReleaseAllocationOnFirstReport()
 	}
 	ms.Topo.QuarantineVolumeFn = func(dn *topology.DataNode, vid needle.VolumeId, readOnly bool) error {
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
