@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,4 +65,24 @@ func TestWriteDeleteMarkerResponseAnonymous(t *testing.T) {
 		require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker), query)
 		require.Empty(t, w.Header().Get("x-amz-version-id"), query)
 	}
+}
+
+func TestWriteConditionalCheckErrorDeleteMarker(t *testing.T) {
+	s3a := &S3ApiServer{}
+	marker := &filer_pb.Entry{
+		Name:     "v_marker",
+		Extended: map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true"), s3_constants.ExtVersionIdKey: []byte("marker")},
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		w := httptest.NewRecorder()
+		s3a.writeConditionalCheckError(w, httptest.NewRequest(method, "/bucket/object", nil), "bucket", "object", "TestHandler", ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey, DeleteMarker: marker})
+		require.Equal(t, http.StatusNotFound, w.Code, method)
+		require.Equal(t, "true", w.Header().Get(s3_constants.AmzDeleteMarker), method)
+		require.Equal(t, "marker", w.Header().Get("x-amz-version-id"), method)
+	}
+
+	w := httptest.NewRecorder()
+	s3a.writeConditionalCheckError(w, httptest.NewRequest(http.MethodGet, "/bucket/object", nil), "bucket", "object", "TestHandler", ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey})
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker))
 }

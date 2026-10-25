@@ -790,14 +790,30 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 			w.Header().Set("ETag", result.ETag)
 		}
 
-		if result.ErrorCode == s3err.ErrNoSuchKey || result.ErrorCode == s3err.ErrNoSuchBucket {
-			s3a.writeAnonymousAwareNotFound(w, r, bucket, result.ErrorCode)
-		} else {
-			s3err.WriteErrorResponse(w, r, result.ErrorCode)
-		}
+		s3a.writeConditionalCheckError(w, r, bucket, object, handlerName, result)
 		return result, true // request handled
 	}
 	return result, false // request not handled
+}
+
+// writeConditionalCheckError answers a failed conditional-header check. A
+// missing-key answer still carries the delete marker's headers when the
+// condition failed against one, so a resuming client can tell a deleted key
+// from one that never existed.
+func (s3a *S3ApiServer) writeConditionalCheckError(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, result ConditionalHeaderResult) {
+	if result.ErrorCode == s3err.ErrNoSuchKey && result.DeleteMarker != nil {
+		markerVersionId := string(result.DeleteMarker.Extended[s3_constants.ExtVersionIdKey])
+		if markerVersionId == "" {
+			markerVersionId = "null"
+		}
+		s3a.writeDeleteMarkerResponse(w, r, bucket, object, handlerName, result.DeleteMarker, markerVersionId, "")
+		return
+	}
+	if result.ErrorCode == s3err.ErrNoSuchKey || result.ErrorCode == s3err.ErrNoSuchBucket {
+		s3a.writeAnonymousAwareNotFound(w, r, bucket, result.ErrorCode)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, result.ErrorCode)
 }
 
 // writeDeleteMarkerResponse answers a GET or HEAD that resolved to a delete
