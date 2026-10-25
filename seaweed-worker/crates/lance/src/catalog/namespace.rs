@@ -48,15 +48,15 @@ impl NamespaceClient {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
-            // reqwest forwards custom headers on a follow, so only a same-host
-            // hop is allowed: anywhere else would carry x-api-key to a server
+            // reqwest forwards custom headers on a follow, so only a same-origin
+            // hop is allowed: anywhere else would carry x-api-key to a listener
             // the credential was never meant for.
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                let same_host = attempt
+                let same_origin = attempt
                     .previous()
                     .last()
-                    .is_some_and(|prev| prev.host_str() == attempt.url().host_str());
-                if same_host {
+                    .is_some_and(|prev| same_origin(prev, attempt.url()));
+                if same_origin {
                     attempt.follow()
                 } else {
                     attempt.stop()
@@ -149,6 +149,14 @@ impl NamespaceClient {
     }
 }
 
+/// A redirect stays within an origin when scheme, host, and port all match, so
+/// a catalog cannot bounce the api key onto a downgraded or foreign listener.
+fn same_origin(from: &reqwest::Url, to: &reqwest::Url) -> bool {
+    from.scheme() == to.scheme()
+        && from.host_str() == to.host_str()
+        && from.port_or_known_default() == to.port_or_known_default()
+}
+
 /// A catalog url protects the api key when the hop is TLS or never leaves the
 /// host; anything else sends it where the network can read it.
 fn protected_transport(base_url: &str) -> bool {
@@ -187,7 +195,22 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::protected_transport;
+    use super::{protected_transport, same_origin};
+
+    #[test]
+    fn same_origin_rejects_scheme_and_port_hops() {
+        for (from, to, expected) in [
+            ("https://c.local/ns", "https://c.local/other", true),
+            ("http://c.local", "http://c.local:80/next", true),
+            ("https://c.local", "http://c.local/next", false),
+            ("https://c.local:8443", "https://c.local/next", false),
+            ("https://c.local", "https://other.local/next", false),
+        ] {
+            let from = reqwest::Url::parse(from).unwrap();
+            let to = reqwest::Url::parse(to).unwrap();
+            assert_eq!(same_origin(&from, &to), expected, "{from} -> {to}");
+        }
+    }
 
     #[test]
     fn protected_transport_covers_tls_and_loopback() {
