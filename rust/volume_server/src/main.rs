@@ -527,7 +527,14 @@ fn try_handle_native_http(
         }
 
         if let Some(limit_bytes) = config.and_then(|c| c.file_size_limit_bytes) {
-            if parsed.content_length > limit_bytes {
+            // For multipart uploads content_length includes envelope bytes;
+            // the size limit applies to the file part, so let the backend check.
+            let is_multipart = parsed
+                .content_type
+                .as_deref()
+                .map(|v| v.trim_start().to_ascii_lowercase().starts_with("multipart/"))
+                .unwrap_or(false);
+            if !is_multipart && parsed.content_length > limit_bytes {
                 consume_bytes(stream, parsed.header_len + parsed.content_length)?;
                 write_native_http_response(
                     stream,
