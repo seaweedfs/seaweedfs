@@ -24,6 +24,8 @@ func TestSetOutboundLocalIP(t *testing.T) {
 		{"empty", "", ""},
 		{"wildcard v4", "0.0.0.0", ""},
 		{"wildcard v6", "::", ""},
+		{"loopback v4", "127.0.0.2", ""},
+		{"loopback v6", "::1", ""},
 		{"garbage", "not-an-ip", ""},
 	}
 	for _, tc := range cases {
