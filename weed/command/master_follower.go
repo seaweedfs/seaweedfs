@@ -129,6 +129,10 @@ func startMasterFollower(masterOptions MasterOptions) {
 	option := masterOptions.toMasterOption(nil)
 	option.IsFollower = true
 
+	listenOnLocalhost := *masterOptions.ipBind == ""
+	if masterOptions.listenOnLocalhost != nil {
+		listenOnLocalhost = *masterOptions.listenOnLocalhost
+	}
 	if *masterOptions.ipBind == "" {
 		*masterOptions.ipBind = *masterOptions.ip
 	}
@@ -137,14 +141,14 @@ func startMasterFollower(masterOptions MasterOptions) {
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
-	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0, listenOnLocalhost)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *masterOptions.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}

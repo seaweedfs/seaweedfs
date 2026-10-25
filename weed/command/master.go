@@ -50,6 +50,7 @@ type MasterOptions struct {
 	portGrpc                      *int
 	ip                            *string
 	ipBind                        *string
+	listenOnLocalhost             *bool
 	metaFolder                    *string
 	peers                         *string
 	mastersDeprecated             *string // deprecated, for backward compatibility in master.follower
@@ -191,6 +192,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if *masterOption.portGrpc == 0 {
 		*masterOption.portGrpc = 10000 + *masterOption.port
 	}
+	// The loopback companion listener is only kept while -ip.bind is unset
+	// and the bind address falls back to -ip. An explicit -ip.bind pins each
+	// port to exactly that address.
+	listenOnLocalhost := *masterOption.ipBind == ""
+	if masterOption.listenOnLocalhost != nil {
+		listenOnLocalhost = *masterOption.listenOnLocalhost
+	}
 	if *masterOption.ipBind == "" {
 		*masterOption.ipBind = *masterOption.ip
 	}
@@ -207,7 +215,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
-	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0, listenOnLocalhost)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -264,7 +272,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}

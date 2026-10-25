@@ -45,6 +45,7 @@ type VolumeServerOptions struct {
 	id                        *string
 	publicUrl                 *string
 	bindIp                    *string
+	listenOnLocalhost         *bool
 	mastersString             *string
 	mserverString             *string // deprecated, for backward compatibility
 	masters                   []pb.ServerAddress
@@ -397,6 +398,13 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ip = util.DetectedHostAddress()
 		glog.V(0).Infof("detected volume server ip address: %v", *v.ip)
 	}
+	// The loopback companion listener is only kept while -ip.bind is unset
+	// and the bind address falls back to -ip. An explicit -ip.bind pins each
+	// port to exactly that address.
+	listenOnLocalhost := *v.bindIp == ""
+	if v.listenOnLocalhost != nil {
+		listenOnLocalhost = *v.listenOnLocalhost
+	}
 	if *v.bindIp == "" {
 		*v.bindIp = *v.ip
 	}
@@ -485,19 +493,19 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.syncBatchOption(),
 	)
 	// starting grpc server
-	grpcS := v.startGrpcService(volumeServer)
+	grpcS := v.startGrpcService(volumeServer, listenOnLocalhost)
 
 	// starting public http server
 	var publicHttpDown httpdown.Server
 	if v.isSeparatedPublicPort() {
-		publicHttpDown = v.startPublicHttpService(publicVolumeMux)
+		publicHttpDown = v.startPublicHttpService(publicVolumeMux, listenOnLocalhost)
 		if nil == publicHttpDown {
 			glog.Fatalf("start public http service failed")
 		}
 	}
 
 	// starting the cluster http server
-	clusterHttpServer, closeCert := v.startClusterHttpService(volumeMux)
+	clusterHttpServer, closeCert := v.startClusterHttpService(volumeMux, listenOnLocalhost)
 
 	grace.OnReload(volumeServer.LoadNewVolumes)
 	grace.OnReload(volumeServer.Reload)
@@ -632,9 +640,9 @@ func (m multiHttpdownServer) Stop() error {
 	return firstErr
 }
 
-func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
+func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer, listenOnLocalhost bool) *grpc.Server {
 	grpcPort := *v.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*v.bindIp, grpcPort, 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*v.bindIp, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -653,10 +661,10 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 	return grpcS
 }
 
-func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
+func (v VolumeServerOptions) startPublicHttpService(handler http.Handler, listenOnLocalhost bool) httpdown.Server {
 	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
 	glog.V(0).Infoln("Start Seaweed volume server", version.Version(), "public at", publicListeningAddress)
-	publicListener, publicLocalListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.publicPort, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	publicListener, publicLocalListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.publicPort, time.Duration(*v.idleConnectionTimeout)*time.Second, listenOnLocalhost)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
@@ -681,7 +689,7 @@ func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdo
 // for invoking the close func on every shutdown path — both the
 // SIGTERM/grace.OnInterrupt path and the shutdownCtx path used by
 // mini/integration tests.
-func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (httpdown.Server, func()) {
+func (v VolumeServerOptions) startClusterHttpService(handler http.Handler, listenOnLocalhost bool) (httpdown.Server, func()) {
 	var (
 		certFile, keyFile string
 	)
@@ -692,7 +700,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 
 	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", version.Version(), listeningAddress)
-	listener, localListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.port, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	listener, localListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.port, time.Duration(*v.idleConnectionTimeout)*time.Second, listenOnLocalhost)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}

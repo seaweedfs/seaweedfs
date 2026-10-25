@@ -154,7 +154,23 @@ func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, e
 	return
 }
 
-func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListener net.Listener, localListener net.Listener, err error) {
+// IsLoopbackOrWildcardAddress reports whether host already covers loopback
+// traffic — empty (all interfaces), a wildcard address, or a loopback address —
+// in which case a separate localhost listener is unnecessary.
+func IsLoopbackOrWildcardAddress(host string) bool {
+	switch host {
+	case "", "localhost", "0.0.0.0", "127.0.0.1", "[::]", "[::1]":
+		return true
+	}
+	return false
+}
+
+// NewIpAndLocalListeners binds host:port and, unless listenOnLocalhost is given
+// as false, a second listener on localhost:port so that local clients still
+// reach the service when it binds a specific address. Callers pass false when
+// the user explicitly chose the bind address (e.g. -ip.bind), honoring exactly
+// that address.
+func NewIpAndLocalListeners(host string, port int, timeout time.Duration, listenOnLocalhost ...bool) (ipListener net.Listener, localListener net.Listener, err error) {
 	listener, err := net.Listen("tcp", JoinHostPort(host, port))
 	if err != nil {
 		return
@@ -165,10 +181,10 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipLis
 		Timeout:  timeout,
 	}
 
-	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
+	if (len(listenOnLocalhost) == 0 || listenOnLocalhost[0]) && !IsLoopbackOrWildcardAddress(host) {
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
-			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
+			glog.V(0).Infof("skip starting localhost listener on :%d: %v", port, err)
 			return ipListener, nil, nil
 		}
 

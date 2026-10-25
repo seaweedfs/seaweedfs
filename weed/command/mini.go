@@ -821,10 +821,20 @@ func isPortAvailable(port int) bool {
 	return true
 }
 
+// isPortUsableOnIP reports whether port can be bound on ip. While mini also
+// opens a loopback listener, the port must additionally be free on every
+// interface so that listener cannot collide with a holder on another address.
+func isPortUsableOnIP(ip string, port int, listenOnLocalhost bool) bool {
+	if !isPortOpenOnIP(ip, port) {
+		return false
+	}
+	return !listenOnLocalhost || isPortAvailable(port)
+}
+
 // findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
 // It skips any ports that are in the reservedPorts map (for gRPC port collision avoidance)
 // It returns the first available port found within maxAttempts, or 0 if none found
-func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool) int {
+func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool, listenOnLocalhost bool) int {
 	for i := 0; i < maxAttempts; i++ {
 		port := startPort + i
 		if port > 65535 {
@@ -836,7 +846,7 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 			continue
 		}
 		// Check on both the specific IP and on all interfaces for maximum reliability
-		if isPortOpenOnIP(ip, port) && isPortAvailable(port) {
+		if isPortUsableOnIP(ip, port, listenOnLocalhost) {
 			return port
 		}
 	}
@@ -847,7 +857,7 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 // ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
 // If the port is not available, it finds the next available port and updates the pointer
 // The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
-func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
+func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string, listenOnLocalhost bool) error {
 	// Check if this port was explicitly specified by the user (from CLI or env, before the config file was applied)
 	isExplicitPort := explicitFlags[flagName]
 
@@ -863,7 +873,7 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved for gRPC calculation and cannot be used", original, serviceName, flagName)
 		}
 		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
-		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts, listenOnLocalhost)
 		if newPort == 0 {
 			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
 		} else {
@@ -874,14 +884,14 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 	}
 
 	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
-	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
+	if !isPortUsableOnIP(ip, original, listenOnLocalhost) {
 		// If explicitly specified, fail immediately with the originally requested port
 		if isExplicitPort {
 			return fmt.Errorf("port %d for %s (specified by flag %s) is not available on %s and cannot be used", original, serviceName, flagName, ip)
 		}
 		// For default ports, try to find an alternative
 		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
-		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts, listenOnLocalhost)
 		if newPort == 0 {
 			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
 		} else {
@@ -897,53 +907,61 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 // ensureAllPortsAvailableOnIP ensures all mini service ports are available on a specific IP
 // Returns an error if an explicitly specified port is unavailable.
 // This should be called before starting any services
-func ensureAllPortsAvailableOnIP(bindIp string) error {
+func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 	portConfigs := []struct {
-		port     *int
-		name     string
-		flagName string
-		grpcPtr  *int
+		port      *int
+		name      string
+		flagName  string
+		grpcPtr   *int
+		localhost bool
 	}{
-		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc},
-		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc},
-		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc},
+		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc, listenOnLocalhost},
+		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc, listenOnLocalhost},
+		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc, listenOnLocalhost},
 	}
 	if *miniEnableS3 {
 		portConfigs = append(portConfigs, struct {
-			port     *int
-			name     string
-			flagName string
-			grpcPtr  *int
-		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc})
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc, listenOnLocalhost})
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			portConfigs = append(portConfigs, struct {
-				port     *int
-				name     string
-				flagName string
-				grpcPtr  *int
-			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
+				port      *int
+				name      string
+				flagName  string
+				grpcPtr   *int
+				localhost bool
+			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil, listenOnLocalhost})
 		}
 		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
 			portConfigs = append(portConfigs, struct {
-				port     *int
-				name     string
-				flagName string
-				grpcPtr  *int
-			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil})
+				port      *int
+				name      string
+				flagName  string
+				grpcPtr   *int
+				localhost bool
+			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil, listenOnLocalhost})
 		}
 	}
+	// WebDAV and the Admin UI bind only -ip.bind; they never open a loopback
+	// companion listener, so ports held elsewhere cannot collide with them.
 	portConfigs = append(portConfigs, struct {
-		port     *int
-		name     string
-		flagName string
-		grpcPtr  *int
-	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
+		port      *int
+		name      string
+		flagName  string
+		grpcPtr   *int
+		localhost bool
+	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil, false},
 		struct {
-			port     *int
-			name     string
-			flagName string
-			grpcPtr  *int
-		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort})
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort, false})
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
 	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
@@ -956,13 +974,20 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		}
 	}
 
+	applyMiniAdminCredentialFallback(&miniAdminOptions)
+	adminBindIP := miniAdminEffectiveBindIP(bindIp)
+
 	// Check all HTTP ports sequentially to avoid race conditions
 	// Each port check and allocation must complete before the next one starts
 	// to prevent multiple goroutines from claiming the same available port
 	// Also avoid allocating ports that are reserved for gRPC calculation
 	for _, config := range portConfigs {
+		checkIP := bindIp
+		if config.name == "Admin" {
+			checkIP = adminBindIP
+		}
 		original := *config.port
-		if err := ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts, config.flagName); err != nil {
+		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, reservedPorts, config.flagName, config.localhost); err != nil {
 			return err
 		}
 		// If port was changed, update the reserved gRPC ports mapping
@@ -975,7 +1000,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// Initialize all gRPC ports before services start
 	// This ensures they won't be recalculated and cause conflicts
 	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
-	allocatedPorts := initializeGrpcPortsOnIP(bindIp)
+	allocatedPorts := initializeGrpcPortsOnIP(bindIp, listenOnLocalhost)
 
 	// Every other service binds within a moment of this check, but the admin
 	// waits for all of them first. The admin gRPC port sits inside the Linux
@@ -1054,7 +1079,7 @@ func listenMiniAdminWorker(bindIP string, port int) (net.Listener, error) {
 // This must be called after HTTP ports are finalized and before services start
 // Returns the set of ports allocated to mini services, for callers that must
 // keep optional listeners from stealing them.
-func initializeGrpcPortsOnIP(bindIp string) map[int]bool {
+func initializeGrpcPortsOnIP(bindIp string, listenOnLocalhost bool) map[int]bool {
 	// Track all ports allocated (both HTTP and gRPC) to prevent collisions.
 	// We must reserve HTTP ports so that gRPC fallback allocation never picks
 	// a port already assigned to an HTTP service (which hasn't bound yet).
@@ -1077,26 +1102,34 @@ func initializeGrpcPortsOnIP(bindIp string) map[int]bool {
 	}
 
 	grpcConfigs := []struct {
-		httpPort *int
-		grpcPort *int
-		name     string
+		httpPort  *int
+		grpcPort  *int
+		name      string
+		ip        string
+		localhost bool
 	}{
-		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master"},
-		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer"},
-		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume"},
+		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master", bindIp, listenOnLocalhost},
+		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer", bindIp, listenOnLocalhost},
+		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume", bindIp, listenOnLocalhost},
 	}
 	if *miniEnableS3 {
 		grpcConfigs = append(grpcConfigs, struct {
-			httpPort *int
-			grpcPort *int
-			name     string
-		}{miniS3Options.port, miniS3Options.portGrpc, "S3"})
+			httpPort  *int
+			grpcPort  *int
+			name      string
+			ip        string
+			localhost bool
+		}{miniS3Options.port, miniS3Options.portGrpc, "S3", bindIp, listenOnLocalhost})
 	}
+	// The Admin worker gRPC binds workerGrpcBindIp (loopback by default), not
+	// -ip.bind, and never opens a companion listener.
 	grpcConfigs = append(grpcConfigs, struct {
-		httpPort *int
-		grpcPort *int
-		name     string
-	}{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"})
+		httpPort  *int
+		grpcPort  *int
+		name      string
+		ip        string
+		localhost bool
+	}{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin", miniAdminOptions.workerGrpcBindIp, false})
 
 	for _, config := range grpcConfigs {
 		if config.grpcPort == nil {
@@ -1110,10 +1143,10 @@ func initializeGrpcPortsOnIP(bindIp string) map[int]bool {
 
 		// Verify the gRPC port is available (whether calculated or explicitly set)
 		// Check on both specific IP and all interfaces, and check against already allocated ports
-		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedPorts[*config.grpcPort] {
+		if !isPortUsableOnIP(config.ip, *config.grpcPort, config.localhost) || allocatedPorts[*config.grpcPort] {
 			glog.Warningf("gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
 			originalPort := *config.grpcPort
-			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedPorts)
+			newPort := findAvailablePortOnIP(config.ip, originalPort+1, 100, allocatedPorts, config.localhost)
 			if newPort == 0 {
 				glog.Errorf("Could not find available gRPC port for %s starting from %d, will use %d and fail on binding", config.name, originalPort+1, originalPort)
 			} else {
@@ -1404,8 +1437,14 @@ func runMini(cmd *Command, args []string) bool {
 		miniAdminOptions.workerGrpcBindIp = "127.0.0.1"
 	}
 
+	// Services keep the loopback companion listener only while -ip.bind is
+	// unset and the bind address falls back to -ip. While it is on, each
+	// service port must be free on every interface, not just bindIp. This
+	// must be captured before *miniBindIp is filled in below.
+	listenOnLocalhost := *miniBindIp == "" && !util.IsLoopbackOrWildcardAddress(bindIp)
+
 	// Ensure all ports are available, find alternatives if needed
-	if err := ensureAllPortsAvailableOnIP(bindIp); err != nil {
+	if err := ensureAllPortsAvailableOnIP(bindIp, listenOnLocalhost); err != nil {
 		glog.Errorf("Port allocation failed: %v", err)
 		os.Exit(1)
 	}
@@ -1430,14 +1469,18 @@ func runMini(cmd *Command, args []string) bool {
 	// ip address
 	miniMasterOptions.ip = miniIp
 	miniMasterOptions.ipBind = miniBindIp
+	miniMasterOptions.listenOnLocalhost = &listenOnLocalhost
 	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	miniFilerOptions.ip = miniIp
 	miniFilerOptions.bindIp = miniBindIp
+	miniFilerOptions.listenOnLocalhost = &listenOnLocalhost
 	miniS3Options.ip = miniIp
 	miniS3Options.bindIp = miniBindIp
+	miniS3Options.listenOnLocalhost = &listenOnLocalhost
 	miniWebDavOptions.ipBind = miniBindIp
 	miniOptions.v.ip = miniIp
 	miniOptions.v.bindIp = miniBindIp
+	miniOptions.v.listenOnLocalhost = &listenOnLocalhost
 	miniOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	miniOptions.v.idleConnectionTimeout = miniTimeout
 	// Admin server binds to the same address as the other mini services.
@@ -1776,6 +1819,14 @@ func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, all
 	return "127.0.0.1"
 }
 
+func miniAdminEffectiveBindIP(requestedIP string) string {
+	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
+		util.GetViper().GetString("https.admin.ca") != ""
+	allowInsecure := miniAdminOptions.allowInsecureBind != nil &&
+		*miniAdminOptions.allowInsecureBind
+	return miniAdminBindIP(requestedIP, *miniAdminOptions.adminPassword != "", hasMTLS, allowInsecure)
+}
+
 // miniAdminWorkerAddress encodes the finalized HTTP and gRPC ports in the
 // server-address format understood by pb.ServerToGrpcAddress.
 func miniAdminWorkerAddress(bindIP string, httpPort, grpcPort int) string {
@@ -1833,16 +1884,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
 
 	requestedBindIP := getBindIp()
+	bindIP := miniAdminEffectiveBindIP(requestedBindIP)
 	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
 		util.GetViper().GetString("https.admin.ca") != ""
 	allowInsecure := miniAdminOptions.allowInsecureBind != nil &&
 		*miniAdminOptions.allowInsecureBind
-	bindIP := miniAdminBindIP(
-		requestedBindIP,
-		*miniAdminOptions.adminPassword != "",
-		hasMTLS,
-		allowInsecure,
-	)
 	miniAdminOptions.ip = &bindIP
 	if bindIP != requestedBindIP {
 		glog.Warningf(

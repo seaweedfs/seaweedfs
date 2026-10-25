@@ -25,6 +25,7 @@ var (
 type SftpOptions struct {
 	filer                 *string
 	bindIp                *string
+	listenOnLocalhost     *bool
 	port                  *int
 	sshPrivateKey         *string
 	hostKeysFolder        *string
@@ -105,6 +106,12 @@ func (sftpOpt *SftpOptions) resolvePaths() {
 }
 
 func (sftpOpt *SftpOptions) startSftpServer() bool {
+	// The loopback companion listener is only kept while -ip.bind is unset.
+	// An explicit -ip.bind pins the port to exactly that address.
+	listenOnLocalhost := *sftpOpt.bindIp == ""
+	if sftpOpt.listenOnLocalhost != nil {
+		listenOnLocalhost = *sftpOpt.listenOnLocalhost
+	}
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
 	}
@@ -194,7 +201,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Start the SFTP service on TCP
 	listenAddress := fmt.Sprintf("%s:%d", *sftpOpt.bindIp, *sftpOpt.port)
-	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second)
+	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
 	}

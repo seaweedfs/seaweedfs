@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
@@ -240,6 +241,17 @@ func init() {
 
 }
 
+// isServerFlagPassed checks if a specific flag was passed on the command line
+func isServerFlagPassed(name string) bool {
+	found := false
+	cmdServer.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
 func runServer(cmd *Command, args []string) bool {
 
 	if *serverOptions.debug {
@@ -293,6 +305,11 @@ func runServer(cmd *Command, args []string) bool {
 		actualPeersForComponents = *masterOptions.peers
 	}
 
+	// The loopback companion listener is only kept while -ip.bind is unset and
+	// the bind address falls back to -ip. Capture that here: serverBindIp is
+	// repointed at serverIp below, after which the flag state is no longer
+	// distinguishable.
+	ipBindUnspecified := *serverBindIp == ""
 	if *serverBindIp == "" {
 		serverBindIp = serverIp
 	}
@@ -307,31 +324,51 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
+	masterOptions.listenOnLocalhost = &ipBindUnspecified
 	// Use actualPeersForComponents for volume/filer, not masterOptions.peers which might be "none"
 	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
+	filerOptions.listenOnLocalhost = &ipBindUnspecified
 	s3Options.ip = serverIp
 	if *s3Options.bindIp == "" {
+		s3Options.listenOnLocalhost = &ipBindUnspecified
 		s3Options.bindIp = serverBindIp
 	}
 	if sftpOptions.bindIp == nil || *sftpOptions.bindIp == "" {
+		sftpOptions.listenOnLocalhost = &ipBindUnspecified
 		sftpOptions.bindIp = serverBindIp
 	}
 	iamOptions.ip = serverBindIp
+	iamOptions.listenOnLocalhost = &ipBindUnspecified
 	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
+	serverOptions.v.listenOnLocalhost = &ipBindUnspecified
 	serverOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	mqBrokerOptions.ip = serverIp
+	mqBrokerOptions.ipBind = serverBindIp
+	mqBrokerOptions.listenOnLocalhost = &ipBindUnspecified
 	mqBrokerOptions.masters = filerOptions.masters.GetInstancesAsMap()
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 	mqAgentServerOptions.ip = serverIp
-	mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
+	mqAgentServerOptions.ipBind = serverBindIp
+	mqAgentServerOptions.listenOnLocalhost = &ipBindUnspecified
+	if isServerFlagPassed("mq.agent.brokers") {
+		mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
+	} else {
+		// Default to the embedded broker's bind address: with an explicit
+		// -ip.bind the broker does not listen on localhost.
+		brokerHost := *serverBindIp
+		if brokerHost == "0.0.0.0" || brokerHost == "::" || brokerHost == "[::]" {
+			brokerHost = "localhost"
+		}
+		mqAgentServerOptions.brokers = []pb.ServerAddress{pb.NewServerAddress(brokerHost, *mqBrokerOptions.port, 0)}
+	}
 
 	// serverOptions.v.pulseSeconds = pulseSeconds
 	// masterOptions.pulseSeconds = pulseSeconds

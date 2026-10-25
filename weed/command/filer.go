@@ -64,6 +64,7 @@ type FilerOptions struct {
 	mastersString             *string
 	ip                        *string
 	bindIp                    *string
+	listenOnLocalhost         *bool
 	port                      *int
 	portGrpc                  *int
 	publicPort                *int
@@ -282,12 +283,17 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 	go stats_collect.StartMetricsServer(*f.metricsHttpIp, *f.metricsHttpPort)
 
+	// Embedded services keep their loopback companion listener only while
+	// -ip.bind is unset and the bind address falls back to -ip. This must be
+	// captured before startFiler fills *f.bindIp in place.
+	filerBindIpUnset := *f.bindIp == ""
 	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.ip = f.ip
 		if *filerS3Options.bindIp == "" {
+			filerS3Options.listenOnLocalhost = &filerBindIpUnset
 			filerS3Options.bindIp = f.bindIp
 		}
 		filerS3Options.localFilerSocket = f.localSocket
@@ -320,6 +326,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
 		filerIamOptions.masters = f.mastersString
+		filerIamOptions.listenOnLocalhost = &filerBindIpUnset
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerIamOptions.startIamServer()
@@ -330,6 +337,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if *filerStartSftp {
 		filerSftpOptions.filer = &filerAddress
 		if *filerSftpOptions.bindIp == "" {
+			filerSftpOptions.listenOnLocalhost = &filerBindIpUnset
 			filerSftpOptions.bindIp = f.bindIp
 		}
 		go func(delay time.Duration) {
@@ -355,6 +363,13 @@ func (fo *FilerOptions) startFiler() {
 	}
 	if *fo.portGrpc == 0 {
 		*fo.portGrpc = 10000 + *fo.port
+	}
+	// The loopback companion listener is only kept while -ip.bind is unset
+	// and the bind address falls back to -ip. An explicit -ip.bind pins each
+	// port to exactly that address.
+	listenOnLocalhost := *fo.bindIp == ""
+	if fo.listenOnLocalhost != nil {
+		listenOnLocalhost = *fo.listenOnLocalhost
 	}
 	if *fo.bindIp == "" {
 		*fo.bindIp = *fo.ip
@@ -433,7 +448,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", version.Version(), "public at", publicListeningAddress)
-		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
+		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0, listenOnLocalhost)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
@@ -459,7 +474,7 @@ func (fo *FilerOptions) startFiler() {
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", version.Version(), *fo.ip, *fo.port)
 	filerListener, filerLocalListener, e := util.NewIpAndLocalListeners(
 		*fo.bindIp, *fo.port,
-		time.Duration(10)*time.Second,
+		time.Duration(10)*time.Second, listenOnLocalhost,
 	)
 	if e != nil {
 		glog.Fatalf("Filer listener error: %v", e)
@@ -467,7 +482,7 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}

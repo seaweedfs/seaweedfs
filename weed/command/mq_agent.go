@@ -17,17 +17,20 @@ var (
 )
 
 type MessageQueueAgentOptions struct {
-	brokers       []pb.ServerAddress
-	brokersString *string
-	filerGroup    *string
-	ip            *string
-	port          *int
+	brokers           []pb.ServerAddress
+	brokersString     *string
+	filerGroup        *string
+	ip                *string
+	ipBind            *string
+	listenOnLocalhost *bool
+	port              *int
 }
 
 func init() {
 	cmdMqAgent.Run = runMqAgent // break init cycle
 	mqAgentOptions.brokersString = cmdMqAgent.Flag.String("broker", "localhost:17777", "comma-separated message queue brokers")
 	mqAgentOptions.ip = cmdMqAgent.Flag.String("ip", "", "message queue agent host address")
+	mqAgentOptions.ipBind = cmdMqAgent.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	mqAgentOptions.port = cmdMqAgent.Flag.Int("port", 16777, "message queue agent gRPC server port")
 }
 
@@ -60,8 +63,20 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 		SeedBrokers: mqAgentOpt.brokers,
 	}, grpcDialOption)
 
+	// The loopback companion listener is only kept while -ip.bind is unset and
+	// the bind address falls back to -ip. An explicit -ip.bind pins the port to
+	// exactly that address.
+	bindIp := *mqAgentOpt.ip
+	listenOnLocalhost := mqAgentOpt.ipBind == nil || *mqAgentOpt.ipBind == ""
+	if mqAgentOpt.ipBind != nil && *mqAgentOpt.ipBind != "" {
+		bindIp = *mqAgentOpt.ipBind
+	}
+	if mqAgentOpt.listenOnLocalhost != nil {
+		listenOnLocalhost = *mqAgentOpt.listenOnLocalhost
+	}
+
 	// start grpc listener
-	grpcL, localL, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0)
+	grpcL, localL, err := util.NewIpAndLocalListeners(bindIp, *mqAgentOpt.port, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}
@@ -84,7 +99,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 		}()
 	}
 
-	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
+	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", bindIp, *mqAgentOpt.port)
 	if err := grpcS.Serve(grpcL); err != nil && err != grpc.ErrServerStopped {
 		glog.Errorf("MQ Agent failed to start: %v", err)
 	}
