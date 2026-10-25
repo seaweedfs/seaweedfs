@@ -177,7 +177,9 @@ func (f *Filer) markPeerReplication(ctx context.Context) error {
 // syncPathCommitGen loads the records' generation, first bumping it when the
 // off marker is present. The marker is checked before the generation is
 // read: since a bump stores the generation before clearing the marker, any
-// bump whose marker this read missed has already landed its value.
+// bump whose marker this read missed has already landed its value. The local
+// generation never moves back: a converging bumper can leave a stale lower
+// value behind between its read and its write.
 func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 	_, offErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
 	if offErr == nil {
@@ -192,7 +194,9 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("read the generation: %w", err)
 	}
-	f.pathCommitGen.Store(gen)
+	if gen > f.pathCommitGen.Load() {
+		f.pathCommitGen.Store(gen)
+	}
 	return nil
 }
 
@@ -201,7 +205,7 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 // only a higher generation and adopts a higher one it finds, so the stored
 // value converges to one generation instead of regressing under a stale read.
 func (f *Filer) bumpPathCommitGen(ctx context.Context) error {
-	var gen uint64
+	gen := f.pathCommitGen.Load()
 	for i := 0; i < 8; i++ {
 		if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(value) >= 8 {
 			if stored := util.BytesToUint64(value); stored > gen {
@@ -230,7 +234,9 @@ func (f *Filer) bumpPathCommitGen(ctx context.Context) error {
 	if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil && !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("clear the off marker: %w", err)
 	}
-	f.pathCommitGen.Store(gen)
+	if gen > f.pathCommitGen.Load() {
+		f.pathCommitGen.Store(gen)
+	}
 	return nil
 }
 
