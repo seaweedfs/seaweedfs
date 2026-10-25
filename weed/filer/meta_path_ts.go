@@ -251,6 +251,8 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 		if sGen, _ := pathCommitGenValue(v); sGen > gen {
 			gen = sGen
 		}
+	} else if !errors.Is(err, ErrKvNotFound) {
+		return fmt.Errorf("read the generation: %w", err)
 	}
 	if gen > f.pathCommitGen.Load() {
 		f.pathCommitGen.Store(gen)
@@ -319,6 +321,8 @@ func (f *Filer) bumpPathCommitGen(ctx context.Context, offTs uint64) error {
 		if sGen, _ := pathCommitGenValue(v); sGen > gen {
 			gen = sGen
 		}
+	} else if !errors.Is(err, ErrKvNotFound) {
+		return fmt.Errorf("read the generation: %w", err)
 	}
 	if gen > f.pathCommitGen.Load() {
 		f.pathCommitGen.Store(gen)
