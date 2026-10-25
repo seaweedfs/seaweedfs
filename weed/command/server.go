@@ -356,6 +356,7 @@ func runServer(cmd *Command, args []string) bool {
 	mqBrokerOptions.masters = filerOptions.masters.GetInstancesAsMap()
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 	mqAgentServerOptions.ip = serverIp
+	mqAgentServerOptions.ipBind = serverBindIp
 	mqAgentServerOptions.listenOnLocalhost = &ipBindUnspecified
 	if isServerFlagPassed("mq.agent.brokers") {
 		mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
