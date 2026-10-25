@@ -59,11 +59,12 @@ func (s *IamGrpcServer) requireRoleStore() (integration.RoleStore, error) {
 
 func toPbOIDCProvider(rec *integration.OIDCProviderRecord) *iam_pb.OIDCProvider {
 	return &iam_pb.OIDCProvider{
-		IssuerUrl:   rec.URL,
-		ClientIds:   rec.ClientIDs,
-		Thumbprints: rec.Thumbprints,
-		AccountId:   rec.AccountID,
-		Arn:         rec.ARN,
+		IssuerUrl:                  rec.URL,
+		ClientIds:                  rec.ClientIDs,
+		Thumbprints:                rec.Thumbprints,
+		AccountId:                  rec.AccountID,
+		Arn:                        rec.ARN,
+		JtiReplayProtectionEnabled: rec.JTIReplayProtectionEnabled,
 	}
 }
 
@@ -95,6 +96,7 @@ func (s *IamGrpcServer) PutOIDCProvider(ctx context.Context, req *iam_pb.PutOIDC
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	rec.JTIReplayProtectionEnabled = req.JtiReplayProtectionEnabled
 	// Put replaces what the request carries and keeps what it cannot. The
 	// store's atomic update decides which against the record as it is when
 	// written, so a delete racing the put is not merged back from a stale read.
@@ -109,6 +111,9 @@ func (s *IamGrpcServer) PutOIDCProvider(ctx context.Context, req *iam_pb.PutOIDC
 			next.Tags = existing.Tags
 			next.AllowedPrincipalTagKeys = existing.AllowedPrincipalTagKeys
 			next.PolicyClaim = existing.PolicyClaim
+			if next.JTIReplayProtectionEnabled == nil {
+				next.JTIReplayProtectionEnabled = existing.JTIReplayProtectionEnabled
+			}
 		}
 		return &next, nil
 	})
