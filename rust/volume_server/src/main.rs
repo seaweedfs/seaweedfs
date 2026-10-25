@@ -1234,6 +1234,13 @@ fn is_executable_file(path: &PathBuf) -> bool {
     }
     #[cfg(not(unix))]
     {
-        true
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                ["exe", "bat", "cmd", "com"]
+                    .iter()
+                    .any(|x| e.eq_ignore_ascii_case(x))
+            })
+            .unwrap_or(false)
     }
 }
