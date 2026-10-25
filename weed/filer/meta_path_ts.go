@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -181,28 +182,75 @@ func (f *Filer) markPeerReplication(ctx context.Context) error {
 }
 
 // syncPathCommitGen loads the records' generation, first consuming the off
-// marker when one is present. The marker is checked before the generation is
-// read: since a bump stores the generation before clearing the marker, any
-// bump whose marker this read missed has already landed its value. The local
-// generation never moves back: a converging bumper can leave a stale lower
-// value behind between its read and its write.
+// marker when one is present. The marker is re-read before acting on the one
+// a pass saw: a marker that moved was consumed by a racing sync or names a
+// later off period, so a stale read is dropped rather than bumped past a
+// generation covering a different marker, and the marker is cleared only
+// while it still reads as the one consumed. The local generation never moves
+// back: a converging bumper can leave a stale lower value behind between its
+// read and its write.
 func (f *Filer) syncPathCommitGen(ctx context.Context) error {
-	marker, offErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
-	if offErr == nil {
+	var gen uint64
+	for attempt := 0; attempt < 8; attempt++ {
+		marker, offErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
+		if offErr != nil {
+			if !errors.Is(offErr, ErrKvNotFound) {
+				return fmt.Errorf("read the off marker: %w", offErr)
+			}
+			break
+		}
 		var offTs uint64
 		if len(marker) >= 8 {
 			offTs = util.BytesToUint64(marker)
 		}
-		return f.bumpPathCommitGen(ctx, offTs)
+		var stored, consumed uint64
+		if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil {
+			stored, consumed = pathCommitGenValue(value)
+		} else if !errors.Is(err, ErrKvNotFound) {
+			return fmt.Errorf("read the generation: %w", err)
+		}
+		if stored > gen {
+			gen = stored
+		}
+		cur, mErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
+		if mErr != nil || !bytes.Equal(cur, marker) {
+			if mErr != nil && !errors.Is(mErr, ErrKvNotFound) {
+				return fmt.Errorf("re-read the off marker: %w", mErr)
+			}
+			continue
+		}
+		if offTs == consumed {
+			if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil && !errors.Is(err, ErrKvNotFound) {
+				return fmt.Errorf("clear the off marker: %w", err)
+			}
+			break
+		}
+		bump := offTs
+		if bump <= stored {
+			bump = stored + 1
+		}
+		if v, rerr := f.Store.KvGet(ctx, []byte(metaPathGenKey)); rerr == nil {
+			if sGen, sConsumed := pathCommitGenValue(v); sConsumed == offTs {
+				continue
+			} else if sGen >= bump {
+				bump = sGen + 1
+			}
+		}
+		value := make([]byte, 16)
+		util.Uint64toBytes(value, offTs)
+		util.Uint64toBytes(value[8:], bump)
+		if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
+			return fmt.Errorf("bump the generation: %w", err)
+		}
+		if bump > gen {
+			gen = bump
+		}
+		glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", bump)
 	}
-	if !errors.Is(offErr, ErrKvNotFound) {
-		return fmt.Errorf("read the off marker: %w", offErr)
-	}
-	var gen uint64
-	if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil {
-		gen, _ = pathCommitGenValue(value)
-	} else if !errors.Is(err, ErrKvNotFound) {
-		return fmt.Errorf("read the generation: %w", err)
+	if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil {
+		if sGen, _ := pathCommitGenValue(v); sGen > gen {
+			gen = sGen
+		}
 	}
 	if gen > f.pathCommitGen.Load() {
 		f.pathCommitGen.Store(gen)

@@ -408,6 +408,64 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 	}
 }
 
+// A sync whose marker read ran behind a later off period's whole consume
+// cycle must not bump for its stale read: the stored generation already
+// covers a different marker, and the marker live by the re-read is the one
+// consumed instead.
+func TestPathCommitGenStaleMarkerRead(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+
+	offMarker := func(ts uint64) []byte {
+		marker := make([]byte, 8)
+		util.Uint64toBytes(marker, ts)
+		return marker
+	}
+	t1, t3 := uint64(1000), uint64(3000)
+
+	// two off periods consumed back to back: the stored generation covers
+	// the second one's marker
+	for i, name := range []string{"first", "second"} {
+		filer := newReplayTestFiler(store)
+		if err := store.KvPut(ctx, []byte(metaPathOffKey), offMarker(t1+uint64(i)*1000)); err != nil {
+			t.Fatalf("KvPut: %v", err)
+		}
+		if err := filer.syncPathCommitGen(ctx); err != nil {
+			t.Fatalf("%s syncPathCommitGen: %v", name, err)
+		}
+		if got := filer.pathCommitGen.Load(); got != t1+uint64(i)*1000 {
+			t.Fatalf("%s generation = %d, want %d", name, got, t1+uint64(i)*1000)
+		}
+	}
+
+	// a third off period is now live, but the racy sync's first read still
+	// shows the consumed first marker; the re-read must see the live one
+	third := offMarker(t3)
+	offReads := 0
+	store.kvGetHook = func(key []byte) {
+		if string(key) == metaPathOffKey {
+			offReads++
+			if offReads == 2 {
+				store.kv[metaPathOffKey] = third
+			}
+		}
+	}
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), offMarker(t1)); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	stale := newReplayTestFiler(store)
+	if err := stale.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	store.kvGetHook = nil
+	if got := stale.pathCommitGen.Load(); got != t3 {
+		t.Fatalf("generation = %d, want the live marker %d — a stale read must not bump", got, t3)
+	}
+	if storeHasKey(store, metaPathOffKey) {
+		t.Fatal("the live marker was left standing after it was consumed")
+	}
+}
+
 // Filers consuming one off marker in parallel settle on a single generation:
 // every bumper either stores the marker's own timestamp or adopts the value
 // a racing bumper already stored for it, and a filer whose marker read runs
