@@ -167,6 +167,21 @@ jobs:
         run: |
           go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run "TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus"
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/volume-server-rust-smoke-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_volume_server_it_*" -print -exec cp -r {} /tmp/volume-server-rust-smoke-logs/ \; || true
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: volume-server-rust-smoke-logs-${{ matrix.mode }}
+          path: /tmp/volume-server-rust-smoke-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Rust smoke summary
         if: always()
         run: |
