@@ -231,7 +231,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
-		if dn == nil || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
+		if (dn == nil && heartbeat.Ip != "") || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
 			ms.Topo.NoteAllocationEvidence()
 		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
