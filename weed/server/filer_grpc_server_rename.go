@@ -78,10 +78,12 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	var pendingRemoteCopies []*pendingRemoteCopy
 	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes, &pendingRemoteCopies)
 	if moveErr != nil {
+		releaseMetadataEventStamps(fs.filer, metadataEvents)
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
 	} else {
 		if commitError := fs.filer.CommitTransaction(ctx); commitError != nil {
+			releaseMetadataEventStamps(fs.filer, metadataEvents)
 			fs.filer.RollbackTransaction(ctx)
 			return nil, fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
@@ -149,10 +151,12 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	var pendingRemoteCopies []*pendingRemoteCopy
 	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes, &pendingRemoteCopies)
 	if moveErr != nil {
+		releaseMetadataEventStamps(fs.filer, metadataEvents)
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
 	} else {
 		if commitError := fs.filer.CommitTransaction(ctx); commitError != nil {
+			releaseMetadataEventStamps(fs.filer, metadataEvents)
 			fs.filer.RollbackTransaction(ctx)
 			return fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
@@ -176,6 +180,17 @@ type metadataEvent struct {
 	// the old entry's remote object is deleted once the rename has committed:
 	// it was copied to the new key, and a rename that fails must not lose it
 	deleteOldRemote bool
+}
+
+// releaseMetadataEventStamps drops the commit stamps queued events would
+// never adopt when the rename fails — left in flight they pin the delivered
+// and flushed watermarks below the aborted rename forever.
+func releaseMetadataEventStamps(f *filer.Filer, events []metadataEvent) {
+	for _, event := range events {
+		if event.newEntry != nil {
+			f.ReleaseEntryCommitTsNs(event.newEntry.CommitTsNs)
+		}
+	}
 }
 
 // pendingRemoteCopy is a remote-only rename over a remote-only target whose
