@@ -8,12 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// CommitTsNs returns the commit timestamp stamped on the entry at path, or
-// fallbackTsNs when the entry predates stamping (or is gone). Peers stamp
-// traversal entries with it so a bootstrap subscriber orders each entry on
-// the sender's commit clock rather than the entry's client-settable mtime.
-// A store read failure is an error, not a fallback: the mtime it would mint
-// could outdate real commits.
+// CommitTsNs resolves the commit timestamp at path for traversal: the
+// entry's stamp, else fallbackTsNs for pre-stamp or missing entries.
 func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs int64) (int64, error) {
 	if f.Store == nil {
 		return fallbackTsNs, nil
@@ -31,9 +27,8 @@ func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs
 	return f.EntryCommitTsNs(ctx, entry, fallbackTsNs)
 }
 
-// EntryCommitTsNs resolves the commit timestamp of an entry already loaded:
-// the stamp written on it, else fallbackTsNs for entries written before
-// stamping existed.
+// EntryCommitTsNs returns the stamp on an already-loaded entry, else
+// fallbackTsNs.
 func (f *Filer) EntryCommitTsNs(ctx context.Context, entry *Entry, fallbackTsNs int64) (int64, error) {
 	if entry.CommitTsNs != 0 {
 		return entry.CommitTsNs, nil
@@ -41,11 +36,8 @@ func (f *Filer) EntryCommitTsNs(ctx context.Context, entry *Entry, fallbackTsNs 
 	return fallbackTsNs, nil
 }
 
-// localCommitTsNs returns the timestamp this filer last committed for path:
-// the commit timestamp stamped on the entry — not client-controllable the
-// way mtime is — else the entry's mtime for versions written before
-// stamping existed. A deleted path has no entry, so nothing orders a stale
-// replayed create against it.
+// localCommitTsNs returns this filer's newest known commit time for path:
+// the entry's stamp — not client-controllable like mtime — else mtime.
 func (f *Filer) localCommitTsNs(ctx context.Context, path util.FullPath) (int64, error) {
 	if f.Store == nil {
 		return 0, nil

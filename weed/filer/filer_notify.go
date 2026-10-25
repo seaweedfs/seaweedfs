@@ -29,8 +29,8 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 
 func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
 	if metadataEventsSuppressed(ctx) {
-		// A stamp the mutation put on the entry stays in flight for the
-		// covering event the caller emits itself (the rename handler does).
+		// The entry's stamp stays in flight for the covering event the
+		// caller emits itself (the rename handler does).
 		return nil
 	}
 
@@ -46,8 +46,7 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	// println("fullpath:", fullpath)
 
 	if strings.HasPrefix(fullpath, SystemLogDir) {
-		// Internal writes never emit: release the stamp here, no covering
-		// event will adopt it.
+		// No event covers this write: release its stamp.
 		if newEntry != nil {
 			f.metaLogInflight.release(newEntry.CommitTsNs)
 		}
@@ -137,17 +136,15 @@ func (t *metaLogInflight) done(tsNs int64) {
 	}
 }
 
-// inFlight reports whether tsNs is a stamp still awaiting its buffer append:
-// a stored entry's stamp it is not, but a mutation's pre-commit stamp it is —
-// that is what lets an event adopt the entry's commit time.
+// inFlight reports whether tsNs is a pre-commit stamp still awaiting its
+// buffer append — how an event adopts the stamp an entry carries.
 func (t *metaLogInflight) inFlight(tsNs int64) bool {
 	t.Lock()
 	defer t.Unlock()
 	return t.stamped[tsNs] > 0
 }
 
-// release drops a stamp whose event will never be appended — a store write
-// that failed, or a write nothing announces.
+// release drops a stamp whose event will never be appended.
 func (t *metaLogInflight) release(tsNs int64) {
 	if tsNs == 0 {
 		return
@@ -225,24 +222,22 @@ func (f *Filer) DoneMetaLogInflightForTest(tsNs int64) {
 }
 
 // stampEntryCommitTsNs assigns the mutation's event timestamp to the entry
-// before it is stored, so the emitted event and the stored version carry the
-// same commit time — peers and local replay ordering must agree on the
-// version's stamp. The stamp is registered in flight until the emitted event
-// is appended; a failed store write or a write no event covers releases it
-// through releaseEntryCommitTsNs.
+// pre-write so the emitted event and stored version carry the same commit
+// time. The stamp stays in flight until the event appends; a write no event
+// covers must release it via releaseEntryCommitTsNs.
 func (f *Filer) stampEntryCommitTsNs(entry *Entry) int64 {
 	tsNs := f.metaLogInflight.stamp()
 	entry.CommitTsNs = tsNs
 	return tsNs
 }
 
-// releaseEntryCommitTsNs drops an entry's stamp when no event will adopt it.
+// releaseEntryCommitTsNs drops a stamp no event will adopt.
 func (f *Filer) releaseEntryCommitTsNs(tsNs int64) {
 	f.metaLogInflight.release(tsNs)
 }
 
-// StampEntryCommitTsNs and ReleaseEntryCommitTsNs expose the stamp lifecycle
-// to the filer server's mutation paths.
+// StampEntryCommitTsNs/ReleaseEntryCommitTsNs expose the lifecycle to the
+// filer server's mutation paths.
 func (f *Filer) StampEntryCommitTsNs(entry *Entry) int64 {
 	return f.stampEntryCommitTsNs(entry)
 }
@@ -251,9 +246,8 @@ func (f *Filer) ReleaseEntryCommitTsNs(tsNs int64) {
 	f.metaLogInflight.release(tsNs)
 }
 
-// stampOf returns the event timestamp for the stored version: the in-flight
-// stamp the mutation set on the entry, or a fresh one for events that carry
-// no newly stamped entry (deletes, unstamped writes).
+// stampOf returns the event's timestamp: the entry's in-flight stamp, or a
+// fresh one for events with no newly stamped entry (deletes).
 func (f *Filer) stampOf(newEntry *Entry) int64 {
 	if newEntry != nil && f.metaLogInflight.inFlight(newEntry.CommitTsNs) {
 		return newEntry.CommitTsNs

@@ -431,8 +431,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Quota:           entry.Quota,
 	}
 	defer func() {
-		// A failed move emits no covering event for the inserted entry's
-		// stamp — release it; on success the rename event adopts it.
+		// On failure no covering event adopts the insert's stamp.
 		if retErr != nil {
 			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 		}

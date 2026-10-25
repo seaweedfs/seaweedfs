@@ -479,10 +479,9 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 
 	emitted := false
 	stamped := false
+	// On abort, release the stamp this call made — one the entry already
+	// carried is a concurrent mutation's and stays for its own event.
 	defer func() {
-		// Aborts before the event emission release the stamp this call
-		// made — a stamp the entry already carried is a concurrent
-		// mutation's and stays in flight for its own event.
 		if !emitted && stamped {
 			f.releaseEntryCommitTsNs(entry.CommitTsNs)
 		}

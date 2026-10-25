@@ -754,10 +754,8 @@ func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, pe
 				continue
 			}
 			entry := FromPbEntry(resp.Directory, resp.Entry)
-			// Order on the sender's per-path commit timestamp, not the
-			// entry's mtime — mtime is client-settable and does not track
-			// when the peer committed the change. Peers that predate the
-			// field send 0 and fall back to mtime.
+			// Order on the sender's commit timestamp, not client-settable
+			// mtime. Peers predating the field send 0: fall back to mtime.
 			peerTsNs := resp.EntryTsNs
 			if peerTsNs == 0 {
 				peerTsNs = entry.Attr.Mtime.UnixNano()
@@ -776,10 +774,9 @@ func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, pe
 }
 
 // applyTraversedEntry merges one bootstrap entry under the path's replay
-// locks, keeping local state when its commit is newer than the sender's —
-// most importantly a delete, whose tombstone must not let the bootstrap
-// resurrect the path. An applied entry records the sender's commit time so a
-// later peer replay orders against it rather than the entry's mtime.
+// locks, keeping local state when its commit is newer than the sender's.
+// An applied entry keeps the sender's commit time on its stamp so a later
+// peer replay orders against it rather than the entry's mtime.
 func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs int64) error {
 	unlock := f.lockReplayPaths(entry.FullPath, "")
 	defer unlock()

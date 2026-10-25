@@ -49,9 +49,7 @@ type Entry struct {
 	Quota              int64
 	WORMEnforcedAtTsNs int64
 	// CommitTsNs is the meta log event timestamp of the mutation that
-	// produced this version — the entry's own commit record, so a replayed
-	// peer event can be ordered without a separate per-path key. Zero for
-	// versions written before the field existed; they order by mtime.
+	// produced this version. Zero for pre-field versions; they order by mtime.
 	CommitTsNs int64
 }
 
