@@ -9,22 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
-func storeHasKey(store *stubFilerStore, key string) bool {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	_, found := store.kv[key]
-	return found
-}
-
-func storeGetUint64(store *stubFilerStore, key string) uint64 {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if v := store.kv[key]; len(v) >= 8 {
-		return util.BytesToUint64(v)
-	}
-	return 0
-}
-
 // Committed entries carry their own commit timestamp; deletes write
 // nothing — no per-path record and no tombstone.
 func TestPathCommitStampedOnEntry(t *testing.T) {

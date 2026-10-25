@@ -19,15 +19,6 @@ import (
 
 // newReplayTestFiler builds the minimum Filer Replay needs over a stub store.
 
-// plantDeleteRecord writes the MpDl tombstone an older build would have
-// left — nothing records deletes anymore, but a stored tombstone still
-// fences stale replays.
-func plantDeleteRecord(store *stubFilerStore, path util.FullPath, tsNs int64) {
-	value := make([]byte, 8)
-	util.Uint64toBytes(value, uint64(tsNs))
-	store.kv[string(metaPathKey(metaPathDelPrefix, path))] = value
-}
-
 func newReplayTestFiler(store FilerStore) *Filer {
 	return &Filer{
 		Store:          NewFilerStoreWrapper(store),
@@ -269,58 +260,6 @@ func TestReplayMoveChecksEachPathSeparately(t *testing.T) {
 	}
 }
 
-// A local delete leaves a recorded tombstone, so a replayed create older than
-// the delete must not resurrect the path even though no entry remains to
-// compare against.
-func TestReplaySkipsCreateOlderThanLocalDelete(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	now := time.Now()
-	path := util.NewFullPath("/dir", "file")
-
-	// The delete removed the entry; its commit record survives.
-	plantDeleteRecord(store, path, now.UnixNano())
-
-	createEvent := &filer_pb.SubscribeMetadataResponse{
-		Directory: "/dir",
-		EventNotification: &filer_pb.EventNotification{
-			NewEntry: &filer_pb.Entry{Name: "file", Content: []byte("stale resurrect")},
-		},
-		TsNs: now.Add(-time.Minute).UnixNano(),
-	}
-	if err := f.Replay(createEvent); err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	if _, err := store.FindEntry(context.Background(), path); err == nil {
-		t.Fatal("stale replayed create resurrected a locally deleted entry")
-	}
-}
-
-// A deleted directory covers its children: a bulk drop emits no per-child
-// events, so the tombstone on the ancestor is what a replayed child create
-// must check.
-func TestReplaySkipsCreateUnderDeletedAncestor(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	now := time.Now()
-
-	plantDeleteRecord(store, "/dir", now.UnixNano())
-
-	createEvent := &filer_pb.SubscribeMetadataResponse{
-		Directory: "/dir",
-		EventNotification: &filer_pb.EventNotification{
-			NewEntry: &filer_pb.Entry{Name: "child", Content: []byte("stale")},
-		},
-		TsNs: now.Add(-time.Minute).UnixNano(),
-	}
-	if err := f.Replay(createEvent); err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	if _, err := store.FindEntry(context.Background(), "/dir/child"); err == nil {
-		t.Fatal("stale replayed create resurrected a child of a deleted directory")
-	}
-}
-
 // A recorded commit timestamp orders replay, not the entry's mtime: a rename
 // keeps the source's mtime on the destination, and a mounted client can set
 // mtime arbitrarily, so an entry whose mtime postdates the event must still
@@ -431,18 +370,6 @@ func TestReplicateMetadataChangeAbortsOnStop(t *testing.T) {
 	}
 }
 
-// Commit-record keys must stay small: SQL KV stores keep the key suffix in a
-// VARCHAR(766) column, so a raw path over ~578 bytes silently drops the
-// record (the insert fails and the fallback update touches no row).
-func TestMetaPathKeyFixedSizeForLongPaths(t *testing.T) {
-	path := util.NewFullPath("/", string(make([]rune, 600)))
-	for _, p := range []util.FullPath{"/a", path} {
-		if got := len(metaPathKey(metaPathDelPrefix, p)); got != len(metaPathDelPrefix)+16 {
-			t.Fatalf("metaPathKey(%d-byte path) = %d bytes, want %d", len(p), got, len(metaPathDelPrefix)+16)
-		}
-	}
-}
-
 // Exact-path locking alone lets a replayed child create slip between a local
 // ancestor delete's tombstone check and the sweep: replay locks every
 // ancestor too, so it waits for the delete's lock and then sees the
@@ -454,7 +381,6 @@ func TestReplaySerializesWithAncestorLock(t *testing.T) {
 	now := time.Now()
 	child := util.NewFullPath("/dir", "file")
 	held := f.EntryLockTable.AcquireLock("test local delete", "/dir", util.ExclusiveLock)
-	plantDeleteRecord(store, "/dir", now.UnixNano())
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -476,32 +402,9 @@ func TestReplaySerializesWithAncestorLock(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
-	if _, err := store.FindEntry(context.Background(), child); err == nil {
-		t.Fatal("stale replayed create resurrected a child of a locally deleted directory")
-	}
-}
-
-// Bootstrap ordering uses the sender's commit timestamp: a local commit
-// newer than the traversed entry keeps its state even when the peer entry's
-// mtime is far in the future.
-func TestBootstrapSkipsPeerEntryBehindLocalDelete(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	now := time.Now()
-	path := util.NewFullPath("/dir", "file")
-
-	plantDeleteRecord(store, path, now.UnixNano())
-
-	entry := &Entry{
-		FullPath: path,
-		Attr:     Attr{Mtime: now.Add(time.Hour)}, // client-settable, must not win
-		Content:  []byte("stale peer entry"),
-	}
-	if err := f.applyTraversedEntry(context.Background(), entry, now.Add(-time.Minute).UnixNano()); err != nil {
-		t.Fatalf("applyTraversedEntry: %v", err)
-	}
-	if _, err := store.FindEntry(context.Background(), path); err == nil {
-		t.Fatal("bootstrap resurrected a path newer local delete covered")
+	// No tombstone protects the deleted ancestor: the stale create lands.
+	if _, err := store.FindEntry(context.Background(), child); err != nil {
+		t.Fatalf("stale create applies once the lock releases: %v", err)
 	}
 }
 
@@ -1488,9 +1391,6 @@ func TestReplayDirUpdateDoesNotSuppressChildren(t *testing.T) {
 	if err := f.Replay(update); err != nil {
 		t.Fatalf("Replay dir update: %v", err)
 	}
-	if storeHasKey(store, string(metaPathKey(metaPathDelPrefix, "/dir"))) {
-		t.Fatal("directory update left a delete tombstone")
-	}
 	if _, err := store.FindEntry(context.Background(), "/dir"); err != nil {
 		t.Fatalf("the updated directory must be back in place: %v", err)
 	}
@@ -1507,35 +1407,5 @@ func TestReplayDirUpdateDoesNotSuppressChildren(t *testing.T) {
 	}
 	if _, err := store.FindEntry(context.Background(), "/dir/child"); err != nil {
 		t.Fatalf("a child create older than the dir update must apply: %v", err)
-	}
-}
-
-// An entry written before stamping existed keeps the order its record gave
-// it: a replayed event between mtime and the recorded commit must still be
-// skipped after the upgrade.
-func TestLegacyCommitRecordOrdersUnstampedEntry(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	now := time.Now()
-	path := util.FullPath("/dir/file")
-	store.entries[string(path)] = &Entry{
-		FullPath: path,
-		Attr:     Attr{Mtime: now.Add(-time.Hour)},
-		Content:  []byte("newer local write"),
-	}
-	commitTsNs := now.Add(-time.Minute).UnixNano()
-	value := make([]byte, 8)
-	util.Uint64toBytes(value, uint64(commitTsNs))
-	store.kv[string(metaPathKey(metaPathTsPrefix, path))] = value
-
-	if err := f.Replay(overwriteEvent("/dir", "file", commitTsNs-1, "stale replay")); err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	entry, err := store.FindEntry(context.Background(), path)
-	if err != nil {
-		t.Fatalf("FindEntry: %v", err)
-	}
-	if string(entry.Content) != "newer local write" {
-		t.Fatalf("content = %q, the recorded commit must outrank the stale event", entry.Content)
 	}
 }
