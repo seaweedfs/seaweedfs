@@ -60,13 +60,21 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		newEntry := FromPbEntry(dir, message.NewEntry)
 		newEntry.CommitTsNs = resp.TsNs
 		if message.OldEntry.IsDirectory {
-			// A directory update upserts in place: the path never sits
-			// deleted between store calls, so a failed retry cannot leave
-			// it without ordering — a tombstone would instead read as a
-			// subtree delete that suppresses the children's own records,
-			// and a directory has no chunks or hard links for a delete to
-			// release.
+			// A directory update replaces the entry in place — UpdateEntry
+			// on a present row, InsertEntry on an absent one, since
+			// InsertEntry is not an upsert on stores configured without
+			// upsert support and UpdateEntry touches no row that is not
+			// there. The path never sits deleted between store calls, so a
+			// failed retry cannot leave it unordered — a tombstone would
+			// instead read as a subtree delete that suppresses the
+			// children's own records — and a directory has no chunks or
+			// hard links for a delete to release.
 			glog.V(4).Infof("updating %v", newPath)
+			if _, findErr := f.Store.FindEntry(ctx, oldPath); findErr == nil {
+				return f.Store.UpdateEntry(ctx, newEntry)
+			} else if !errors.Is(findErr, filer_pb.ErrNotFound) {
+				return findErr
+			}
 			return f.Store.InsertEntry(ctx, newEntry)
 		}
 		// Record the delete before the insert too: if the insert fails and
