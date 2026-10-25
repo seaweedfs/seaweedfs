@@ -2402,8 +2402,10 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	// Use direct map assignment to preserve original header casing (matches proxy behavior)
 	if entry.Extended != nil {
 		for k, v := range entry.Extended {
-			// Skip internal SeaweedFS headers
-			if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
+			// Skip internal SeaweedFS headers, and the stored tag/ACL/lock
+			// metadata that belongs behind its own API (GetObjectTagging,
+			// GetObjectAcl, GetObjectRetention) instead of every reader.
+			if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, s3_constants.ExtAmzPrefix) && !strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) && !s3_constants.IsSeaweedFSInternalHeader(k) {
 				// Support backward compatibility: migrate old non-canonical format to canonical format
 				// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo" (preserving suffix case)
 				headerKey := k
