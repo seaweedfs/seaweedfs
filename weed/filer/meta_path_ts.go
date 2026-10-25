@@ -15,6 +15,10 @@ import (
 )
 
 const (
+	// metaPathTsPrefix keyed the per-path commit records written before
+	// entries carried their own stamp. Nothing writes it now; an unstamped
+	// entry still consults it so its recorded order survives the upgrade.
+	metaPathTsPrefix = "MpTs"
 	// metaPathDelPrefix keys delete-only timestamps. A deleted path has no
 	// entry left to carry its commit timestamp, so the tombstone preserves
 	// the ordering a replayed peer event checks — including against an
@@ -201,8 +205,25 @@ func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs
 	if entry == nil {
 		return fallbackTsNs, nil
 	}
+	return f.EntryCommitTsNs(ctx, entry, fallbackTsNs)
+}
+
+// EntryCommitTsNs resolves the commit timestamp of an entry already loaded:
+// the stamp written on it, else the per-path record versions before entry
+// stamping left behind, else fallbackTsNs.
+func (f *Filer) EntryCommitTsNs(ctx context.Context, entry *Entry, fallbackTsNs int64) (int64, error) {
 	if entry.CommitTsNs != 0 {
 		return entry.CommitTsNs, nil
+	}
+	if f.Store == nil {
+		return fallbackTsNs, nil
+	}
+	tsNs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, entry.FullPath))
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return tsNs, nil
 	}
 	return fallbackTsNs, nil
 }
@@ -255,10 +276,10 @@ func (f *Filer) deletedAfterTsNs(ctx context.Context, path util.FullPath) (int64
 }
 
 // localCommitTsNs returns the newest timestamp this filer is known to have
-// committed for path: the commit timestamp stamped on the entry — not
-// client-controllable the way mtime is — else the entry's mtime for entries
-// written before stamping existed, plus any recorded delete of the path or
-// an ancestor.
+// committed for path: the commit timestamp stamped on the entry — or the
+// record a pre-stamping version left — neither client-controllable the way
+// mtime is, else the entry's mtime for entries written before either
+// existed, plus any recorded delete of the path or an ancestor.
 func (f *Filer) localCommitTsNs(ctx context.Context, path util.FullPath) (int64, error) {
 	if f.Store == nil {
 		return 0, nil
@@ -270,10 +291,11 @@ func (f *Filer) localCommitTsNs(ctx context.Context, path util.FullPath) (int64,
 			return 0, findErr
 		}
 	} else if entry != nil {
-		tsNs = entry.CommitTsNs
-		if tsNs == 0 {
-			tsNs = entry.Mtime.UnixNano()
+		entryTsNs, tsErr := f.EntryCommitTsNs(ctx, entry, entry.Mtime.UnixNano())
+		if tsErr != nil {
+			return 0, tsErr
 		}
+		tsNs = entryTsNs
 	}
 	if pendDel := f.pendingDeleteTsNs(path); pendDel > tsNs {
 		tsNs = pendDel

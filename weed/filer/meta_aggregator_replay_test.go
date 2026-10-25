@@ -1609,3 +1609,32 @@ func TestReplayDirUpdateDoesNotSuppressChildren(t *testing.T) {
 	}
 }
 
+// An entry written before stamping existed keeps the order its record gave
+// it: a replayed event between mtime and the recorded commit must still be
+// skipped after the upgrade.
+func TestLegacyCommitRecordOrdersUnstampedEntry(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.FullPath("/dir/file")
+	store.entries[string(path)] = &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(-time.Hour)},
+		Content:  []byte("newer local write"),
+	}
+	commitTsNs := now.Add(-time.Minute).UnixNano()
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(commitTsNs))
+	store.kv[string(metaPathKey(metaPathTsPrefix, path))] = value
+
+	if err := f.Replay(overwriteEvent("/dir", "file", commitTsNs-1, "stale replay")); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	entry, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "newer local write" {
+		t.Fatalf("content = %q, the recorded commit must outrank the stale event", entry.Content)
+	}
+}

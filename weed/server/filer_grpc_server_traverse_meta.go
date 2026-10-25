@@ -61,7 +61,11 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 		return nil
 	}
 	sendEntry := func(entry *filer.Entry) error {
-		return send(entry, entry.CommitTsNs)
+		entryTsNs, err := fs.filer.EntryCommitTsNs(ctx, entry, entry.Mtime.UnixNano())
+		if err != nil {
+			return fmt.Errorf("commit timestamp of %s: %w", entry.FullPath, err)
+		}
+		return send(entry, entryTsNs)
 	}
 	sendEntryUnstamped := func(entry *filer.Entry) error {
 		return send(entry, 0)
