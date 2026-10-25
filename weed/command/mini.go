@@ -975,8 +975,6 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 		}
 	}
 
-	// The Admin HTTP listener may fall back to loopback when it has no
-	// credential configured; validate its port on the address it will bind.
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
 	adminBindIP := miniAdminEffectiveBindIP(bindIp)
 
@@ -1816,9 +1814,6 @@ func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, all
 	return "127.0.0.1"
 }
 
-// miniAdminEffectiveBindIP resolves the address startMiniAdminWithWorker will
-// bind the Admin HTTP listener to, including the unauthenticated loopback
-// fallback.
 func miniAdminEffectiveBindIP(requestedIP string) string {
 	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
 		util.GetViper().GetString("https.admin.ca") != ""
