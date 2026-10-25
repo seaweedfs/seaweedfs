@@ -166,8 +166,9 @@ func TestAllocationDelayExtendedByEvidence(t *testing.T) {
 	topo.DeferAllocation(time.Minute)
 	time.Sleep(600 * time.Millisecond)
 	topo.NoteAllocationEvidence()
+	time.Sleep(600 * time.Millisecond)
 	if wait := topo.allocationDelay(); wait <= 0 {
-		t.Fatal("fresh evidence should extend the deferral")
+		t.Fatal("evidence should extend the deferral past the original quiet deadline")
 	}
 }
 
