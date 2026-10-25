@@ -76,6 +76,12 @@ func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs
 // which can outdate a replayed peer stamp — else fallbackTsNs.
 func (f *Filer) EntryCommitTsNs(ctx context.Context, entry *Entry, fallbackTsNs int64) (int64, error) {
 	tsNs := entry.CommitTsNs
+	if f.Store == nil {
+		if tsNs == 0 {
+			return fallbackTsNs, nil
+		}
+		return tsNs, nil
+	}
 	recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, entry.FullPath))
 	if err != nil {
 		return 0, err
