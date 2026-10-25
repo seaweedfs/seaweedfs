@@ -331,6 +331,8 @@ message OIDCProvider {
     // from it and the issuer URL.
     string account_id = 4;
     string arn = 5; // output only
+    // unset means the server default (replay protection on)
+    optional bool jti_replay_protection_enabled = 6;
 }
 
 // PutOIDCProviderRequest creates the provider, or replaces the client IDs and
@@ -340,6 +342,8 @@ message PutOIDCProviderRequest {
     repeated string client_ids = 2;
     repeated string thumbprints = 3;
     string account_id = 4;
+    // unset keeps the stored value, or the server default on create
+    optional bool jti_replay_protection_enabled = 5;
 }
 
 message PutOIDCProviderResponse {
