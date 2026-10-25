@@ -66,8 +66,6 @@ enum ListenerRole {
 
 #[derive(Clone, Default)]
 struct NativeHttpConfig {
-    jwt_signing_enabled: bool,
-    access_ui_enabled: bool,
     file_size_limit_bytes: Option<usize>,
 }
 
@@ -288,7 +286,7 @@ fn run_supervised_mode(
 
 fn run_native_mode(forwarded: &[String]) -> Result<(), String> {
     eprintln!(
-        "weed-volume-rs: native mode bootstrap active; serving Rust control/static/UI paths (/status, /healthz, OPTIONS, /ui/index.html, /favicon.ico, /seaweedfsstatic/*), delegating remaining handlers to Go backend"
+        "weed-volume-rs: native mode bootstrap active; serving Rust OPTIONS/method-parity paths, delegating remaining handlers to Go backend"
     );
     run_supervised_mode(forwarded, true)
 }
@@ -360,7 +358,6 @@ fn start_proxy_listener(
                                 &mut stream,
                                 role,
                                 native_http_config.as_deref(),
-                                &backend_addr,
                             ) {
                                 Ok(true) => return,
                                 Ok(false) => {}
@@ -451,7 +448,6 @@ fn try_handle_native_http(
     stream: &mut TcpStream,
     role: ListenerRole,
     config: Option<&NativeHttpConfig>,
-    backend_http_addr: &str,
 ) -> io::Result<bool> {
     let parsed = match peek_http_request_headers(stream)? {
         Some(v) => v,
@@ -486,60 +482,6 @@ fn try_handle_native_http(
     if parsed.method == "OPTIONS" {
         consume_bytes(stream, parsed.header_len)?;
         write_native_options_response(stream, role, parsed.origin.is_some())?;
-        let _ = stream.shutdown(Shutdown::Both);
-        return Ok(true);
-    }
-
-    let is_head_or_get = parsed.method == "GET" || parsed.method == "HEAD";
-    if is_head_or_get && parsed.path == "/favicon.ico" {
-        consume_bytes(stream, parsed.header_len)?;
-        write_native_http_response(
-            stream,
-            "200 OK",
-            "image/x-icon",
-            b"",
-            parsed.method == "HEAD",
-            parsed.request_id.as_deref(),
-        )?;
-        let _ = stream.shutdown(Shutdown::Both);
-        return Ok(true);
-    }
-
-    if is_head_or_get && parsed.path.starts_with("/seaweedfsstatic/") {
-        consume_bytes(stream, parsed.header_len)?;
-        write_native_http_response(
-            stream,
-            "200 OK",
-            "application/octet-stream",
-            b"",
-            parsed.method == "HEAD",
-            parsed.request_id.as_deref(),
-        )?;
-        let _ = stream.shutdown(Shutdown::Both);
-        return Ok(true);
-    }
-
-    if role == ListenerRole::HttpAdmin && is_head_or_get && parsed.path == "/ui/index.html" {
-        consume_bytes(stream, parsed.header_len)?;
-        if is_ui_access_denied(config) {
-            write_native_http_response(
-                stream,
-                "401 Unauthorized",
-                "text/plain; charset=utf-8",
-                b"ui access denied\n",
-                parsed.method == "HEAD",
-                parsed.request_id.as_deref(),
-            )?;
-        } else {
-            write_native_http_response(
-                stream,
-                "200 OK",
-                "text/html; charset=utf-8",
-                native_ui_index_html().as_bytes(),
-                parsed.method == "HEAD",
-                parsed.request_id.as_deref(),
-            )?;
-        }
         let _ = stream.shutdown(Shutdown::Both);
         return Ok(true);
     }
@@ -615,28 +557,7 @@ fn try_handle_native_http(
         }
     }
 
-    let is_admin_control = role == ListenerRole::HttpAdmin
-        && (parsed.path == "/status" || parsed.path == "/healthz")
-        && (parsed.method == "GET" || parsed.method == "HEAD");
-    if !is_admin_control {
-        return Ok(false);
-    }
-
-    consume_bytes(stream, parsed.header_len)?;
-
-    if parsed.path == "/status" {
-        write_native_status_response(stream, &parsed.method, parsed.request_id.as_deref())?;
-    } else {
-        write_native_healthz_response(
-            stream,
-            &parsed.method,
-            parsed.request_id.as_deref(),
-            backend_http_addr,
-        )?;
-    }
-
-    let _ = stream.shutdown(Shutdown::Both);
-    Ok(true)
+    Ok(false)
 }
 
 struct ParsedHttpRequest {
@@ -883,78 +804,6 @@ fn consume_bytes(stream: &mut TcpStream, mut remaining: usize) -> io::Result<()>
     Ok(())
 }
 
-fn write_native_status_response(
-    stream: &mut TcpStream,
-    method: &str,
-    request_id: Option<&str>,
-) -> io::Result<()> {
-    let body = br#"{"Version":"rust-native-bootstrap","DiskStatuses":[],"Volumes":[]}"#;
-    write_native_http_response(
-        stream,
-        "200 OK",
-        "application/json",
-        body,
-        method == "HEAD",
-        request_id,
-    )
-}
-
-fn write_native_healthz_response(
-    stream: &mut TcpStream,
-    _method: &str,
-    request_id: Option<&str>,
-    backend_http_addr: &str,
-) -> io::Result<()> {
-    let status = match query_backend_healthz_status(backend_http_addr) {
-        Some(200) => "200 OK",
-        Some(503) => "503 Service Unavailable",
-        Some(code) if (100..=599).contains(&code) => {
-            return write_native_http_response(
-                stream,
-                &format!("{} Unknown", code),
-                "text/plain; charset=utf-8",
-                b"",
-                true,
-                request_id,
-            );
-        }
-        _ => "503 Service Unavailable",
-    };
-    write_native_http_response(
-        stream,
-        status,
-        "text/plain; charset=utf-8",
-        b"",
-        true,
-        request_id,
-    )
-}
-
-fn query_backend_healthz_status(backend_http_addr: &str) -> Option<u16> {
-    let mut upstream = TcpStream::connect(backend_http_addr).ok()?;
-    let _ = upstream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = upstream.set_write_timeout(Some(Duration::from_millis(500)));
-
-    let request = format!(
-        "GET /healthz HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        backend_http_addr
-    );
-    upstream.write_all(request.as_bytes()).ok()?;
-    upstream.flush().ok()?;
-
-    let mut buf = [0u8; 1024];
-    let n = upstream.read(&mut buf).ok()?;
-    if n == 0 {
-        return None;
-    }
-    let line = String::from_utf8_lossy(&buf[..n]);
-    let status_line = line.lines().next()?;
-    let mut parts = status_line.split_whitespace();
-    let _http = parts.next()?;
-    let code = parts.next()?.parse::<u16>().ok()?;
-    Some(code)
-}
-
 fn write_native_options_response(
     stream: &mut TcpStream,
     role: ListenerRole,
@@ -1048,52 +897,7 @@ fn load_native_http_config(args: &[String]) -> NativeHttpConfig {
             config.file_size_limit_bytes = Some(limit_mb.saturating_mul(1024 * 1024));
         }
     }
-
-    let config_dir = match extract_flag(args, "-config_dir") {
-        Some(v) if !v.is_empty() => v,
-        _ => return config,
-    };
-    let security_path = PathBuf::from(config_dir).join("security.toml");
-    let content = match std::fs::read_to_string(security_path) {
-        Ok(v) => v,
-        Err(_) => return config,
-    };
-
-    let mut section = "";
-    for raw_line in content.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line;
-            if section == "[jwt.signing]" {
-                config.jwt_signing_enabled = true;
-            }
-            continue;
-        }
-        if section == "[access]" {
-            if let Some((name, value)) = line.split_once('=') {
-                if name.trim().eq_ignore_ascii_case("ui")
-                    && value.trim().eq_ignore_ascii_case("true")
-                {
-                    config.access_ui_enabled = true;
-                }
-            }
-        }
-    }
     config
-}
-
-fn is_ui_access_denied(config: Option<&NativeHttpConfig>) -> bool {
-    if let Some(c) = config {
-        return c.jwt_signing_enabled && !c.access_ui_enabled;
-    }
-    false
-}
-
-fn native_ui_index_html() -> &'static str {
-    "<html><head><title>SeaweedFS Volume</title></head><body><h1>SeaweedFS Volume</h1></body></html>"
 }
 
 fn parse_frontend_ports(args: &[String]) -> Result<FrontendPorts, String> {
