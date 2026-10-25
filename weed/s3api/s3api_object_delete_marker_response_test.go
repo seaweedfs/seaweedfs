@@ -88,6 +88,18 @@ func TestWriteConditionalCheckErrorDeleteMarker(t *testing.T) {
 	require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker))
 }
 
+func TestWriteConditionalCheckErrorDeleteMarkerVersionFromName(t *testing.T) {
+	s3a := &S3ApiServer{}
+	marker := &filer_pb.Entry{
+		Name:     "v_named",
+		Extended: map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+	w := httptest.NewRecorder()
+	s3a.writeConditionalCheckError(w, httptest.NewRequest(http.MethodGet, "/bucket/object", nil), "bucket", "object", "TestHandler", ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey, DeleteMarker: marker})
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Equal(t, "named", w.Header().Get("x-amz-version-id"))
+}
+
 func newDeleteMarkerTestServer(t *testing.T) *S3ApiServer {
 	t.Helper()
 	f := &anonymousReadFiler{entries: map[string]*filer_pb.Entry{

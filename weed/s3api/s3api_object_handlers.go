@@ -802,11 +802,7 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 // from one that never existed.
 func (s3a *S3ApiServer) writeConditionalCheckError(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, result ConditionalHeaderResult) {
 	if result.ErrorCode == s3err.ErrNoSuchKey && result.DeleteMarker != nil {
-		markerVersionId := string(result.DeleteMarker.Extended[s3_constants.ExtVersionIdKey])
-		if markerVersionId == "" {
-			markerVersionId = "null"
-		}
-		s3a.writeDeleteMarkerResponse(w, r, bucket, object, handlerName, result.DeleteMarker, markerVersionId, "")
+		s3a.writeDeleteMarkerResponse(w, r, bucket, object, handlerName, result.DeleteMarker, "", "")
 		return
 	}
 	if result.ErrorCode == s3err.ErrNoSuchKey || result.ErrorCode == s3err.ErrNoSuchBucket {
@@ -830,10 +826,16 @@ func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	w.Header().Set(s3_constants.AmzDeleteMarker, "true")
-	if markerVersionId != "" {
-		w.Header().Set("x-amz-version-id", markerVersionId)
+	// The entry's own version id wins: markers written outside the normal PUT
+	// path may lack the attribute yet still carry it in the v_<id> file name.
+	if versionId := versionIdFromEntry(entry); versionId != "" {
+		markerVersionId = versionId
 	}
+	if markerVersionId == "" {
+		markerVersionId = "null"
+	}
+	w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+	w.Header().Set("x-amz-version-id", markerVersionId)
 	if requestedVersionId == "" {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return
