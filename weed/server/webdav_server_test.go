@@ -279,9 +279,35 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 	}
 }
 
+// A file copied or moved onto a collection URL is created at the name without
+// the slash: OpenFile refuses "name/" only after the collection is removed.
+func TestCopyMoveGuardHandler_FileOntoCollectionURL(t *testing.T) {
+	var got string
+	h := copyMoveGuardHandler{
+		fs: &stubDavFs{present: map[string]bool{"/f": true, "/d": true}, dirs: map[string]bool{"/d": true}},
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.Header.Get("Destination")
+		}),
+	}
+	for _, tc := range []struct{ method, src, dst, want string }{
+		{"COPY", "/f", "/coll/", "http://x/coll"},
+		{"MOVE", "/f", "/coll/", "http://x/coll"},
+		{"COPY", "/f", "/a%20b/", "http://x/a%20b"},
+		{"COPY", "/f", "/coll", "http://x/coll"},
+		{"COPY", "/d", "/coll/", "http://x/coll/"},
+	} {
+		got = ""
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		assert.Equal(t, tc.want, got, "%s %s -> %s", tc.method, tc.src, tc.dst)
+	}
+}
+
 type stubDavFs struct {
 	webdav.FileSystem
 	present  map[string]bool
+	dirs     map[string]bool
 	errPaths map[string]bool
 }
 
@@ -290,7 +316,11 @@ func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("filer unavailable")
 	}
 	if f.present[path.Clean(name)] {
-		return &FileInfo{name: path.Base(name)}, nil
+		fi := &FileInfo{name: path.Base(name)}
+		if f.dirs[path.Clean(name)] {
+			fi.isDirectory = true
+		}
+		return fi, nil
 	}
 	return nil, os.ErrNotExist
 }

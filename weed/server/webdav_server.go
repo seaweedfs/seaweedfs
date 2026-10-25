@@ -110,13 +110,22 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		// a source that cannot be read makes the operation fail after the
 		// destination is already gone — reject it before that
-		if _, err := h.fs.Stat(r.Context(), r.URL.Path); err != nil {
+		fi, err := h.fs.Stat(r.Context(), r.URL.Path)
+		if err != nil {
 			if os.IsNotExist(err) {
 				w.WriteHeader(http.StatusNotFound)
 			} else {
 				w.WriteHeader(http.StatusInternalServerError)
 			}
 			return
+		}
+		// a file copied onto a collection URL ("dir/") is created without the
+		// slash; OpenFile refuses a file name ending in "/" only after the
+		// overwritten collection has been removed
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && !fi.IsDir() && strings.HasSuffix(u.Path, "/") {
+			u.Path = strings.TrimRight(u.Path, "/")
+			u.RawPath = ""
+			r.Header.Set("Destination", u.String())
 		}
 	}
 	h.next.ServeHTTP(w, r)
