@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -361,8 +362,8 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 		cleanPath = "/" + cleanPath
 	}
 
-	// Prevent path traversal attacks
-	if strings.Contains(cleanPath, "..") {
+	// Reject parent-directory components; names merely containing ".." are valid
+	if slices.Contains(strings.Split(cleanPath, "/"), "..") {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 

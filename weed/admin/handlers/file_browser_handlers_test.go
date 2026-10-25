@@ -26,6 +26,9 @@ func TestValidateAndCleanFilePath_AllowsControlChars(t *testing.T) {
 		{"relative/path.txt", "/relative/path.txt"},
 		// Duplicate slashes should be collapsed by path.Clean.
 		{"/a//b", "/a/b"},
+		// ".." inside a file or directory name is not a parent component.
+		{"/buckets/reports/report..csv", "/buckets/reports/report..csv"},
+		{"/a../b", "/a../b"},
 	}
 	for _, tc := range cases {
 		got, err := h.validateAndCleanFilePath(tc.in)
@@ -43,6 +46,15 @@ func TestValidateAndCleanFilePath_RejectsEmpty(t *testing.T) {
 	h := &FileBrowserHandlers{}
 	if _, err := h.validateAndCleanFilePath(""); err == nil {
 		t.Errorf("expected empty path rejection")
+	}
+}
+
+func TestValidateAndCleanFilePath_RejectsParentComponents(t *testing.T) {
+	h := &FileBrowserHandlers{}
+	for _, p := range []string{"../etc", "../../etc/iam", "..", "a/../../b"} {
+		if _, err := h.validateAndCleanFilePath(p); err == nil {
+			t.Errorf("validateAndCleanFilePath(%q): expected traversal rejection", p)
+		}
 	}
 }
 
