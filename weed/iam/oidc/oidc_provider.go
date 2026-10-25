@@ -422,6 +422,9 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 
 	transport := &http.Transport{
 		TLSClientConfig: tlsConfig,
+		// A replaced provider drops its transport without a close; bound
+		// idle connections so they cannot linger with their goroutines.
+		IdleConnTimeout: 90 * time.Second,
 	}
 	p.httpClient = &http.Client{
 		Timeout:       30 * time.Second,
