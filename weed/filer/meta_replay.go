@@ -23,12 +23,14 @@ import (
 // only when no newer local change is recorded, so a late event cannot revert
 // or resurrect entries.
 //
-// Ordering uses the per-path commit timestamp recorded for every emitted
-// mutation (meta_path_ts.go), which survives deletes as a tombstone and is
-// not client-controllable the way entry mtime is — a mounted client can set
-// mtime into the future, and a rename keeps the source file's mtime on the
-// destination entry. Entries written before recording existed fall back to
-// their mtime.
+// Ordering uses the commit timestamp stamped on the entry by its mutation
+// event (meta_path_ts.go), which is not client-controllable the way entry
+// mtime is — a mounted client can set mtime into the future, and a rename
+// keeps the source file's mtime on the destination entry. Entries written
+// before stamping existed fall back to their mtime, except where a
+// per-path record left by an older build remains: a retained change or
+// delete record outlives the entry it ordered, so a stale replayed event
+// cannot resurrect a path whose removal the record still covers.
 //
 // The check and the mutation run under the same per-path entry lock the
 // filer server's local writes hold, so they cannot be split by a concurrent
@@ -340,16 +342,15 @@ func (f *Filer) replayBlockedByLocal(ctx context.Context, path util.FullPath, ts
 	return localTsNs > tsNs, nil
 }
 
-// lockReplayPaths holds the shared entry locks for every path the event
-// touches, in the same sorted order the rename handler takes them.
 // lockReplayPaths takes the per-path entry locks for the event's paths and
 // every ancestor of them, in lexicographic order — parents sort before
 // children, the same ordering the local rename handler's two-path lock uses,
 // so lock acquisition is deadlock-free across operations. Ancestors are
-// included because the replay check consults ancestor delete records: a
-// local recursive delete or directory rename holds only the ancestor's lock,
-// and without contending on it a replay could reinsert a stale child after
-// its check. Ancestors are locked shared — they only need to exclude an
+// included because the replay check consults ancestor state — a retained
+// delete record an older build left, or the ancestor entry itself: a local
+// recursive delete or directory rename holds only the ancestor's lock, and
+// without contending on it a replay could reinsert a stale child into a
+// subtree being deleted after its check. Ancestors are locked shared — they only need to exclude an
 // exclusive holder, not each other, or every replay under a busy parent
 // would serialize — while a path the event actually changes stays exclusive
 // even when it is also the other path's ancestor. The root is never locked:
