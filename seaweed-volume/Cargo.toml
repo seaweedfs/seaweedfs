@@ -51,6 +51,7 @@ prost-types = "0.14"
 # HTTP server
 axum = { version = "0.8", features = ["multipart"] }
 http-body = "1"
+httpdate = "1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
 tower = { version = "0.5", features = ["util"] }

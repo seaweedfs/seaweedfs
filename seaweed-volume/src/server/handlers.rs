@@ -1120,6 +1120,10 @@ async fn get_or_head_handler_inner(
     };
 
     let (etag, last_modified_str) = etag_and_last_modified(&n);
+    // A Range whose If-Range no longer matches is ignored and the whole
+    // content is sent, so a resumed download restarts instead of mixing
+    // two versions.
+    let range = range.filter(|_| if_range_matches(&headers, &etag, &last_modified_str));
     if let Some(resp) = not_modified_response(&n, &headers, &etag, &last_modified_str) {
         // A request that ends here was answered by the meta read alone.
         if let Some(io_errors) = strategy.io_errors() {
@@ -1167,14 +1171,20 @@ async fn get_or_head_handler_inner(
             return head_from_meta_response(&info, response_headers);
         }
         ReadStrategy::RangeFromSource(info) => {
-            return range_from_source_response(
-                &state,
-                range.as_deref().unwrap_or_default(),
-                info,
-                response_headers,
-                track_download,
-            )
-            .await;
+            return match range.as_deref() {
+                Some(range) => {
+                    range_from_source_response(
+                        &state,
+                        range,
+                        info,
+                        response_headers,
+                        track_download,
+                    )
+                    .await
+                }
+                // If-Range dropped the range; serve the whole content.
+                None => stream_response(&state, info, response_headers, track_download),
+            };
         }
         ReadStrategy::Buffered => {}
     }
@@ -1555,6 +1565,31 @@ fn not_modified_response(
         }
     }
     None
+}
+
+/// If-Range (RFC 9110 13.1.5): an entity-tag by strong comparison, or a date
+/// equal to Last-Modified. The response etag here is always a strong tag.
+fn if_range_matches(headers: &HeaderMap, etag: &str, last_modified_str: &Option<String>) -> bool {
+    let Some(raw) = headers.get(header::IF_RANGE) else {
+        return true;
+    };
+    let Ok(if_range) = raw.to_str() else {
+        return false;
+    };
+    let if_range = if_range.trim();
+    if if_range.is_empty() {
+        return true;
+    }
+    if if_range.starts_with('"') || if_range.starts_with("W/") {
+        return if_range == etag;
+    }
+    let Ok(date) = httpdate::parse_http_date(if_range) else {
+        return false;
+    };
+    last_modified_str
+        .as_deref()
+        .and_then(|lm| httpdate::parse_http_date(lm).ok())
+        .is_some_and(|lm| date == lm)
 }
 
 /// Weak comparison against "*" or a comma-separated entity-tag list (RFC 9110 13.1.2).
@@ -5765,6 +5800,53 @@ mod tests {
         let resp = not_modified_response(&n, &headers, &etag, &last_modified_str).unwrap();
         assert!(resp.headers().contains_key(header::ETAG));
         assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    }
+
+    #[test]
+    fn test_if_range_matches() {
+        let etag = "\"v2\"".to_string();
+        let last_modified_str = Some("Sat, 24 Oct 2026 22:01:04 GMT".to_string());
+        let cases: Vec<(Option<&str>, bool)> = vec![
+            (None, true),
+            (Some("\"v2\""), true),
+            (Some("Sat, 24 Oct 2026 22:01:04 GMT"), true),
+            (Some("Saturday, 24-Oct-26 22:01:04 GMT"), true),
+            (Some("Sat Oct 24 22:01:04 2026"), true),
+            (Some("\"v1\""), false),
+            (Some("W/\"v2\""), false),
+            (Some("Sat, 24 Oct 2026 22:01:03 GMT"), false),
+            (Some("not a date"), false),
+        ];
+        for (if_range, want) in cases {
+            let mut headers = HeaderMap::new();
+            if let Some(v) = if_range {
+                headers.insert(header::IF_RANGE, v.parse().unwrap());
+            }
+            assert_eq!(
+                if_range_matches(&headers, &etag, &last_modified_str),
+                want,
+                "{if_range:?}"
+            );
+        }
+
+        // A present value that is not valid UTF-8 fails the condition.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_RANGE,
+            header::HeaderValue::from_bytes(b"\"\xff\xfev2\"").unwrap(),
+        );
+        assert!(!if_range_matches(&headers, &etag, &last_modified_str));
+
+        // No Last-Modified on the representation: a date validator fails,
+        // an entity-tag still applies.
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_RANGE, "\"v2\"".parse().unwrap());
+        assert!(if_range_matches(&headers, &etag, &None));
+        headers.insert(
+            header::IF_RANGE,
+            "Sat, 24 Oct 2026 22:01:04 GMT".parse().unwrap(),
+        );
+        assert!(!if_range_matches(&headers, &etag, &None));
     }
 
     /// A GET whose needle read is parked must not hold the store lock: a
