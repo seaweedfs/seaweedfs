@@ -182,7 +182,10 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 			consumedElsewhere := false
 			if v, rerr := f.Store.KvGet(ctx, []byte(metaPathGenKey)); rerr == nil {
 				if sGen, sConsumed := pathCommitGenValue(v); sConsumed == offTs {
-					gen, consumedElsewhere = sGen, true
+					if sGen > gen {
+						gen = sGen
+					}
+					consumedElsewhere = true
 				} else if sGen >= bump {
 					bump = sGen + 1
 				}
