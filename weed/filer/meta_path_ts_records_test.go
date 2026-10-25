@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -394,5 +395,49 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 	}
 	if got := sixth.pathCommitGen.Load(); got <= newTs+1 {
 		t.Fatalf("generation = %d, want a fence past the stored %d", got, newTs+1)
+	}
+}
+
+// Filers consuming one off marker in parallel settle on a single generation:
+// every bumper either stores the marker's own timestamp or adopts the value
+// a racing bumper already stored for it, and a filer whose marker read runs
+// behind a winner's delete adopts the stored generation instead.
+func TestPathCommitGenConsumedConcurrently(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+
+	off := newReplayTestFiler(store)
+	off.pathCommitRecordsOff.Store(true)
+	if err := off.markPathCommitRecordsOff(ctx); err != nil {
+		t.Fatalf("markPathCommitRecordsOff: %v", err)
+	}
+	offTs := storeGetUint64(store, metaPathOffKey)
+	if offTs == 0 {
+		t.Fatal("empty off marker")
+	}
+
+	const racers = 4
+	filers := make([]*Filer, racers)
+	errs := make([]error, racers)
+	var wg sync.WaitGroup
+	for i := range filers {
+		filers[i] = newReplayTestFiler(store)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = filers[i].syncPathCommitGen(ctx)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("syncPathCommitGen %d: %v", i, err)
+		}
+		if got := filers[i].pathCommitGen.Load(); got != offTs {
+			t.Fatalf("filer %d generation = %d, want the consumed marker %d", i, got, offTs)
+		}
+	}
+	if storeHasKey(store, metaPathOffKey) {
+		t.Fatal("off marker left after the racing bumps")
 	}
 }
