@@ -58,6 +58,12 @@ type Filer struct {
 	LocalMetaLogBuffer  *log_buffer.LogBuffer
 	metaLogCollection   string
 	metaLogReplication  string
+	// pathCommitRecordsOff stops the per-path commit records (meta_path_ts.go)
+	// from being written or read. They only order events replayed from peer
+	// filers that keep their own store; filers that all share one store never
+	// replay each other's events, so there the records are never read and only
+	// accumulate. Set via viper: filer.options.pathCommitRecords = false.
+	pathCommitRecordsOff bool
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
@@ -172,6 +178,15 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	f.metaLogTargetReplication = v.GetString("filer.options.metaLog.replication")
 	if f.metaLogTargetCollection != "" {
 		glog.V(0).Infof("system metadata logs will be stored in collection %q", f.metaLogTargetCollection)
+	}
+
+	// Per-path commit records cost a store write per metadata change and one
+	// key per path ever changed, kept after the path is deleted. Only filers
+	// replaying a peer with its own store read them.
+	v.SetDefault("filer.options.pathCommitRecords", true)
+	f.pathCommitRecordsOff = !v.GetBool("filer.options.pathCommitRecords")
+	if f.pathCommitRecordsOff {
+		glog.V(0).Infof("per-path commit records are off (filer.options.pathCommitRecords = false): keep them on if any peer filer uses another store")
 	}
 
 	if newPlacementOverlay != nil {

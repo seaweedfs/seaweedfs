@@ -23,6 +23,12 @@ recursive_delete = false
 # moved, and old log entries keep referencing that collection's volumes.
 #metaLog.collection = "filer-meta"
 #metaLog.replication = ""
+# every metadata change records the path's commit time in the filer store
+# (keys prefixed MpTs/MpDl, kept after the path is deleted), to order events
+# this filer replays from peer filers that keep their own store.
+# Filers that all share one store (one Redis, MySQL, TiKV, ...) never replay
+# each other's events and never read these records: set false there.
+#pathCommitRecords = true
 
 ####################################################
 # The following are filer store options

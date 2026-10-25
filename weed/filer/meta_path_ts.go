@@ -25,6 +25,10 @@ const (
 	// the path's ancestors too, so a directory delete also covers children
 	// swept without per-child events (a dropped bucket's whole-store delete,
 	// or a walk aborted partway).
+	//
+	// Both only matter to a filer replaying a peer that keeps its own store.
+	// filer.options.pathCommitRecords = false turns them off for filers that all
+	// share one store, which never replay each other's events.
 	metaPathDelPrefix = "MpDl"
 )
 
@@ -46,6 +50,11 @@ func metaPathKey(prefix string, path util.FullPath) []byte {
 // key is absent or malformed. Any other store read failure is an error: a
 // caller deciding whether a replayed change is stale must not guess.
 func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found bool, err error) {
+	if f.pathCommitRecordsOff {
+		// Records left from before the option went off stopped tracking the
+		// path then; ordering falls back as for entries older than records.
+		return 0, false, nil
+	}
 	value, err := f.Store.KvGet(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrKvNotFound) {
@@ -75,7 +84,7 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 // unreachable. Ordering reads consult the pending record until the retry
 // lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
-	if f.Store == nil {
+	if f.Store == nil || f.pathCommitRecordsOff {
 		return
 	}
 	ctx := context.Background()
