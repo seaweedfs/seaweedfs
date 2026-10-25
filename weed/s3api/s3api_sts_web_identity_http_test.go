@@ -7,12 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,7 +97,6 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 	iam := &IdentityAccessManagement{iamIntegration: NewS3IAMIntegration(manager, "")}
 	handlers := NewSTSHandlers(manager.GetSTSService(), iam)
 
-	var jtiCounter atomic.Int64
 	signOIDCToken := func(t *testing.T, subject string) string {
 		t.Helper()
 		token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -108,10 +105,6 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 			"aud": "test-client",
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
-			// a unique jti per token: the exchange consumes it, so two
-			// subtests minting the same claims in one second would otherwise
-			// collide on the token fingerprint and read as a replay
-			"jti": fmt.Sprintf("%s-%d", subject, jtiCounter.Add(1)),
 		})
 		token.Header["kid"] = "web-identity-test-key"
 		signed, err := token.SignedString(key)
@@ -180,6 +173,25 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 			assert.False(t, denied, "the role does not grant s3:PutObject")
 		})
 	}
+
+	// Kubernetes workload identity re-presents the same projected token until
+	// ~80% of its lifetime, so one token must exchange more than once.
+	t.Run("the same token exchanges twice", func(t *testing.T) {
+		form := url.Values{
+			"Action":           {"AssumeRoleWithWebIdentity"},
+			"Version":          {"2011-06-15"},
+			"RoleArn":          {trustedRoleArn},
+			"RoleSessionName":  {"web-session-reuse"},
+			"WebIdentityToken": {signOIDCToken(t, "oidc-user-1")},
+		}
+		for attempt := 1; attempt <= 2; attempt++ {
+			req := httptest.NewRequest(http.MethodPost, "http://sts.seaweedfs.test/", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			handlers.HandleSTSRequest(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, "attempt %d: %s", attempt, rec.Body.String())
+		}
+	})
 
 	t.Run("inline session policy is reported in PackedPolicySize", func(t *testing.T) {
 		sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::bucket/*"]}]}`

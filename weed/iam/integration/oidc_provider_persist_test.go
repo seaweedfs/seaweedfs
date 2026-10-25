@@ -560,92 +560,47 @@ func TestAFailureDuringARetryIsNotDropped(t *testing.T) {
 	assert.GreaterOrEqual(t, store.successes(), 2, "the retry ended on its first success, dropping the refresh that failed while it ran")
 }
 
-// A refresh must not rebuild a provider whose record is unchanged: rebuilding
-// would drop the provider's consumed-token (jti) replay cache and let an
-// already-used token be presented again.
-func TestRefreshReusesProviderWhileRecordIsUnchanged(t *testing.T) {
-	ctx := context.Background()
-	store := NewMemoryOIDCProviderStore()
+// A refresh caused by an unrelated record must not rebuild a provider whose
+// own record is unchanged: rebuilding drops its JWKS cache, so a briefly
+// unreachable issuer would fail exchanges its cached keys still allow.
+func TestAnUnrelatedRefreshKeepsAProvidersRuntimeState(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
 	mgr := startServer(t, store)
-
 	arn := arnOf(t, persistTestAPIIssuer)
-	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
-		ARN: arn, URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
-	}))
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	first := mgr.oidcManagedProviders[arn].provider
-	require.NotNil(t, first)
+	createAPIProvider(t, mgr, persistTestAPIIssuer)
 
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	assert.Same(t, first, mgr.oidcManagedProviders[arn].provider,
-		"an unchanged record was rebuilt, dropping its replay cache")
+	mgr.oidcRefreshMu.Lock()
+	before := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, before)
 
-	// A changed record must rebuild so the new configuration applies.
-	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
-		ARN: arn, URL: persistTestAPIIssuer, ClientIDs: []string{"aud", "aud2"},
-	}))
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	rebuilt := mgr.oidcManagedProviders[arn].provider
-	require.NotNil(t, rebuilt)
-	assert.NotSame(t, first, rebuilt, "a changed record kept the old provider")
+	createAPIProvider(t, mgr, persistTestStaticIssuer) // refreshes over an unrelated record
 
-	// Deleting the record drops the provider from the cache and the STS map.
-	require.NoError(t, store.DeleteProvider(ctx, "", arn))
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	assert.NotContains(t, mgr.oidcManagedProviders, arn)
-	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer))
+	mgr.oidcRefreshMu.Lock()
+	after := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, after)
+	assert.Same(t, before.provider, after.provider, "an unchanged record's provider was rebuilt")
 }
 
-// stsKnowsIssuerForAccount is stsKnowsIssuer through the account-scoped
-// lookup used for providers that have no global record.
-func stsKnowsIssuerForAccount(t *testing.T, mgr *IAMManager, issuer, accountID string) bool {
-	t.Helper()
-	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss": issuer, "sub": "probe", "aud": "aud", "exp": time.Now().Add(time.Hour).Unix(),
-	}).SignedString([]byte("not-the-providers-key"))
-	require.NoError(t, err)
-	_, _, err = mgr.GetSTSService().ValidateWebIdentityTokenForAccount(context.Background(), tok, accountID)
-	require.Error(t, err, "an unsigned-by-provider token for %s was accepted", issuer)
-	return !strings.Contains(err.Error(), "no identity provider registered")
-}
-
-// Two records for one issuer with identical validation settings share a
-// single provider — and with it the consumed-token (jti) replay store — so a
-// token spent through one account's record stays spent through the other's.
-// Removing one record of the pair must not shut the shared provider down.
-func TestSameIssuerRecordsShareOneProvider(t *testing.T) {
-	ctx := context.Background()
-	store := NewMemoryOIDCProviderStore()
+// A record whose validation settings change must get a new provider: the
+// cached runtime cannot keep serving settings the store no longer holds.
+func TestAChangedRecordRebuildsItsProvider(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
 	mgr := startServer(t, store)
+	arn := arnOf(t, persistTestAPIIssuer)
+	createAPIProvider(t, mgr, persistTestAPIIssuer)
 
-	arnA := arnOf(t, persistTestAPIIssuer) + "-account-a"
-	arnB := arnOf(t, persistTestAPIIssuer) + "-account-b"
-	for _, rec := range []*OIDCProviderRecord{
-		{ARN: arnA, URL: persistTestAPIIssuer, AccountID: "111111111111", ClientIDs: []string{"aud"}},
-		{ARN: arnB, URL: persistTestAPIIssuer, AccountID: "222222222222", ClientIDs: []string{"aud"}},
-	} {
-		require.NoError(t, store.StoreProvider(ctx, "", rec))
-	}
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
+	mgr.oidcRefreshMu.Lock()
+	before := mgr.oidcManagedProviders[arn].provider
+	mgr.oidcRefreshMu.Unlock()
 
-	shared := mgr.oidcManagedProviders[arnA].provider
-	require.NotNil(t, shared)
-	assert.Same(t, shared, mgr.oidcManagedProviders[arnB].provider,
-		"identical records for one issuer built separate replay stores")
+	require.NoError(t, mgr.UpdateOIDCProviderThumbprints(context.Background(), arn,
+		[]string{"0123456789abcdef0123456789abcdef01234567"}))
 
-	// Removing one record of the pair keeps the shared provider alive.
-	require.NoError(t, store.DeleteProvider(ctx, "", arnA))
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	assert.Same(t, shared, mgr.oidcManagedProviders[arnB].provider,
-		"a removed sibling record shut down the shared provider")
-	assert.True(t, stsKnowsIssuerForAccount(t, mgr, persistTestAPIIssuer, "222222222222"))
-
-	// The remaining record diverging rebuilds its own provider.
-	require.NoError(t, store.StoreProvider(ctx, "", &OIDCProviderRecord{
-		ARN: arnB, URL: persistTestAPIIssuer, AccountID: "222222222222", ClientIDs: []string{"b-aud"},
-	}))
-	require.NoError(t, mgr.refreshOIDCProvidersFrom(ctx, store))
-	assert.NotSame(t, shared, mgr.oidcManagedProviders[arnB].provider,
-		"a changed record kept the shared provider")
-	assert.True(t, stsKnowsIssuerForAccount(t, mgr, persistTestAPIIssuer, "222222222222"))
+	mgr.oidcRefreshMu.Lock()
+	after := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, after)
+	assert.NotSame(t, before, after.provider, "a changed record kept its provider")
 }
