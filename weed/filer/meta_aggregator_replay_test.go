@@ -18,6 +18,16 @@ import (
 )
 
 // newReplayTestFiler builds the minimum Filer Replay needs over a stub store.
+
+// plantDeleteRecord writes the MpDl tombstone an older build would have
+// left — nothing records deletes anymore, but a stored tombstone still
+// fences stale replays.
+func plantDeleteRecord(store *stubFilerStore, path util.FullPath, tsNs int64) {
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(tsNs))
+	store.kv[string(metaPathKey(metaPathDelPrefix, path))] = value
+}
+
 func newReplayTestFiler(store FilerStore) *Filer {
 	return &Filer{
 		Store:          NewFilerStoreWrapper(store),
@@ -269,7 +279,7 @@ func TestReplaySkipsCreateOlderThanLocalDelete(t *testing.T) {
 	path := util.NewFullPath("/dir", "file")
 
 	// The delete removed the entry; its commit record survives.
-	f.notePathChange(path, now.UnixNano(), true)
+	plantDeleteRecord(store, path, now.UnixNano())
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -294,7 +304,7 @@ func TestReplaySkipsCreateUnderDeletedAncestor(t *testing.T) {
 	f := newReplayTestFiler(store)
 	now := time.Now()
 
-	f.notePathChange("/dir", now.UnixNano(), true)
+	plantDeleteRecord(store, "/dir", now.UnixNano())
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -444,7 +454,7 @@ func TestReplaySerializesWithAncestorLock(t *testing.T) {
 	now := time.Now()
 	child := util.NewFullPath("/dir", "file")
 	held := f.EntryLockTable.AcquireLock("test local delete", "/dir", util.ExclusiveLock)
-	f.notePathChange("/dir", now.UnixNano(), true)
+	plantDeleteRecord(store, "/dir", now.UnixNano())
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -480,7 +490,7 @@ func TestBootstrapSkipsPeerEntryBehindLocalDelete(t *testing.T) {
 	now := time.Now()
 	path := util.NewFullPath("/dir", "file")
 
-	f.notePathChange(path, now.UnixNano(), true)
+	plantDeleteRecord(store, path, now.UnixNano())
 
 	entry := &Entry{
 		FullPath: path,
@@ -612,63 +622,6 @@ func TestBootstrapCopiesMissingEntryWithoutCommitTime(t *testing.T) {
 	}
 }
 
-// A delete whose commit record failed to persist still blocks a stale
-// replayed create: the pending record stands in until the retry lands it.
-func TestPendingDeleteRecordBlocksStaleReplay(t *testing.T) {
-	store := newStubFilerStore()
-	store.setKvPutErr(errors.New("kv store unreachable"))
-	f := newReplayTestFiler(store)
-	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
-	defer f.flushCancel()
-	now := time.Now()
-	path := util.NewFullPath("/dir", "file")
-
-	// The delete already committed; only its ordering record failed.
-	f.notePathChange(path, now.UnixNano(), true)
-
-	createEvent := &filer_pb.SubscribeMetadataResponse{
-		Directory: "/dir",
-		EventNotification: &filer_pb.EventNotification{
-			NewEntry: &filer_pb.Entry{Name: "file", Content: []byte("stale resurrect")},
-		},
-		TsNs: now.Add(-time.Minute).UnixNano(),
-	}
-	if err := f.Replay(createEvent); err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	if _, err := store.FindEntry(context.Background(), path); err == nil {
-		t.Fatal("stale create resurrected a path whose delete record is still pending")
-	}
-}
-
-// The failed record write retries until it lands, then leaves the pending set.
-func TestPendingCommitRecordRepairs(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
-	defer f.flushCancel()
-	path := util.NewFullPath("/dir", "file")
-
-	store.setKvPutErr(errors.New("kv store unreachable"))
-	f.notePathChange(path, 100, true)
-	if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
-		t.Fatal("failed record write must stay pending")
-	}
-	store.setKvPutErr(nil)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
-			ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path))
-			if err != nil || !found || ts != 100 {
-				t.Fatalf("delete record after repair: ts=%v found=%v err=%v", ts, found, err)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("pending record was not repaired")
-}
-
 // CommitTsNs reports the commit timestamp stamped on the entry, or the
 // fallback when the entry predates stamping or is gone.
 func TestCommitTsNsFromEntry(t *testing.T) {
@@ -686,59 +639,6 @@ func TestCommitTsNsFromEntry(t *testing.T) {
 	store.entries[string(path)].CommitTsNs = 0
 	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 7 {
 		t.Fatalf("unstamped: CommitTsNs = %d, %v; want fallback 7", got, err)
-	}
-}
-
-// A successful write discharges what the pending record owed before it, so a
-// repair pass can never put an older timestamp back over it.
-func TestPendingCommitRecordDischargedByNewerWrite(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
-	defer f.flushCancel()
-	path := util.NewFullPath("/dir", "file")
-
-	store.setKvPutErr(errors.New("kv store unreachable"))
-	f.notePathChange(path, 100, true)
-	store.setKvPutErr(nil)
-	f.notePathChange(path, 200, true)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path))
-	if err != nil || !found || ts != 200 {
-		t.Fatalf("MpDl after repair = %v, %v, %v; want 200", ts, found, err)
-	}
-}
-
-// A failed delete record keeps its own time: a newer delete the pending
-// record merges must not stamp the record at the older delete's time.
-func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
-	store := newStubFilerStore()
-	store.setKvPutErr(errors.New("kv store unreachable"))
-	f := newReplayTestFiler(store)
-	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
-	defer f.flushCancel()
-	path := util.NewFullPath("/dir", "file")
-
-	f.notePathChange(path, 100, true)
-	f.notePathChange(path, 200, true)
-	store.setKvPutErr(nil)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path)); err != nil || !found || ts != 200 {
-		t.Fatalf("MpDl = %v, %v, %v; want 200", ts, found, err)
 	}
 }
 
@@ -900,9 +800,10 @@ func TestReplayDirectoryDeleteKeepsNewerChildren(t *testing.T) {
 	}
 }
 
-// A directory kept for newer descendants still records the delete: a stale
-// create replayed later for another child must be fenced by it.
-func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
+// A directory kept for newer descendants records no delete — tombstones are
+// gone — so a stale create replayed later for another child resurrects
+// under it. This documents the accepted tradeoff.
+func TestReplayKeptDirectoryDeleteAllowsStaleCreates(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
 	ctx := context.Background()
@@ -946,8 +847,8 @@ func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
 	if err := f.Replay(stale); err != nil {
 		t.Fatalf("replay stale create: %v", err)
 	}
-	if _, err := store.FindEntry(ctx, "/d/late.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
-		t.Fatal("stale create resurrected a child under a directory the origin deleted")
+	if _, err := store.FindEntry(ctx, "/d/late.txt"); err != nil {
+		t.Fatalf("no tombstone exists, so the stale create lands: %v", err)
 	}
 }
 

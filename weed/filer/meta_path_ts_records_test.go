@@ -25,8 +25,8 @@ func storeGetUint64(store *stubFilerStore, key string) uint64 {
 	return 0
 }
 
-// Every committed event stamps its entry; deletes additionally leave an
-// MpDl tombstone. No separate per-path timestamp record is written.
+// Committed entries carry their own commit timestamp; deletes write
+// nothing — no per-path record and no tombstone.
 func TestPathCommitStampedOnEntry(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
@@ -44,10 +44,11 @@ func TestPathCommitStampedOnEntry(t *testing.T) {
 		t.Fatalf("kv keys written for a change event: %v", store.kv)
 	}
 
-	delTs := entry.CommitTsNs + 1
-	f.noteCommittedEvent(deleteEvent("/dir", "file", delTs))
-	if got := storeGetUint64(store, string(metaPathKey(metaPathDelPrefix, "/dir/file"))); got != uint64(delTs) {
-		t.Fatalf("MpDl ts = %d, want %d", got, delTs)
+	if err := store.DeleteEntry(ctx, entry.FullPath); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	if len(store.kv) != 0 {
+		t.Fatalf("kv keys written for a change or delete: %v", store.kv)
 	}
 }
 
@@ -102,18 +103,5 @@ func TestEventWithoutPreStampStillEmits(t *testing.T) {
 	}
 	if got := f.metaLogInflight.minTsNs(); got != 0 {
 		t.Fatalf("stamp leaked: %d", got)
-	}
-}
-
-// With filer.options.deleteTombstones=false no tombstone is written: deleted
-// paths may reappear under a stale peer replay — the operator's tradeoff.
-func TestDeleteTombstonesSkipped(t *testing.T) {
-	store := newStubFilerStore()
-	f := newReplayTestFiler(store)
-	f.skipDeleteTombstones = true
-
-	f.noteCommittedEvent(deleteEvent("/dir", "file", time.Now().UnixNano()))
-	if len(store.kv) != 0 {
-		t.Fatalf("tombstone written despite opt-out: %v", store.kv)
 	}
 }

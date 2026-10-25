@@ -23,11 +23,6 @@ recursive_delete = false
 # moved, and old log entries keep referencing that collection's volumes.
 #metaLog.collection = "filer-meta"
 #metaLog.replication = ""
-# whether deletes write MpDl tombstones that order replayed peer events.
-# Set false only when no dedicated-store peer replication can ever happen
-# (single filer, or all filers sharing one metadata store); otherwise a
-# stale replayed event can resurrect a deleted path.
-#deleteTombstones = true
 
 ####################################################
 # The following are filer store options

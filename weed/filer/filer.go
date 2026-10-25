@@ -61,13 +61,8 @@ type Filer struct {
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
-	metaLogTargetCollection  string
-	metaLogTargetReplication string
-	// skipDeleteTombstones stops writing MpDl records on deletes. Without
-	// them a dedicated-store peer replaying a stale event can resurrect a
-	// deleted path — safe only when no peer replication can ever happen.
-	// Set via viper: filer.options.deleteTombstones = false.
-	skipDeleteTombstones          bool
+	metaLogTargetCollection       string
+	metaLogTargetReplication      string
 	DefaultDiskType               string
 	MetaAggregator                *MetaAggregator
 	Signature                     int32
@@ -120,12 +115,6 @@ type Filer struct {
 	// overwriting the unread ledger with a partial set.
 	deletionLedgerBlocked atomic.Bool
 	deletionLedgerFlush   chan struct{}
-	// metaTsPending holds per-path commit records whose KV write failed,
-	// keyed by path; ordering reads consult it until the retry lands them
-	// (see meta_path_ts.go). metaTsRepairing marks paths with a live
-	// repair goroutine so failures neither strand a record nor pile on.
-	metaTsPending   sync.Map
-	metaTsRepairing sync.Map
 	// flushCtx is the context metadata-log flushes append under. It stays
 	// live for the process lifetime and is cancelled once during Shutdown,
 	// bounding every retry - in-flight and queued alike - to one deadline.
@@ -175,11 +164,6 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	v.SetDefault("filer.options.metaLog.replication", "")
 	f.metaLogTargetCollection = v.GetString("filer.options.metaLog.collection")
 	f.metaLogTargetReplication = v.GetString("filer.options.metaLog.replication")
-	v.SetDefault("filer.options.deleteTombstones", true)
-	f.skipDeleteTombstones = !v.GetBool("filer.options.deleteTombstones")
-	if f.skipDeleteTombstones {
-		glog.V(0).Infof("delete tombstones disabled: a dedicated-store peer replaying stale events can resurrect deleted paths")
-	}
 	if f.metaLogTargetCollection != "" {
 		glog.V(0).Infof("system metadata logs will be stored in collection %q", f.metaLogTargetCollection)
 	}

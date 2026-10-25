@@ -63,12 +63,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			glog.V(4).Infof("updating %v", newPath)
 			return f.updateExistingEntry(ctx, oldPath, newEntry)
 		}
-		// Record the delete before the insert too: if the insert fails and
-		// the event is retried later, the path sits deleted in between —
-		// without the tombstone a stale peer create could resurrect it in
-		// the gap.
 		glog.V(4).Infof("deleting %v", oldPath)
-		f.notePathChange(oldPath, resp.TsNs, true)
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
@@ -102,10 +97,6 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 					return err
 				}
 			}
-			// The origin deleted the directory even when a newer descendant
-			// keeps its entry here — recording the delete fences stale child
-			// creates that would otherwise resurrect under it.
-			f.notePathChange(oldPath, resp.TsNs, true)
 		}
 	}
 
@@ -319,7 +310,6 @@ func (f *Filer) deleteSweptChild(ctx context.Context, sub *Entry, message *filer
 	if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
 		return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
 	}
-	f.notePathChange(sub.FullPath, tsNs, true)
 	// chunks of a hard-linked child belong to the shared inode record; free
 	// them only once that record is gone. A directory entry can still carry
 	// chunks of its own — an S3 child promotes an existing file to a
