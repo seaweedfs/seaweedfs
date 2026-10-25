@@ -929,6 +929,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			glog.V(3).Infof("GetObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
+				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
+					if marker := s3a.nullDeleteMarkerEntry(bucket, object); marker != nil {
+						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "GetObjectHandler", marker, "null", versionId)
+						return
+					}
+				}
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
 				if errors.Is(err, filer_pb.ErrNotFound) {
 					s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchVersion)
@@ -2606,6 +2612,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			glog.V(2).Infof("HeadObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
+				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
+					if marker := s3a.nullDeleteMarkerEntry(bucket, object); marker != nil {
+						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "HeadObjectHandler", marker, "null", versionId)
+						return
+					}
+				}
 				glog.Errorf("Failed to get specific version %s for %s/%s: %v", versionId, bucket, object, err)
 				if errors.Is(err, filer_pb.ErrNotFound) {
 					s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchVersion)

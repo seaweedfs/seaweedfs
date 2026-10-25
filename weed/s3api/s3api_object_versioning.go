@@ -314,6 +314,18 @@ func (s3a *S3ApiServer) createNullDeleteMarker(bucket, object string) error {
 	return nil
 }
 
+// nullDeleteMarkerEntry returns the suspended-versioning "null" delete marker
+// stored under .versions, or nil when the object has none.
+// getSpecificObjectVersion only checks the plain path for "null", so callers
+// that must answer a marker named by versionId consult this on a miss.
+func (s3a *S3ApiServer) nullDeleteMarkerEntry(bucket, object string) *filer_pb.Entry {
+	entry, err := s3a.getEntry(s3a.getVersionedObjectDir(bucket, s3_constants.NormalizeObjectKey(object)), s3a.getVersionFileName("null"))
+	if err != nil || entry.Extended == nil || string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) != "true" {
+		return nil
+	}
+	return entry
+}
+
 // versionListItem represents an item in the unified version/prefix list
 type versionListItem struct {
 	key         string
