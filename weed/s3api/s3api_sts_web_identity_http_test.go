@@ -7,12 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,7 +97,6 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 	iam := &IdentityAccessManagement{iamIntegration: NewS3IAMIntegration(manager, "")}
 	handlers := NewSTSHandlers(manager.GetSTSService(), iam)
 
-	var jtiCounter atomic.Int64
 	signOIDCToken := func(t *testing.T, subject string) string {
 		t.Helper()
 		token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -108,10 +105,6 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 			"aud": "test-client",
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
-			// a unique jti per token: the exchange consumes it, so two
-			// subtests minting the same claims in one second would otherwise
-			// collide on the token fingerprint and read as a replay
-			"jti": fmt.Sprintf("%s-%d", subject, jtiCounter.Add(1)),
 		})
 		token.Header["kid"] = "web-identity-test-key"
 		signed, err := token.SignedString(key)
