@@ -131,8 +131,14 @@ func (f *Filer) markPathCommitRecordsOff(ctx context.Context) error {
 
 // syncPathCommitGen loads the records' generation, first bumping it when the
 // off marker is present. The marker is removed only once the bump is stored,
-// so a failure leaves it for the next try.
+// so a failure leaves it for the next try. The marker is checked before the
+// generation is read: since a bump stores the generation before clearing the
+// marker, any bump whose marker this read missed has already landed its value.
 func (f *Filer) syncPathCommitGen(ctx context.Context) error {
+	_, offErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
+	if offErr != nil && !errors.Is(offErr, ErrKvNotFound) {
+		return fmt.Errorf("read the off marker: %w", offErr)
+	}
 	var gen uint64
 	value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey))
 	if err == nil && len(value) >= 8 {
@@ -140,7 +146,7 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("read the generation: %w", err)
 	}
-	if _, err := f.Store.KvGet(ctx, []byte(metaPathOffKey)); err == nil {
+	if offErr == nil {
 		gen++
 		value = make([]byte, 8)
 		util.Uint64toBytes(value, gen)
@@ -151,8 +157,6 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 			return fmt.Errorf("clear the off marker: %w", err)
 		}
 		glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", gen)
-	} else if !errors.Is(err, ErrKvNotFound) {
-		return fmt.Errorf("read the off marker: %w", err)
 	}
 	f.pathCommitGen.Store(gen)
 	return nil
