@@ -71,8 +71,6 @@ func runMqBroker(cmd *Command, args []string) bool {
 
 	mqBrokerStandaloneOptions.masters = pb.ServerAddresses(*mqBrokerStandaloneOptions.mastersString).ToAddressMap()
 
-	// An unset -ip.bind keeps the historical all-interface listener; fall
-	// back to -ip only once the localhost opt-out needs a specific address.
 	if *mqBrokerStandaloneOptions.ipBind == "" && !*mqBrokerStandaloneOptions.ipBindLocalhost {
 		mqBrokerStandaloneOptions.ipBind = mqBrokerStandaloneOptions.ip
 	}
