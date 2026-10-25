@@ -85,3 +85,26 @@ func TestSendHeartbeatAdmittedReporterStillFreezesOnMismatch(t *testing.T) {
 	_ = ms.SendHeartbeat(stream)
 	assert.True(t, ms.Topo.IsGrowthFrozen())
 }
+
+// An unregistered heartbeat with no address can never be the pinned reporter:
+// its stale topology id and seen bound must not reach the topology on the way
+// to the delta-heartbeat skip.
+func TestSendHeartbeatRejectsAddresslessFirstHeartbeat(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.RaftServer = admitTestRaftServer{}
+	ms.Topo.SetGrowthFreezeConfig(true, 0)
+	ms.Topo.SetTopologyId("cluster-b")
+	ms.Topo.ReleaseAllocationOnFirstReport("10.0.0.1:8080")
+
+	stream := &fakeHeartbeatStream{heartbeats: []*master_pb.Heartbeat{{
+		MaxVolumeIdSeen:    7,
+		LastSeenTopologyId: "cluster-a",
+		Volumes:            []*master_pb.VolumeInformationMessage{{Id: 3}},
+	}}}
+
+	err := ms.SendHeartbeat(stream)
+	require.ErrorContains(t, err, "rejected")
+	assert.False(t, ms.Topo.IsGrowthFrozen())
+	assert.Zero(t, uint32(ms.Topo.GetMaxVolumeId()))
+	assert.Empty(t, stream.sent)
+}

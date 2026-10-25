@@ -231,8 +231,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
-		if dn == nil && heartbeat.Ip != "" {
-			if addr := util.JoinHostPort(heartbeat.Ip, int(heartbeat.Port)); !ms.Topo.AdmitVolumeReporter(addr) {
+		if dn == nil {
+			// An unregistered heartbeat carries no address to admit; under
+			// the pinned single reporter it can never be the embedded one,
+			// so it must not move allocation or topology state either.
+			addr := ""
+			if heartbeat.Ip != "" {
+				addr = util.JoinHostPort(heartbeat.Ip, int(heartbeat.Port))
+			}
+			if !ms.Topo.AdmitVolumeReporter(addr) {
 				err := fmt.Errorf("volume server %s rejected: this master admits a single volume-server reporter", addr)
 				glog.Warningf("SendHeartbeat: %v", err)
 				return err
