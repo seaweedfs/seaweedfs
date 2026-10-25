@@ -355,6 +355,8 @@ func TestProcessRangeRequestIfRange(t *testing.T) {
 		{"", http.StatusPartialContent, "01"},
 		{etag, http.StatusPartialContent, "01"},
 		{lastModified, http.StatusPartialContent, "01"},
+		{"Saturday, 24-Oct-26 22:01:04 GMT", http.StatusPartialContent, "01"},
+		{"Sat Oct 24 22:01:04 2026", http.StatusPartialContent, "01"},
 		{`"v1"`, http.StatusOK, "0123456789"},
 		{`W/"v2"`, http.StatusOK, "0123456789"},
 		{"Sat, 24 Oct 2026 22:01:03 GMT", http.StatusOK, "0123456789"},
