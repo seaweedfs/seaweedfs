@@ -111,13 +111,59 @@ fn run() -> Result<(), String> {
 }
 
 fn normalize_volume_args(args: Vec<String>) -> Vec<String> {
-    if args.iter().any(|a| a == "volume") {
-        return args;
+    let mut config_dir: Option<String> = None;
+    let mut rest: Vec<String> = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        match flag_value(&args[i], "securityFile") {
+            Some(Some(v)) => {
+                config_dir = Some(parent_dir_of(&v));
+                i += 1;
+            }
+            Some(None) => {
+                if i + 1 < args.len() {
+                    config_dir = Some(parent_dir_of(&args[i + 1]));
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            None => {
+                rest.push(args[i].clone());
+                i += 1;
+            }
+        }
     }
-    let mut forwarded = Vec::with_capacity(args.len() + 1);
-    forwarded.push("volume".to_string());
-    forwarded.extend(args);
+
+    let mut forwarded = Vec::with_capacity(rest.len() + 2);
+    if let Some(dir) = config_dir {
+        forwarded.push(format!("-config_dir={}", dir));
+    }
+    if !rest.iter().any(|a| a == "volume") {
+        forwarded.push("volume".to_string());
+    }
+    forwarded.extend(rest);
     forwarded
+}
+
+fn parent_dir_of(path: &str) -> String {
+    PathBuf::from(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+fn flag_value(arg: &str, key: &str) -> Option<Option<String>> {
+    let a = arg.trim_start_matches('-');
+    let k = key.trim_start_matches('-');
+    if let Some(v) = a.strip_prefix(&format!("{}=", k)) {
+        return Some(Some(v.to_string()));
+    }
+    if a == k && a != arg {
+        return Some(None);
+    }
+    None
 }
 
 fn run_exec_mode(forwarded: &[String]) -> Result<(), String> {
@@ -1066,46 +1112,40 @@ fn allocate_free_port(bind_ip: &str) -> Result<u16, String> {
 }
 
 fn extract_flag(args: &[String], key: &str) -> Option<String> {
-    let with_equals = format!("{}=", key);
     let mut i = 0;
     while i < args.len() {
-        let arg = &args[i];
-        if let Some(v) = arg.strip_prefix(&with_equals) {
-            return Some(v.to_string());
+        match flag_value(&args[i], key) {
+            Some(Some(v)) => return Some(v),
+            Some(None) => return args.get(i + 1).cloned(),
+            None => i += 1,
         }
-        if arg == key {
-            if i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            }
-            return None;
-        }
-        i += 1;
     }
     None
 }
 
 fn replace_flag_value(args: &[String], key: &str, value: &str) -> Vec<String> {
-    let with_equals = format!("{}=", key);
     let mut out = Vec::with_capacity(args.len() + 2);
-    let mut i = 0;
     let mut replaced = false;
+    let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
-        if arg.starts_with(&with_equals) {
-            out.push(format!("{}={}", key, value));
-            replaced = true;
-            i += 1;
-            continue;
+        match flag_value(arg, key) {
+            Some(Some(_)) => {
+                out.push(format!("{}={}", key, value));
+                replaced = true;
+                i += 1;
+            }
+            Some(None) => {
+                out.push(arg.clone());
+                out.push(value.to_string());
+                replaced = true;
+                i += 2;
+            }
+            None => {
+                out.push(arg.clone());
+                i += 1;
+            }
         }
-        if arg == key {
-            out.push(arg.clone());
-            out.push(value.to_string());
-            replaced = true;
-            i += 2;
-            continue;
-        }
-        out.push(arg.clone());
-        i += 1;
     }
     if !replaced {
         out.push(format!("{}={}", key, value));
