@@ -144,6 +144,43 @@ func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 	assert.Empty(t, log.RequesterIdentity, "non-federated session must not surface the session id as a requester_identity")
 }
 
+// Authentication resolves the identity before the policy verdict, so a denied
+// request still has a requester and the audit entry must name it. See issue
+// #11474.
+func TestAuditRequesterForDeniedRequest(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "read_only_user",
+			Credentials: []*iam_pb.Credential{{AccessKey: "readonly_access_key", SecretKey: "readonly_secret_key"}},
+			Actions:     []string{"Read", "List"},
+		}},
+	}))
+
+	denied, err := newTestRequest(http.MethodDelete, "http://s3/bucket/obj", 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, signRequestV4(denied, "readonly_access_key", "readonly_secret_key"))
+	denied = s3_constants.EnsureIdentityHolder(denied)
+
+	rec := httptest.NewRecorder()
+	iam.Auth(func(http.ResponseWriter, *http.Request) {
+		t.Error("denied request must not reach the handler")
+	}, s3_constants.ACTION_WRITE)(rec, denied)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	log := s3err.GetAccessLog(denied, rec.Code, s3err.ErrAccessDenied)
+	assert.Equal(t, "read_only_user", log.Requester, "denied request must still audit the requester")
+	assert.Equal(t, "arn:aws:iam::"+defaultAccountID+":user/read_only_user", log.RequesterArn)
+
+	anonymous := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/bucket/obj", nil))
+	rec = httptest.NewRecorder()
+	iam.handleAuthResult(rec, anonymous, nil, s3err.ErrAccessDenied, func(http.ResponseWriter, *http.Request) {
+		t.Error("denied request must not reach the handler")
+	})
+	log = s3err.GetAccessLog(anonymous, rec.Code, s3err.ErrAccessDenied)
+	assert.Empty(t, log.Requester, "unauthenticated denial must not attribute a requester")
+}
+
 // A JWT-authenticated identity carries no PrincipalArn of its own — the auth
 // layer hands the principal over in a request header — so the audit entry has to
 // resolve the ARN the same way policy evaluation does.

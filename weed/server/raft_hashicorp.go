@@ -149,6 +149,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshots"), os.ModePerm); err != nil {
 		return nil, err
 	}
+	option.Topo.SetMaxVolumeIdFile(filepath.Join(s.dataDir, "max_volume_id"))
 	baseDir := s.dataDir
 
 	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, ldbFile))

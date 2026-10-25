@@ -111,7 +111,7 @@ func TestNewSignV4ChunkedReaderStreamingUnsignedPayloadTrailer(t *testing.T) {
 	runWithRequest(iam, req, t, expectedPayload)
 }
 
-func runWithRequest(iam IdentityAccessManagement, req *http.Request, t *testing.T, expectedPayload string) {
+func runWithRequest(iam *IdentityAccessManagement, req *http.Request, t *testing.T, expectedPayload string) {
 	reader, errCode := iam.newChunkedReader(req)
 	assert.NotNil(t, reader)
 	assert.Equal(t, s3err.ErrNone, errCode)
@@ -124,11 +124,11 @@ func runWithRequest(iam IdentityAccessManagement, req *http.Request, t *testing.
 	assert.Equal(t, expectedPayload, string(data))
 }
 
-func setupIam() IdentityAccessManagement {
+func setupIam() *IdentityAccessManagement {
 	// Create an IdentityAccessManagement instance
 	// Add default access keys and secrets
 
-	iam := IdentityAccessManagement{
+	iam := &IdentityAccessManagement{
 		identities:        []*Identity{},
 		accessKeyIdent:    map[string]*Identity{},
 		accounts:          map[string]*Account{},
@@ -137,7 +137,7 @@ func setupIam() IdentityAccessManagement {
 		hashCounters:      map[string]*int32{},
 		identityAnonymous: nil,
 		domain:            "",
-		isAuthEnabled:     false,
+		isAuthEnabled:     true,
 	}
 
 	iam.identities = append(iam.identities, &Identity{
@@ -476,4 +476,59 @@ func TestSignedStreamingUploadInvalidSignature(t *testing.T) {
 	_, err = io.ReadAll(reader)
 	assert.Error(t, err, "Expected error when reading chunk with invalid signature")
 	assert.Contains(t, err.Error(), "chunk signature does not match", "Error should indicate chunk signature mismatch")
+}
+
+// TestSignedStreamingUploadWithoutIAM verifies that signed streaming uploads
+// (STREAMING-AWS4-HMAC-SHA256-PAYLOAD) are decoded rather than rejected when no
+// credentials are configured. Trino and other AWS SDK v2 clients always send
+// this payload type, so open gateways must accept it.
+func TestSignedStreamingUploadWithoutIAM(t *testing.T) {
+	iam := IdentityAccessManagement{
+		identities:     []*Identity{},
+		accessKeyIdent: map[string]*Identity{},
+		isAuthEnabled:  false,
+	}
+	s3a := &S3ApiServer{iam: &iam}
+
+	chunkData := strings.Repeat("a", 1024)
+	payload := fmt.Sprintf("400;chunk-signature=%064x\r\n%s\r\n", 1, chunkData) +
+		fmt.Sprintf("0;chunk-signature=%064x\r\n\r\n", 2)
+
+	req, err := http.NewRequest(http.MethodPut, "http://localhost/test-bucket/test-object",
+		bytes.NewReader([]byte(payload)))
+	assert.NoError(t, err)
+	req.Header.Set("x-amz-content-sha256", streamingContentSHA256)
+	req.Header.Set("Content-Encoding", "aws-chunked")
+	req.Header.Set("x-amz-decoded-content-length", "1024")
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=x/20261016/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc")
+
+	reader, errCode := getRequestDataReader(s3a, req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, chunkData, string(data))
+}
+
+// TestTrailerStreamingUploadWithoutIAM verifies that the trailer variant
+// (STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER) is also decoded when no
+// credentials are configured, and that the checksum trailer is still honored.
+func TestTrailerStreamingUploadWithoutIAM(t *testing.T) {
+	iam := IdentityAccessManagement{
+		identities:     []*Identity{},
+		accessKeyIdent: map[string]*Identity{},
+		isAuthEnabled:  false,
+	}
+	s3a := &S3ApiServer{iam: &iam}
+
+	req, expectedData := createTrailerStreamingRequest(t, true)
+
+	reader, errCode := getRequestDataReader(s3a, req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, expectedData, string(data))
 }

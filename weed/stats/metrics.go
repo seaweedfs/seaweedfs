@@ -101,6 +101,22 @@ var (
 			Help:      "admin lock",
 		}, []string{"client"})
 
+	MasterVolumeGrowthFrozen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "volume_growth_frozen",
+			Help:      "1 while volume growth is frozen after detected master state loss",
+		})
+
+	MasterDuplicateVolumeIds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "duplicate_volume_ids",
+			Help:      "volume id registered under two different layouts",
+		}, []string{"collection", "volumeId"})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -789,6 +805,14 @@ var (
 			Help:      "Remote-mount object read attempts by source, bucket and cache result. A cold object retried before caching completes records a miss per attempt; paths outside the buckets folder use bucket \"_other\".",
 		}, []string{"source", "bucket", "result"})
 
+	RemoteCacheEvictedCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "cache_evicted_total",
+			Help:      "Remote-mounted objects whose local chunks were evicted under disk pressure.",
+		})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -983,6 +1007,8 @@ func init() {
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
+	Gather.MustRegister(MasterVolumeGrowthFrozen)
+	Gather.MustRegister(MasterDuplicateVolumeIds)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
@@ -1072,6 +1098,7 @@ func init() {
 	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(RemoteCacheReadCounter)
+	Gather.MustRegister(RemoteCacheEvictedCounter)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)

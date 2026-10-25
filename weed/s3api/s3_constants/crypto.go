@@ -10,6 +10,10 @@ const (
 	SSEAlgorithmAES256 = "AES256"
 	SSEAlgorithmKMS    = "aws:kms"
 
+	// SSEKMSDefaultKeyID is the AWS-managed key SSE-KMS requests resolve to
+	// when no key ID is given, matching AWS's aws/s3 managed key alias.
+	SSEKMSDefaultKeyID = "alias/aws/s3"
+
 	// SSE type identifiers for response headers and internal processing
 	SSETypeC   = "SSE-C"
 	SSETypeKMS = "SSE-KMS"

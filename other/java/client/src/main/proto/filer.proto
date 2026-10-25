@@ -527,6 +527,10 @@ message AtomicRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    // When true, the rename fails with ErrEntryAlreadyExists if the target
+    // already exists. Lets a caller that authorized the rename without delete
+    // access on an absent target stay safe if one is created concurrently.
+    bool fail_if_target_exists = 6;
 }
 
 message AtomicRenameEntryResponse {
@@ -767,7 +771,8 @@ message FilerConf {
         string replication = 3;
         string ttl = 4;
         string disk_type = 5;
-        bool fsync = 6;
+        // unset inherits from the enclosing path rule, set overrides it
+        optional bool fsync = 6;
         uint32 volume_growth_count = 7;
         bool read_only = 8;
         string data_center = 9;

@@ -24,8 +24,8 @@ on:
       - '.github/workflows/s3-policy-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-policy-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
   # Unit tests for policy components
   policy-unit-tests:
     name: S3 Policy Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     
     steps:
@@ -49,6 +49,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Get dependencies
@@ -81,17 +82,21 @@ jobs:
   # S3 Policy Variables Integration Tests
   s3-policy-variables-tests:
     name: S3 Policy Variables Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -106,7 +111,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           
           echo "=== Starting S3 Policy Variables Integration Tests ==="
           
@@ -187,7 +192,7 @@ jobs:
   # S3 Policy Enforcement Integration Tests
   s3-policy-enforcement-tests:
     name: S3 Policy Enforcement Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -197,10 +202,14 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -215,7 +224,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           
           echo "=== Starting S3 Policy Enforcement Tests (${{ matrix.test-case }}) ==="
           
@@ -308,7 +317,7 @@ jobs:
   # Trusted Proxy Detection Tests
   trusted-proxy-tests:
     name: Trusted Proxy Detection Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -319,6 +328,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -395,7 +405,7 @@ jobs:
   # S3 Policy Shell Integration Tests
   s3-policy-shell-tests:
     name: S3 Policy Shell Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -406,6 +416,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS

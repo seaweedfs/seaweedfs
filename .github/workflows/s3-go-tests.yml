@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'weed/s3api/**'
+      - 'weed/remote_storage/**'
       - 'weed/filer/**'
       - 'weed/server/**'
       - 'test/s3/**'
@@ -12,8 +13,8 @@ on:
       - '.github/workflows/s3-go-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-go-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -25,7 +26,7 @@ defaults:
 jobs:
   s3-versioning-tests:
     name: S3 Versioning Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -35,10 +36,14 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -53,7 +58,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management
@@ -92,7 +97,7 @@ jobs:
 
   s3-versioning-compatibility:
     name: S3 Versioning Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -103,6 +108,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -140,7 +146,7 @@ jobs:
 
   s3-cors-compatibility:
     name: S3 CORS Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -151,6 +157,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -188,7 +195,7 @@ jobs:
 
   s3-retention-tests:
     name: S3 Retention Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -198,10 +205,14 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -216,7 +227,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management
@@ -255,7 +266,7 @@ jobs:
 
   s3-lifecycle-tests:
     name: S3 Lifecycle Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -283,6 +294,7 @@ jobs:
           - TestLifecycleSuspendedVersioningExpiration
           - TestLifecycleTagFilter
           - TestLifecycleVersionedBucketCreatesDeleteMarker
+          - TestLifecycleVersionedBucketExpiresOnSecondRun
 
     steps:
       - name: Check out code
@@ -292,6 +304,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -326,17 +339,21 @@ jobs:
 
   s3-checksum-tests:
     name: S3 Checksum Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -351,7 +368,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           make test-with-server
 
@@ -381,7 +398,7 @@ jobs:
 
   s3-cors-tests:
     name: S3 CORS Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -391,10 +408,14 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -409,7 +430,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Tests ==="
           
           # Run tests with automatic server management
@@ -448,7 +469,7 @@ jobs:
 
   s3-retention-worm:
     name: S3 Retention WORM Integration Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -459,6 +480,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -497,7 +519,7 @@ jobs:
 
   s3-versioning-stress:
     name: S3 Versioning Stress Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     
     steps:
@@ -508,6 +530,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -565,7 +588,7 @@ jobs:
   s3-tagging-tests:
     # CI job for S3 object tagging tests
     name: S3 Tagging Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -576,6 +599,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -620,7 +644,7 @@ jobs:
 
   s3-remote-cache-tests:
     name: S3 Remote Cache Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -631,6 +655,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS

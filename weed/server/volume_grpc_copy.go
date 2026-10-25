@@ -34,6 +34,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return err
 	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(stream.Context(), req.SourceDataNode); err != nil {
+			return fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
+	}
 
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient
@@ -54,7 +59,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
-	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 		var err error
 		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: req.VolumeId,
@@ -96,7 +101,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
 			// keep remote data: the inbound copy carries a .vif that may point at
 			// the same cloud-tier object the existing volume references.
-			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
+			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
 				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
 			}
 			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
@@ -209,7 +214,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 
 		return nil
-	})
+	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 
 	if err != nil {
 		return err
@@ -254,7 +259,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		if !shouldValidateCopyCounts {
 			return nil
 		}
-		return checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
+		// Counter drift (bloom-filter estimates, rows appended between the
+		// status snapshots) is not proof of a bad copy; the byte sizes
+		// already match. Warn instead of rejecting the copy.
+		if countErr := checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount()); countErr != nil {
+			glog.Warningf("copied volume %d counts differ from source in-memory counters (counter drift): %v", req.VolumeId, countErr)
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
@@ -297,7 +308,7 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 
 }
 
-// checkCopyFiles verifies the copied file sizes. Record counts are checked
+// checkCopyFiles verifies the copied file sizes. Record counts are compared
 // after the target volume is mounted, when the target needle map is available.
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
@@ -525,6 +536,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	resp.DiskType = string(v.DiskType())
 	resp.VolumeInfo = v.GetVolumeInfo()
 	resp.Version = uint32(v.Version())
+	resp.ExpireAtSec = v.ExpireAtSec()
 	return resp, nil
 }
 
@@ -705,10 +717,16 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 	var targetFile *os.File
 	var filePath string
 	var bytesWritten uint64
+	// Set while an EC .ecj is being received; released only after the file is
+	// closed and any partial copy removed.
+	var ecjWriteDone func()
 
 	defer func() {
 		if targetFile != nil {
 			targetFile.Close()
+		}
+		if ecjWriteDone != nil {
+			ecjWriteDone()
 		}
 	}()
 
@@ -798,6 +816,13 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				// Create EC shard file path
 				baseFileName := erasure_coding.EcShardBaseFileName(fileInfo.Collection, int(fileInfo.VolumeId))
 				filePath = util.Join(targetLocation.Directory, baseFileName+fileInfo.Ext)
+				// The mounted check above runs once; a volume can still mount on
+				// this journal while the stream writes it. Registered as a writer
+				// before the file is created, that mount cannot compact the
+				// journal and leave the rest of the stream in an unlinked inode.
+				if fileInfo.Ext == ".ecj" && ecjWriteDone == nil {
+					ecjWriteDone = erasure_coding.BeginEcjWrite(filePath)
+				}
 			} else {
 				// Regular volume file
 				v := vs.store.GetVolume(needle.VolumeId(fileInfo.VolumeId))

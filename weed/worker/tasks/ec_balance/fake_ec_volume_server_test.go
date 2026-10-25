@@ -32,6 +32,12 @@ type fakeEcVolumeServer struct {
 	// the request even when it was a no-op against the inventory.
 	deleted   []string
 	unmounted []string
+	// refuseCopyOnDisk, when nonzero, makes VolumeEcShardsCopy fail requests
+	// pinning that disk id with "no space left" — a full disk; a request with
+	// DiskId 0 (server picks) still succeeds.
+	refuseCopyOnDisk uint32
+	// copyDiskIds records the DiskId each copy request carried.
+	copyDiskIds []uint32
 	// grpcAddr is host:port; the code under test dials by address string.
 	grpcAddr string
 	stop     func()
@@ -46,9 +52,29 @@ func (f *fakeEcVolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume
 			VolumeId:   req.VolumeId,
 			ShardId:    sid,
 			Collection: f.collection,
+			Size:       1,
 		})
 	}
 	return resp, nil
+}
+
+// VolumeEcShardsCopy records the request's DiskId and adds the shards to this
+// server's inventory, unless the pinned disk is the configured refusing disk.
+func (f *fakeEcVolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.copyDiskIds = append(f.copyDiskIds, req.DiskId)
+	if f.refuseCopyOnDisk != 0 && req.DiskId == f.refuseCopyOnDisk {
+		return nil, fmt.Errorf("disk %d: no space left", req.DiskId)
+	}
+	for _, sid := range req.ShardIds {
+		f.shards[req.VolumeId][sid] = true
+	}
+	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+func (f *fakeEcVolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
+	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
 }
 
 func (f *fakeEcVolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {

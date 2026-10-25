@@ -13,6 +13,9 @@ import (
 type MaxVolumeIdCommand struct {
 	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
 	TopologyId  string          `json:"topologyId"`
+	// GrowthFrozen replicates the volume-growth freeze through raft so a
+	// leader change does not silently lift it. nil means no change.
+	GrowthFrozen *bool `json:"growthFrozen,omitempty"`
 }
 
 func NewMaxVolumeIdCommand(value needle.VolumeId, topologyId string) *MaxVolumeIdCommand {
@@ -42,6 +45,12 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 				glog.V(0).Infof("TopologyId applied on follower: %s", c.TopologyId)
 			}
 		}
+	}
+	if c.GrowthFrozen != nil {
+		topo.SetGrowthFrozen(*c.GrowthFrozen)
+	}
+	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 

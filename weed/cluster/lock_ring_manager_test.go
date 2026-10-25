@@ -213,6 +213,111 @@ func TestLockRingManager_NoBroadcastWithoutFn(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // should not panic
 }
 
+func TestLockRingManager_EmptyRingNotBroadcast(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 50 * time.Millisecond
+
+	group := FilerGroupName("default")
+
+	lrm.AddServer(group, "filer1:8888")
+	lrm.FlushPending(group)
+
+	mu.Lock()
+	broadcasts = nil
+	mu.Unlock()
+
+	// Removing the last member must not propagate an empty ring.
+	lrm.RemoveServer(group, "filer1:8888")
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, 0, len(broadcasts), "empty ring must not be broadcast")
+	mu.Unlock()
+
+	// The last non-empty snapshot is still served to reconnecting clients.
+	update := lrm.GetLastUpdate(group)
+	require.NotNil(t, update)
+	assert.Equal(t, []string{"filer1:8888"}, update.Servers)
+}
+
+func TestLockRingManager_PeriodicRebroadcast(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 20 * time.Millisecond
+	lrm.rebroadcastInterval = 60 * time.Millisecond
+
+	group := FilerGroupName("default")
+	lrm.AddServer(group, "filer1:8888")
+
+	// Without any further membership change, the ring keeps being re-sent so
+	// a lost or poisoned update cannot be permanent.
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	require.GreaterOrEqual(t, len(broadcasts), 2, "ring should rebroadcast periodically")
+	for i := 1; i < len(broadcasts); i++ {
+		assert.Greater(t, broadcasts[i].Version, broadcasts[i-1].Version)
+	}
+	mu.Unlock()
+}
+
+func TestLockRingManager_RebroadcastDefersToPendingStabilization(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 100 * time.Millisecond
+	lrm.rebroadcastInterval = 30 * time.Millisecond
+
+	group := FilerGroupName("default")
+	lrm.AddServer(group, "filer1:8888")
+	lrm.FlushPending(group)
+
+	mu.Lock()
+	require.Len(t, broadcasts, 1)
+	mu.Unlock()
+
+	// A membership change just before the periodic tick: the rebroadcast must
+	// not publish the unsettled ring ahead of the stabilization timer.
+	lrm.RemoveServer(group, "filer1:8888")
+	lrm.AddServer(group, "filer2:8888")
+	time.Sleep(2 * lrm.rebroadcastInterval)
+
+	mu.Lock()
+	assert.Len(t, broadcasts, 1, "rebroadcast during stabilization should be deferred")
+	mu.Unlock()
+
+	time.Sleep(2 * lrm.stabilizeDelay)
+
+	mu.Lock()
+	require.GreaterOrEqual(t, len(broadcasts), 2)
+	assert.Equal(t, []string{"filer2:8888"}, broadcasts[1].Servers)
+	mu.Unlock()
+}
+
 func TestLockRingManager_GetLastUpdateReturnsBroadcastState(t *testing.T) {
 	lrm := NewLockRingManager(nil)
 

@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     paths:
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - '.github/workflows/rust_binaries_dev.yml'
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
     permissions:
       contents: write
     needs: cleanup
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -45,6 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -113,6 +115,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |

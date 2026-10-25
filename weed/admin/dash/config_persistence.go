@@ -895,7 +895,7 @@ func (cp *ConfigPersistence) ListTaskDetails() ([]string, error) {
 	return taskIDs, nil
 }
 
-// CleanupCompletedTasks removes old completed tasks beyond the retention limit
+// CleanupCompletedTasks removes old terminal task files beyond the retention limit
 func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 	cp.tasksMu.Lock()
 	defer cp.tasksMu.Unlock()
@@ -914,10 +914,10 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 		return fmt.Errorf("failed to load tasks for cleanup: %w", err)
 	}
 
-	// Filter completed and failed tasks, sort by completion time
 	var completedTasks []*maintenance.MaintenanceTask
 	for _, task := range allTasks {
-		if (task.Status == maintenance.TaskStatusCompleted || task.Status == maintenance.TaskStatusFailed) && task.CompletedAt != nil {
+		switch task.Status {
+		case maintenance.TaskStatusCompleted, maintenance.TaskStatusFailed, maintenance.TaskStatusCancelled:
 			completedTasks = append(completedTasks, task)
 		}
 	}

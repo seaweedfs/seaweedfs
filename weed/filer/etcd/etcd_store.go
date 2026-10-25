@@ -181,7 +181,7 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
-	if startFileName != "" {
+	if startFileName > prefix {
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 

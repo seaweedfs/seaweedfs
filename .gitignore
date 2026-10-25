@@ -144,3 +144,4 @@ weed_bin
 telemetry/server/telemetry-server
 .aider*
 /seaweed-volume/docs
+__pycache__/

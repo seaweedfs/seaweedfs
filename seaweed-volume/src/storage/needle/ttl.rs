@@ -80,6 +80,12 @@ impl TTL {
         if s.is_empty() {
             return Ok(TTL::EMPTY);
         }
+        // The unit is read as the last BYTE and the count as everything before
+        // it, so a trailing multi-byte character would split inside itself and
+        // panic. A TTL is digits plus a one-letter unit; reject the rest.
+        if !s.is_ascii() {
+            return Err(format!("invalid TTL {:?}: must be ASCII", s));
+        }
         let last_byte = s.as_bytes()[s.len() - 1];
         let (num_str, unit_byte) = if last_byte.is_ascii_digit() {
             // All digits — default to minutes (matching Go)
@@ -239,6 +245,16 @@ impl fmt::Display for TTL {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?ttl=5%C3%A9` must be an error, not a panic. The unit is taken as the
+    /// last *byte*, so a trailing multi-byte character made `&s[..s.len()-1]`
+    /// split inside it.
+    #[test]
+    fn ttl_read_rejects_non_ascii_instead_of_panicking() {
+        for s in ["5é", "é", "3🦀", "12é"] {
+            assert!(TTL::read(s).is_err(), "non-ASCII TTL {:?} must error", s);
+        }
+    }
 
     #[test]
     fn test_ttl_parse() {

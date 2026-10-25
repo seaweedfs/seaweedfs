@@ -219,6 +219,19 @@ func TestValidate_RejectsNegativeSubscriptionReceiveTimeout(t *testing.T) {
 	require.NoError(t, validate(cfg))
 }
 
+// RetentionWindow without a Walker would drop promoted rules' only
+// dispatch path while the drain cursor still advances past their events.
+func TestValidate_RejectsRetentionWindowWithoutWalker(t *testing.T) {
+	cfg := validatableConfig()
+	cfg.RetentionWindow = 24 * time.Hour
+	require.ErrorContains(t, validate(cfg), "RetentionWindow")
+	cfg.Walker = func(context.Context, *engine.Snapshot, []int) error { return nil }
+	require.NoError(t, validate(cfg))
+	cfg.Walker = nil
+	cfg.RetentionWindow = 0
+	require.NoError(t, validate(cfg))
+}
+
 // slowSavePersister stretches teardown past the caller's deadline.
 type slowSavePersister struct {
 	*memPersister

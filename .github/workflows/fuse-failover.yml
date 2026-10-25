@@ -24,8 +24,8 @@ on:
       - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/fuse-failover
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -33,7 +33,7 @@ permissions:
 jobs:
   fuse-failover:
     name: FUSE Volume Server Failover
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
 
     steps:
@@ -42,10 +42,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Configure FUSE
         run: |

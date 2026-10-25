@@ -2,7 +2,7 @@
 //!
 //! `weed/pb/plugin.proto` is a language-agnostic gRPC stream: a worker connects
 //! out to admin, announces the job types it can detect and execute, and then
-//! answers requests on that one stream. `weed worker -admin=host:23646` is the
+//! answers requests on that one stream. `weed worker -admin=host:12535` is the
 //! Go implementation of the same contract from outside the admin process; this
 //! is the Rust one, and it knows nothing about any particular job.
 
@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod registry;
 pub mod senders;
 pub mod stream;
+pub mod token;
 
 /// Generated plugin.proto types.
 pub mod pb {

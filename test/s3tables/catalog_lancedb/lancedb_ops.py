@@ -45,7 +45,15 @@ def seed_table(namespace_url, storage, bucket, namespace, table, rows):
     LanceDB reads through the catalog; the writing half is pylance, because the
     namespace records where a table lives and does not carry its data.
     """
-    ns = ln.connect("rest", {"uri": namespace_url})
+    ns = ln.connect(
+        "rest",
+        {
+            "uri": namespace_url,
+            "header.x-api-key": (
+                f"{storage['aws_access_key_id']}:{storage['aws_secret_access_key']}"
+            ),
+        },
+    )
     ns.create_namespace(
         ln.CreateNamespaceRequest(id=[bucket], mode="EXIST_OK")
     )
@@ -98,7 +106,12 @@ def main():
 
     print(f"lancedb {lancedb.__version__} connecting to {args.namespace_url}")
     db = lancedb.connect_namespace(
-        "rest", {"uri": args.namespace_url}, storage_options=storage
+        "rest",
+        {
+            "uri": args.namespace_url,
+            "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+        },
+        storage_options=storage,
     )
 
     # 1. The catalog is browsable: the bucket is a namespace, and the table is
@@ -190,7 +203,10 @@ def main():
     #    declare-and-write - rather than a hang, a 404, or a half-made table.
     pushdown = lancedb.connect_namespace(
         "rest",
-        {"uri": args.namespace_url},
+        {
+            "uri": args.namespace_url,
+            "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+        },
         storage_options=storage,
         namespace_client_pushdown_operations=["CreateTable"],
     )

@@ -350,7 +350,7 @@ main() {
     info "  weed volume -mserver=localhost:9333   # Start Go volume server"
     info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
     if [ "$WORKER_INSTALLED" = true ]; then
-        info "  weed-worker --admin localhost:23646  # Start the Rust maintenance worker"
+        info "  weed-worker --admin localhost:12535  # Start the Rust maintenance worker"
     fi
 }
 

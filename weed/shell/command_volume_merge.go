@@ -120,7 +120,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		if !cleanupTarget {
 			return
 		}
-		if delErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, volumeId, targetServer, false, false); delErr != nil {
+		if delErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, volumeId, targetServer, false, false, false); delErr != nil {
 			glog.Warningf("failed to clean up temporary merge volume %d on %s: %v", volumeId, targetServer, delErr)
 		}
 	}()
@@ -192,7 +192,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, volumeId, targetServer, false, false); err != nil {
+	if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, volumeId, targetServer, false, false, false); err != nil {
 		return err
 	}
 
@@ -232,14 +232,14 @@ func startTailNeedleStream(grpcDialOption grpc.DialOption, volumeId needle.Volum
 	ch := make(chan *needle.Needle, 32)
 	stream := &tailNeedleStream{ch: ch}
 	go func() {
-		err := operation.TailVolumeFromSource(server, grpcDialOption, volumeId, 0, mergeIdleTimeoutSeconds, func(n *needle.Needle) error {
+		err := operation.TailVolumeFromSource(server, volumeId, 0, mergeIdleTimeoutSeconds, func(n *needle.Needle) error {
 			select {
 			case ch <- n:
 			case <-done:
 				return fmt.Errorf("merge cancelled")
 			}
 			return nil
-		})
+		}, grpcDialOption)
 		close(ch)
 		stream.setErr(err)
 	}()

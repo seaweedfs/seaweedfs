@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path"
@@ -267,7 +268,23 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	if !util.FileExists(indexBaseFileName+".ecx") && rebuildLocation.IdxDirectory != rebuildLocation.Directory {
 		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
 	}
-	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+	if ev, found := rebuildLocation.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+		// A mounted volume appends runtime deletes through ev.ecjFile, so the
+		// fold runs under its journal lock on the journal's own base, and the
+		// handle is repointed: otherwise RebuildEcxFile's unlink strands later
+		// appends on the detached inode.
+		indexBaseFileName = ev.EcIndexBaseFileName()
+		unlockJournal := ev.LockDeletionJournal()
+		err := erasure_coding.RebuildEcxFile(indexBaseFileName)
+		if err == nil {
+			err = ev.ReopenDeletionJournal()
+		}
+		unlockJournal()
+		if err != nil {
+			recordEcRebuild("failure", time.Since(start))
+			return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+		}
+	} else if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
 		recordEcRebuild("failure", time.Since(start))
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
@@ -315,6 +332,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
+	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(ctx, req.SourceDataNode); err != nil {
+			return nil, fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
 	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
@@ -372,7 +394,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
 		if location == nil {
-			return nil, fmt.Errorf("no space left")
+			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}
 	}
 
@@ -387,7 +409,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 	throttler := util.NewWriteThrottler(ioBytePerSecond)
 
-	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy ec data slices
 		for _, shardId := range req.ShardIds {
@@ -431,8 +453,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		if req.CopyEcjFile {
-			// copy ecj file
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil, throttler); err != nil {
+			// The journal is a *set* of ids: merge the source's into the
+			// local one as a union, never append it whole.
+			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
 			}
 		}
@@ -455,12 +478,67 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 		}
 		return nil
-	})
+	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
 		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// copyEcjAndMerge folds the source peer's .ecj into the local journal of vid
+// as a set union: only ids the local journal lacks are appended, so a
+// shard bounced between servers cannot grow it. The source journal streams
+// straight into memory — no staging file — and a source without one is not an
+// error. destDir is the receiving disk's data directory and destBase its index
+// base name.
+func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClient, collection string, vid uint32, destDir, destBase string, throttler *util.WriteThrottler) error {
+	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		VolumeId:                 vid,
+		Ext:                      ".ecj",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               math.MaxInt64,
+		Collection:               collection,
+		IsEcVolume:               true,
+		IgnoreSourceFileNotFound: true,
+	})
+	if err != nil {
+		return fmt.Errorf("volume %d: start copying .ecj: %w", vid, err)
+	}
+	ids, found, err := receiveEcjIds(stream, throttler)
+	if err != nil {
+		return fmt.Errorf("volume %d: copy .ecj: %w", vid, err)
+	}
+	if !found {
+		return nil
+	}
+	if _, err := vs.store.MergeEcJournal(needle.VolumeId(vid), destDir, destBase+".ecj", ids); err != nil {
+		return fmt.Errorf("volume %d: merge .ecj: %w", vid, err)
+	}
+	return nil
+}
+
+// receiveEcjIds decodes a CopyFile stream of an .ecj into its distinct ids.
+// found is false only when the source has no journal, which the source
+// signals with neither a modified time nor any bytes; an empty journal still
+// carries its modified time.
+func receiveEcjIds(stream volume_server_pb.VolumeServer_CopyFileClient, throttler *util.WriteThrottler) (ids map[types.NeedleId]struct{}, found bool, err error) {
+	decoder := erasure_coding.NewEcjIdDecoder()
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return nil, false, recvErr
+		}
+		if resp.ModifiedTsNs != 0 || len(resp.FileContent) > 0 {
+			found = true
+		}
+		decoder.Write(resp.FileContent)
+		throttler.MaybeSlowdown(int64(len(resp.FileContent)))
+	}
+	return decoder.Ids(), found, nil
 }
 
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed
@@ -510,6 +588,27 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 			}
 		}
 		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
+	}
+
+	if req.DeleteGenerationsOlderThan > 0 {
+		// Post-commit cleanup of a 2PC generation switch: the committed
+		// generation has been promoted to the canonical names, so only the
+		// staged <base>.*.v<N> files strictly older than the threshold are
+		// superseded and safe to remove. Versioned files are never mounted,
+		// so nothing needs to be unloaded first.
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			if err := erasure_coding.RemoveEcGenerationFiles(dataBase, req.DeleteGenerationsOlderThan); err != nil {
+				return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+			if dataBase != idxBase {
+				if err := erasure_coding.RemoveEcGenerationFiles(idxBase, req.DeleteGenerationsOlderThan); err != nil {
+					return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.IdxDirectory, err)
+				}
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
 	}
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
@@ -564,14 +663,37 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	// Delete the requested shard files unconditionally. Gating on a local .ecx
 	// (still used for index-file routing below) would leak an orphan shard left
 	// by a failed copy that reconciliation later mounts under a foreign index.
+	shardFileNames := make([]string, 0, len(shardIds))
 	for _, shardId := range shardIds {
-		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-		if util.FileExists(shardFileName) {
-			found = true
-			if err := removeFileIfExists(shardFileName); err != nil {
-				return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
+		shardFileNames = append(shardFileNames, dataBaseFilename+erasure_coding.ToExt(int(shardId)))
+	}
+	// The shard and every 2PC generation of it (<name>.v<N>) are removed:
+	// the shard must not live on this disk at all. Names match literally —
+	// a glob would let glob metacharacters in the collection part of bName
+	// leak into another volume's files.
+	entries, readErr := os.ReadDir(location.Directory)
+	switch {
+	case readErr == nil:
+		for _, entry := range entries {
+			for _, shardFileName := range shardFileNames {
+				name := filepath.Join(location.Directory, entry.Name())
+				if name != shardFileName && erasure_coding.EcFileGeneration(entry.Name(), filepath.Base(shardFileName)) < 0 {
+					continue
+				}
+				if util.FileExists(name) {
+					found = true
+					if err := removeFileIfExists(name); err != nil {
+						return fmt.Errorf("remove ec shard %s: %w", name, err)
+					}
+				}
 			}
 		}
+	case errors.Is(readErr, fs.ErrNotExist):
+		// No such directory means no shard files on this disk.
+	default:
+		// A listing failure must not fall back to canonical names only:
+		// staged .v<N> files would survive while the RPC reports success.
+		return fmt.Errorf("list %s for ec shards of %s: %w", location.Directory, bName, readErr)
 	}
 
 	if !found {
@@ -629,13 +751,13 @@ func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasE
 	dataBaseFilename := path.Join(location.Directory, bName)
 	if hasEcxFile {
 		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
-		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj", indexBaseFilename + erasure_coding.EcjCompactTmpExt} {
 			if err := removeFileIfExists(p); err != nil {
 				return err
 			}
 		}
 		if location.IdxDirectory != location.Directory {
-			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj", dataBaseFilename + erasure_coding.EcjCompactTmpExt} {
 				if err := removeFileIfExists(p); err != nil {
 					return err
 				}
@@ -699,11 +821,20 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
 	record(removeFileIfExists(indexBaseFileName + ".ecx"))
 	record(removeFileIfExists(indexBaseFileName + ".ecj"))
+	record(removeFileIfExists(indexBaseFileName + erasure_coding.EcjCompactTmpExt))
 	record(removeBitrotSidecars(indexBaseFileName))
 	if dataBaseFileName != indexBaseFileName {
 		record(removeFileIfExists(dataBaseFileName + ".ecx"))
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.EcjCompactTmpExt))
 		record(removeBitrotSidecars(dataBaseFileName))
+	}
+
+	// Generations staged by the 2PC switch are <base>.ecNN.v<N> plus the
+	// versioned .ecx/.ecj/.vif/.ecsum: a teardown of this disk leaves none.
+	record(erasure_coding.RemoveEcGenerationFiles(dataBaseFileName, 0))
+	if dataBaseFileName != indexBaseFileName {
+		record(erasure_coding.RemoveEcGenerationFiles(indexBaseFileName, 0))
 	}
 
 	// Canonical <base>.vif. A shard copy installs shards + .ecx before .vif, so an
@@ -1023,6 +1154,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return vs.adoptStagedVolume(req)
 	}
 
+	if _, loaded := vs.ecDecodesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+		return nil, status.Errorf(codes.Unavailable, "ec volume %d is already being decoded", req.VolumeId)
+	}
+	defer vs.ecDecodesInFlight.Delete(req.VolumeId)
+
 	// Collect all EC shards (NewEcVolume will load EC config from .vif into v.ECContext)
 	// Use MaxShardCount (32) to support custom EC ratios up to 32 total shards
 	tempShards := make([]string, erasure_coding.MaxShardCount)
@@ -1053,18 +1189,50 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		}
 	}
 
-	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
-	if !util.FileExists(indexBaseFileName + ".ecx") {
-		indexBaseFileName = dataBaseFileName
+	dataBaseFileName := v.DataBaseFileName()
+	// The fold and the index write must work on the same .ecj that runtime
+	// deletes append to through ecjFile — the volume's resolved index dir,
+	// which can differ from IndexBaseFileName when an .ecx copy exists in
+	// both the data and index directories.
+	indexBaseFileName := v.EcIndexBaseFileName()
+
+	// Resolve the offline-compaction location before taking the journal
+	// lock: FindEcVolume takes the ec-volume map lock, and acquiring it inside
+	// the journal lock inverts DestroyEcVolume's map->journal order — a decode
+	// holding the journal lock while waiting on the map deadlocks a destroy
+	// holding the map lock while waiting on the journal.
+	var volumeLocation *storage.DiskLocation
+	for _, location := range vs.store.Locations {
+		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
+			volumeLocation = location
+			break
+		}
+	}
+	if volumeLocation == nil {
+		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
 	}
 
 	// Merge .ecj deletions into .ecx so that HasLiveNeedles and FindDatFileSize
 	// see the full set of deleted needles. Without this, needles deleted after the
 	// last ecx rebuild would still appear live, causing the decoded .dat to include
 	// data that should be skipped and HasLiveNeedles to return a false positive.
+	//
+	// The journal lock is held across the fold: RebuildEcxFile unlinks .ecj,
+	// and a delete committed between its read and the unlink would land on the
+	// detached inode that ecjFile keeps open — synced, successful, and
+	// invisible to every path-based reader. ReopenDeletionJournal then points
+	// the handle back at a fresh journal, so deletes committed during the .dat
+	// rebuild stay durable and reach the index write below.
+	unlockJournal := v.LockDeletionJournal()
 	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		unlockJournal()
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
+	if err := v.ReopenDeletionJournal(); err != nil {
+		unlockJournal()
+		return nil, fmt.Errorf("reopen deletion journal %s: %v", indexBaseFileName, err)
+	}
+	unlockJournal()
 
 	// If the EC index contains no live entries, decoding should be a no-op:
 	// just allow the caller to purge EC shards and do not generate an empty normal volume.
@@ -1100,6 +1268,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, err
 	}
 
+	// Runtime deletes serialize on the volume's journal lock; holding it from
+	// the journal-consuming index write through the offline compaction keeps a
+	// committed delete from slipping past the rebuilt .idx.
+	defer v.LockDeletionJournal()()
+
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
@@ -1112,17 +1285,6 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		removeBitrotSidecars(indexBaseFileName)
 	}
 
-	var volumeLocation *storage.DiskLocation
-	for _, location := range vs.store.Locations {
-		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
-			volumeLocation = location
-			break
-		}
-	}
-	if volumeLocation == nil {
-		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
-	}
-
 	if err := vs.store.CompactVolumeFiles(
 		needle.VolumeId(req.VolumeId),
 		v.Collection,
@@ -1132,6 +1294,13 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		0,
 		vs.compactionBytePerSecond,
 	); err != nil {
+		// Benign only when the swap never started or was settled: a surviving
+		// .cpc marker means the commit was decided but the renames could not
+		// be reconciled, so .dat/.idx may be a mismatched pair — fail the
+		// decode and let the caller keep the shards.
+		if util.FileExists(dataBaseFileName + ".cpc") {
+			return nil, fmt.Errorf("CompactVolumeFiles %s: %w", dataBaseFileName, err)
+		}
 		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 

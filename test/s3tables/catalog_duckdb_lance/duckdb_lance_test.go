@@ -142,7 +142,7 @@ func (env *environment) start(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -156,7 +156,9 @@ func (env *environment) start(t *testing.T) {
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.iceberg=0")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -242,7 +244,13 @@ func (env *environment) tableBucketExists(t *testing.T, bucket string) bool {
 	t.Helper()
 
 	url := fmt.Sprintf("http://%s:%d/v1/namespace/%s/exists", env.bindIP, env.lancePort, bucket)
-	resp, err := http.Post(url, "application/json", strings.NewReader("{}"))
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build the namespace exists request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", env.accessKey+":"+env.secretKey)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ask the namespace whether %s exists: %v", bucket, err)
 	}

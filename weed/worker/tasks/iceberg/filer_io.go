@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -160,40 +163,122 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return state, nil
 }
 
-// loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
-// dataPath is the bucket-relative directory the table's files live in.
-func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) ([]byte, error) {
+func isFilerNotFound(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound
+}
+
+// resolveFilerPath returns the filer path that actually holds a referenced
+// file: the verbatim spelling first, then the percent-decoded one. Writers
+// may record a path with escaped segments while the S3 layer decoded the key
+// before storing the object.
+func resolveFilerPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (string, error) {
+	_, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	return fullPath, err
+}
+
+// lookupResolvedEntry returns the entry and filer path holding an
+// Iceberg-style reference under the verbatim-first rule.
+func lookupResolvedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, string, error) {
 	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: path.Dir(fullPath),
+		Name:      path.Base(fullPath),
+	})
+	if err == nil {
+		return resp.Entry, fullPath, nil
+	}
+	if !isFilerNotFound(err) {
+		return nil, "", err
+	}
+	if decoded, decErr := url.PathUnescape(icebergPath); decErr == nil && decoded != icebergPath {
+		return lookupResolvedEntry(ctx, client, bucketName, dataPath, decoded)
+	}
+	return nil, "", err
+}
+
+// addFilerPathSpellings records every filer path lookupResolvedEntry can
+// return for a reference: each successive decoding of the reference, with the
+// rest of the path left verbatim. An extra spelling only keeps a file; a
+// missing one can drop a referenced file.
+func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, icebergPath string) {
+	for spelling := icebergPath; ; {
+		filerPath, err := icebergFilerPath(bucketName, dataPath, spelling)
+		if err != nil {
+			return
+		}
+		set[filerPath] = struct{}{}
+		decoded, err := url.PathUnescape(spelling)
+		if err != nil || decoded == spelling {
+			return
+		}
+		spelling = decoded
+	}
+}
+
+// lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
+// path. dataPath is the bucket-relative directory the table's files live in.
+func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
+	entry, _, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	return entry, err
+}
+
+// loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
+func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) ([]byte, error) {
+	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, dataPath, icebergPath)
 	if err != nil {
 		return nil, err
 	}
-	dir, fileName := path.Dir(fullPath), path.Base(fullPath)
 
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      fileName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("lookup %s/%s: %w", dir, fileName, err)
-	}
-	if resp == nil || resp.Entry == nil {
-		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
-	}
-
-	if len(resp.Entry.Content) > 0 || len(resp.Entry.Chunks) == 0 {
-		return resp.Entry.Content, nil
+	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
+		return entry.Content, nil
 	}
 
 	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
-	reader := filer.NewFileReader(singleFilerClient{client: client}, resp.Entry)
+	reader := filer.NewFileReader(singleFilerClient{client: client}, entry)
 	if closer, ok := reader.(io.Closer); ok {
 		defer closer.Close()
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("read chunked file %s/%s: %w", dir, fileName, err)
+		return nil, fmt.Errorf("read chunked file %s: %w", icebergPath, err)
 	}
 	return data, nil
+}
+
+// parquetSchemaByIcebergPath reads a file's parquet schema from its footer,
+// so the file's body is never fetched: a chunked file's ReadAt pulls only the
+// chunks the footer spans.
+func parquetSchemaByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*parquet.Schema, error) {
+	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, dataPath, icebergPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var readerAt io.ReaderAt
+	size := int64(entry.GetAttributes().GetFileSize())
+	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
+		readerAt = bytes.NewReader(entry.Content)
+		size = int64(len(entry.Content))
+	} else {
+		initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
+		reader := filer.NewChunkStreamReader(singleFilerClient{client: client}, entry.Chunks)
+		defer reader.Close()
+		readerAt = reader
+		if size <= 0 {
+			if size, err = reader.Seek(0, io.SeekEnd); err != nil {
+				return nil, fmt.Errorf("size of %s: %w", icebergPath, err)
+			}
+		}
+	}
+
+	f, err := parquet.OpenFile(readerAt, size)
+	if err != nil {
+		return nil, fmt.Errorf("open parquet file %s: %w", icebergPath, err)
+	}
+	return f.Schema(), nil
 }
 
 // normalizeIcebergPath converts an Iceberg path (an S3 URL, an absolute filer

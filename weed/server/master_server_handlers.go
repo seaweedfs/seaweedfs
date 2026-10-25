@@ -190,6 +190,22 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	if !ms.Topo.RackExists(option.DataCenter, option.Rack) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("rack %v not found in topology", option.Rack),
+		})
+		return
+	}
+	if !ms.Topo.DataNodeExists(option.DataCenter, option.Rack, option.DataNode) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("data node %v not found in topology", option.DataNode),
+		})
+		return
+	}
+
+	// As in gRPC Assign: the periodic growth scan keeps this layout topped up
+	// to the writableVolumeCount clients ask for. 0 (not sent) is ignored.
+	vl.SetLastGrowCount(uint32(writableVolumeCount))
 
 	for time.Since(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize)
@@ -245,6 +261,16 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The last in-loop pick can predate the growth it triggered concluding:
+	// growth registers its volumes before clearing the pending flag, so pick
+	// once more before shedding.
+	if fid, count, dnList, _, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize); err == nil {
+		if dn := dnList.Head(); dn != nil {
+			ms.maybeAddJwtAuthorization(w, fid, true)
+			writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
+			return
+		}
+	}
 	// See Assign: initiator that timed out with growth still pending stays retryable.
 	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
 		w.Header().Set("Retry-After", "1")

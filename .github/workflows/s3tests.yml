@@ -25,8 +25,8 @@ on:
       - '.github/workflows/s3tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -34,7 +34,7 @@ permissions:
 jobs:
   basic-s3-tests:
     name: Basic S3 tests (KV store)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -44,6 +44,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -57,9 +58,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -289,6 +290,11 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_s3 \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_s3_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_bad_enc_kms \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \
@@ -311,6 +317,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \
@@ -380,7 +387,7 @@ jobs:
 
   versioning-tests:
     name: S3 Versioning & Object Lock tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -390,6 +397,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -403,9 +411,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Fix S3 tests bucket creation conflicts
         run: |
@@ -550,7 +558,7 @@ jobs:
 
   cors-tests:
     name: S3 CORS tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
@@ -560,6 +568,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -573,9 +582,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
@@ -675,7 +684,7 @@ jobs:
 
   copy-tests:
     name: SeaweedFS Custom S3 Copy tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
@@ -685,6 +694,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Run SeaweedFS Custom S3 Copy tests
@@ -777,7 +787,7 @@ jobs:
 
   sql-store-tests:
     name: Basic S3 tests (SQL store)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -787,6 +797,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Set up Python
@@ -800,9 +811,9 @@ jobs:
           cd s3-tests
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
-          pip install -r requirements.txt
-          pip install tox
-          pip install -e .
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
@@ -1149,6 +1160,11 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_s3 \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_s3_kms \
+          s3tests/functional/test_s3.py::test_put_obj_enc_conflict_bad_enc_kms \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \
@@ -1171,6 +1187,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \

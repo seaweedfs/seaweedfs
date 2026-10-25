@@ -641,7 +641,7 @@ func TestComputeStartFrom(t *testing.T) {
 	}{
 		{"empty marker", "", "", "", false},
 		{"empty marker with path", "", "dir", "", false},
-		{"root level file", "file1.txt", "", "file1.txt", true},
+		{"root level file", "file1.txt", "", "file1", true},
 		{"root level with subpath", "Mailboxes/5ac/file1", "", "Mailboxes", true},
 		{"matching subdir", "Mailboxes/5ac/file1", "Mailboxes", "5ac", true},
 		{"deeper subdir", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac", "ItemsData", true},
@@ -649,6 +649,12 @@ func TestComputeStartFrom(t *testing.T) {
 		{"unrelated directory", "other/path", "Mailboxes", "", false},
 		{"marker equals relativePath", "Mailboxes", "Mailboxes", "", false},
 		{"marker before directory", "aaa/file", "zzz", "", false},
+		{"dir prefix below slash", "d.x", "", "d", true},
+		{"dir prefix below slash nested", "a-b/file", "", "a", true},
+		{"dir prefix at marker end", "d-", "", "d", true},
+		{"no qualifying prefix", "zzz", "", "zzz", true},
+		{"leading below-slash byte", ".hidden", "", ".hidden", true},
+		{"leading below-slash byte nested", ".hidden/file", "", ".hidden", true},
 	}
 
 	for _, tt := range tests {
@@ -732,4 +738,20 @@ func TestVersionedListSkipsEchoedVersionsMarker(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"file-2"}, seen, "the echoed marker entry should not be returned")
+}
+
+// TestListObjectVersionsMaxKeysZero verifies that max-keys=0 returns an empty,
+// non-truncated page without listing the bucket, matching ListObjects.
+func TestListObjectVersionsMaxKeysZero(t *testing.T) {
+	s3a := &S3ApiServer{}
+	result, err := s3a.listObjectVersions("bucket", "prefix/", "key-marker", "version-marker", "/", 0)
+	assert.NoError(t, err)
+	assert.Empty(t, result.Entries)
+	assert.False(t, result.IsTruncated)
+	assert.Equal(t, 0, result.MaxKeys)
+	assert.Equal(t, "", result.NextKeyMarker)
+	assert.Equal(t, "", result.NextVersionIdMarker)
+	assert.Equal(t, "key-marker", result.KeyMarker)
+	assert.Equal(t, "version-marker", result.VersionIdMarker)
+	assert.Equal(t, "/", result.Delimiter)
 }

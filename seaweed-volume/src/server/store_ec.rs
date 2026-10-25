@@ -26,7 +26,7 @@
 //! cache write-back briefly reacquires the EcVolume's internal
 //! `RwLock` so we do not contend with the Store-level lock at all.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::sync::Arc;
@@ -38,12 +38,13 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use tokio::sync::Semaphore;
 use tonic::Request;
 
-use crate::pb::master_pb::{self, LookupEcVolumeRequest, seaweed_client::SeaweedClient};
+use crate::pb::master_pb::{self, LookupEcVolumeRequest};
 use crate::pb::volume_server_pb::{
-    CopyFileRequest, VolumeEcShardReadRequest, volume_server_client::VolumeServerClient,
+    CopyFileRequest, VolumeEcBlobDeleteRequest, VolumeEcShardReadRequest,
 };
-use crate::server::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint, parse_grpc_address};
-use crate::server::request_id::outgoing_request_id_interceptor;
+use crate::server::grpc_client::{
+    GrpcDialOptions, connect_channel, master_client, parse_grpc_address, volume_server_client,
+};
 use crate::server::volume_server::{VolumeServerState, to_http_address};
 use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
@@ -94,20 +95,41 @@ struct Snapshot {
     encode_ts_ns: i64,
 }
 
-/// Top-level entry point. Returns `Ok(None)` for "not found" (matches
-/// Go's `ReadEcShardNeedle`); errors propagate as `io::Error`.
+/// Why a distributed EC read has no needle to return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EcMiss {
+    NotFound,
+    /// Tombstoned in the local `.ecx`/`.ecj`, or reported deleted by a peer.
+    Deleted,
+    VolumeNotFound,
+}
+
+/// Top-level entry point. Returns `Ok(None)` for any miss — absent,
+/// deleted, or volume gone; errors propagate as `io::Error`.
 pub async fn read_ec_shard_needle_distributed(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
 ) -> io::Result<Option<Needle>> {
+    Ok(read_ec_shard_needle_or_miss(state, vid, needle_id)
+        .await?
+        .ok())
+}
+
+/// Like `read_ec_shard_needle_distributed`, but says why there is no needle,
+/// as Go's `ReadEcShardNeedle` tells `ErrorDeleted` from not-found.
+pub async fn read_ec_shard_needle_or_miss(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) -> io::Result<Result<Needle, EcMiss>> {
     // Phase A — under the Store read lock, locate the needle, compute
     // intervals, and read any locally-mounted shard intervals. We must
     // not `.await` while holding this guard (std::sync::RwLockReadGuard
     // is !Send).
     let mut snapshot = match snapshot_under_lock(state, vid, needle_id)? {
-        Some(s) => s,
-        None => return Ok(None),
+        Ok(s) => s,
+        Err(miss) => return Ok(Err(miss)),
     };
 
     // Phase B — refresh the shard_locations cache from the master if
@@ -209,17 +231,11 @@ pub async fn read_ec_shard_needle_distributed(
         .collect()
         .await;
 
-    let mut assembled: Vec<Vec<u8>> = Vec::with_capacity(fetched.len());
-    for res in fetched {
-        let (buf, is_deleted) = res?;
-        // A peer reports the needle deleted (a cross-server window where the
-        // local index still shows it live): treat as not-found rather than
-        // serving zeros, mirroring Go's ErrorDeleted.
-        if is_deleted {
-            return Ok(None);
-        }
-        assembled.push(buf);
-    }
+    // A peer reports the needle deleted (a cross-server window where the
+    // local index still shows it live): answer deleted rather than serving zeros.
+    let Some(assembled) = gather_intervals(fetched)? else {
+        return Ok(Err(EcMiss::Deleted));
+    };
 
     // Phase D — assemble and parse the Needle. Mirrors the tail of
     // `EcVolume::read_ec_shard_needle`.
@@ -251,7 +267,271 @@ pub async fn read_ec_shard_needle_distributed(
         snapshot.version,
     )
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)))?;
-    Ok(Some(n))
+    Ok(Ok(n))
+}
+
+/// `None` when any holder reported the needle deleted. That outranks another
+/// interval's error: deletes are never invented, so the needle is gone either way.
+fn gather_intervals(fetched: Vec<io::Result<(Vec<u8>, bool)>>) -> io::Result<Option<Vec<Vec<u8>>>> {
+    if fetched.iter().any(|r| matches!(r, Ok((_, true)))) {
+        return Ok(None);
+    }
+    fetched
+        .into_iter()
+        .map(|r| r.map(|(buf, _)| buf))
+        .collect::<io::Result<_>>()
+        .map(Some)
+}
+
+/// What one EC delete RPC carries — `VolumeEcBlobDeleteRequest` minus tonic.
+struct EcDeleteTarget<'a> {
+    vid: VolumeId,
+    collection: &'a str,
+    version: Version,
+    needle_id: NeedleId,
+}
+
+/// `Store.doDeleteNeedleFromAtLeastOneRemoteEcShards` in Go: journal the
+/// tombstone on one holder of the needle's primary data shard, falling back
+/// to any other shard holder when the primary has none. Exactly one node
+/// journals — replicas of a shard hold identical .ecx copies, so journaling
+/// on more than one would double the reported delete count.
+///
+/// `NotFound` means the volume or needle is gone; other errors mean every
+/// reachable holder failed or no shard has a holder at all.
+pub async fn delete_ec_shard_needle_distributed(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) -> io::Result<()> {
+    let (
+        primary_shard_id,
+        collection,
+        version,
+        total_shards,
+        local_shards,
+        data_shards,
+        encode_ts_ns,
+        refreshed_at,
+        cached_locations,
+    ) = {
+        let store = state.store.read().unwrap();
+        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("ec volume {} not mounted", vid.0),
+            )
+        })?;
+        let (_, _, intervals) = ecv.locate_needle(needle_id)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("needle {} not in ec volume {}", needle_id, vid.0),
+            )
+        })?;
+        let (shard_id, _) = intervals
+            .first()
+            .map(|i| ecv.interval_to_shard_id_and_offset(i))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no intervals for needle"))?;
+        let (cached_locations, refreshed_at) = ecv.shard_locations_snapshot();
+        (
+            shard_id,
+            ecv.collection.clone(),
+            ecv.version,
+            ecv.data_shards + ecv.parity_shards,
+            local_shard_ids(ecv),
+            ecv.data_shards as usize,
+            ecv.encode_ts_ns,
+            refreshed_at,
+            cached_locations,
+        )
+    };
+    let target = EcDeleteTarget {
+        vid,
+        collection: &collection,
+        version,
+        needle_id,
+    };
+
+    // Holder addresses come from the same staleness-gated cache as the read
+    // path: a master LookupEcVolume only when due, merged on a complete reply.
+    let mut locations = cached_locations;
+    if claim_shard_locations_refresh(
+        state,
+        vid,
+        &locations,
+        refreshed_at,
+        data_shards,
+        total_shards as usize,
+    ) {
+        match cached_lookup_ec_shard_locations(state, vid).await {
+            Ok(fresh) => {
+                match write_back_shard_locations(state, vid, fresh, data_shards, encode_ts_ns) {
+                    Some(merged) => locations = merged,
+                    None => mark_shard_locations_stale(state, vid),
+                }
+            }
+            Err(_) => mark_shard_locations_stale(state, vid),
+        }
+    }
+
+    match delete_on_ec_shard_holders(state, &locations, &local_shards, primary_shard_id, &target)
+        .await
+    {
+        Ok(true) => return Ok(()),
+        Err(e) => return Err(e),
+        Ok(false) => {}
+    }
+
+    for shard_id in 0..total_shards {
+        let Ok(shard_id) = shard_id_try_from(shard_id) else {
+            continue;
+        };
+        if shard_id == primary_shard_id {
+            continue;
+        }
+        if let Ok(true) =
+            delete_on_ec_shard_holders(state, &locations, &local_shards, shard_id, &target).await
+        {
+            return Ok(());
+        }
+    }
+
+    Err(io::Error::other(format!(
+        "ec volume {}: no shard holder could journal the delete",
+        vid.0
+    )))
+}
+
+/// `doDeleteNeedleFromRemoteEcShardServers` in Go. `Ok(false)` is the
+/// shard-missing signal — no live holder anywhere — that triggers the
+/// caller's fallback walk over the remaining shards.
+async fn delete_on_ec_shard_holders(
+    state: &Arc<VolumeServerState>,
+    locations: &HashMap<ShardId, Vec<String>>,
+    local_shards: &HashSet<ShardId>,
+    shard_id: ShardId,
+    target: &EcDeleteTarget<'_>,
+) -> io::Result<bool> {
+    let addrs = locations.get(&shard_id);
+    if !local_shards.contains(&shard_id) && addrs.is_none_or(|a| a.is_empty()) {
+        return Ok(false);
+    }
+
+    let mut last_err = None;
+    if local_shards.contains(&shard_id) {
+        // A decode in its publishing tail must not miss this delete. The
+        // tail membership is verified again under the store write lock
+        // inside journal_delete_local — WouldBlock means the decode claimed
+        // it in the gap after this wait — so wait and retry.
+        loop {
+            crate::server::grpc_server::wait_ec_decode_tail(state, target.vid).await;
+            match journal_delete_local(state, target.vid, target.needle_id) {
+                Ok(()) => return Ok(true),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                // Nothing was committed — the volume unmounted or remounted
+                // without the needle — so it is safe to fall back to other
+                // shard holders, unlike an RPC failure which may have landed.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => {
+                    last_err = Some(e);
+                    break;
+                }
+            }
+        }
+    }
+    if let Some(addrs) = addrs {
+        let self_http = to_http_address(&state.self_url);
+        for addr in addrs {
+            // A stale self entry: the loopback RPC would journal on this same
+            // volume, which the local attempt above already covered.
+            if to_http_address(addr).as_ref() == self_http.as_ref() {
+                continue;
+            }
+            match delete_on_remote_ec_shard(state, addr, target).await {
+                Ok(()) => return Ok(true),
+                Err(e) => last_err = Some(e),
+            }
+        }
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(false),
+    }
+}
+
+/// `doDeleteNeedleFromRemoteEcShard` in Go — one `VolumeEcBlobDelete` RPC.
+async fn delete_on_remote_ec_shard(
+    state: &Arc<VolumeServerState>,
+    addr: &str,
+    target: &EcDeleteTarget<'_>,
+) -> io::Result<()> {
+    let grpc_addr =
+        parse_grpc_address(addr).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::unary(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("connect to {}: {}", addr, e)))?;
+    let mut client = volume_server_client(channel);
+    client
+        .volume_ec_blob_delete(Request::new(VolumeEcBlobDeleteRequest {
+            volume_id: target.vid.0,
+            collection: target.collection.to_string(),
+            file_key: target.needle_id.0,
+            version: target.version.0 as u32,
+        }))
+        .await
+        .map_err(|e| io::Error::other(format!("volume_ec_blob_delete on {}: {}", addr, e)))?;
+    Ok(())
+}
+
+/// Journals on the local volume — what the `VolumeEcBlobDelete` handler runs
+/// when this server is the shard holder. An absent needle is an error, not a
+/// no-op: `journal_delete` would accept it silently, but here it means the
+/// volume remounted as a different generation mid-delete and the tombstone
+/// should go to a replica that still has the needle.
+fn journal_delete_local(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) -> io::Result<()> {
+    let mut store = state.store.write().unwrap();
+    // Membership is read under the write lock: a decode can claim the
+    // publishing tail while this call waited for the decoder's read lock,
+    // so a check taken earlier would be stale by commit time.
+    if crate::server::grpc_server::ec_decode_tail_contains(state, vid) {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            format!("ec volume {} is in decode publishing tail", vid.0),
+        ));
+    }
+    let ecv = store.find_ec_volume_mut(vid).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("ec volume {} unmounted", vid.0),
+        )
+    })?;
+    match ecv.find_needle_from_ecx(needle_id)? {
+        None => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("needle {} not in local ecx", needle_id),
+            ));
+        }
+        Some((_, size)) if size.is_deleted() => return Ok(()),
+        Some(_) => {}
+    }
+    ecv.journal_delete(needle_id)
+}
+
+fn local_shard_ids(ecv: &crate::storage::erasure_coding::EcVolume) -> HashSet<ShardId> {
+    ecv.shards
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.as_ref().map(|_| i as ShardId))
+        .collect()
 }
 
 /// FULL EC scrub: verify every needle's bytes across local AND remote shards,
@@ -324,9 +604,9 @@ pub async fn scrub_ec_volume_distributed(
         // mounted volume's encode_ts_ns no longer matches, abort like a
         // mid-scan unmount rather than mixing generations.
         let encode_ts_ns = ecv.encode_ts_ns;
-        // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
-        let cached_locations = ecv.shard_locations.read().unwrap().clone();
-        let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+        // One read section, so the map and the refresh time it is aged against
+        // describe the same lookup.
+        let (cached_locations, cache_refreshed_at) = ecv.shard_locations_snapshot();
         let data_shards = ecv.data_shards as usize;
         let total_shards = (ecv.data_shards + ecv.parity_shards) as usize;
         (
@@ -428,7 +708,7 @@ pub async fn scrub_ec_volume_distributed(
                 );
             }
         };
-        ecv.shard_locations.read().unwrap().clone()
+        ecv.shard_locations_snapshot().0
     };
 
     // Walk the .ecx (private fd captured under the lock, no lock held) for the
@@ -632,11 +912,10 @@ fn snapshot_under_lock(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
-) -> io::Result<Option<Snapshot>> {
+) -> io::Result<Result<Snapshot, EcMiss>> {
     let store = state.store.read().unwrap();
-    let ecv = match store.find_ec_volume(vid) {
-        Some(v) => v,
-        None => return Ok(None),
+    let Some(ecv) = store.find_ec_volume(vid) else {
+        return Ok(Err(EcMiss::VolumeNotFound));
     };
 
     // Reuse EcVolume::locate_needle for offset/size resolution AND
@@ -644,11 +923,17 @@ fn snapshot_under_lock(
     // local-only read path uses, so we stay byte-identical on the
     // shard-size + interval boundaries. locate_needle applies the runtime
     // delete mask, which is correct for serving reads.
-    let (offset, size, intervals) = match ecv.locate_needle(needle_id)? {
-        Some(v) => v,
-        None => return Ok(None),
+    let Some((offset, size, intervals)) = ecv.locate_needle(needle_id)? else {
+        // locate_needle folds a tombstone into not-found.
+        let deleted =
+            matches!(ecv.find_needle_from_ecx(needle_id)?, Some((_, s)) if s.is_deleted());
+        return Ok(Err(if deleted {
+            EcMiss::Deleted
+        } else {
+            EcMiss::NotFound
+        }));
     };
-    build_snapshot(ecv, offset, size, &intervals).map(Some)
+    build_snapshot(ecv, offset, size, &intervals).map(Ok)
 }
 
 /// Like `snapshot_under_lock`, but locates intervals from the RAW .ecx
@@ -773,8 +1058,7 @@ fn build_snapshot(
     }
     let actual = get_actual_size(size, ecv.version);
     let interval_results = read_local_intervals(ecv, intervals);
-    let cached_locations = ecv.shard_locations.read().unwrap().clone();
-    let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+    let (cached_locations, cache_refreshed_at) = ecv.shard_locations_snapshot();
 
     Ok(Snapshot {
         data_shards: ecv.data_shards,
@@ -826,14 +1110,14 @@ fn needs_refresh(
 fn mark_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
     let store = state.store.read().unwrap();
     if let Some(ecv) = store.find_ec_volume(vid) {
-        *ecv.shard_locations_stale.lock().unwrap() = true;
+        ecv.mark_shard_locations_stale();
     }
 }
 
-/// Decide whether the cached map is due a master lookup and, when it is, consume
-/// its stale mark in the same critical section. A mark raised from here on
-/// belongs to the next refresh: the read that raised it has disproved the map
-/// this lookup is about to install.
+/// Decide whether the caller's snapshot is due a master lookup and, when it is,
+/// consume the cache's stale mark in the same critical section. A mark raised
+/// from here on belongs to the next refresh: the read that raised it has
+/// disproved the map this lookup is about to install.
 fn claim_shard_locations_refresh(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -846,44 +1130,31 @@ fn claim_shard_locations_refresh(
     let Some(ecv) = store.find_ec_volume(vid) else {
         return needs_refresh(locations, refreshed_at, false, data_shards, total_shards);
     };
-    let mut stale = ecv.shard_locations_stale.lock().unwrap();
-    let refresh = needs_refresh(locations, refreshed_at, *stale, data_shards, total_shards);
-    if refresh {
-        *stale = false;
-    }
-    refresh
+    ecv.claim_shard_locations_refresh(|stale| {
+        needs_refresh(locations, refreshed_at, stale, data_shards, total_shards)
+    })
 }
 
 async fn cached_lookup_ec_shard_locations(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
 ) -> io::Result<HashMap<ShardId, Vec<String>>> {
-    let master = {
-        let live = state.current_master_url.read().await.clone();
-        if !live.is_empty() {
-            live
-        } else {
-            state.master_url.clone()
-        }
-    };
+    let master = state.current_master().await;
     if master.is_empty() {
-        return Err(io::Error::other("no master configured for ec shard lookup"));
+        return Err(io::Error::other("no master leader known for ec shard lookup"));
     }
 
     let grpc_addr =
         parse_grpc_address(&master).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let channel = endpoint
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("master connect: {}", e)))?;
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::unary(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("master connect: {}", e)))?;
 
-    let mut client = SeaweedClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = master_client(channel);
 
     let resp = client
         .lookup_ec_volume(Request::new(LookupEcVolumeRequest { volume_id: vid.0 }))
@@ -1064,14 +1335,13 @@ async fn do_read_remote_ec_shard_interval(
     } = iv;
     let grpc_addr =
         parse_grpc_address(source).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let channel = endpoint
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("connect to {}: {}", source, e)))?;
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("connect to {}: {}", source, e)))?;
 
     // TODO(grpc-jwt): clusters with `jwt.signing.key` configured will
     // reject peer-to-peer VolumeEcShardRead calls until the Rust
@@ -1081,9 +1351,7 @@ async fn do_read_remote_ec_shard_interval(
     // here in isolation would split the credential plumbing across
     // call sites. Re-visit when outgoing JWT signing lands as a
     // server-wide helper.
-    let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = volume_server_client(channel);
 
     let req = VolumeEcShardReadRequest {
         volume_id: vid.0,
@@ -1471,16 +1739,14 @@ async fn fetch_ec_index_from_one_peer(
 ) -> io::Result<()> {
     let grpc_addr =
         parse_grpc_address(peer).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let channel = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("connect {}: {}", peer, e)))?;
-    let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("connect {}: {}", peer, e)))?;
+    let mut client = volume_server_client(channel);
 
     let copy_req = |ext: &str, ignore_not_found: bool| CopyFileRequest {
         volume_id: m.vid.0,
@@ -1500,7 +1766,7 @@ async fn fetch_ec_index_from_one_peer(
         .await
         .map_err(|e| io::Error::other(format!("copy .ecx: {}", e)))?
         .into_inner();
-    drain_copy_stream(stream, ecx_path, false).await?;
+    drain_copy_stream(stream, ecx_path).await?;
 
     let meta =
         fs::metadata(ecx_path).map_err(|e| io::Error::other(format!("stat copied .ecx: {}", e)))?;
@@ -1513,15 +1779,30 @@ async fn fetch_ec_index_from_one_peer(
         )));
     }
 
-    // .ecj is the source peer's deletion journal (appended); .vif carries EC
-    // params. Both are best-effort: a missing .ecj is recreated at mount and a
-    // missing .vif falls back to default EC parameters. A failed .ecj append
-    // leaves a partial file, so drop it.
+    // .ecj is the source peer's deletion journal; .vif carries EC params. Both
+    // are best-effort: a missing .ecj is recreated at mount and a missing .vif
+    // falls back to default EC parameters. The journal is a *set*: merge the
+    // peer's ids into any local ones as a union instead of appending, so
+    // a volume bounced between servers cannot double its journal. The merge
+    // only appends whole records, so a failure leaves nothing to clean up.
     match client.copy_file(copy_req(".ecj", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), ecj_path, true).await {
+            let mut stream = resp.into_inner();
+            let merged = match crate::server::grpc_server::receive_ecj_ids(&mut stream).await {
+                Ok((ids, true)) => crate::server::grpc_server::merge_ecj_ids(
+                    state,
+                    m.vid,
+                    m.data_dir.clone(),
+                    ecj_path.to_string(),
+                    ids,
+                )
+                .await
+                .map(|_| ()),
+                Ok((_, false)) => Ok(()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = merged {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e);
-                let _ = fs::remove_file(ecj_path);
             }
         }
         Err(e) => tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e),
@@ -1529,7 +1810,7 @@ async fn fetch_ec_index_from_one_peer(
 
     match client.copy_file(copy_req(".vif", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path, false).await {
+            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path).await {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e);
             }
         }
@@ -1539,22 +1820,14 @@ async fn fetch_ec_index_from_one_peer(
     Ok(())
 }
 
-/// Drain a CopyFile stream into a local file, appending or truncating.
+/// Drain a CopyFile stream into a local file, truncating it first.
 async fn drain_copy_stream(
     mut stream: tonic::Streaming<crate::pb::volume_server_pb::CopyFileResponse>,
     dest_path: &str,
-    append: bool,
 ) -> io::Result<()> {
     use std::io::Write;
-    let mut file = if append {
-        fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dest_path)
-    } else {
-        fs::File::create(dest_path)
-    }
-    .map_err(|e| io::Error::other(format!("create {}: {}", dest_path, e)))?;
+    let mut file = fs::File::create(dest_path)
+        .map_err(|e| io::Error::other(format!("create {}: {}", dest_path, e)))?;
     while let Some(chunk) = stream
         .message()
         .await
@@ -1569,6 +1842,21 @@ async fn drain_copy_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gather_intervals_puts_a_reported_deletion_ahead_of_errors() {
+        let failed = || Err(io::Error::other("shard unreachable"));
+        assert!(
+            gather_intervals(vec![failed(), Ok((Vec::new(), true))])
+                .unwrap()
+                .is_none()
+        );
+        assert!(gather_intervals(vec![failed(), Ok((vec![1], false))]).is_err());
+        assert_eq!(
+            gather_intervals(vec![Ok((vec![1], false)), Ok((vec![2], false))]).unwrap(),
+            Some(vec![vec![1], vec![2]])
+        );
+    }
 
     fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {
         (0..count)

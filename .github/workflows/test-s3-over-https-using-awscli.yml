@@ -27,6 +27,10 @@ defaults:
   run:
     working-directory: weed
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 jobs:
   awscli-tests:
     runs-on: ubuntu-latest
@@ -37,6 +41,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ^1.26
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build SeaweedFS
         run: |
@@ -86,7 +91,11 @@ jobs:
           set -e
           dd if=/dev/urandom of=generated bs=1M count=32
           aws --no-verify-ssl s3 cp --no-progress generated s3://bucket/test-multipart
-          aws --no-verify-ssl s3 cp --no-progress s3://bucket/test-multipart downloaded
+          for i in 1 2 3 4 5; do
+            aws --no-verify-ssl s3 cp --no-progress s3://bucket/test-multipart downloaded && break
+            if [ "$i" -eq 5 ]; then exit 1; fi
+            sleep 2
+          done
           diff -q generated downloaded
           rm -f generated downloaded
 

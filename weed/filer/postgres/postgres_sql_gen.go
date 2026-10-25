@@ -75,14 +75,22 @@ func (gen *SqlGenPostgres) nameExpr() string {
 	return "name"
 }
 
+// GetSqlScanPage uses a row-value comparison, one primary-key range seek on
+// PostgreSQL. The name keeps the column's own collation (COLLATE "C" would
+// sort every page); the scan promises no lexical order.
+func (gen *SqlGenPostgres) GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{}) {
+	return fmt.Sprintf(`SELECT dirhash, name, directory, meta FROM "%s" WHERE (dirhash, name) > ($1, $2) ORDER BY dirhash ASC, name ASC LIMIT $3`, tableName),
+		[]interface{}{dirhash, name, limit}
+}
+
 func (gen *SqlGenPostgres) GetSqlListExclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {

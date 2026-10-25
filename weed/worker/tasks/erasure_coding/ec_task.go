@@ -21,6 +21,7 @@ import (
 	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
@@ -36,6 +37,9 @@ type ErasureCodingTask struct {
 	workDir        string
 	progress       float64
 	grpcDialOption grpc.DialOption
+	// workerAddress is weed worker -address (host:port). Not a volume URL;
+	// late-bind matches replica hostnames against HostKey(workerAddress).
+	workerAddress string
 
 	// EC parameters
 	dataShards       int32
@@ -51,6 +55,10 @@ type ErasureCodingTask struct {
 	// pre-distribute sweep. deleteOriginalVolume skips these so it does not
 	// re-delete and remove the now-EC .vif those servers share.
 	emptyReplicasDeleted map[string]bool
+
+	// expireAtSec is the source volume's TTL expiry read with the file copy;
+	// it goes into the .vif so the EC volume honors the collection's TTL.
+	expireAtSec uint64
 
 	// encodedBlockSize is the shard block layout WriteEcFiles actually encoded
 	// with, read back off the EC context. Every holder must report serving the
@@ -173,11 +181,9 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("EC preflight failed for volume %d: %w", t.volumeID, err)
 	}
 
-	// Step 1: Mark all replicas readonly, then reconcile them and select the most
-	// complete replica as the encode source. Encoding a stale replica and then
-	// deleting the originals would silently lose entries that exist only on another
-	// replica; SyncAndSelectBestReplica builds the union onto the best replica first
-	// (mirrors the shell ec.encode best-replica selection).
+	// Step 1: Mark all replicas readonly, then compare live .idx NeedleId
+	// sets. A mismatch or idx read error aborts encode and does not build a union.
+	// The encode source is late-bound only when the sets match.
 	t.ReportProgressWithStage(10.0, "Marking volume readonly")
 	t.GetLogger().Info("Marking volume readonly")
 	if err := t.markReplicasReadonly(ctx); err != nil {
@@ -383,27 +389,46 @@ func (t *ErasureCodingTask) markReplicasReadonly(ctx context.Context) error {
 	return nil
 }
 
-// syncAndSelectSourceReplica reconciles the volume's replicas (building the union
-// of all live entries onto the most complete one) and switches the encode source
-// to that replica, so a stale replica is never the basis of the encode.
+// syncAndSelectSourceReplica compares live .idx sets after every replica is
+// readonly. Matching sets late-bind the encode source; a mismatch or idx RPC
+// error aborts without unioning replicas.
 func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 	locs := t.replicaLocations()
-	if len(locs) <= 1 {
-		return nil // single replica: nothing to reconcile
+	workerAddr := strings.TrimSpace(t.workerAddress)
+	if workerAddr == "" {
+		workerAddr, _ = os.Hostname()
 	}
+	prefer := lateBindSourceToWorkerHost(t.server, workerAddr, locs)
 	var buf bytes.Buffer
-	best, err := volume_replica.SyncAndSelectBestReplica(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, "", &buf)
+	best, err := volume_replica.SelectSourceIfIndexesMatch(t.grpcDialOption, needle.VolumeId(t.volumeID), t.collection, locs, prefer, &buf)
 	if out := strings.TrimSpace(buf.String()); out != "" {
-		glog.Infof("EC encode replica sync for volume %d:\n%s", t.volumeID, out)
+		glog.Infof("EC encode replica idx compare for volume %d:\n%s", t.volumeID, out)
 	}
 	if err != nil {
 		return err
 	}
 	if best.Url != "" && best.Url != t.server {
-		glog.Infof("EC encode: using best replica %s as source for volume %d (was %s)", best.Url, t.volumeID, t.server)
+		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", best.Url, t.volumeID, t.server)
 		t.server = best.Url
 	}
 	return nil
+}
+
+// lateBindSourceToWorkerHost returns the replica on the worker -address host
+// (any port), keeping current when no replica shares that host. Worker address
+// is not a volume URL. Safe to prefer after the idx gate: matching live sets
+// make every listed replica an equivalent source.
+func lateBindSourceToWorkerHost(current, workerAddress string, locs []wdclient.Location) string {
+	workerHost := util.HostKey(workerAddress)
+	if workerHost == "" {
+		return current
+	}
+	for _, l := range locs {
+		if util.HostKey(l.Url) == workerHost {
+			return l.Url
+		}
+	}
+	return current
 }
 
 // rollbackReadonly is a best-effort restore of every replica markReplicasReadonly
@@ -430,33 +455,60 @@ func (t *ErasureCodingTask) rollbackReadonly(_ context.Context) {
 	}
 }
 
+// ecCopyAttempts bounds how often the pinned file pair copy restarts after a
+// concurrent compaction bumps the source's CompactionRevision mid-copy.
+const ecCopyAttempts = 3
+
 // copyVolumeFilesToWorker copies .idx and .dat files from source server to local worker.
 // The .idx is copied first, then .dat. Both copies are capped to the sizes reported by
-// ReadVolumeFileStatus. If a write lands after .idx is copied, .dat may include extra
-// data not referenced by .idx (harmless). The reverse (idx referencing data past .dat)
-// is caught by verifyDatIdxConsistency in generateEcShardsLocally.
+// ReadVolumeFileStatus and pinned to its CompactionRevision so they come from the same
+// volume generation. A concurrent vacuum bumps that revision mid-copy, so a compaction
+// failure restarts the pair under a freshly read revision.
 func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir string) (map[string]string, error) {
 	localFiles := make(map[string]string)
 
-	fileStatus, err := t.readSourceVolumeFileStatus(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read source volume file status: %w", err)
+	var copyErr error
+	for attempt := 0; attempt < ecCopyAttempts; attempt++ {
+		fileStatus, err := t.readSourceVolumeFileStatus(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read source volume file status: %w", err)
+		}
+		t.expireAtSec = fileStatus.GetExpireAtSec()
+		if t.expireAtSec == 0 {
+			// Volume servers that predate the top-level field still carry the
+			// expiry in the nested .vif once SaveVolumeInfo has stamped it.
+			t.expireAtSec = fileStatus.GetVolumeInfo().GetExpireAtSec()
+		}
+
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":           t.volumeID,
+			"source":              t.server,
+			"working_dir":         workDir,
+			"compaction_revision": fileStatus.GetCompactionRevision(),
+			"dat_file_size_bytes": fileStatus.GetDatFileSize(),
+			"idx_file_size_bytes": fileStatus.GetIdxFileSize(),
+		}).Info("Starting volume file copy from source server")
+
+		if copyErr = t.copyVolumeFilePair(ctx, workDir, fileStatus, localFiles); copyErr == nil {
+			return localFiles, nil
+		}
+		if !isVolumeCompactedError(copyErr) || ctx.Err() != nil {
+			return nil, copyErr
+		}
+		glog.Warningf("volume %d on %s compacted during EC file copy, restarting with fresh file status: %v", t.volumeID, t.server, copyErr)
 	}
+	return nil, copyErr
+}
 
-	t.GetLogger().WithFields(map[string]interface{}{
-		"volume_id":           t.volumeID,
-		"source":              t.server,
-		"working_dir":         workDir,
-		"compaction_revision": fileStatus.GetCompactionRevision(),
-		"dat_file_size_bytes": fileStatus.GetDatFileSize(),
-		"idx_file_size_bytes": fileStatus.GetIdxFileSize(),
-	}).Info("Starting volume file copy from source server")
-
-	// Copy .idx file FIRST — if a write lands on the source after this copy,
-	// the .dat copy will include the new data but .idx won't reference it.
+// copyVolumeFilePair copies .idx first, then .dat, pinned to the compaction
+// revision in fileStatus. If a write lands after .idx is copied, .dat may
+// include extra data not referenced by .idx (harmless). The reverse (idx
+// referencing data past .dat) is caught by verifyDatIdxConsistency in
+// generateEcShardsLocally.
+func (t *ErasureCodingTask) copyVolumeFilePair(ctx context.Context, workDir string, fileStatus *volume_server_pb.ReadVolumeFileStatusResponse, localFiles map[string]string) error {
 	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
 	if err := t.copyFileFromSource(ctx, ".idx", idxFile, fileStatus.GetCompactionRevision(), fileStatus.GetIdxFileSize()); err != nil {
-		return nil, fmt.Errorf("failed to copy .idx file: %w", err)
+		return fmt.Errorf("failed to copy .idx file: %w", err)
 	}
 	localFiles["idx"] = idxFile
 
@@ -472,7 +524,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 	// Copy .dat file SECOND — guaranteed to have at least as much data as .idx references.
 	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
 	if err := t.copyFileFromSource(ctx, ".dat", datFile, fileStatus.GetCompactionRevision(), fileStatus.GetDatFileSize()); err != nil {
-		return nil, fmt.Errorf("failed to copy .dat file: %w", err)
+		return fmt.Errorf("failed to copy .dat file: %w", err)
 	}
 	localFiles["dat"] = datFile
 
@@ -485,7 +537,13 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 		}).Info("Volume data file copied successfully")
 	}
 
-	return localFiles, nil
+	return nil
+}
+
+// isVolumeCompactedError matches the failure CopyFile returns when the source
+// volume's CompactionRevision moved past the pinned one mid-copy.
+func isVolumeCompactedError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "is compacted")
 }
 
 func (t *ErasureCodingTask) readSourceVolumeFileStatus(ctx context.Context) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
@@ -679,6 +737,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	volumeInfo := &volume_server_pb.VolumeInfo{
 		Version:       uint32(needle.GetCurrentVersion()),
 		EcShardConfig: ecShardConfig,
+		ExpireAtSec:   t.expireAtSec,
 	}
 	// The decoder resolves the shard block layout from the encode-time .dat
 	// size; without it, decoding falls back to inferring the layout from the

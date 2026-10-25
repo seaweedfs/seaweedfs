@@ -47,6 +47,8 @@ func init() {
 	mf.metricsIntervalSec = aws.Int(0)
 	mf.raftResumeState = aws.Bool(false)
 	mf.maxParallelVacuumPerServer = aws.Int(1)
+	mf.vacuumIntervalSeconds = aws.Int(840)
+	mf.vacuumDeleteEmptyAfterSeconds = aws.Int(0)
 	mf.telemetryUrl = aws.String("https://telemetry.seaweedfs.com/api/collect")
 	mf.telemetryEnabled = aws.Bool(false)
 }

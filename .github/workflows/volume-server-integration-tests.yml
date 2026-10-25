@@ -21,8 +21,8 @@ on:
       - '.github/workflows/volume-server-integration-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/volume-server-integration-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -33,10 +33,44 @@ env:
   SHARD_COUNT: 3
 
 jobs:
+  build-weed:
+    name: Build SeaweedFS Binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Build SeaweedFS binary
+        run: |
+          cd weed
+          go build -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Package binary
+        run: tar cf weed-binary.tar weed/weed
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: weed-binary
+          if-no-files-found: error
+          retention-days: 1
+          path: weed-binary.tar
+
   volume-server-integration-tests:
     name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
+    needs: [build-weed]
     strategy:
       fail-fast: false
       matrix:
@@ -51,13 +85,18 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
-      - name: Build SeaweedFS binary
+      - name: Download binary
+        uses: actions/download-artifact@v7
+        with:
+          name: weed-binary
+
+      - name: Restore binary
         run: |
-          cd weed
-          go build -o weed .
-          chmod +x weed
-          ./weed version
+          tar xf weed-binary.tar
+          chmod +x weed/weed
+          ./weed/weed version
 
       # Dealing the listed tests out one by one keeps the shards even. Bucketing
       # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of

@@ -282,7 +282,7 @@ func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 // dashboard never shows an empty list.
 func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	masterMap := make(map[string]MasterNode)
-	raftCallSucceeded := false
+	raftReturnedEmpty := false
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -291,16 +291,19 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		if err != nil {
 			return err
 		}
-		raftCallSucceeded = true
+		raftReturnedEmpty = len(resp.ClusterServers) == 0
 		for _, server := range resp.ClusterServers {
-			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
-			// error, so pre-validate the raft address with net.SplitHostPort
-			// and skip malformed entries instead of taking the process down.
+			// Skip malformed raft addresses instead of letting an
+			// unconvertible value into masterMap.
 			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
 				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
 				continue
 			}
 			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			if httpAddress == "" {
+				glog.Warningf("skip master with invalid raft address %q", server.Address)
+				continue
+			}
 			masterMap[httpAddress] = MasterNode{
 				Address:  httpAddress,
 				IsLeader: server.IsLeader,
@@ -320,10 +323,11 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
 			// A successful empty raft response means raft is not initialized
 			// (standalone/non-raft cluster); the only master IS the leader.
-			// A failed RPC means connectivity issue; do not claim leadership.
+			// A failed RPC or a nonempty response whose entries were all
+			// rejected must not claim leadership.
 			masterMap[addr] = MasterNode{
 				Address:  addr,
-				IsLeader: raftCallSucceeded,
+				IsLeader: raftReturnedEmpty,
 			}
 		}
 	}

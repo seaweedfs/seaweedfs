@@ -21,8 +21,8 @@ on:
       - '.github/workflows/s3-proxy-signature-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/s3-proxy-signature-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ permissions:
 jobs:
   proxy-signature-tests:
     name: S3 Proxy Signature Verification Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -40,6 +40,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Configure Docker Hub mirror

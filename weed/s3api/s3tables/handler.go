@@ -57,11 +57,12 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region        string
-	accountID     string
-	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
-	trusted       bool // Trusted local tooling (shell/admin) bypasses authorization
-	iamAuthorizer IAMAuthorizer
+	region          string
+	accountID       string
+	defaultAllow    bool // Whether to allow access by default (for zero-config IAM)
+	trusted         bool // Trusted local tooling (shell/admin) bypasses authorization
+	iamAuthorizer   IAMAuthorizer
+	localAccountIDs func(string) bool
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
@@ -98,6 +99,13 @@ func (h *S3TablesHandler) SetTrusted(trusted bool) {
 	h.trusted = trusted
 }
 
+// SetLocalAccountChecker injects the predicate that recognizes account IDs of
+// configured local identities, so a stored owner that names one is never
+// re-anchored to an OIDC subject.
+func (h *S3TablesHandler) SetLocalAccountChecker(fn func(string) bool) {
+	h.localAccountIDs = fn
+}
+
 // FilerClient interface for filer operations
 type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
@@ -118,6 +126,10 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	glog.V(3).Infof("S3Tables: handling operation %s", operation)
+
+	// the status the handler answers decides how its error is logged (logRequestError)
+	sw := &statusRecorder{ResponseWriter: w}
+	w = sw
 
 	var err error
 	switch operation {
@@ -215,9 +227,50 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if err != nil {
-		glog.Errorf("S3Tables: error handling %s: %v", operation, err)
+		logRequestError(operation, sw.status, err)
 	}
 }
+
+// A refusal the handler answered with a 4xx (access denied, not authorized,
+// not found, already exists, not empty) is the API working as intended, not a
+// server fault; it is logged at V(1). A 5xx, or an error returned without any
+// status written, stays at ERROR.
+var (
+	logClientRefusal = func(format string, args ...interface{}) { glog.V(1).Infof(format, args...) }
+	logServerError   = glog.Errorf
+)
+
+func logRequestError(operation string, status int, err error) {
+	if status >= 400 && status < 500 {
+		logClientRefusal("S3Tables: %s refused (%d): %v", operation, status, err)
+		return
+	}
+	logServerError("S3Tables: error handling %s: %v", operation, err)
+}
+
+// statusRecorder remembers the first status written through it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.NewResponseController reach the underlying writer, so it
+// flushes (or reports ErrNotSupported) exactly as that writer does.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // Principal/authorization helpers
 
@@ -238,20 +291,12 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 			// Prefer stable claims from JWT/STS identities. Only "sub" is guaranteed durable per OIDC;
 			// preferred_username is ergonomic but can rotate and may orphan ownership data, while email
 			// is explicitly excluded to avoid storing PII in metadata.
-			claimsField := val.FieldByName("Claims")
-			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
-				for _, claimKey := range []string{"sub", "preferred_username"} {
-					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
-					if !claimVal.IsValid() {
-						continue
-					}
-					if claimVal.Kind() == reflect.Interface && !claimVal.IsNil() {
-						claimVal = claimVal.Elem()
-					}
-					if claimVal.Kind() == reflect.String {
-						if principal := normalizePrincipalID(claimVal.String()); principal != "" {
-							return principal
-						}
+			if claims := identityClaimsMap(val); claims != nil {
+				// aws:userid is the issuer-namespaced (sub, iss) hash; a bare
+				// sub or preferred_username collides across providers.
+				for _, claimKey := range []string{"aws:userid", "sub", "preferred_username"} {
+					if principal := normalizePrincipalID(claimString(claims, claimKey)); principal != "" {
+						return principal
 					}
 				}
 			}
@@ -289,6 +334,46 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 		}
 	}
 	return h.accountID
+}
+
+// identityClaimsMap extracts the Claims map from an identity value, using
+// reflection to avoid an import cycle with the s3api identity type.
+func identityClaimsMap(val reflect.Value) map[string]interface{} {
+	claimsField := val.FieldByName("Claims")
+	if !claimsField.IsValid() || claimsField.Kind() != reflect.Map || claimsField.IsNil() || claimsField.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	claims, ok := claimsField.Interface().(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return claims
+}
+
+func claimString(claims map[string]interface{}, key string) string {
+	v, ok := claims[key]
+	if !ok || v == nil {
+		return ""
+	}
+	str, _ := v.(string)
+	return str
+}
+
+// trustedIssuers returns the OIDC issuers the auth layer asserted into the
+// identity's claims; they re-anchor legacy owner checks in checkPermission.
+func (h *S3TablesHandler) trustedIssuers(r *http.Request) []string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw == nil {
+		return nil
+	}
+	val := reflect.ValueOf(identityRaw)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil
+	}
+	return strings.Fields(claimString(identityClaimsMap(val), "seaweed:oidc-issuers"))
 }
 
 // normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.
@@ -417,6 +502,70 @@ func (h *S3TablesHandler) generateS3BucketARN(bucketName string) string {
 func isAuthError(err error) bool {
 	var authErr *AuthError
 	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
+}
+
+// authorizeAbsentTarget reports whether the caller may learn the target
+// resolved to nothing, so a caller without a grant gets the same response a
+// denied existing target would give. The bucket named by the target still
+// applies whatever metadata and policy load; with nothing readable to
+// evaluate, only an identity-level grant on the operation, the admin, or a
+// default-allow deployment passes.
+func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient FilerClient, operation, bucketName, namespace, name, resourceARN string) bool {
+	principal := h.getAccountID(r)
+	if principal == "" {
+		return false
+	}
+
+	var bucketOwner, bucketPolicy string
+	var bucketTags map[string]string
+	if bucketName != "" {
+		bucketPath := GetTableBucketPath(bucketName)
+		_ = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			if data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata); err == nil {
+				var meta tableBucketMetadata
+				if json.Unmarshal(data, &meta) == nil {
+					bucketOwner = meta.OwnerAccountID
+				}
+			}
+			if policy, err := h.readPolicy(r, client, bucketPath); err == nil {
+				bucketPolicy = policy
+			}
+			bucketTags, _ = h.readTags(r.Context(), client, bucketPath)
+			return nil
+		})
+	}
+
+	bucketARN := h.generateTableBucketARN(bucketOwner, bucketName)
+	// Judge the target by the canonical ARN the surviving bucket resolves to:
+	// the request ARN's account and region are the caller's to choose and must
+	// not decide whether a policy Deny applies.
+	canonicalARN := resourceARN
+	if bucketOwner != "" {
+		if name != "" {
+			canonicalARN = h.generateTableARN(bucketOwner, bucketName, namespace+"/"+name)
+		} else {
+			canonicalARN = bucketARN
+		}
+	}
+	ctx := &PolicyContext{
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespace,
+		TableName:        name,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  getIdentityActions(r),
+		DefaultAllow:     h.defaultAllowFor(r),
+	}
+	if resourceARN != "" &&
+		matchesDenyStatement(operation, principal, bucketPolicy, canonicalARN, ctx) {
+		return false
+	}
+	if CheckTableOrBucketPermission(operation, principal, "", "", canonicalARN,
+		bucketOwner, bucketPolicy, bucketARN, ctx) {
+		return true
+	}
+	return bucketOwner == "" && checkPermission(operation, principal, "", "", resourceARN, ctx)
 }
 
 func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (map[string]string, error) {

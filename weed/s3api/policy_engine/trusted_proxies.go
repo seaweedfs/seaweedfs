@@ -42,6 +42,20 @@ func NewTrustedProxies(whiteList []string) *TrustedProxies {
 	return tp
 }
 
+// IsTrustedPeer reports whether the direct TCP peer of the request is in the
+// allowlist. Use it to decide whether forwarding headers a proxy may have
+// added (X-Forwarded-*, X-Real-*) can be honored for this request.
+func (tp *TrustedProxies) IsTrustedPeer(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host := strings.TrimSpace(r.RemoteAddr)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return tp.IsTrusted(host)
+}
+
 func (tp *TrustedProxies) IsTrusted(ipStr string) bool {
 	if tp == nil {
 		return false

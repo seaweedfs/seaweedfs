@@ -155,6 +155,28 @@ func TestWithClientStopsWaitingOnDeadline(t *testing.T) {
 	}
 }
 
+// TestMarkServingMaster verifies leader-change detection survives the
+// disconnected gap where currentMaster is cleared between reconnect attempts.
+func TestMarkServingMaster(t *testing.T) {
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "test-group", "test-client", "", "", "", pb.ServerDiscovery{})
+
+	if prev := mc.markServingMaster("master1:9333"); prev != "" {
+		t.Fatalf("first connect should not report a change, got %q", prev)
+	}
+	if prev := mc.markServingMaster("master1:9333"); prev != "" {
+		t.Fatalf("reconnect to same master should not report a change, got %q", prev)
+	}
+
+	// Simulate the gap between stream attempts.
+	mc.setCurrentMaster("")
+	if prev := mc.markServingMaster("master2:9333"); prev != "master1:9333" {
+		t.Fatalf("leader change across disconnect not detected, got %q", prev)
+	}
+	if got := mc.getCurrentMaster(); got != "master2:9333" {
+		t.Fatalf("current master = %q", got)
+	}
+}
+
 // TestWithClientStopsBackoffOnCancel verifies that a cancellation arriving while
 // the retry is backing off cuts the backoff short rather than sleeping it out.
 func TestWithClientStopsBackoffOnCancel(t *testing.T) {

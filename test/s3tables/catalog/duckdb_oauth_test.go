@@ -135,6 +135,8 @@ func (env *oauthTestEnv) start(t *testing.T) {
 	if env.s3ExternalURL != "" {
 		args = append(args, "-s3.externalUrl", env.s3ExternalURL)
 	}
+	args = append(args, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	args = append(args, "-s3.port.lance=0")
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, args...)
 	cmd.Dir = env.dataDir
@@ -349,6 +351,9 @@ SELECT 'DuckDB Iceberg OAuth secret created successfully' as result;
 	t.Logf("DuckDB output:\n%s", outputStr)
 
 	if err != nil {
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", err)
+		}
 		if strings.Contains(outputStr, "iceberg extension is not available") ||
 			strings.Contains(outputStr, "Failed to load") {
 			t.Skip("Skipping: Iceberg extension not available in DuckDB Docker image")
@@ -377,6 +382,9 @@ SELECT 'DuckDB Iceberg OAuth secret created successfully' as result;
 			t.Logf("DuckDB fallback output:\n%s", fallbackStr)
 
 			if fallbackErr != nil {
+				if testutil.IsIllegalInstruction(fallbackErr) {
+					t.Skipf("DuckDB image cannot run on this CPU: %v", fallbackErr)
+				}
 				if strings.Contains(fallbackStr, "NotFound_404") && strings.Contains(fallbackStr, "/v1/oauth/tokens") {
 					t.Fatal("OAuth token endpoint returned 404 - the fix is not working")
 				}

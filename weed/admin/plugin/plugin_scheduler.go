@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -28,12 +30,18 @@ const (
 	defaultScheduledMaxResults           int32 = 1000
 	defaultScheduledExecutionConcurrency       = 1
 	defaultScheduledPerWorkerConcurrency       = 1
-	maxScheduledExecutionConcurrency           = 128
-	defaultScheduledRetryBackoff               = 5 * time.Second
-	defaultClusterContextTimeout               = 10 * time.Second
-	defaultWaitingBacklogFloor                 = 8
-	defaultWaitingBacklogMultiplier            = 4
-	maxEstimatedRuntimeCap                     = 8 * time.Hour
+	// Hold a job on replica-host workers until their reservation load
+	// reaches this; 0 disables the pin and spills immediately.
+	defaultLocalQueuePin = 5
+	// Wait this long after a home worker disappears before stealing
+	// its queue; 0 steals immediately. Covers a reconnect blink.
+	defaultOrphanRehomeGrace         = 30 * time.Second
+	maxScheduledExecutionConcurrency = 128
+	defaultScheduledRetryBackoff     = 5 * time.Second
+	defaultClusterContextTimeout     = 10 * time.Second
+	defaultWaitingBacklogFloor       = 8
+	defaultWaitingBacklogMultiplier  = 4
+	maxEstimatedRuntimeCap           = 8 * time.Hour
 	// How long started jobs may drain past the run window close.
 	scheduledExecutionDrainGrace = 30 * time.Minute
 )
@@ -49,6 +57,12 @@ type schedulerPolicy struct {
 	PerWorkerConcurrency   int
 	RetryLimit             int
 	ExecutorReserveBackoff time.Duration
+	// LocalQueuePin is K: do not spill off replica-host workers while
+	// min(load(pref)) < K. Zero is the old immediate-spill path.
+	LocalQueuePin int
+	// OrphanRehomeGrace is how long a missing home's queue is held
+	// before steal-without-K. Zero steals as soon as the worker is gone.
+	OrphanRehomeGrace time.Duration
 }
 
 // laneSchedulerLoop is the main scheduling goroutine for a single lane.
@@ -466,6 +480,8 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		PerWorkerConcurrency:   int(adminRuntime.PerWorkerExecutionConcurrency),
 		RetryLimit:             int(adminRuntime.RetryLimit),
 		ExecutorReserveBackoff: 200 * time.Millisecond,
+		LocalQueuePin:          defaultLocalQueuePin,
+		OrphanRehomeGrace:      defaultOrphanRehomeGrace,
 	}
 
 	if policy.DetectionInterval < r.schedulerTick {
@@ -495,6 +511,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 
 	if policy.ExecutionTimeout < defaultScheduledExecutionTimeout {
 		policy.ExecutionTimeout = defaultScheduledExecutionTimeout
+	}
+	if policy.LocalQueuePin < 0 {
+		policy.LocalQueuePin = 0
 	}
 
 	return policy, true, nil
@@ -596,7 +615,7 @@ func deriveSchedulerAdminRuntime(
 	descriptor *plugin_pb.JobTypeDescriptor,
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
-		adminConfig := *cfg.AdminRuntime
+		adminConfig := proto.Clone(cfg.AdminRuntime).(*plugin_pb.AdminRuntimeConfig)
 		// Overlay descriptor defaults for any zero numeric fields. Persisted
 		// configs from older versions have no execution_timeout_seconds, and
 		// without this overlay the scheduler would fall back to the 90s
@@ -628,7 +647,7 @@ func deriveSchedulerAdminRuntime(
 				adminConfig.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
 			}
 		}
-		return &adminConfig
+		return adminConfig
 	}
 
 	if descriptor == nil || descriptor.AdminRuntimeDefaults == nil {
@@ -813,19 +832,22 @@ func (r *Plugin) dispatchScheduledProposals(
 	// whole dispatch lets manual shell operations interleave between jobs.
 	jobsRequireLock := LaneRequiresLock(JobTypeLane(jobType))
 
-	jobQueue := make(chan *plugin_pb.JobSpec, len(proposals))
+	jobs := make([]*plugin_pb.JobSpec, 0, len(proposals))
 	for index, proposal := range proposals {
-		job := buildScheduledJobSpec(jobType, proposal, index)
-		r.trackExecutionQueued(job)
 		select {
 		case <-r.shutdownCh:
-			close(jobQueue)
-			return 0, 0, 0
+			for _, job := range jobs {
+				r.cancelQueuedJob(job, errSchedulerShutdown)
+			}
+			return 0, 0, len(jobs)
 		default:
-			jobQueue <- job
 		}
+		job := buildScheduledJobSpec(jobType, proposal, index)
+		r.trackExecutionQueued(job)
+		jobs = append(jobs, job)
 	}
-	close(jobQueue)
+
+	queues := r.assignJobsToWorkerQueues(jobType, jobs, policy)
 
 	var wg sync.WaitGroup
 	var statsMu sync.Mutex
@@ -842,130 +864,110 @@ func (r *Plugin) dispatchScheduledProposals(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-
-		jobLoop:
-			for job := range jobQueue {
+			for {
 				select {
 				case <-r.shutdownCh:
 					return
 				default:
 				}
-
 				if ctx.Err() != nil {
-					r.cancelQueuedJob(job, ctx.Err())
-					statsMu.Lock()
-					canceledCount++
-					statsMu.Unlock()
+					return
+				}
+				if queues.isEmpty() {
+					return
+				}
+
+				item, targetID := r.takeQueuedJob(queues, jobType, policy)
+				if item == nil {
+					if queues.isEmpty() {
+						return
+					}
+					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+						return
+					}
+					continue
+				}
+				if ctx.Err() != nil {
+					queues.pushFront(item)
+					return
+				}
+
+				executor, release, reserveErr := r.reserveExecutorByID(jobType, policy, targetID)
+				if reserveErr != nil {
+					queues.pushFront(item)
+					if ctx.Err() != nil {
+						return
+					}
+					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+						return
+					}
 					continue
 				}
 
-				for {
-					select {
-					case <-r.shutdownCh:
-						return
-					default:
+				var releaseJobLock func()
+				if jobsRequireLock {
+					var lockErr error
+					releaseJobLock, lockErr = r.acquireAdminLock(fmt.Sprintf("plugin scheduler %s job %s", jobType, item.job.JobId))
+					if lockErr != nil {
+						release()
+						statsMu.Lock()
+						errorCount++
+						statsMu.Unlock()
+						r.appendActivity(JobActivity{
+							JobID:      item.job.JobId,
+							JobType:    item.job.JobType,
+							Source:     "admin_scheduler",
+							Message:    fmt.Sprintf("scheduled execution lock failed: %v", lockErr),
+							Stage:      "failed",
+							OccurredAt: timeToPtr(time.Now().UTC()),
+						})
+						continue
 					}
 					if ctx.Err() != nil {
-						r.cancelQueuedJob(job, ctx.Err())
+						releaseJobLock()
+						release()
+						queues.pushFront(item)
+						return
+					}
+				}
+
+				err := r.executeScheduledJobWithExecutor(ctx, executor, item.job, clusterContext, policy)
+				if releaseJobLock != nil {
+					releaseJobLock()
+				}
+				release()
+				if errors.Is(err, errExecutorAtCapacity) {
+					queues.pushFront(item)
+					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+						return
+					}
+					continue
+				}
+				if err != nil {
+					if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+						r.cancelQueuedJob(item.job, err)
 						statsMu.Lock()
 						canceledCount++
 						statsMu.Unlock()
-						continue jobLoop
-					}
-
-					executor, release, reserveErr := r.reserveScheduledExecutor(ctx, jobType, policy)
-					if reserveErr != nil {
-						if ctx.Err() != nil {
-							r.cancelQueuedJob(job, ctx.Err())
-							statsMu.Lock()
-							canceledCount++
-							statsMu.Unlock()
-							continue jobLoop
-						}
-						statsMu.Lock()
-						errorCount++
-						statsMu.Unlock()
-						r.appendActivity(JobActivity{
-							JobType:    jobType,
-							Source:     "admin_scheduler",
-							Message:    fmt.Sprintf("scheduled execution reservation failed: %v", reserveErr),
-							Stage:      "failed",
-							OccurredAt: timeToPtr(time.Now().UTC()),
-						})
-						break
-					}
-
-					var releaseJobLock func()
-					if jobsRequireLock {
-						var lockErr error
-						releaseJobLock, lockErr = r.acquireAdminLock(fmt.Sprintf("plugin scheduler %s job %s", jobType, job.JobId))
-						if lockErr != nil {
-							release()
-							statsMu.Lock()
-							errorCount++
-							statsMu.Unlock()
-							r.appendActivity(JobActivity{
-								JobID:      job.JobId,
-								JobType:    job.JobType,
-								Source:     "admin_scheduler",
-								Message:    fmt.Sprintf("scheduled execution lock failed: %v", lockErr),
-								Stage:      "failed",
-								OccurredAt: timeToPtr(time.Now().UTC()),
-							})
-							break
-						}
-						// The lock may have been held by an operator for a
-						// while; re-check the execution window.
-						if ctx.Err() != nil {
-							releaseJobLock()
-							release()
-							r.cancelQueuedJob(job, ctx.Err())
-							statsMu.Lock()
-							canceledCount++
-							statsMu.Unlock()
-							continue jobLoop
-						}
-					}
-
-					err := r.executeScheduledJobWithExecutor(ctx, executor, job, clusterContext, policy)
-					if releaseJobLock != nil {
-						releaseJobLock()
-					}
-					release()
-					if errors.Is(err, errExecutorAtCapacity) {
-						r.trackExecutionQueued(job)
-						if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
-							return
-						}
 						continue
 					}
-					if err != nil {
-						if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-							r.cancelQueuedJob(job, err)
-							statsMu.Lock()
-							canceledCount++
-							statsMu.Unlock()
-							continue jobLoop
-						}
-						statsMu.Lock()
-						errorCount++
-						statsMu.Unlock()
-						r.appendActivity(JobActivity{
-							JobID:      job.JobId,
-							JobType:    job.JobType,
-							Source:     "admin_scheduler",
-							Message:    fmt.Sprintf("scheduled execution failed: %v", err),
-							Stage:      "failed",
-							OccurredAt: timeToPtr(time.Now().UTC()),
-						})
-						break
-					}
-
 					statsMu.Lock()
-					successCount++
+					errorCount++
 					statsMu.Unlock()
-					break
+					r.appendActivity(JobActivity{
+						JobID:      item.job.JobId,
+						JobType:    item.job.JobType,
+						Source:     "admin_scheduler",
+						Message:    fmt.Sprintf("scheduled execution failed: %v", err),
+						Stage:      "failed",
+						OccurredAt: timeToPtr(time.Now().UTC()),
+					})
+					continue
 				}
+
+				statsMu.Lock()
+				successCount++
+				statsMu.Unlock()
 			}
 		}()
 	}
@@ -976,8 +978,8 @@ func (r *Plugin) dispatchScheduledProposals(
 	if drainErr == nil {
 		drainErr = errSchedulerShutdown
 	}
-	for job := range jobQueue {
-		r.cancelQueuedJob(job, drainErr)
+	for _, item := range queues.drain() {
+		r.cancelQueuedJob(item.job, drainErr)
 		canceledCount++
 	}
 
@@ -988,6 +990,7 @@ func (r *Plugin) reserveScheduledExecutor(
 	ctx context.Context,
 	jobType string,
 	policy schedulerPolicy,
+	preferredHosts []string,
 ) (*WorkerSession, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1015,7 +1018,7 @@ func (r *Plugin) reserveScheduledExecutor(
 			return nil, nil, fmt.Errorf("timed out waiting for executor capacity for %s", jobType)
 		}
 
-		executors, err := r.registry.ListExecutors(jobType)
+		executors, err := r.registry.ListExecutors(jobType, preferredHosts...)
 		if err != nil {
 			if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 				if ctx.Err() != nil {
@@ -1026,11 +1029,19 @@ func (r *Plugin) reserveScheduledExecutor(
 			continue
 		}
 
-		for _, executor := range executors {
-			release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
-			if !ok {
-				continue
+		pref, rest := partitionByPreferredHost(executors, preferredHosts)
+		lane := JobTypeLane(jobType)
+		loadOf := func(e *WorkerSession) int { return r.executorReservationLoad(e, lane) }
+
+		if len(pref) > 0 {
+			sortExecutorsByLoad(pref, loadOf)
+			if executor, release, ok := r.tryReserveFirst(pref, jobType, policy); ok {
+				return executor, release, nil
 			}
+		}
+
+		sortExecutorsByLoad(rest, loadOf)
+		if executor, release, ok := r.tryReserveFirst(rest, jobType, policy); ok {
 			return executor, release, nil
 		}
 
@@ -1049,6 +1060,75 @@ func (r *Plugin) tryReserveExecutorCapacity(
 	policy schedulerPolicy,
 ) (func(), bool) {
 	return r.tryReserveExecutorCapacityForLane(executor, jobType, policy, JobTypeLane(jobType))
+}
+
+func (r *Plugin) tryReserveFirst(executors []*WorkerSession, jobType string, policy schedulerPolicy) (*WorkerSession, func(), bool) {
+	for _, executor := range executors {
+		release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+		if ok {
+			return executor, release, true
+		}
+	}
+	return nil, nil, false
+}
+
+func (r *Plugin) reserveExecutorByID(jobType string, policy schedulerPolicy, workerID string) (*WorkerSession, func(), error) {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return nil, nil, fmt.Errorf("executor id is empty")
+	}
+	executors, err := r.registry.ListExecutors(jobType)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, executor := range executors {
+		if executor == nil || executor.WorkerID != workerID {
+			continue
+		}
+		release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+		if !ok {
+			return nil, nil, errExecutorAtCapacity
+		}
+		return executor, release, nil
+	}
+	return nil, nil, fmt.Errorf("executor %s is not available for %s", workerID, jobType)
+}
+
+func (r *Plugin) executorReservationLoad(executor *WorkerSession, lane SchedulerLane) int {
+	if executor == nil {
+		return 0
+	}
+	load := 0
+	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsUsed > 0 {
+		load = int(executor.Heartbeat.ExecutionSlotsUsed)
+	}
+	workerID := strings.TrimSpace(executor.WorkerID)
+	if ls := r.lanes[lane]; ls != nil {
+		ls.execMu.Lock()
+		load += ls.execRes[workerID]
+		ls.execMu.Unlock()
+		return load
+	}
+	r.schedulerExecMu.Lock()
+	load += r.schedulerExecReservations[workerID]
+	r.schedulerExecMu.Unlock()
+	return load
+}
+
+func sortExecutorsByLoad(executors []*WorkerSession, load func(*WorkerSession) int) {
+	sort.SliceStable(executors, func(i, j int) bool {
+		if executors[i] == nil {
+			return false
+		}
+		if executors[j] == nil {
+			return true
+		}
+		li, lj := load(executors[i]), load(executors[j])
+		if li != lj {
+			return li < lj
+		}
+		return executors[i].WorkerID < executors[j].WorkerID
+	})
 }
 
 // tryReserveExecutorCapacityForLane reserves an execution slot on the
@@ -1577,6 +1657,8 @@ func (r *Plugin) DispatchProposals(
 			ExecutionTimeout:       defaultScheduledExecutionTimeout,
 			RetryBackoff:           defaultScheduledRetryBackoff,
 			ExecutorReserveBackoff: 200 * time.Millisecond,
+			LocalQueuePin:          defaultLocalQueuePin,
+			OrphanRehomeGrace:      defaultOrphanRehomeGrace,
 		}
 	}
 

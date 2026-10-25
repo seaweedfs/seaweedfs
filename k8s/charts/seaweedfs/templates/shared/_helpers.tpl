@@ -76,6 +76,43 @@ Inject extra environment vars in the format key:value, if populated
 {{- end }}
 {{- end -}}
 
+{{/*
+Writable temporary directory for containers using a read-only root filesystem.
+Input: list of the root context, the component container security context, the
+rendered extraVolumeMounts and extraVolumes, and whether the pod has secondary
+chart-managed containers that mount seaweedfs-tmp. A user-supplied /tmp mount
+only covers the main container, so the volume is still emitted for secondaries;
+a user-supplied seaweedfs-tmp volume is reused rather than duplicated.
+*/}}
+{{- define "seaweedfs.tmpDirCovered" -}}
+{{- regexMatch `(?m)^\s*-?\s*mountPath:\s*['"]?/tmp/?['"]?\s*(#.*)?$` (index . 2) -}}
+{{- end -}}
+
+{{- define "seaweedfs.tmpDirVolume" -}}
+{{- $root := index . 0 -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (or (index . 4) (ne (include "seaweedfs.tmpDirCovered" .) "true"))
+  (not (regexMatch `(?m)^\s*-?\s*name:\s*['"]?seaweedfs-tmp['"]?\s*(#.*)?$` (index . 3))) }}
+- name: seaweedfs-tmp
+  {{- with $root.Values.global.seaweedfs.tmpDir.sizeLimit }}
+  emptyDir:
+    sizeLimit: {{ . | quote }}
+  {{- else }}
+  emptyDir: {}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "seaweedfs.tmpDirVolumeMount" -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (ne (include "seaweedfs.tmpDirCovered" .) "true") }}
+- name: seaweedfs-tmp
+  mountPath: /tmp
+{{- end }}
+{{- end -}}
+
 {{/* Whether the mysql filer store is selected; a flag the chart cannot read counts as selected. */}}
 {{- define "seaweedfs.filer.mysqlEnabled" -}}
 {{- $merged := dict -}}
@@ -105,13 +142,13 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Whether admin authentication is enabled from any supported source:
-     admin.secret (adminPassword or existingSecret), or WEED_ADMIN_PASSWORD
-     supplied via extraEnvironmentVars / secretExtraEnvironmentVars (which
-     weed admin picks up through viper's AutomaticEnv). A secret-backed
-     entry counts as enabled even though the chart cannot read its value. */}}
+{{/* Whether the admin non-loopback bind guard is satisfied: admin.secret
+     (adminPassword or existingSecret), WEED_ADMIN_PASSWORD via
+     extraEnvironmentVars / secretExtraEnvironmentVars, or
+     admin.allowInsecureBind. A secret-backed entry counts as enabled even
+     though the chart cannot read its value. */}}
 {{- define "seaweedfs.admin.authEnabled" -}}
-{{- if or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword -}}
+{{- if or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword .Values.admin.allowInsecureBind -}}
 true
 {{- else -}}
 {{- $merged := dict -}}
@@ -407,6 +444,46 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Read a JWT key from the chart's existing security.toml without fromToml
+     (which requires Helm >=3.17). Args: (list "<section>" $raw).
+     Return the single-line TOML string token, including its quotes, so escapes
+     and explicitly empty values survive unchanged. No output means absent.
+     Accept bare or simply quoted dotted header segments. Fail on other quoted
+     headers rather than risk rotating a key hidden by unsupported syntax.
+     This reads the chart's section/key layout, not arbitrary TOML syntax. */}}
+{{- define "seaweedfs.existingTomlKey" -}}
+{{- $section := index . 0 -}}
+{{- $raw := index . 1 -}}
+{{- $parts := list -}}
+{{- range $part := splitList "." $section -}}
+  {{- $escaped := regexQuoteMeta $part -}}
+  {{- $parts = append $parts (printf `(?:%s|"%s"|'%s')` $escaped $escaped $escaped) -}}
+{{- end -}}
+{{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (join `[ \t]*\.[ \t]*` $parts) -}}
+{{- $segment := `(?:[A-Za-z0-9_-]+|"[^"\\]*"|'[^']*')` -}}
+{{- $simpleHeader := printf `^\[[ \t]*%s(?:[ \t]*\.[ \t]*%s)*[ \t]*\][ \t]*(#.*)?$` $segment $segment -}}
+{{- $assignment := `^(key|"key"|'key')[ \t]*=[ \t]*` -}}
+{{- $string := `"([^"\\]|\\.)*"|'[^']*'` -}}
+{{- $active := false -}}
+{{- $key := "" -}}
+{{- range $rawLine := splitList "\n" $raw -}}
+  {{- $line := trim $rawLine -}}
+  {{- if hasPrefix "[" $line -}}
+    {{- if and (regexMatch `^\[[^]]*["']` $line) (not (regexMatch $simpleHeader $line)) (eq $key "") -}}
+      {{- fail (printf "security.toml has an unsupported quoted section header; refusing to replace [%s].key" $section) -}}
+    {{- end -}}
+    {{- $active = regexMatch $header $line -}}
+  {{- else if and $active (eq $key "") (regexMatch $assignment $line) -}}
+    {{- $value := regexReplaceAll $assignment $line "" -}}
+    {{- if not (regexMatch (printf `^(%s)[ \t]*(#.*)?$` $string) $value) -}}
+      {{- fail (printf "security.toml [%s].key must be a single-line quoted TOML string; refusing to replace an existing key" $section) -}}
+    {{- end -}}
+    {{- $key = regexFind $string $value -}}
+  {{- end -}}
+{{- end -}}
+{{- $key -}}
+{{- end -}}
+
 {{/* True when the post-install bucket hook Job renders: an S3 endpoint, plus
      buckets to create on it. Read by the Job itself and by its NetworkPolicy,
      which has to appear exactly when the Job does - a Job without its policy
@@ -467,8 +544,9 @@ true
 {{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
 {{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
 {{-             if $currentPVC }}
-{{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage }}
-{{-               $newSize := include "seaweedfs.resource-quantity" $desiredSize }}
+{{- /* include returns a string such as "6.442450944e+10"; convert back to a number, or gt compares lexically */}}
+{{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage | float64 }}
+{{-               $newSize := include "seaweedfs.resource-quantity" $desiredSize | float64 }}
 {{-               if gt $newSize $oldSize }}
 {{-                 $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
 {{-               end }}
@@ -613,4 +691,29 @@ Usage: {{ include "seaweedfs.service.loadBalancerFields" .Values.s3.service }}
     {{- toYaml . | nindent 4 }}
 {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/*
+Checksum that restarts the S3-serving pods when the generated S3 config changes. It hashes the
+values s3-secret.yaml is built from, not the rendered Secret: that template keeps its generated keys
+with lookup, so rendering it again for a checksum draws new random keys whenever lookup finds
+nothing (on install), and the first upgrade then changed the checksum and restarted the pods
+although nothing had changed. Only the values that template reads are hashed, so scaling the S3
+gateway or changing its resources does not restart the filer. Keep this list in step with
+s3-secret.yaml.
+Keys the chart generated are not part of it. Deleting the Secret to rotate them regenerates them on
+the next upgrade without restarting the pods; restart them afterwards (kubectl rollout restart).
+Folding the stored keys in would bring the first-upgrade restart back, since lookup finds nothing
+on install.
+*/}}
+{{- define "seaweedfs.s3.configChecksum" -}}
+{{- dict
+  "secretName" (include "seaweedfs.fullname" .)
+  "enabled" (list .Values.s3.enabled .Values.filer.s3.enabled .Values.allInOne.enabled .Values.allInOne.s3.enabled)
+  "enableAuth" (list .Values.s3.enableAuth .Values.filer.s3.enableAuth .Values.allInOne.s3.enableAuth)
+  "existingConfigSecret" (list .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret .Values.allInOne.s3.existingConfigSecret)
+  "credentials" .Values.s3.credentials
+  "legacySecret" (list .Values.s3.reuseLegacySecret .Values.s3.legacySecretName)
+  "auditLogConfig" (list .Values.s3.auditLogConfig .Values.filer.s3.auditLogConfig)
+  | toJson | sha256sum -}}
 {{- end -}}

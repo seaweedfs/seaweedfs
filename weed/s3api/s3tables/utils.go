@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -127,11 +128,13 @@ func TableDataDirFromMetadataLocation(metadataLocation string) string {
 }
 
 // ValidateMetadataLocation checks that an s3:// metadata location stays within
-// the authorized table bucket and rejects traversal segments that path.Join
-// would collapse to escape the bucket directory. Empty locations are allowed
-// (the catalog derives one). A non-empty location must include a table path so
-// its metadata directory is table-specific, not shared at the bucket level.
-func ValidateMetadataLocation(metadataLocation, bucketName string) error {
+// the authorized table bucket and inside the caller's own namespace subtree,
+// the boundary per-tenant policies are delegated on. Without the namespace
+// check a caller could register a location inside another tenant's data
+// directory and DeleteTable would purge it. Empty locations are allowed (the
+// catalog derives one). A non-empty location must include a table path so its
+// metadata directory is table-specific, not shared at the bucket level.
+func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) error {
 	if metadataLocation == "" {
 		return nil
 	}
@@ -154,6 +157,9 @@ func ValidateMetadataLocation(metadataLocation, bucketName string) error {
 	}
 	if !hasSegment {
 		return fmt.Errorf("metadata location must include a table path")
+	}
+	if !strings.HasPrefix(tablePath, namespace+"/") {
+		return fmt.Errorf("metadata location must be within namespace %s", namespace)
 	}
 	return nil
 }
@@ -367,17 +373,25 @@ func arnPartitionForRegion(region string) string {
 
 // ValidateTags validates tags for S3 Tables.
 func ValidateTags(tags map[string]string) error {
-	if len(tags) > 10 {
-		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
+	return ValidateTagsWithLimit(tags, 10)
+}
+
+// ValidateTagsWithLimit validates a tag set that may hold up to maxTags tags.
+func ValidateTagsWithLimit(tags map[string]string, maxTags int) error {
+	if len(tags) > maxTags {
+		return fmt.Errorf("validate tags: %d tags more than %d", len(tags), maxTags)
 	}
 	for k, v := range tags {
-		if len(k) > 128 {
+		if len(k) == 0 {
+			return fmt.Errorf("validate tags: empty tag key")
+		}
+		if utf8.RuneCountInString(k) > 128 {
 			return fmt.Errorf("validate tags: tag key longer than 128")
 		}
 		if !tagPattern.MatchString(k) {
 			return fmt.Errorf("validate tags key %s error, incorrect key", k)
 		}
-		if len(v) > 256 {
+		if utf8.RuneCountInString(v) > 256 {
 			return fmt.Errorf("validate tags: tag value longer than 256")
 		}
 		if !tagPattern.MatchString(v) {

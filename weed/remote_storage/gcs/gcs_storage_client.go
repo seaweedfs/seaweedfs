@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -21,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/proto"
@@ -252,6 +254,9 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 	// breaks range reads and returns sizes that disagree with RemoteSize
 	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(context.Background(), offset, size)
 	if readErr != nil {
+		if errors.Is(readErr, storage.ErrObjectNotExist) {
+			return nil, gcs.missingObjectError(context.Background(), loc)
+		}
 		return nil, readErr
 	}
 	data, err = io.ReadAll(rangeReader)
@@ -268,11 +273,34 @@ func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *re
 	reader, err = gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
-			return nil, remote_storage.ErrRemoteObjectNotFound
+			return nil, gcs.missingObjectError(ctx, loc)
 		}
 		return nil, fmt.Errorf("failed to open stream for %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return reader, nil
+}
+
+// missingObjectError confirms a read's ErrObjectNotExist before reporting the
+// object gone: GCS answers a read from a missing bucket the same way, and that
+// must not read as every object under the mount being deleted.
+func (gcs *gcsRemoteStorageClient) missingObjectError(ctx context.Context, loc *remote_pb.RemoteStorageLocation) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultGCSOpTimeout)
+	defer cancel()
+	key := loc.Path[1:]
+	query := &storage.Query{Prefix: key}
+	if err := query.SetAttrSelection([]string{"Name"}); err != nil {
+		return fmt.Errorf("read gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	attrs, err := gcs.client.Bucket(loc.Bucket).Objects(ctx, query).Next()
+	switch {
+	case errors.Is(err, iterator.Done):
+		return remote_storage.ErrRemoteObjectNotFound
+	case err != nil:
+		return fmt.Errorf("read gcs %s%s: object not found and bucket unconfirmed: %w", loc.Bucket, loc.Path, err)
+	case attrs.Name == key:
+		return fmt.Errorf("read gcs %s%s: object not found but listed", loc.Bucket, loc.Path)
+	}
+	return remote_storage.ErrRemoteObjectNotFound
 }
 
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
@@ -321,6 +349,16 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 		wc.ContentType = entry.Attributes.Mime
 	}
 	wc.ContentEncoding = remote_storage.EntryContentEncoding(entry)
+	// A Writer reserves a buffer of ChunkSize bytes (16 MiB by default) so a
+	// failed request can be retried. An object below that size takes a buffer
+	// of its own size plus one 256 KiB unit, the SDK's granularity: a burst of
+	// small uploads in flight does not hold 16 MiB each, every upload keeps
+	// its retry buffer, and the object stays below ChunkSize so it goes in one
+	// request rather than a resumable session. The size counts the chunks,
+	// not only the attribute, which some write paths leave at zero.
+	if size := filer.FileSize(entry); size < uint64(googleapi.DefaultUploadChunkSize) {
+		wc.ChunkSize = int((size/googleapi.MinUploadChunkSize + 1) * googleapi.MinUploadChunkSize)
+	}
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
@@ -348,9 +386,9 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 	return metadata
 }
 
-func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
 	attrsToUpdate := storage.ObjectAttrsToUpdate{}
 	if metadata := toMetadata(newEntry.Extended); len(metadata) > 0 {
@@ -363,11 +401,14 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStora
 	}
 
 	if attrsToUpdate.Metadata == nil && attrsToUpdate.ContentEncoding == nil {
-		return nil
+		return nil, nil
 	}
 	key := loc.Path[1:]
-	_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
-	return
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
+	if err != nil {
+		return nil, err
+	}
+	return gcs.toRemoteEntry(attr), nil
 }
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
@@ -378,6 +419,38 @@ func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocati
 		return fmt.Errorf("gcs delete %s%s: %v", loc.Bucket, key, err)
 	}
 	return
+}
+
+// DeleteFileIfUnchanged deletes the object only while it is still the one the
+// stat describes, enforced with a generation precondition. A replacement that
+// lands between the stat and the delete gets a new generation and fails the
+// precondition instead of being deleted.
+func (gcs *gcsRemoteStorageClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (bool, error) {
+	key := loc.Path[1:]
+	object := gcs.client.Bucket(loc.Bucket).Object(key)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := object.Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	if !remote_storage.StillCurrent(stamp, gcs.toRemoteEntry(attr)) {
+		return false, nil
+	}
+	if err := object.If(storage.Conditions{GenerationMatch: attr.Generation}).Delete(ctx); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return true, nil
+		}
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusPreconditionFailed {
+			return false, nil
+		}
+		return false, fmt.Errorf("gcs delete %s%s: %w", loc.Bucket, key, err)
+	}
+	return true, nil
 }
 
 func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {

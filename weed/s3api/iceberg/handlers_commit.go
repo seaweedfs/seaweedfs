@@ -242,6 +242,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeManagerError(w, err)
 			return
 		}
+		if reqErr := s.authorizeCommit(r.Context(), bucketARN, namespace, tableName, identityName); reqErr != nil {
+			writeError(w, reqErr.status, reqErr.errType, reqErr.message)
+			return
+		}
 
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {
@@ -397,8 +401,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		if cleanupErr := s.deleteMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
 			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after update failure: %v", newMetadataLocation, cleanupErr)
 		}
-		glog.Errorf("Iceberg: CommitTable UpdateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+		logManagerError("CommitTable UpdateTable", err)
+		writeManagerError(w, err)
 		return
 	}
 }

@@ -32,9 +32,14 @@ type deleteRewriteGroup struct {
 	TotalSize      int64
 }
 
+// positionDeleteRow is the Iceberg position-delete schema: the spec reserves
+// field ids 2147483546 (file_path) and 2147483545 (pos). file_path is
+// dictionary-encoded: PyArrow cannot decode parquet-go's default
+// DELTA_LENGTH_BYTE_ARRAY into the dictionary PyIceberg asks for, and the
+// column repeats one data file's path anyway.
 type positionDeleteRow struct {
-	FilePath string `parquet:"file_path"`
-	Pos      int64  `parquet:"pos"`
+	FilePath string `parquet:"file_path,dict,id(2147483546)"`
+	Pos      int64  `parquet:"pos,id(2147483545)"`
 }
 
 func hasEligibleDeleteRewrite(
@@ -102,6 +107,9 @@ func collectDeleteRewriteGroups(
 			}
 
 			allPositionEntries = append(allPositionEntries, entry)
+			if entry.DataFile().FileFormat() == iceberg.PuffinFile {
+				continue
+			}
 
 			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 			if err != nil {
@@ -208,46 +216,35 @@ func writeManifestWithContent(
 	content iceberg.ManifestContent,
 ) (iceberg.ManifestFile, []byte, error) {
 	var manifestBuf bytes.Buffer
-	mf, err := iceberg.WriteManifest(filename, &manifestBuf, version, spec, schema, snapshotID, entries)
+	w, err := iceberg.NewManifestWriter(version, &manifestBuf, spec, schema, snapshotID,
+		iceberg.WithManifestWriterContent(content))
 	if err != nil {
 		return nil, nil, err
 	}
-
-	manifestBytes := manifestBuf.Bytes()
-	if content == iceberg.ManifestContentDeletes {
-		manifestBytes, err = patchManifestContentBytesToDeletes(manifestBytes)
-		if err != nil {
-			return nil, nil, err
+	for _, entry := range entries {
+		var addErr error
+		switch entry.Status() {
+		case iceberg.EntryStatusADDED:
+			addErr = w.Add(entry)
+		case iceberg.EntryStatusEXISTING:
+			addErr = w.Existing(entry)
+		case iceberg.EntryStatusDELETED:
+			addErr = w.Delete(entry)
+		default:
+			addErr = fmt.Errorf("unexpected manifest entry status: %v", entry.Status())
+		}
+		if addErr != nil {
+			return nil, nil, addErr
 		}
 	}
-
-	rebuilt := iceberg.NewManifestFile(version, filename, int64(len(manifestBytes)), int32(spec.ID()), snapshotID).
-		Content(content).
-		AddedFiles(mf.AddedDataFiles()).
-		ExistingFiles(mf.ExistingDataFiles()).
-		DeletedFiles(mf.DeletedDataFiles()).
-		AddedRows(mf.AddedRows()).
-		ExistingRows(mf.ExistingRows()).
-		DeletedRows(mf.DeletedRows()).
-		Partitions(mf.Partitions()).
-		Build()
-	return rebuilt, manifestBytes, nil
-}
-
-func patchManifestContentBytesToDeletes(manifestBytes []byte) ([]byte, error) {
-	old := append([]byte{0x0e}, []byte("content")...)
-	old = append(old, 0x08)
-	old = append(old, []byte("data")...)
-
-	new := append([]byte{0x0e}, []byte("content")...)
-	new = append(new, 0x0e)
-	new = append(new, []byte("deletes")...)
-
-	result := bytes.Replace(manifestBytes, old, new, 1)
-	if bytes.Equal(result, manifestBytes) {
-		return nil, fmt.Errorf("delete manifest content patch failed")
+	if err := w.Close(); err != nil {
+		return nil, nil, err
 	}
-	return result, nil
+	mf, err := w.ToManifestFile(filename, int64(manifestBuf.Len()))
+	if err != nil {
+		return nil, nil, err
+	}
+	return mf, manifestBuf.Bytes(), nil
 }
 
 func writePositionDeleteFile(rows []positionDeleteRow) ([]byte, error) {
@@ -263,6 +260,8 @@ func writePositionDeleteFile(rows []positionDeleteRow) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+const skipDeleteRewriteV3 = "rewrite_position_delete_files skipped: position-delete files must not be added to a format-version 3 table"
 
 func (h *Handler) rewritePositionDeleteFiles(
 	ctx context.Context,
@@ -280,6 +279,13 @@ func (h *Handler) rewritePositionDeleteFiles(
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
 		return "no current snapshot", nil, nil
+	}
+	// The spec forbids adding position-delete files to a v3 table ("Position
+	// delete files must not be added to v3 tables"; v3 writes deletion
+	// vectors), and this rewrite adds new ones. Compaction still applies and
+	// removes existing position deletes.
+	if hasRowLineage(meta.Version()) {
+		return skipDeleteRewriteV3, nil, nil
 	}
 
 	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
@@ -547,8 +553,10 @@ func (h *Handler) rewritePositionDeleteFiles(
 		allManifests = append(allManifests, mf)
 	}
 
+	firstRowID := rowLineageFirstRowID(meta)
 	var manifestListBuf bytes.Buffer
-	if err := iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests); err != nil {
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, firstRowID, allManifests)
+	if err != nil {
 		return "", nil, fmt.Errorf("write delete manifest list: %w", err)
 	}
 	manifestListName := fmt.Sprintf("snap-%d-%s.avro", newSnapID, artifactSuffix)
@@ -559,9 +567,9 @@ func (h *Handler) rewritePositionDeleteFiles(
 
 	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 		newSnapshot := &table.Snapshot{
 			SnapshotID:       newSnapID,
@@ -580,6 +588,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 				return &id
 			}(),
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}

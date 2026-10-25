@@ -32,6 +32,7 @@ var Commands = []*Command{
 	cmdFix,
 	cmdFuse,
 	cmdIam,
+	cmdImage,
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMini,

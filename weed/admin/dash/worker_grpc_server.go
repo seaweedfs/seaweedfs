@@ -133,6 +133,17 @@ func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Li
 	return nil
 }
 
+// ServeOn serves the worker gRPC API on an additional already-bound listener,
+// e.g. a legacy compat port kept alongside the primary one. grpc.Server tracks
+// every listener passed to Serve, so Stop closes it together with the primary.
+func (s *WorkerGrpcServer) ServeOn(listener net.Listener) {
+	go func() {
+		if err := s.grpcServer.Serve(listener); err != nil && s.running {
+			glog.Warningf("Worker gRPC compat listener on %s stopped: %v", listener.Addr(), err)
+		}
+	}()
+}
+
 // ListenPort returns the currently bound worker gRPC listen port.
 func (s *WorkerGrpcServer) ListenPort() int {
 	if s == nil || s.listener == nil {
@@ -187,6 +198,10 @@ func (s *WorkerGrpcServer) Stop() error {
 // WorkerStream handles bidirectional communication with workers
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
+
+	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
 
 	// get client address
 	address := findClientAddress(ctx)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -23,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
 
@@ -150,15 +153,22 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, _ := util.FullPath(absPath).DirAndName()
-	if err := fs.checkFilePermission(dir, "write"); err != nil {
-		glog.Errorf("Permission denied for %s", dir)
+	if err := fs.checkFilePermission(absPath, "write"); err != nil {
+		glog.Errorf("Permission denied for %s", absPath)
 		return nil, err
 	}
 	// Create a temporary file to buffer writes
 	tmpFile, err := os.CreateTemp("", "sftp-upload-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	// Without O_TRUNC the client writes into the existing file, so start from its current bytes.
+	if !r.Pflags().Trunc {
+		if err := fs.copyExistingContent(absPath, tmpFile); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return nil, err
+		}
 	}
 
 	return &SeaweedSftpFileWriter{
@@ -173,6 +183,75 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	}, nil
 }
 
+func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
+	entry, err := fs.getEntry(absPath)
+	if err == os.ErrNotExist {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.IsDirectory {
+		return nil
+	}
+	size := int64(filer.FileSize(entry))
+	remote := entry.GetRemoteEntry()
+	if len(entry.Content) == 0 && len(entry.GetChunks()) == 0 {
+		if remote != nil && remote.RemoteSize > 0 {
+			return fmt.Errorf("existing content of %s is not readable", absPath)
+		}
+		if size == 0 {
+			return nil
+		}
+		return writeZeros(dst, size)
+	}
+	if size == 0 {
+		return nil
+	}
+	if len(entry.Content) > 0 {
+		if _, err := dst.Write(entry.Content); err != nil {
+			return err
+		}
+		if remaining := size - int64(len(entry.Content)); remaining > 0 {
+			return writeZeros(dst, remaining)
+		}
+		return nil
+	}
+	streamFn, err := filer.PrepareStreamContent(lookupFileIdFn(filer.LookupFn(fs)), filer.JwtForVolumeServer, entry.GetChunks(), 0, size)
+	if err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	if err := streamFn(dst); err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	return nil
+}
+
+// lookupFileIdFn adapts a filer LookupFn to the chunk streamer's provider
+// interface. PrepareStreamContent fills unstored gaps with zeros, so a sparse
+// file's tail survives the copy.
+type lookupFileIdFn wdclient.LookupFileIdFunctionType
+
+func (fn lookupFileIdFn) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return wdclient.LookupFileIdFunctionType(fn)
+}
+
+func writeZeros(w io.Writer, size int64) error {
+	zeros := make([]byte, 8192)
+	for size > 0 {
+		n := int64(len(zeros))
+		if size < n {
+			n = size
+		}
+		written, err := w.Write(zeros[:n])
+		size -= int64(written)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (fs *SftpServer) removeEntry(absPath string) error {
 	return fs.deleteEntry(absPath, false)
 }
@@ -185,15 +264,146 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
+	requireAbsentTarget := false
+	if path.Clean(absPath) != path.Clean(absTarget) {
+		var err error
+		requireAbsentTarget, err = fs.checkRenameTargetDelete(absTarget, targetDir)
+		if err != nil {
+			return err
+		}
+	}
+	if err := fs.checkRenameKeepsAcl(absPath, absTarget); err != nil {
+		return err
+	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: oldDir, OldName: oldName,
 			NewDirectory: newDir, NewName: newName,
+			// A target the user may not delete must stay absent: the filer
+			// checks it again under the rename locks, where a create cannot
+			// slip in.
+			FailIfTargetExists: requireAbsentTarget,
 		})
 		return err
 	})
+}
+
+// checkRenameTargetDelete enforces delete access where a rename can destroy an
+// entry. Overwriting an existing target deletes it, so it needs delete access
+// on the target itself. A name that does not exist yet needs no delete check
+// unless a configured ACL restricts that name itself: enforcing such an ACL
+// even while the entry is absent keeps a concurrent create from slipping a
+// protected target under the rename. When the target name simply inherits its
+// directory's ACL and the user could not delete an entry there, the rename is
+// still allowed for a new name but the caller is told to require the target to
+// stay absent, so the filer rejects the overwrite of one created in the gap.
+// Lookup failures other than not-found fail closed.
+func (fs *SftpServer) checkRenameTargetDelete(absTarget, targetDir string) (requireAbsentTarget bool, err error) {
+	if _, err := fs.getEntry(absTarget); err == nil {
+		return false, fs.checkFilePermission(absTarget, "delete")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
+		return false, nil
+	}
+	if matchingAclPrefix(fs.user, absTarget) != matchingAclPrefix(fs.user, targetDir) {
+		if !HasExplicitPermission(fs.user, absTarget, PermDelete, false) {
+			glog.V(0).Infof("permission denied for user %s: rename target %s carries a delete-protected ACL", fs.user.Username, absTarget)
+			return false, os.ErrPermission
+		}
+		return false, nil
+	}
+	if err := fs.checkFilePermission(absTarget, "delete"); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// matchingAclPrefix returns the longest configured ACL path that applies to p,
+// or "" when no configured path covers it.
+func matchingAclPrefix(user *user.User, p string) string {
+	best := ""
+	for aclPath := range user.Permissions {
+		cleaned := path.Clean(aclPath)
+		if pathWithin(cleaned, p) && len(cleaned) > len(best) {
+			best = cleaned
+		}
+	}
+	return best
+}
+
+// checkRenameKeepsAcl denies a rename that would move entries to locations
+// where ACLs grant the user read, list, write, or delete access the source
+// side lacked. It compares the moved root and every configured ACL path under
+// either the source or the target (mapped back to the source) so both
+// inherited restrictions and deeper destination grants are caught.
+func (fs *SftpServer) checkRenameKeepsAcl(absPath, absTarget string) error {
+	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
+		return nil
+	}
+	type aclPair struct {
+		src, dst string
+		isDir    bool
+	}
+	srcEntry, err := fs.getEntry(absPath)
+	if err != nil {
+		return err
+	}
+	pairs := []aclPair{{absPath, absTarget, srcEntry.IsDirectory}}
+	seen := map[string]bool{absPath: true}
+	for p := range fs.user.Permissions {
+		cleaned := path.Clean(p)
+		var src string
+		switch {
+		case pathWithin(absPath, cleaned):
+			src = cleaned
+		case pathWithin(absTarget, cleaned):
+			src = path.Join(absPath, strings.TrimPrefix(cleaned, absTarget))
+		default:
+			continue
+		}
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		// A rule only protects an entry that actually moves; a path reserved
+		// for a missing child must not block the rename. A lookup error is not
+		// proof that the child is missing, so only os.ErrNotExist may skip.
+		entry, err := fs.getEntry(src)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		relocated := path.Join(absTarget, strings.TrimPrefix(src, absPath))
+		pairs = append(pairs, aclPair{src, relocated, entry.IsDirectory})
+	}
+	for _, pair := range pairs {
+		// A moved directory carries file children whose ACLs resolve with
+		// isDirectory=false, where list no longer counts as read. Comparing
+		// only the directory shape would miss children gaining read, so a
+		// directory is checked in the file shape too.
+		shapes := []bool{pair.isDir}
+		if pair.isDir {
+			shapes = append(shapes, false)
+		}
+		for _, isDir := range shapes {
+			for _, perm := range []string{PermRead, PermList, PermWrite, PermDelete} {
+				if !HasExplicitPermission(fs.user, pair.src, perm, isDir) && HasExplicitPermission(fs.user, pair.dst, perm, isDir) {
+					glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, pair.src)
+					return os.ErrPermission
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) error {
@@ -247,21 +457,24 @@ func (fs *SftpServer) listAllPages(dirPath string) (sftp.ListerAt, error) {
 	var all []os.FileInfo
 	last := ""
 	for {
-		page, err := fs.fetchDirectoryPage(dirPath, last)
+		page, lastName, received, err := fs.fetchDirectoryPage(dirPath, last)
 		if err != nil {
 			return nil, err
 		}
 		all = append(all, page...)
-		if len(page) < defaultListLimit {
+		if received < defaultListLimit {
 			break
 		}
-		last = page[len(page)-1].Name()
+		last = lastName
 	}
 	return listerat(all), nil
 }
 
-func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, error) {
+// fetchDirectoryPage returns the entries the user may list, plus the last name and count the filer sent.
+func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, string, int, error) {
 	var list []os.FileInfo
+	lastName := ""
+	received := 0
 	err := fs.callWithClient(true, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{Directory: dirPath, StartFromFileName: start, Limit: defaultListLimit})
 		if err != nil {
@@ -272,9 +485,14 @@ func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, 
 			if err == io.EOF {
 				break
 			}
-			if err != nil || r.Entry == nil {
+			if err != nil {
+				return err
+			}
+			if r.Entry == nil {
 				continue
 			}
+			received++
+			lastName = r.Entry.Name
 			p := path.Join(dirPath, r.Entry.Name)
 			if err := fs.checkFilePermission(p, "list"); err != nil {
 				continue
@@ -283,7 +501,7 @@ func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, 
 		}
 		return nil
 	})
-	return list, err
+	return list, lastName, received, err
 }
 
 // makeDir creates a new directory with proper permissions.

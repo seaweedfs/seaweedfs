@@ -1,0 +1,20 @@
+{
+  "identities": [
+    {
+      "name": "snowflake_compat_admin",
+      "credentials": [
+        {
+          "accessKey": "snowflake_compat_access",
+          "secretKey": "snowflake_compat_secret"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}

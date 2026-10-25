@@ -156,7 +156,11 @@ func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.
 func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(dirPath.Child(prefix))
-	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
+	scanStart := expectedPrefix
+	if resumeKey := []byte(dirPath.Child(startFileName)); bytes.Compare(resumeKey, scanStart) > 0 {
+		scanStart = resumeKey
+	}
+	scan, err := hrpc.NewScanRange(ctx, store.table, scanStart, nil, hrpc.Families(family))
 	if err != nil {
 		return lastFileName, err
 	}
@@ -188,7 +192,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		value := cell.Value
 
-		if fileName == startFileName && !includeStartFile {
+		if fileName < startFileName || (fileName == startFileName && !includeStartFile) {
 			continue
 		}
 

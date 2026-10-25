@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -19,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type OptionalString struct {
@@ -69,8 +73,8 @@ func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 		Metadata:       in.Metadata,
 		Name:           in.Name,
 		Prefix:         in.Prefix,
-		Marker:         in.Marker,
-		NextMarker:     in.NextMarker,
+		Marker:         encodeMarkerEcho(in.Marker, in.EncodingType == s3.EncodingTypeUrl),
+		NextMarker:     encodeMarkerEcho(in.NextMarker, in.EncodingType == s3.EncodingTypeUrl),
 		MaxKeys:        in.MaxKeys,
 		Delimiter:      in.Delimiter,
 		IsTruncated:    in.IsTruncated,
@@ -103,9 +107,10 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	marker := continuationToken.string
+	startAfterKey := decodeMarkerEcho(startAfter, encodingTypeUrl)
+	marker := decodeListContinuationToken(continuationToken.string)
 	if !continuationToken.set {
-		marker = startAfter
+		marker = startAfterKey
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
@@ -144,16 +149,128 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		IsTruncated:           response.IsTruncated,
 		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
 		MaxKeys:               uint16(response.MaxKeys),
-		NextContinuationToken: response.NextMarker,
+		NextContinuationToken: encodeListContinuationToken(response.NextMarker),
 		Prefix:                response.Prefix,
 		StartAfter:            startAfter,
 	}
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
+		responseV2.StartAfter = urlPathEscape(startAfterKey)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
 	writeSuccessResponseXML(w, r, responseV2)
+}
+
+// continuationTokenEncodingPrefix tags a NextContinuationToken whose payload is the
+// base64url encoding of the raw key. XML 1.0 cannot carry control characters, and the
+// XML encoder replaces them with U+FFFD, so a token holding such a key would resume
+// past a mangled name and skip every key sorting between the two. Keys that are valid
+// XML text still travel as the bare key, so the token is unchanged for them.
+const continuationTokenEncodingPrefix = "base64:"
+
+func encodeListContinuationToken(key string) string {
+	if key == "" {
+		return ""
+	}
+	if isXMLText(key) && !strings.HasPrefix(key, continuationTokenEncodingPrefix) {
+		return key
+	}
+	return continuationTokenEncodingPrefix + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func encodeListContinuationTokenField(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return aws.String(encodeListContinuationToken(*value))
+}
+
+// encodeMarkerEcho renders a decoded request marker for the response echo:
+// the token encoding keeps an XML-unsafe key legible, and urlPathEscape applies
+// the encoding-type=url form the keys in the same response already carry.
+func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	marker = encodeListContinuationToken(marker)
+	if encodingTypeUrl {
+		marker = urlPathEscape(marker)
+	}
+	return marker
+}
+
+// decodeMarkerEcho reverses the wire encoding on a marker the client echoes
+// back: under encoding-type=url the emitted echo was urlPathEscape'd. Only a
+// value that is the canonical escaped form of its unescape could have come
+// from that encoder — "a%2541" round-trips to itself, "a%41" does not — so
+// anything else stays the raw key the client sent.
+func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
+	return decodeEscapedEcho(marker, encodingTypeUrl, urlPathEscape)
+}
+
+func decodeEscapedEcho(marker string, encodingTypeUrl bool, escape func(string) string) string {
+	if !encodingTypeUrl {
+		return marker
+	}
+	if unescaped, err := url.QueryUnescape(marker); err == nil && escape(unescaped) == marker {
+		return unescaped
+	}
+	return marker
+}
+
+func decodeListContinuationToken(token string) string {
+	key, ok := strings.CutPrefix(token, continuationTokenEncodingPrefix)
+	if !ok {
+		return token
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil {
+		// Not a token this server wrote; resume at the token as the raw key.
+		return token
+	}
+	decodedKey := string(decoded)
+	// encodeListContinuationToken only writes a token for a key that cannot
+	// travel bare, so a decoded key that could have stayed bare — valid XML
+	// text without the prefix — means the input was a legacy raw-key token,
+	// not something to decode.
+	if isXMLText(decodedKey) && !strings.HasPrefix(decodedKey, continuationTokenEncodingPrefix) {
+		return token
+	}
+	// A decoded key that could not travel bare makes the token ambiguous
+	// ("base64:AQ" reads as both the encoded form of "\x01" and a literal
+	// legacy key). The encoded reading wins: preferring the raw one would
+	// resume past real entries for every token this server writes, while a
+	// legacy token aliasing the encoded form only re-lists keys.
+	return decodedKey
+}
+
+// isXMLText reports whether s survives an XML 1.0 round trip unchanged, i.e. the
+// encoder does not replace any of its characters with U+FFFD.
+func isXMLText(s string) bool {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return false
+		}
+		if !isXMLChar(r) {
+			return false
+		}
+		i += size
+	}
+	return true
+}
+
+// isXMLChar follows the XML 1.0 Char production the encoding/xml encoder enforces.
+func isXMLChar(r rune) bool {
+	switch {
+	case r == 0x9 || r == 0xA || r == 0xD:
+		return true
+	case r >= 0x20 && r <= 0xD7FF:
+		return true
+	case r >= 0xE000 && r <= 0xFFFD:
+		return true
+	case r >= 0x10000 && r <= 0x10FFFF:
+		return true
+	}
+	return false
 }
 
 func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
@@ -162,19 +279,16 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, listMarker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, marker, delimiter, maxKeys)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, listMarker, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	if maxKeys < 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
-		return
-	}
+	// maxKeys is uint16 here; negative values are rejected during parsing.
 
 	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
 	if allowUnordered && delimiter != "" {
@@ -183,8 +297,8 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
-	requestMarker := marker
-	marker = adjustMarkerForDelimiter(marker, originalPrefix, delimiter)
+	requestMarker := decodeListContinuationToken(decodeMarkerEcho(listMarker, encodingTypeUrl))
+	marker := adjustMarkerForDelimiter(requestMarker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
 		bucket:          bucket,
@@ -192,7 +306,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		marker:          marker,
 		requestMarker:   requestMarker,
 		delimiter:       delimiter,
-		maxKeys:         uint16(maxKeys),
+		maxKeys:         maxKeys,
 		encodingTypeUrl: encodingTypeUrl,
 		fetchOwner:      true,
 	})
@@ -540,6 +654,18 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				if excludedKey != "" && !entry.IsDirectory && fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):] == excludedKey {
 					return
 				}
+				// A delimiter marker excludes the entire folded prefix, not just
+				// the key bearing its name. This also applies to delimiters such as
+				// "_", whose groups are not directory blocks in the filer walk.
+				if delimiter != "" {
+					name := entry.Name
+					if entry.IsDirectory && !entry.IsPrefixObject() {
+						name += "/"
+					}
+					if folded := prefixForKey(dir, name); folded != "" && folded <= requestMarker {
+						return
+					}
+				}
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if originalPrefix != "" {
@@ -556,6 +682,8 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 					// plain key. The traversal never descends into it under a delimiter,
 					// so the CommonPrefix its nested keys fold into is added here too.
 					if entry.IsPrefixObject() {
+						keyOnly := cursor.prefixObjectKeyOnly
+						cursor.prefixObjectKeyOnly = false
 						key := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
 						if strings.HasPrefix(key, originalPrefix) {
 							if folded := prefixForKey(dir, entry.Name); folded != "" {
@@ -570,8 +698,10 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 						// whole, so a page ending between them cannot resume at the prefix:
 						// a marker of "<key>/" means the subtree is done, not that it is
 						// next. The page runs one item over maxKeys instead of dropping it.
-						if childPrefix := prefixForKey(dir, entry.Name+"/"); childPrefix != "" && s3a.hasChildren(ctx, bucket, key) {
-							addCommonPrefix(childPrefix)
+						if !keyOnly {
+							if childPrefix := prefixForKey(dir, entry.Name+"/"); childPrefix != "" && s3a.hasChildren(ctx, bucket, key) {
+								addCommonPrefix(childPrefix)
+							}
 						}
 						return
 					}
@@ -780,12 +910,22 @@ type ListingCursor struct {
 	// something to find once a bucket has version history to leave behind.
 	hideDeletedPrefixes bool
 	probedEntries       int
+	// probeBudget overrides hiddenProbeBudget for the per-prefix probe; 0 means use
+	// the package default. Tests set this to a small value to stay fast.
+	probeBudget int
+	// probeTotalBudget overrides hiddenProbeTotalBudget for the request-wide probe
+	// ceiling; 0 means use the package default.
+	probeTotalBudget int
 	// retractEntry undoes the listing of a base-path null object once its .versions
 	// sibling reveals that the current version is a delete marker.
 	retractEntry func(dir, name string)
 	// resolvePendingNulls settles trailing null objects whose .versions sibling
 	// has not streamed yet before a page is declared full.
 	resolvePendingNulls func() error
+	// prefixObjectKeyOnly limits the next prefix-object entry passed to the entry
+	// callback to its plain key; its "<name>/" CommonPrefix is deferred to the
+	// directory's own block position.
+	prefixObjectKeyOnly bool
 }
 
 // excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
@@ -811,6 +951,19 @@ func markerSortsBeforePrefix(prefix, marker string) bool {
 		return false
 	}
 	return !strings.HasPrefix(marker, prefix) && marker < prefix
+}
+
+// markerSortsPastPrefix reports whether marker lies beyond the last key the
+// prefix can match. A marker that diverges from the prefix at a larger byte
+// is after every key under it, so the listing is empty no matter where the
+// walk would resume.
+func markerSortsPastPrefix(prefix, marker string) bool {
+	prefix = strings.TrimLeft(prefix, "/")
+	marker = strings.TrimLeft(marker, "/")
+	if marker == "" || prefix == "" {
+		return false
+	}
+	return !strings.HasPrefix(marker, prefix) && marker > prefix
 }
 
 // the prefix and marker may be in different directories
@@ -912,21 +1065,27 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		return // Don't set isTruncated here - let caller decide based on whether more entries exist
 	}
 
-	if strings.Contains(marker, "/") {
-		subDir, subMarker := toParentAndDescendants(marker)
-		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + subDir, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
-		if subErr != nil {
-			err = subErr
-			return
-		}
-		nextMarker = subDir + "/" + subNextMarker
-		// finished processing this subdirectory
-		marker = subDir
-	}
-	if cursor.isTruncated {
+	// A marker past the prefix's range leaves nothing under the prefix to
+	// resume at, and descending into the marker's own directory below would
+	// drop the prefix filter entirely.
+	if markerSortsPastPrefix(prefix, marker) {
 		return
 	}
+
+	// A directory's keys sort at "<name>/" among this level's children, not at
+	// the name itself: siblings like "a-c" and "a.txt" sort before "a/b" while
+	// "a0" sorts after. Start the window at the first child whose block can
+	// still hold keys past the marker — the shortest prefix of the marker
+	// followed by a byte no greater than "/" — and ask for it inclusively, so
+	// a marker-named directory's subtree is reached at all.
+	startName := marker
+	for i := 0; i < len(marker); i++ {
+		if marker[i] <= '/' {
+			startName = marker[:i]
+			break
+		}
+	}
+	inclusiveStartFrom = startName != ""
 
 	// now marker is also a direct child of dir
 	ctx, cancel := context.WithCancel(ctx)
@@ -935,6 +1094,128 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	// The marker this page started from, unlike marker below, which advances with
 	// each request window inside the page.
 	pageMarker := marker
+
+	// Defer each directory until a child past its "<name>/" block arrives, so
+	// emission follows S3 byte order rather than the filer's name order.
+	type pendingDir struct {
+		e                *filer_pb.Entry
+		matchedPrefixDir bool
+	}
+	var pendingDirs []pendingDir
+	stopped := false
+	// hasEntries reports whether the filer directory holds at least one entry,
+	// probed on the request's own client; errors answer conservatively as true.
+	hasEntries := func(path string) bool {
+		probeCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stream, lerr := client.ListEntries(probeCtx, &filer_pb.ListEntriesRequest{Directory: path, Limit: 1})
+		if lerr != nil {
+			return true
+		}
+		_, recvErr := stream.Recv()
+		return recvErr == nil
+	}
+	emitDir := func(e *filer_pb.Entry, matchedPrefixDir bool) error {
+		blockKey := e.Name + "/"
+		var subMarker string
+		if strings.HasPrefix(marker, blockKey) {
+			if delimiter == "/" {
+				// this block collapses to one common prefix, already emitted
+				return nil
+			}
+			subMarker = marker[len(blockKey):]
+		} else if blockKey <= marker {
+			return nil
+		}
+		// A prefix object's plain key is emitted at the name position or not at
+		// all; the block emits only its "<name>/" fold, so the callback sees a
+		// plain directory.
+		emitEntry := e
+		if e.IsPrefixObject() {
+			emitEntry = proto.Clone(e).(*filer_pb.Entry)
+			delete(emitEntry.Extended, s3_constants.SeaweedFSPrefixObject)
+		}
+		isKeyObject := e.IsDirectoryKeyObject() && !e.IsPrefixObject()
+		if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+			// A trailing-slash prefix (e.g. "logs/") names one directory, so the
+			// recursion below answers whether it exists and what it holds.
+			if cursor.prefixEndsOnDelimiter {
+				cursor.prefixEndsOnDelimiter = false
+			}
+			if isKeyObject && blockKey > marker {
+				// Directory key objects (created via PutObject with trailing "/")
+				// appear as regular keys in recursive listing mode.
+				eachEntryFn(dir, emitEntry)
+			}
+			subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + e.Name, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
+			if subErr != nil {
+				return fmt.Errorf("doListFilerEntries2: %w", subErr)
+			}
+			nextMarker = e.Name + "/" + subNextMarker
+			if cursor.maxKeys <= 0 && subNextMarker == "" && hasEntries(dir+"/"+e.Name) {
+				// The recursion starved on quota before listing the subtree;
+				// keep a resume position that re-enters it.
+				cursor.isTruncated = true
+			}
+			// An empty directory gets no marker under its own "<dir>/" prefix:
+			// that listing enumerates children, where S3 returns nothing for an
+			// empty prefix, and a fake entry is read back as a real object by
+			// clients that enumerate locks or similar.
+			// println("doListFilerEntries2 dir", dir+"/"+e.Name, "subNextMarker", subNextMarker)
+			if cursor.isTruncated || matchedPrefixDir {
+				stopped = true
+			}
+			// println("doListFilerEntries2 nextMarker", nextMarker)
+		} else {
+			switch {
+			case isKeyObject && blockKey > marker:
+				eachEntryFn(dir, emitEntry)
+			case e.IsPrefixObject():
+				// The plain key already listed at the name position; the
+				// deferred block emits the "<name>/" common prefix only when
+				// children fold under it.
+				if hasEntries(dir + "/" + e.Name) {
+					eachEntryFn(dir, emitEntry)
+				}
+			case !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+e.Name, cursor):
+				eachEntryFn(dir, emitEntry)
+			}
+			// Whatever the block emitted sits at its "<name>/" position, so the
+			// resume marker is the block boundary: the bare name sorts inside the
+			// (name, name/) band and would reopen the block for a second emission.
+			nextMarker = e.Name + "/"
+		}
+		return nil
+	}
+	// pendingDirs is kept ordered by "<name>/" rather than by name: "a-c/" and
+	// "a./" sort before "a/" even though "a" is the smaller name.
+	flushDirs := func(upTo string) error {
+		for len(pendingDirs) > 0 && (upTo == "" || pendingDirs[0].e.Name+"/" < upTo) {
+			if cursor.maxKeys <= 0 {
+				cursor.isTruncated = true
+				return nil
+			}
+			d := pendingDirs[0]
+			pendingDirs = pendingDirs[1:]
+			if err := emitDir(d.e, d.matchedPrefixDir); err != nil {
+				return err
+			}
+			if stopped || cursor.isTruncated {
+				return nil
+			}
+		}
+		return nil
+	}
+	queueDir := func(pd pendingDir) {
+		blockKey := pd.e.Name + "/"
+		i := 0
+		for i < len(pendingDirs) && pendingDirs[i].e.Name+"/" < blockKey {
+			i++
+		}
+		pendingDirs = append(pendingDirs, pendingDir{})
+		copy(pendingDirs[i+1:], pendingDirs[i:])
+		pendingDirs[i] = pd
+	}
 
 	// Entries that emit nothing (empty directories, the .uploads folder, the marker
 	// echo) consume the request window without consuming maxKeys, so one window may
@@ -945,7 +1226,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			Directory:          dir,
 			Prefix:             prefix,
 			Limit:              uint32(cursor.maxKeys) + 2, // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
-			StartFromFileName:  marker,
+			StartFromFileName:  startName,
 			InclusiveStartFrom: inclusiveStartFrom,
 		}
 
@@ -976,17 +1257,21 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 			entriesReceived++
 			lastEntryName = entry.Name
-			// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
-			// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
-			// behavior if inclusive callers are introduced in the future.
-			// A versioned object lives in a "<key>.versions" directory, so the marker also
-			// has to be matched against the object name that directory stands for.
-			markerName := entry.Name
-			if entry.IsDirectory {
-				markerName = strings.TrimSuffix(markerName, s3_constants.VersionsFolder)
+			// A directory whose block sorts before this entry emits now — every
+			// key it yields still sorts before this entry's name.
+			if err = flushDirs(entry.Name); err != nil || stopped || cursor.isTruncated {
+				return
 			}
-			if !inclusiveStartFrom && marker != "" && (entry.Name == marker || markerName == marker) {
-				continue
+			// A directory block still contributes past a marker that lands inside
+			// its "<name>/" band; only a block entirely behind it is skipped.
+			if marker != "" {
+				if entry.IsDirectory {
+					if entry.Name+"/" <= marker && !strings.HasPrefix(marker, entry.Name+"/") {
+						continue
+					}
+				} else if entry.Name <= marker {
+					continue
+				}
 			}
 
 			// The .versions sibling of the key just emitted still decides that key's
@@ -1013,16 +1298,34 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
 			matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
 			if cursor.prefixEndsOnDelimiter {
-				if entry.Name == prefix && entry.IsDirectory {
-					if delimiter != "/" {
-						cursor.prefixEndsOnDelimiter = false
-					}
-				} else {
+				if !matchedPrefixDir {
 					continue
 				}
+				// Keep the exact-directory filter until emitDir descends into
+				// the deferred block. Clearing it at the name position lets
+				// siblings like "a.txt" leak into a listing for "a/".
 			}
 			if entry.IsDirectory {
 				// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+				// A marker inside a skipped subtree still descends — the
+				// internal folder is not listed, its contents may be.
+				if strings.HasPrefix(marker, entry.Name+"/") {
+					if delimiter == "/" {
+						// The whole block already collapsed into its common
+						// prefix; nothing under it is listed again.
+						continue
+					}
+					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, marker: marker[len(entry.Name)+1:], delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
+					if subErr != nil {
+						err = fmt.Errorf("doListFilerEntries: %w", subErr)
+						return
+					}
+					nextMarker = entry.Name + "/" + subNextMarker
+					if cursor.isTruncated {
+						return
+					}
+					continue
+				}
 				if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 					continue
 				}
@@ -1037,6 +1340,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					}
 					// Extract object name from .versions directory name
 					baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
+					// A marker at or past the folded key already covered it.
+					if marker != "" && baseObjectName <= marker {
+						continue
+					}
 					// A page resuming from a marker inside the base key's extension
 					// region ("k.bak" sorts between "k" and "k.versions") means an
 					// earlier page already listed and settled the base null object;
@@ -1073,80 +1380,46 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					continue
 				}
 
-				if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-					// A trailing-slash prefix (e.g. "logs/") names one directory and asks
-					// whether it exists, so a real but empty directory must be reported for
-					// that probe.
-					explicitDirProbe := cursor.prefixEndsOnDelimiter
-					if cursor.prefixEndsOnDelimiter {
-						cursor.prefixEndsOnDelimiter = false
-					}
-					isKeyObject := entry.IsDirectoryKeyObject()
-					if isKeyObject {
-						// Directory key objects (created via PutObject with trailing "/")
-						// must appear as regular keys in recursive listing mode.
-						eachEntryFn(dir, entry)
-					}
-					// Recurse into subdirectory to list any children, noting whether the
-					// subtree produced any entries.
-					childEmitted := false
-					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, delimiter: delimiter, bucket: bucket}, cursor, func(d string, e *filer_pb.Entry) {
-						childEmitted = true
-						eachEntryFn(d, e)
-					})
-					if subErr != nil {
-						err = fmt.Errorf("doListFilerEntries2: %w", subErr)
-						return
-					}
-					// A real but empty directory (created out of band via mount, mkdir or
-					// the filer API, so it carries no MIME) is otherwise invisible to S3
-					// clients that detect directories by listing it under its own "<dir>/"
-					// prefix. Surface it as a directory marker for that explicit probe,
-					// identical to a directory created via PutObject with a trailing "/", so
-					// tools like hadoop-aws can find it. Plain listings are left untouched, so
-					// empty directories left behind by deleted objects are not shown as keys.
-					// A directory that still holds version history no longer names anything,
-					// so it gets no marker either.
-					if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil &&
-						!s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
-						entry.Attributes.Mime = s3_constants.FolderMimeType
-						eachEntryFn(dir, entry)
-					}
-					// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
-					nextMarker = entry.Name + "/" + subNextMarker
-					if cursor.isTruncated {
-						return
-					}
-					if matchedPrefixDir {
-						return
-					}
-					// println("doListFilerEntries2 nextMarker", nextMarker)
-				} else if entry.IsDirectoryKeyObject() || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
+				pd := pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir}
+				// A prefix object lists as the plain key "<name>", which sorts
+				// at the name, not at the "<name>/" block its children occupy; the
+				// deferred block emits the common prefix at its own position.
+				if entry.IsPrefixObject() && entry.Name > marker {
+					cursor.prefixObjectKeyOnly = true
 					eachEntryFn(dir, entry)
 				}
-			} else {
-				eachEntryFn(dir, entry)
-				// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+				queueDir(pd)
+				continue
 			}
+			eachEntryFn(dir, entry)
+			// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 			if cursor.prefixEndsOnDelimiter {
 				cursor.prefixEndsOnDelimiter = false
 			}
 		}
 
-		if cursor.isTruncated || entriesReceived < request.Limit {
+		if cursor.isTruncated || stopped {
 			return
 		}
-		marker = lastEntryName
+		if entriesReceived < request.Limit {
+			err = flushDirs("")
+			return
+		}
+		startName = lastEntryName
 		inclusiveStartFrom = false
 	}
 }
 
-// hiddenProbePageSize is the window one probe request asks the filer for, and
-// hiddenProbeBudget caps how many entries a single list request may look at while
-// deciding which directories still stand for a prefix.
+// hiddenProbePageSize is the window one probe request asks the filer for.
+// hiddenProbeBudget caps how many entries one prefix's probe may scan; it
+// resets for every candidate prefix so one large all-deleted subtree cannot
+// exhaust the allowance for later prefixes. hiddenProbeTotalBudget caps the
+// scanned entries a single listing request spends on probing overall, since a
+// page may still walk an unbounded number of all-deleted prefixes.
 const (
-	hiddenProbePageSize = 64
-	hiddenProbeBudget   = 10000
+	hiddenProbePageSize    = 64
+	hiddenProbeBudget      = 10000
+	hiddenProbeTotalBudget = 100000
 )
 
 // dirHoldsOnlyHiddenEntries reports whether dir holds entries but none that a
@@ -1159,13 +1432,29 @@ const (
 //
 // The scan stops at the first key it finds, so a populated prefix costs one ListEntries
 // answered by its first entry. A subtree that is entirely delete-marked costs a walk of
-// that subtree, bounded by the request's probe budget; once the budget is spent the
-// prefix is reported, as it was before this check existed.
+// that subtree, bounded by hiddenProbeBudget entries per prefix. The budget resets for
+// each candidate prefix, so a large all-deleted subtree cannot exhaust the allowance
+// for later prefixes in the same request.
 func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, cursor *ListingCursor) bool {
 	if !cursor.hideDeletedPrefixes {
 		return false
 	}
+	budget := hiddenProbeBudget
+	if cursor.probeBudget > 0 {
+		budget = cursor.probeBudget
+	}
+	totalBudget := hiddenProbeTotalBudget
+	if cursor.probeTotalBudget > 0 {
+		totalBudget = cursor.probeTotalBudget
+	}
+	return s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir, &budget, totalBudget, cursor)
+}
 
+// dirHoldsOnlyHiddenEntriesInner is the recursive body of dirHoldsOnlyHiddenEntries.
+// budget is shared across the recursive descent for one prefix but reset by the
+// caller for each top-level prefix, preventing cross-prefix budget exhaustion.
+// cursor.probedEntries bounds the total work one listing request spends probing.
+func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, budget *int, totalBudget int, cursor *ListingCursor) bool {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1207,8 +1496,9 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 			startFrom = entry.Name
 			sawEntry = true
 
+			*budget--
 			cursor.probedEntries++
-			if cursor.probedEntries > hiddenProbeBudget {
+			if *budget < 0 || cursor.probedEntries > totalBudget {
 				return false
 			}
 
@@ -1249,7 +1539,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 			if entry.IsDirectoryKeyObject() {
 				return false
 			}
-			if !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
+			if !s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir+"/"+entry.Name, budget, totalBudget, cursor) {
 				return false
 			}
 		}
@@ -1266,16 +1556,9 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
-	if values.Get("max-keys") != "" {
-		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
-			maxkeys = uint16(maxKeys)
-		} else {
-			// Invalid max-keys value (non-numeric)
-			errCode = s3err.ErrInvalidMaxKeys
-			return
-		}
-	} else {
-		maxkeys = maxObjectListSizeLimit
+	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
+	if errCode != s3err.ErrNone {
+		return
 	}
 	fetchOwner = values.Get("fetch-owner") == "true"
 	allowUnordered = values.Get("allow-unordered") == "true"
@@ -1283,25 +1566,35 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool, errCode s3err.ErrorCode) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == "url"
-	if values.Get("max-keys") != "" {
-		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
-			maxkeys = int16(maxKeys)
-		} else {
-			// Invalid max-keys value (non-numeric)
-			errCode = s3err.ErrInvalidMaxKeys
-			return
-		}
-	} else {
-		maxkeys = maxObjectListSizeLimit
+	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
+	if errCode != s3err.ErrNone {
+		return
 	}
 	allowUnordered = values.Get("allow-unordered") == "true"
 	errCode = s3err.ErrNone
 	return
+}
+
+// parseMaxKeys parses the max-keys query parameter. Like AWS S3, any integer in
+// [0, 2147483647] is accepted and the page size is capped at maxObjectListSizeLimit;
+// an empty value means the default limit, anything else is ErrInvalidMaxKeys.
+func parseMaxKeys(value string) (uint16, s3err.ErrorCode) {
+	if value == "" {
+		return maxObjectListSizeLimit, s3err.ErrNone
+	}
+	maxKeys, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || maxKeys < 0 {
+		return 0, s3err.ErrInvalidMaxKeys
+	}
+	if maxKeys > maxObjectListSizeLimit {
+		return maxObjectListSizeLimit, s3err.ErrNone
+	}
+	return uint16(maxKeys), s3err.ErrNone
 }
 
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
@@ -1367,6 +1660,15 @@ func adjustMarkerForDelimiter(marker, prefix, delimiter string) string {
 		return marker
 	}
 	if strings.TrimLeft(marker, "/") == strings.TrimLeft(prefix, "/") {
+		return marker
+	}
+
+	// A marker ending on "/" already names the bound past that directory's
+	// block — the walk reads "boo/" as "the boo/ block is done". Trimming it
+	// to the bare name would sort inside the (name, name/) band instead and
+	// reopen the block. Other delimiters have no matching directory boundary,
+	// so their markers still need the trim below.
+	if delimiter == "/" {
 		return marker
 	}
 

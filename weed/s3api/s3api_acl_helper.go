@@ -21,8 +21,25 @@ type AccountManager interface {
 	GetAccountIdByIdentityName(name string) string
 }
 
+// aclOwnerAccountManager recognizes the stored resource owner as a valid
+// grantee even if that account is no longer registered, while every other
+// unknown account id is still rejected by the wrapped registry lookup.
+type aclOwnerAccountManager struct {
+	AccountManager
+	ownerId string
+}
+
+func (m aclOwnerAccountManager) GetAccountNameById(canonicalId string) string {
+	name := m.AccountManager.GetAccountNameById(canonicalId)
+	if name == "" && canonicalId != "" && canonicalId == m.ownerId {
+		return canonicalId
+	}
+	return name
+}
+
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
+	accountManager = aclOwnerAccountManager{AccountManager: accountManager, ownerId: ownerId}
 	if r.Body != nil && r.Body != http.NoBody {
 		defer util_http.CloseRequest(r)
 
@@ -40,7 +57,10 @@ func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucke
 
 		return ValidateAndTransferGrants(accountManager, acp.Grants)
 	} else {
-		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
+		// Canned and default ACLs grant FULL_CONTROL to the resource owner,
+		// not the requesting account: an admin updating another account's
+		// object must not take over its full-control grant.
+		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, ownerId, true)
 		return grants, errCode
 	}
 }
@@ -110,7 +130,7 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	customAclHeaders := []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp}
 	var errCode s3err.ErrorCode
 	for _, customAclHeader := range customAclHeaders {
-		headerValue := r.Header.Get(customAclHeader)
+		headerValue := strings.Join(r.Header.Values(customAclHeader), ",")
 		switch customAclHeader {
 		case s3_constants.AmzAclRead:
 			errCode = ParseCustomAclHeader(headerValue, s3_constants.PermissionRead, grants)
@@ -130,51 +150,64 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	return s3err.ErrNone
 }
 
-func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
-	if len(headerValue) > 0 {
-		split := strings.Split(headerValue, ", ")
-		for _, grantStr := range split {
-			kv := strings.Split(grantStr, "=")
-			if len(kv) != 2 {
-				return s3err.ErrInvalidRequest
-			}
-
-			switch kv[0] {
-			case "id":
-				var accountId string
-				_ = json.Unmarshal([]byte(kv[1]), &accountId)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &accountId,
-					},
-					Permission: &permission,
-				})
-			case "emailAddress":
-				var emailAddress string
-				_ = json.Unmarshal([]byte(kv[1]), &emailAddress)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type:         &s3_constants.GrantTypeAmazonCustomerByEmail,
-						EmailAddress: &emailAddress,
-					},
-					Permission: &permission,
-				})
-			case "uri":
-				var groupName string
-				_ = json.Unmarshal([]byte(kv[1]), &groupName)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeGroup,
-						URI:  &groupName,
-					},
-					Permission: &permission,
-				})
-			}
-		}
+// parseAclGranteePairs decodes a comma-separated list of quoted grantees into
+// key/value pairs. Decoding each value before splitting keeps commas and equals
+// signs inside quotes intact.
+func parseAclGranteePairs(headerValue string) (pairs [][2]string, errCode s3err.ErrorCode) {
+	if headerValue == "" {
+		return nil, s3err.ErrNone
 	}
-	return s3err.ErrNone
+	remaining := strings.TrimSpace(headerValue)
+	for {
+		key, encoded, ok := strings.Cut(remaining, "=")
+		if !ok {
+			return nil, s3err.ErrInvalidRequest
+		}
+		decoder := json.NewDecoder(strings.NewReader(encoded))
+		var value string
+		if decoder.Decode(&value) != nil || value == "" {
+			return nil, s3err.ErrInvalidRequest
+		}
+		key = strings.TrimSpace(key)
+		switch key {
+		case "id", "emailAddress", "uri":
+		default:
+			return nil, s3err.ErrInvalidRequest
+		}
+		pairs = append(pairs, [2]string{key, value})
+		remaining = strings.TrimSpace(encoded[decoder.InputOffset():])
+		if remaining == "" {
+			break
+		}
+		if remaining[0] != ',' {
+			return nil, s3err.ErrInvalidRequest
+		}
+		remaining = strings.TrimSpace(remaining[1:])
+	}
+	return pairs, s3err.ErrNone
+}
 
+func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
+	pairs, errCode := parseAclGranteePairs(headerValue)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+	var parsed []*s3.Grant
+	for i := range pairs {
+		grantee := &s3.Grantee{}
+		switch pairs[i][0] {
+		case "id":
+			grantee.Type, grantee.ID = &s3_constants.GrantTypeCanonicalUser, &pairs[i][1]
+		case "emailAddress":
+			grantee.Type, grantee.EmailAddress = &s3_constants.GrantTypeAmazonCustomerByEmail, &pairs[i][1]
+		case "uri":
+			grantee.Type, grantee.URI = &s3_constants.GrantTypeGroup, &pairs[i][1]
+		}
+		parsed = append(parsed, &s3.Grant{Grantee: grantee, Permission: &permission})
+	}
+	// Do not leave partially parsed grants behind when any list element fails.
+	*grants = append(*grants, parsed...)
+	return s3err.ErrNone
 }
 
 func ParseCannedAclHeader(bucketOwnership, bucketOwnerId, accountId, cannedAcl string, putAcl bool) (ownerId string, grants []*s3.Grant, err s3err.ErrorCode) {

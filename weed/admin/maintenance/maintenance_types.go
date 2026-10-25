@@ -218,6 +218,10 @@ type MaintenanceQueue struct {
 	policy       *MaintenancePolicy
 	integration  *MaintenanceIntegration
 	persistence  TaskPersistence // Interface for task persistence
+	// persistMu serializes the check+write in saveTaskState against the
+	// deletes in the cancel paths, so a stale pending save cannot land on
+	// disk after the task's file was removed.
+	persistMu sync.Mutex
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks

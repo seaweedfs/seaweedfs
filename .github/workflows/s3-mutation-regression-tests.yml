@@ -12,8 +12,8 @@ on:
       - '.github/workflows/s3-mutation-regression-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-mutation-regression-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ permissions:
 jobs:
   s3-versioning-regressions:
     name: S3 Versioning Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:
@@ -32,6 +32,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Run S3 versioning regression tests
         timeout-minutes: 20
@@ -74,7 +75,7 @@ jobs:
 
   s3-delete-regressions:
     name: S3 Delete Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -85,6 +86,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Run S3 delete regression tests
         timeout-minutes: 15
@@ -112,7 +114,7 @@ jobs:
 
   s3-distributed-lock-regressions:
     name: S3 Distributed Lock Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -123,6 +125,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build SeaweedFS
         run: |

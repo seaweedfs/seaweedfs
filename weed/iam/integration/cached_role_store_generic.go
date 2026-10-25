@@ -116,6 +116,14 @@ func (c *GenericCachedRoleStore) DeleteRole(ctx context.Context, filerAddress st
 	return c.Delete(ctx, filerAddress, roleName)
 }
 
+// UpdateRole implements RoleStore interface. The update reads the filer, not
+// the cache, and the cache is dropped afterwards whatever the outcome: a
+// refused write may mean the cached role is stale.
+func (c *GenericCachedRoleStore) UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error {
+	defer c.ClearCache()
+	return c.adapter.store.UpdateRole(ctx, filerAddress, roleName, update)
+}
+
 // genericCopyRoleDefinition creates a deep copy of a RoleDefinition for the generic cache
 func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	if role == nil {
@@ -123,9 +131,13 @@ func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	}
 
 	result := &RoleDefinition{
-		RoleName:    role.RoleName,
-		RoleArn:     role.RoleArn,
-		Description: role.Description,
+		RoleName:           role.RoleName,
+		RoleArn:            role.RoleArn,
+		Description:        role.Description,
+		MaxSessionDuration: role.MaxSessionDuration,
+		Source:             role.Source,
+		CreatedAt:          role.CreatedAt,
+		RoleId:             role.RoleId,
 	}
 
 	// Deep copy trust policy if it exists

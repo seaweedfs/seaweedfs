@@ -14,6 +14,16 @@ var (
 	CollectionDefault = wildcard.CollectionDefault
 )
 
+// resolveCollectionName maps the shared "_default" keyword to the empty-named
+// collection for commands whose -collection flag names one collection rather
+// than filtering by a pattern.
+func resolveCollectionName(name string) string {
+	if name == CollectionDefault {
+		return ""
+	}
+	return name
+}
+
 // ErrorWaitGroup lives in weed/util so packages outside the shell can share it.
 type ErrorWaitGroup = util.ErrorWaitGroup
 type ErrorWaitGroupTask = util.ErrorWaitGroupTask

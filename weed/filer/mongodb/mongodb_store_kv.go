@@ -46,7 +46,7 @@ func (store *MongodbStore) KvGet(ctx context.Context, key []byte) (value []byte,
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
 		glog.ErrorfCtx(ctx, "kv get: %v", err)
-		return nil, filer.ErrKvNotFound
+		return nil, err
 	}
 
 	if len(data.Meta) == 0 {

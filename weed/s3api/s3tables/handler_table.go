@@ -2,11 +2,13 @@ package s3tables
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +101,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -232,7 +234,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 	}
 	bucketName, namespaceName, tableName := target.bucketName, target.namespaceName, target.tableName
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -340,16 +342,9 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 	var metadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		entry, err := h.lookupEntry(r.Context(), client, tablePath)
+		data, err := h.readTableMetadata(r.Context(), client, tablePath)
 		if err != nil {
 			return err
-		}
-		if EntryType(entry.Extended) == EntryTypeView {
-			return filer_pb.ErrNotFound
-		}
-		data, ok := entry.Extended[ExtendedKeyMetadata]
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
@@ -424,26 +419,21 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespace+"/"+tableName)
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
-	tableAllowed := CheckPermissionWithContext("GetTable", accountID, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespace,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext("GetTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespace,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
+	allowed := CheckTableOrBucketPermission("GetTable", accountID,
+		metadata.OwnerAccountID, tablePolicy, tableARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespace,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
+		})
 
-	if !tableAllowed && !bucketAllowed {
+	if !allowed {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return ErrAccessDenied
 	}
@@ -525,11 +515,14 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketTags := map[string]string{}
 
 			// Fetch namespace metadata and policy
+			targetAbsent := false
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 			if err != nil {
-				return err // Not Found handled by caller
-			}
-			if err := json.Unmarshal(data, &nsMeta); err != nil {
+				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+					return err
+				}
+				targetAbsent = true
+			} else if err := json.Unmarshal(data, &nsMeta); err != nil {
 				return err
 			}
 
@@ -537,7 +530,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
 			if err == nil {
 				namespacePolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !errors.Is(err, ErrAttributeNotFound) && !errors.Is(err, filer_pb.ErrNotFound) {
 				return fmt.Errorf("failed to fetch namespace policy: %w", err)
 			}
 
@@ -547,6 +540,8 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				if err := json.Unmarshal(data, &bucketMeta); err != nil {
 					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 				}
+			} else if errors.Is(err, filer_pb.ErrNotFound) {
+				targetAbsent = true
 			} else if !errors.Is(err, ErrAttributeNotFound) {
 				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
@@ -554,32 +549,37 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
-			} else if !errors.Is(err, ErrAttributeNotFound) {
+			} else if !errors.Is(err, ErrAttributeNotFound) && !errors.Is(err, filer_pb.ErrNotFound) {
 				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return fmt.Errorf("failed to read bucket tags: %w", err)
+				if !errors.Is(err, filer_pb.ErrNotFound) {
+					return fmt.Errorf("failed to read bucket tags: %w", err)
+				}
 			} else if tags != nil {
 				bucketTags = tags
 			}
 
+			if targetAbsent {
+				if !h.authorizeAbsentTarget(r, &singleClient{client}, "ListTables", bucketName, namespaceName, "", "") {
+					return ErrAccessDenied
+				}
+				return filer_pb.ErrNotFound
+			}
+
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
-			nsAllowed := CheckPermissionWithContext("ListTables", accountID, nsMeta.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
-				TableBucketName: bucketName,
-				Namespace:       namespaceName,
-				TableBucketTags: bucketTags,
-				IdentityActions: identityActions,
-				DefaultAllow:    h.defaultAllowFor(r),
-			})
-			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-				TableBucketName: bucketName,
-				Namespace:       namespaceName,
-				TableBucketTags: bucketTags,
-				IdentityActions: identityActions,
-				DefaultAllow:    h.defaultAllowFor(r),
-			})
-			if !nsAllowed && !bucketAllowed {
+			if !CheckTableOrBucketPermission("ListTables", accountID,
+				nsMeta.OwnerAccountID, namespacePolicy, bucketARN,
+				bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+					TrustedIssuers:   h.trustedIssuers(r),
+					IsLocalAccountID: h.localAccountIDs,
+					TableBucketName:  bucketName,
+					Namespace:        namespaceName,
+					TableBucketTags:  bucketTags,
+					IdentityActions:  identityActions,
+					DefaultAllow:     h.defaultAllowFor(r),
+				}) {
 				return ErrAccessDenied
 			}
 
@@ -597,7 +597,13 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 			if err != nil {
-				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+				}
+				if !h.authorizeAbsentTarget(r, &singleClient{client}, "ListTables", bucketName, "", "", "") {
+					return ErrAccessDenied
+				}
+				return filer_pb.ErrNotFound
 			}
 			if err := json.Unmarshal(data, &bucketMeta); err != nil {
 				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
@@ -619,10 +625,12 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
 			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-				TableBucketName: bucketName,
-				TableBucketTags: bucketTags,
-				IdentityActions: identityActions,
-				DefaultAllow:    h.defaultAllowFor(r),
+				TrustedIssuers:   h.trustedIssuers(r),
+				IsLocalAccountID: h.localAccountIDs,
+				TableBucketName:  bucketName,
+				TableBucketTags:  bucketTags,
+				IdentityActions:  identityActions,
+				DefaultAllow:     h.defaultAllowFor(r),
 			}) {
 				return ErrAccessDenied
 			}
@@ -889,7 +897,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	var tableTags map[string]string
 	var bucketMetadata tableBucketMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadata(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
@@ -955,26 +963,25 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
-	tableAllowed := CheckPermissionWithContext("DeleteTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext("DeleteTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+	allowed := CheckTableOrBucketPermission("DeleteTable", principal,
+		metadata.OwnerAccountID, tablePolicy, tableARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespaceName,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
+		})
+	if !allowed {
+		if h.canReadEntry("GetTable", principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespaceName, tableName, bucketTags, tableTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		} else {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		}
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}
 	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
@@ -998,6 +1005,26 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// still a live catalog entry. Only this table's authorization was
 			// checked; a decoupled location has had its catalog attributes
 			// stripped, so a surviving marker means the path belongs elsewhere.
+			// The marker lives on the entry's name path, so ancestors of the
+			// data path are checked as well: a location inside another table's
+			// directory resolves above any marker the data path itself would
+			// carry.
+			for dir := path.Dir(dataPath); dir != GetTableBucketPath(bucketName) && strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/"); dir = path.Dir(dir) {
+				ancestor, lookupErr := h.lookupEntry(r.Context(), client, dir)
+				if lookupErr != nil {
+					if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+						continue
+					}
+					return fmt.Errorf("refusing to delete table %s: cannot read data path %q: %w", tableName, dataPath, lookupErr)
+				}
+				if _, ok := ancestor.Extended[ExtendedKeyEntryType]; ok {
+					return fmt.Errorf("refusing to delete table %s: data path %q is inside another catalog entry", tableName, dataPath)
+				}
+				var ownerMeta tableMetadataInternal
+				if data := ancestor.Extended[ExtendedKeyMetadata]; json.Unmarshal(data, &ownerMeta) == nil && ownerMeta.Name != "" {
+					return fmt.Errorf("refusing to delete table %s: data path %q is inside another catalog entry", tableName, dataPath)
+				}
+			}
 			switch _, markerErr := h.getExtendedAttribute(r.Context(), client, dataPath, ExtendedKeyMetadata); {
 			case markerErr == nil:
 				return fmt.Errorf("refusing to delete table %s: data path %q is another catalog entry", tableName, dataPath)
@@ -1043,10 +1070,15 @@ var renamedTableAttributes = []string{
 // catalogEntryKind describes the entry a rename operates on, so tables and
 // views share one implementation of the catalog-only move.
 type catalogEntryKind struct {
-	entryType    string
-	noun         string
-	renameOp     string
-	createOp     string
+	entryType string
+	noun      string
+	renameOp  string
+	createOp  string
+	readOp    string
+	// tagsForRead mirrors whether the read handler supplies resource tags to
+	// the policy check, so the denied-write visibility test cannot accept a
+	// tag-conditioned allow the real read would not evaluate.
+	tagsForRead  bool
 	notFoundCode string
 	existsCode   string
 	// resourceARN builds the ARN a policy scoped to this entry would name, so a
@@ -1060,6 +1092,8 @@ var (
 		noun:         "table",
 		renameOp:     "RenameTable",
 		createOp:     "CreateTable",
+		readOp:       "GetTable",
+		tagsForRead:  true,
 		notFoundCode: ErrCodeNoSuchTable,
 		existsCode:   ErrCodeTableAlreadyExists,
 		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
@@ -1071,6 +1105,8 @@ var (
 		noun:         "view",
 		renameOp:     "RenameView",
 		createOp:     "CreateView",
+		readOp:       "GetView",
+		tagsForRead:  false,
 		notFoundCode: ErrCodeNoSuchView,
 		existsCode:   ErrCodeViewAlreadyExists,
 		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
@@ -1078,6 +1114,45 @@ var (
 		},
 	}
 )
+
+// readTableMetadata returns the entry's table-metadata xattr. A view stored at
+// the same name is reported absent, the way GetTable and the renamer's
+// entry-type check already treat kind mismatches.
+func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, tablePath string) ([]byte, error) {
+	entry, err := h.lookupEntry(ctx, client, tablePath)
+	if err != nil {
+		return nil, err
+	}
+	if EntryType(entry.Extended) == EntryTypeView {
+		return nil, filer_pb.ErrNotFound
+	}
+	data, ok := entry.Extended[ExtendedKeyMetadata]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+	}
+	return data, nil
+}
+
+// canReadEntry reports whether the principal may read the catalog entry a
+// denied write would touch. A denied write is then answered with 403 — the
+// refusal leaks nothing a reader could not load anyway — while a caller that
+// cannot see the entry keeps the not-found veil.
+func (h *S3TablesHandler) canReadEntry(readOp, principal, tableOwner, bucketOwner, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespace, name string, bucketTags, tableTags map[string]string, identityActions []string, r *http.Request) bool {
+	ctx := &PolicyContext{
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespace,
+		TableName:        name,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     tableTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
+	}
+	return CheckTableOrBucketPermission(readOp, principal,
+		tableOwner, tablePolicy, tableARN,
+		bucketOwner, bucketPolicy, bucketARN, ctx)
+}
 
 // handleRenameTable moves a table's catalog entry to a new namespace/name within
 // the same bucket. It is catalog-only: the metadata.json and data files stay put,
@@ -1247,26 +1322,29 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
-	tableAllowed := CheckPermissionWithContext(kind.renameOp, principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       srcNamespace,
-		TableName:       srcName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext(kind.renameOp, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       srcNamespace,
-		TableName:       srcName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+	allowed := CheckTableOrBucketPermission(kind.renameOp, principal,
+		metadata.OwnerAccountID, tablePolicy, tableARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        srcNamespace,
+			TableName:        srcName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
+		})
+	if !allowed {
+		readTags := tableTags
+		if !kind.tagsForRead {
+			readTags = nil
+		}
+		if h.canReadEntry(kind.readOp, principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, srcNamespace, srcName, bucketTags, readTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to rename "+kind.noun)
+		} else {
+			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+		}
 		return NewAuthError(kind.renameOp, principal, "not authorized to rename "+kind.noun)
 	}
 
@@ -1312,23 +1390,18 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	// must also be allowed to create a table there (the source check alone lets a
 	// caller move tables into namespaces they don't control). Denials report the
 	// same not-found as a missing destination namespace.
-	destNamespaceAllowed := CheckPermissionWithContext(kind.createOp, principal, destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       destNamespace,
-		TableName:       destName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	destBucketAllowed := CheckPermissionWithContext(kind.createOp, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       destNamespace,
-		TableName:       destName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	if !destNamespaceAllowed && !destBucketAllowed {
+	if !CheckTableOrBucketPermission(kind.createOp, principal,
+		destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        destNamespace,
+			TableName:        destName,
+			TableBucketTags:  bucketTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
+		}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", destNamespace))
 		return NewAuthError(kind.renameOp, principal, "not authorized to create "+kind.noun+" in the destination namespace")
 	}
@@ -1412,40 +1485,51 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// handleUpdateTable updates table metadata
-func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	var req UpdateTableRequest
-	if err := h.readRequestBody(r, &req); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
+// updateTableTarget is the table state an update was authorized against: the
+// stored values the optimistic-concurrency check compares and the fields the
+// response echoes back.
+type updateTableTarget struct {
+	bucketName     string
+	namespaceName  string
+	tableName      string
+	tablePath      string
+	tableARN       string
+	metadata       tableMetadataInternal
+	storedMetadata []byte
+	storedPolicy   []byte
+}
 
+// authorizeUpdateTable validates the names an update names, loads the table
+// and the policies governing it, and checks the caller may update it, writing
+// the error response itself. Credential vending asks the same question without
+// updating anything, so it runs this gate through Manager.AuthorizeUpdateTable.
+func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, req *UpdateTableRequest) (*updateTableTarget, error) {
 	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
-		return fmt.Errorf("missing required parameters")
+		return nil, fmt.Errorf("missing required parameters")
 	}
 
 	namespaceName, err := validateNamespace(req.Namespace)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	tableName, err := validateTableName(req.Name)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
+		return nil, err
 	}
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
@@ -1462,7 +1546,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// 1. Get Table Metadata
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadata(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
@@ -1514,7 +1598,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		}
-		return err
+		return nil, err
 	}
 
 	// Authorization Check
@@ -1523,29 +1607,54 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 
-	tableAllowed := CheckPermissionWithContext("UpdateTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext("UpdateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
+	allowed := CheckTableOrBucketPermission("UpdateTable", principal,
+		metadata.OwnerAccountID, tablePolicy, tableARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespaceName,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
+		})
 
-	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
-		return NewAuthError("UpdateTable", principal, "not authorized to update table")
+	if !allowed {
+		if h.canReadEntry("GetTable", principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespaceName, tableName, bucketTags, tableTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		} else {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
+		}
+		return nil, NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
+
+	return &updateTableTarget{
+		bucketName:     bucketName,
+		namespaceName:  namespaceName,
+		tableName:      tableName,
+		tablePath:      tablePath,
+		tableARN:       tableARN,
+		metadata:       metadata,
+		storedMetadata: storedMetadata,
+		storedPolicy:   storedPolicy,
+	}, nil
+}
+
+// handleUpdateTable updates table metadata
+func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req UpdateTableRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	target, err := h.authorizeUpdateTable(w, r, filerClient, &req)
+	if err != nil {
+		return err
+	}
+	metadata := target.metadata
 
 	// Check version token if provided
 	if req.VersionToken != "" && req.VersionToken != metadata.VersionToken {
@@ -1593,15 +1702,15 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateEntryExtended(r.Context(), client, tablePath, func(extended map[string][]byte) error {
-			if !bytes.Equal(extended[ExtendedKeyMetadata], storedMetadata) {
+		return h.mutateEntryExtended(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
 			// The policy this request was authorized against must still be the
 			// one in force: an administrator restricting it mid-commit should
 			// send the caller back through authorization, not have its decision
 			// applied afterwards.
-			if !bytes.Equal(extended[ExtendedKeyPolicy], storedPolicy) {
+			if !bytes.Equal(extended[ExtendedKeyPolicy], target.storedPolicy) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
@@ -1619,7 +1728,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.writeJSON(w, http.StatusOK, &UpdateTableResponse{
-		TableARN:         tableARN,
+		TableARN:         target.tableARN,
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
 	})
@@ -1733,18 +1842,20 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		RequestTags:     requestTags,
-		TagKeys:         mapKeys(requestTags),
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		RequestTags:      requestTags,
+		TagKeys:          mapKeys(requestTags),
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}
-	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, policyContext)
-	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext)
-	if !nsAllowed && !bucketAllowed {
+	if !CheckTableOrBucketPermission("CreateTable", accountID,
+		namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN,
+		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return nil, ErrAccessDenied
 	}

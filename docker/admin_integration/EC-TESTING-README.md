@@ -21,7 +21,7 @@ The testing environment uses **official SeaweedFS commands** and includes:
 - **1 Master Server** (port 9333) - Coordinates the cluster with 50MB volume size limit
 - **6 Volume Servers** (ports 8080-8085) - Distributed across 2 data centers and 3 racks for diversity  
 - **1 Filer** (port 8888) - Provides file system interface
-- **1 Admin Server** (port 23646) - Detects volumes needing EC and manages workers using official `admin` command
+- **1 Admin Server** (port 12535) - Detects volumes needing EC and manages workers using official `admin` command
 - **3 EC Workers** - Execute erasure coding tasks using official `worker` command with task-specific working directories
 - **1 Load Generator** - Continuously writes and deletes files using SeaweedFS shell commands
 - **1 Monitor** - Tracks cluster health and EC progress using shell scripts
@@ -47,7 +47,7 @@ This provides:
 - Docker and Docker Compose installed
 - GNU Make installed
 - At least 4GB RAM available for containers
-- Ports 8080-8085, 8888, 9333, 23646 available
+- Ports 8080-8085, 8888, 9333, 12535 available
 
 ### Start the Environment
 
@@ -127,7 +127,7 @@ Run `make help` to see all available targets:
 |---------|-----|-------------|
 | Master UI | http://localhost:9333 | Cluster status and topology |
 | Filer | http://localhost:8888 | File operations |
-| Admin Server | http://localhost:23646/ | Task management |
+| Admin Server | http://localhost:12535/ | Task management |
 | Monitor | http://localhost:9999/status | Complete cluster monitoring |
 | Volume Servers | http://localhost:8080-8085/status | Individual volume server stats |
 

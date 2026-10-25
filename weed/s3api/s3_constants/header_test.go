@@ -123,6 +123,54 @@ func TestIsValidObjectKey(t *testing.T) {
 	}
 }
 
+func TestNormalizeObjectKeyAllowBackslash(t *testing.T) {
+	SetAllowBackslashInObjectKey(true)
+	defer SetAllowBackslashInObjectKey(false)
+
+	normalizeTests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"backslash kept verbatim", "folder\\file.txt", "folder\\file.txt"},
+		{"nested backslash kept", "folder\\sub\\file.txt", "folder\\sub\\file.txt"},
+		{"trailing backslash kept", "folder\\", "folder\\"},
+		{"lone backslash kept", "\\", "\\"},
+		{"double backslash kept", "a\\\\b", "a\\\\b"},
+		{"mixed separators", "folder\\sub/another\\file.txt", "folder\\sub/another\\file.txt"},
+		{"duplicate slashes still collapse", "folder//sub///file.txt", "folder/sub/file.txt"},
+		{"leading slash still trimmed", "/folder\\file.txt", "folder\\file.txt"},
+		{"trailing slash preserved", "folder/", "folder/"},
+		{"windows path style", "C:\\Users\\test\\file.txt", "C:\\Users\\test\\file.txt"},
+	}
+	for _, tt := range normalizeTests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeObjectKey(tt.input); got != tt.expected {
+				t.Errorf("NormalizeObjectKey(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+
+	validTests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"backslash dotdot is one segment", "..\\evil\\test.txt", true},
+		{"backslash dotdot inside", "good\\..\\evil/test.txt", true},
+		{"nested dotdot still rejected", "good/../evil/test.txt", false},
+		{"leading dotdot still rejected", "../evil/test.txt", false},
+		{"plain backslash key", "folder\\file.txt", true},
+	}
+	for _, tt := range validTests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidObjectKey(tt.input); got != tt.want {
+				t.Errorf("IsValidObjectKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsValidBucketName(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -263,5 +311,22 @@ func TestGetIdentityNameFromContextWithoutHolder(t *testing.T) {
 
 	if got := GetIdentityNameFromContext(req); got != "admin" {
 		t.Errorf("requester = %q, want admin", got)
+	}
+}
+
+func TestStoredCredentialFingerprintIsKeyed(t *testing.T) {
+	key := []byte("test-signing-key-32-characters!!")
+	fp := StoredCredentialFingerprint(key, "AKIAEXAMPLE", "secret")
+	if fp == "" {
+		t.Fatal("fingerprint is empty with a key")
+	}
+	if again := StoredCredentialFingerprint(key, "AKIAEXAMPLE", "secret"); again != fp {
+		t.Error("fingerprint is not deterministic")
+	}
+	if other := StoredCredentialFingerprint([]byte("another-signing-key-padded-out"), "AKIAEXAMPLE", "secret"); other == fp {
+		t.Error("fingerprint ignores the server key, leaving the secret guessable")
+	}
+	if noKey := StoredCredentialFingerprint(nil, "AKIAEXAMPLE", "secret"); noKey != "" {
+		t.Error("an empty key must yield an empty fingerprint")
 	}
 }

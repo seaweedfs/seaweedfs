@@ -813,7 +813,7 @@ impl EncodeRun<'_> {
         // explicitly.
         for (i, buf) in self.buffers[..self.data_shards].iter_mut().enumerate() {
             let read_offset = offset + (i * block_size) as u64;
-            let n = read_at_most(self.dat_file, buf, read_offset)?;
+            let n = crate::storage::io::read_full_at(self.dat_file, buf, read_offset)?;
             buf[n..].fill(0);
         }
 
@@ -834,19 +834,6 @@ impl EncodeRun<'_> {
     }
 }
 
-/// Read into `buf` at `offset` until it is full or EOF; returns bytes read.
-fn read_at_most(dat_file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    let mut n = 0;
-    while n < buf.len() {
-        let r = crate::storage::io::read_at(dat_file, &mut buf[n..], offset + n as u64)?;
-        if r == 0 {
-            break;
-        }
-        n += r;
-    }
-    Ok(n)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -861,7 +848,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         // Create a volume with some data
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -908,7 +895,7 @@ mod tests {
     fn make_volume_with_needles(n: u64) -> TempDir {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -983,7 +970,7 @@ mod tests {
     // the dir path so a test can drop/truncate shards and rebuild.
     fn encode_sample_volume(tmp: &TempDir) -> String {
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(1),
@@ -1180,7 +1167,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(2),
@@ -1229,7 +1216,7 @@ mod tests {
         use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
-        let mut v = Volume::new(
+        let v = Volume::new(
             &dir,
             &dir,
             VolumeId(3),
@@ -1329,7 +1316,7 @@ mod tests {
         let idx_dir = idx_tmp.path().to_str().unwrap();
 
         // Create a volume with separate data and index directories
-        let mut v = Volume::new(
+        let v = Volume::new(
             dat_dir,
             idx_dir,
             VolumeId(1),
@@ -1409,7 +1396,7 @@ mod tests {
         let idx_dir = idx_tmp.path().to_str().unwrap();
         let wrong_dir = wrong_tmp.path().to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dat_dir,
             idx_dir,
             VolumeId(1),
@@ -1443,7 +1430,7 @@ mod tests {
     /// a caller-chosen directory, which is what a split-disk test needs: the
     /// shards have to be scattered out of the directory they were encoded into.
     fn seed_encoded_volume(dir: &str, vid: VolumeId) {
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             vid,

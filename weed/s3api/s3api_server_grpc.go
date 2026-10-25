@@ -19,15 +19,16 @@ import (
 // checkAdminAuth verifies the caller presented a Bearer token signed by the
 // filer write-signing key (jwt.filer_signing.key). It mirrors the filer's
 // IamGrpcServer.checkAdminAuth so the same operator knob that locks down the
-// filer IAM gRPC service also locks down this cache. With no key configured the
-// check is a no-op, matching the rest of SeaweedFS's gRPC surface.
+// filer IAM gRPC service also locks down this cache. With no key configured
+// remote callers cannot be told apart, so only local clients (unix socket,
+// loopback, or the server's own addresses) are allowed.
 func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
-	if s3a.filerGuard == nil {
-		return nil
+	var signingKey security.SigningKey
+	if s3a.filerGuard != nil {
+		signingKey = s3a.filerGuard.SigningKey()
 	}
-	signingKey := s3a.filerGuard.SigningKey()
 	if len(signingKey) == 0 {
-		return nil
+		return checkLocalPeer(ctx)
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -50,6 +51,10 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "invalid admin token")
 	}
 	return nil
+}
+
+func checkLocalPeer(ctx context.Context) error {
+	return security.CheckLocalGrpcPeer(ctx)
 }
 
 func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentityRequest) (*iam_pb.PutIdentityResponse, error) {

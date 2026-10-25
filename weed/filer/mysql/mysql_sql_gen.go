@@ -62,14 +62,23 @@ func (gen *SqlGenMysql) nameExpr() string {
 	return "`name`"
 }
 
+// GetSqlScanPage spells the cursor as two primary-key ranges: MySQL 5.7 does
+// not turn a row-value comparison into a range seek. The name keeps the
+// column's own collation (BINARY would filesort every page); the scan promises
+// no lexical order. SQLite overrides this method.
+func (gen *SqlGenMysql) GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{}) {
+	return fmt.Sprintf("SELECT `dirhash`, `name`, `directory`, `meta` FROM `%s` WHERE `dirhash` > ? OR (`dirhash` = ? AND `name` > ?) ORDER BY `dirhash` ASC, `name` ASC LIMIT ?", tableName),
+		[]interface{}{dirhash, dirhash, name, limit}
+}
+
 func (gen *SqlGenMysql) GetSqlListExclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s > ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s > ? AND `directory` = ? AND %s LIKE ? ESCAPE '!' ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s >= ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s >= ? AND `directory` = ? AND %s LIKE ? ESCAPE '!' ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {

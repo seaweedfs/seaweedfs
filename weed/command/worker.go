@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -25,21 +26,21 @@ Behavior:
   - Use -metricsPort/-metricsIp to expose /health, /ready, and /metrics
 
 Examples:
-  weed worker -admin=localhost:23646
-  weed worker -admin=localhost:23646 -jobType=all
-  weed worker -admin=localhost:23646 -jobType=default
-  weed worker -admin=localhost:23646 -jobType=heavy
-  weed worker -admin=localhost:23646 -jobType=default,iceberg
-  weed worker -admin=localhost:23646 -jobType=vacuum,volume_balance
-  weed worker -admin=localhost:23646 -jobType=erasure_coding
-  weed worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
-  weed worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
-  weed worker -admin=localhost:23646 -metricsPort=9327 -metricsIp=0.0.0.0
+  weed worker -admin=localhost:12535
+  weed worker -admin=localhost:12535 -jobType=all
+  weed worker -admin=localhost:12535 -jobType=default
+  weed worker -admin=localhost:12535 -jobType=heavy
+  weed worker -admin=localhost:12535 -jobType=default,iceberg
+  weed worker -admin=localhost:12535 -jobType=vacuum,volume_balance
+  weed worker -admin=localhost:12535 -jobType=erasure_coding
+  weed worker -admin=admin.example.com:12535 -id=plugin-vacuum-a -heartbeat=10s
+  weed worker -admin=localhost:12535 -workingDir=/var/lib/seaweedfs-plugin
+  weed worker -admin=localhost:12535 -metricsPort=9327 -metricsIp=0.0.0.0
 `,
 }
 
 var (
-	workerAdminServer = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
+	workerAdminServer = cmdWorker.Flag.String("admin", fmt.Sprintf("localhost:%d", defaultAdminHTTPPort), "admin server address")
 	workerID          = cmdWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
 	workerWorkingDir  = cmdWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
 	workerJobType     = cmdWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types or categories to serve: all, default, heavy, or explicit names/aliases such as ec, balance, iceberg (comma-separated)")

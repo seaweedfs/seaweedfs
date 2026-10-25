@@ -59,6 +59,8 @@ service Seaweed {
   }
   rpc RaftLeadershipTransfer (RaftLeadershipTransferRequest) returns (RaftLeadershipTransferResponse) {
   }
+  rpc ResumeVolumeGrowth (ResumeVolumeGrowthRequest) returns (ResumeVolumeGrowthResponse) {
+  }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
   rpc CollectionStatistics (CollectionStatisticsRequest) returns (CollectionStatisticsResponse) {
@@ -119,6 +121,12 @@ message Heartbeat {
   // place of `volumes`. A master that does not understand this never sets
   // volume_digest_supported, so it keeps being sent the whole list.
   repeated VolumeInformationMessage changed_volumes = 28;
+
+  // Highest volume id this server has ever observed, persisted locally. Fed
+  // by HeartbeatResponse.max_volume_id echoes and by AllocateVolume requests.
+  uint32 max_volume_id_seen = 29;
+  // Topology id of the master cluster this server last heartbeated to.
+  string last_seen_topology_id = 30;
 }
 
 message HeartbeatResponse {
@@ -135,6 +143,12 @@ message HeartbeatResponse {
   // The master compares volume digests, so a server that reports one may send
   // changed_volumes in place of its whole list.
   bool volume_digest_supported = 9;
+  // The leader's current allocation bound; servers persist it and report it
+  // back as max_volume_id_seen so the bound survives master state loss.
+  uint32 max_volume_id = 10;
+  // The leader's cluster identity; a different value reported back later
+  // means the master's state was rebuilt.
+  string topology_id = 11;
 }
 
 message VolumeInformationMessage {
@@ -213,6 +227,9 @@ message KeepConnectedRequest {
   string filer_group = 5;
   string data_center = 6;
   string rack = 7;
+  // A draining filer leaves the lock ring but stays a cluster member, so peers
+  // keep following its metadata until the stream closes.
+  bool leave_lock_ring = 8;
 }
 
 message VolumeLocation {
@@ -302,6 +319,18 @@ message VolumeGrowRequest {
   string data_node = 7;
   uint32 memory_map_max_size_mb = 8;
   string disk_type = 9;
+  // If > 0, grow only when the average fill ratio of the layout's writable
+  // volumes has reached this threshold (e.g. 0.6). Lets callers pre-grow on
+  // fill level with one call, instead of listing volumes to compute the
+  // ratio themselves. Ignored when there are no writable volumes.
+  float grow_avg_fill_threshold = 10;
+}
+
+message ResumeVolumeGrowthRequest {
+}
+
+message ResumeVolumeGrowthResponse {
+  bool was_frozen = 1;
 }
 
 message AssignResponse {
@@ -608,4 +637,9 @@ message RaftLeadershipTransferResponse {
 }
 
 message VolumeGrowResponse {
+  // Average fill ratio of the layout's writable volumes at request time
+  // (0 when there are none). Reported whether or not growth was triggered.
+  float avg_fill = 1;
+  // Number of writable volumes at request time.
+  uint32 writable_count = 2;
 }

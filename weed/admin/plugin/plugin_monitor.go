@@ -887,6 +887,37 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	})
 }
 
+// bindQueuedJobWorker records the home worker while the job stays pending/queued.
+func (r *Plugin) bindQueuedJobWorker(job *plugin_pb.JobSpec, workerID string) {
+	if job == nil || strings.TrimSpace(job.JobId) == "" || strings.TrimSpace(workerID) == "" {
+		return
+	}
+
+	now := time.Now().UTC()
+	r.jobsMu.Lock()
+	tracked := r.jobs[job.JobId]
+	if tracked == nil {
+		r.jobsMu.Unlock()
+		return
+	}
+	if isTerminalTrackedJobState(tracked.State) {
+		r.jobsMu.Unlock()
+		return
+	}
+	tracked.WorkerID = workerID
+	tracked.Message = "queued on worker " + workerID
+	tracked.UpdatedAt = timeToPtr(now)
+	snap := cloneTrackedJob(*tracked)
+	r.dirtyJobs = true
+	r.jobsMu.Unlock()
+
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+		detail.WorkerID = snap.WorkerID
+		detail.Message = snap.Message
+		detail.UpdatedAt = snap.UpdatedAt
+	})
+}
+
 func (r *Plugin) cancelQueuedJob(job *plugin_pb.JobSpec, cause error) {
 	reason := "job canceled"
 	if cause != nil {

@@ -2,12 +2,16 @@
 
 `weed/pb/plugin.proto` is a language-agnostic contract: a maintenance worker
 connects out to admin, announces the job types it can detect and execute, and
-answers requests on that one stream. `weed worker -admin=host:23646` is the Go
+answers requests on that one stream. `weed worker -admin=host:12535` is the Go
 implementation of it from outside the admin process. This workspace is the Rust
 one.
 
     crates/core     the contract: stream, handshake, heartbeat, registry, config forms
     crates/lance    maintenance jobs for Lance tables, and a binary
+
+It also depends on `../seaweed-common`, a small crate outside this workspace
+holding the few helpers the Rust volume server needs identically — the
+HTTP<->gRPC address rule and the rustls provider choice.
 
 `core` knows nothing about any job. A second worker is a new crate beside
 `lance` that depends on it, not a fork of the protocol.
@@ -31,7 +35,7 @@ binary for the runner's platform, resolved from the version in `Cargo.lock`.
 
 ## Running
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535
 
 The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
@@ -45,7 +49,7 @@ Released builds do not need a toolchain. The worker ships inside the SeaweedFS
 image, beside the Rust volume server, under the verb that mirrors
 `volume-rust`:
 
-    docker run chrislusf/seaweedfs worker-rust --admin admin:23646
+    docker run chrislusf/seaweedfs worker-rust --admin admin:12535
 
 and as `weed-worker_linux_{amd64,arm64}.tar.gz` on each GitHub release. Both are
 linux amd64/arm64 only — lance, arrow and datafusion make every extra target an
@@ -55,7 +59,7 @@ entrypoint says so rather than failing as "not found".
 
 ## Metrics
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646 --metrics-port 9328
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --metrics-port 9328
 
 Serves `/health`, `/ready` and `/metrics` on that port, the same three the Go
 worker serves under `weed worker -metricsPort`, so one scrape config covers

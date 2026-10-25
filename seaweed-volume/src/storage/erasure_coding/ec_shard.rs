@@ -87,14 +87,14 @@ impl EcVolumeShard {
         Ok(())
     }
 
-    /// Read data at a specific offset.
+    /// Read data at a specific offset, filling `buf` unless the shard ends first.
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         let file = self
             .ecd_file
             .as_ref()
             .ok_or_else(|| io::Error::other("shard file not open"))?;
 
-        crate::storage::io::read_at(file, buf, offset)
+        crate::storage::io::read_full_at(file, buf, offset)
     }
 
     /// Write data to the shard file (appends).
@@ -193,6 +193,104 @@ impl ShardBits {
     pub fn minus(&self, other: ShardBits) -> ShardBits {
         ShardBits(self.0 & !other.0)
     }
+}
+
+/// Parses the generation of a 2PC-staged `<base>.v<N>` file: `None` means the
+/// name is not a generation file of `base`.
+pub fn ec_file_generation(name: &str, base: &str) -> Option<u32> {
+    let suffix = name.strip_prefix(&format!("{}.v", base))?;
+    match suffix.parse::<u32>() {
+        Ok(g) if g > 0 => Some(g),
+        _ => None,
+    }
+}
+
+/// Removes 2PC generation files staged under `base`:
+/// `<base>.ecNN.v<N>`, `<base>.ecx.v<N>`, `<base>.ecj.v<N>`, `<base>.ecsum.v<N>`
+/// and `<base>.vif.v<N>`. `generations_older_than == 0` removes every
+/// generation; otherwise only generations strictly below it. Returns the
+/// first real removal failure. Mirrors Go's `RemoveEcGenerationFiles`.
+pub fn remove_ec_generation_files(base: &str, generations_older_than: u32) -> io::Result<()> {
+    let path = std::path::Path::new(base);
+    let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) else {
+        return Ok(());
+    };
+    let ec_prefix = format!("{}.ec", fname.to_string_lossy());
+    let vif_name = format!("{}.vif", fname.to_string_lossy());
+    let mut first_err: Option<io::Error> = None;
+    let mut record = |res: io::Result<()>| {
+        if let Err(e) = res
+            && first_err.is_none()
+        {
+            first_err = Some(e);
+        }
+    };
+    match fs::read_dir(parent) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        // A skipped entry means an incomplete sweep; report it
+                        // instead of pretending the cleanup finished.
+                        record(Err(e));
+                        continue;
+                    }
+                };
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some((artifact, _)) = name.rsplit_once(".v") else {
+                    continue;
+                };
+                if artifact != vif_name && !artifact.starts_with(&ec_prefix) {
+                    continue;
+                }
+                let Some(generation) = ec_file_generation(&name, artifact) else {
+                    continue;
+                };
+                if generations_older_than > 0 && generation >= generations_older_than {
+                    continue;
+                }
+                record(match fs::remove_file(entry.path()) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                    _ => Ok(()),
+                });
+            }
+        }
+        Err(e) if e.kind() != io::ErrorKind::NotFound => record(Err(e)),
+        Err(_) => {}
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Removes every staged generation `<shard_file>.v<N>` of one shard file.
+/// Returns true when at least one generation file was removed.
+pub fn remove_ec_shard_generations(shard_file: &str) -> io::Result<bool> {
+    let path = std::path::Path::new(shard_file);
+    let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) else {
+        return Ok(false);
+    };
+    let fname = fname.to_string_lossy().into_owned();
+    let mut removed = false;
+    match fs::read_dir(parent) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if ec_file_generation(&name, &fname).is_some() {
+                    match fs::remove_file(entry.path()) {
+                        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                        _ => removed = true,
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        Err(_) => {}
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

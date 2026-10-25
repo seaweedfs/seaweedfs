@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -55,11 +56,18 @@ type VolumeServer struct {
 	AllowUntrustedRemoteEndpoints bool
 	compactionBytePerSecond       int64
 	maintenanceBytePerSecond      int64
+	vacuumCommitSlots             chan struct{}
+	vacuumCommitsWaiting          atomic.Int32
 	metricsAddress                string
 	metricsIntervalSec            int
 	fileSizeLimitBytes            int64
 	isHeartbeating                bool
 	stopChan                      chan bool
+
+	// Volumes with an EC decode in flight. A cancelled request does not
+	// stop the handler; this keeps a retry from racing it on the same
+	// volume files.
+	ecDecodesInFlight sync.Map
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -74,6 +82,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readMode string,
 	compactionMBPerSecond int,
 	maintenanceMBPerSecond int,
+	maxParallelVacuumCommits int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
@@ -84,6 +93,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	ldbTimeout int64,
 	allowUntrustedRemoteEndpoints bool,
 	diskProbeConfig stats.DiskIOProbeConfig,
+	syncBatch storage.SyncBatchOption,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -121,6 +131,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		whiteList:                     whiteList,
 		AllowUntrustedRemoteEndpoints: allowUntrustedRemoteEndpoints,
 	}
+	if maxParallelVacuumCommits > 0 {
+		vs.vacuumCommitSlots = make(chan struct{}, maxParallelVacuumCommits)
+	}
 
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
 	// Copy the caller's slice so subsequent external mutation cannot desync
@@ -136,6 +149,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.checkWithMaster()
 
 	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout, diskProbeConfig)
+	vs.store.MasterFn = vs.getCurrentMaster
+	vs.store.SetSyncBatchOption(syncBatch)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

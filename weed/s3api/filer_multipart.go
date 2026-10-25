@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"cmp"
+	"container/heap"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -69,7 +70,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString := s3a.generateUploadID(*input.Key)
 
-	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	// a time-ordered uuid keeps uploads of one key in initiation order
+	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
 
 	// Validate checksum algorithm before creating the upload directory
 	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
@@ -110,6 +112,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		if input.ContentType != nil {
 			entry.Attributes.Mime = *input.ContentType
 		}
+		applyPutObjectACL(r, entry)
 
 		// Prepare and apply encryption configuration within directory creation
 		// This ensures encryption resources are only allocated if directory creation succeeds
@@ -383,7 +386,7 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 	}
 }
 
-func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
+func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, ""); err == nil && entry != nil && entry.Extended != nil {
 		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 			cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
@@ -581,7 +584,36 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			glog.Errorf("completeMultipartUpload: %v", typeErr)
 			return nil, nil, s3err.ErrInvalidRequest
 		}
+		query := parseRequestQuery(r)
+		if completeType := lookupHeaderOrQuery(r, query, s3_constants.AmzChecksumType); completeType != "" && !strings.EqualFold(completeType, resolvedType) {
+			return nil, nil, s3err.ErrBadDigest
+		}
 		checksumType = resolvedType
+
+		provided := make(map[int]string, len(parts.Parts))
+		for _, part := range parts.Parts {
+			provided[part.PartNumber] = part.GetChecksum(checksumHeaderName)
+		}
+		for _, partNumber := range completedPartNumbers {
+			providedChecksum := provided[partNumber]
+			if providedChecksum == "" {
+				// COMPOSITE uploads must carry every part checksum in the
+				// request; FULL_OBJECT uploads instead carry the whole-object
+				// checksum in a request header.
+				if checksumType == s3_constants.ChecksumTypeComposite {
+					return nil, nil, s3err.ErrInvalidRequest
+				}
+				continue
+			}
+			raw, _, decodeErr := decodePartChecksum(partNumber, partEntries[partNumber], checksumHeaderName)
+			if decodeErr != nil {
+				glog.Errorf("completeMultipartUpload: %v", decodeErr)
+				return nil, nil, s3err.ErrInvalidPart
+			}
+			if providedChecksum != base64.StdEncoding.EncodeToString(raw) {
+				return nil, nil, s3err.ErrBadDigest
+			}
+		}
 
 		var checksumErr error
 		if checksumType == s3_constants.ChecksumTypeFullObject {
@@ -592,6 +624,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		if checksumErr != nil {
 			glog.Errorf("completeMultipartUpload: %s checksum computation failed: %v", checksumType, checksumErr)
 			return nil, nil, s3err.ErrInvalidPart
+		}
+		if objectChecksum := lookupHeaderOrQuery(r, query, checksumHeaderName); objectChecksum != "" && objectChecksum != checksumValue {
+			return nil, nil, s3err.ErrBadDigest
 		}
 	}
 
@@ -656,7 +691,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	routeKey := s3a.objectRouteKey(*input.Bucket, *input.Key)
 	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
-		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
+		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, parts, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
 		if prepCode != s3err.ErrNone || output != nil {
 			return prepCode
 		}
@@ -1258,56 +1293,172 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	glog.V(2).Infof("listMultipartUploads input %v", input)
 
-	output = &ListMultipartUploadsResult{
-		Bucket:       input.Bucket,
-		Delimiter:    input.Delimiter,
-		EncodingType: input.EncodingType,
-		KeyMarker:    input.KeyMarker,
-		MaxUploads:   input.MaxUploads,
-		Prefix:       input.Prefix,
-		IsTruncated:  aws.Bool(false),
-	}
-
-	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
+	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
+	var page *multipartUploadPage
+	err := listRetry(uploadsFolder, func() error {
+		page = newMultipartUploadPage(input)
+		return filer_pb.List(context.Background(), s3a, uploadsFolder, "", func(entry *filer_pb.Entry, isLastEntry bool) error {
+			page.add(entry)
+			return nil
+		}, "", false, math.MaxInt32)
+	})
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
 		if isFilerNotFound(err) {
-			return output, s3err.ErrNone
+			return selectMultipartUploads(input, nil), s3err.ErrNone
 		}
 		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
-		return output, s3err.ErrInternalError
+		return nil, s3err.ErrInternalError
 	}
 
-	uploadsCount := int64(0)
+	return page.result(), s3err.ErrNone
+}
+
+// selectMultipartUploads orders uploads by key, then by upload id, and resumes
+// after the (key-marker, upload-id-marker) position, so an aborted marker
+// upload does not hide the rest of its key.
+func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*filer_pb.Entry) *ListMultipartUploadsResult {
+	page := newMultipartUploadPage(input)
 	for _, entry := range entries {
-		if entry.Extended != nil {
-			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
-			if *input.KeyMarker != "" && *input.KeyMarker != key {
-				continue
-			}
-			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
-				continue
-			}
-			upload := &s3.MultipartUpload{
-				Key:      objectKey(aws.String(key)),
-				UploadId: aws.String(entry.Name),
-			}
-			if entry.Attributes != nil {
-				upload.Initiated = aws.Time(time.Unix(entry.Attributes.Crtime, int64(entry.Attributes.CrtimeNs)))
-			}
-			output.Upload = append(output.Upload, upload)
-			uploadsCount += 1
-		}
-		if uploadsCount >= *input.MaxUploads {
-			output.IsTruncated = aws.Bool(true)
-			output.NextUploadIdMarker = aws.String(entry.Name)
-			break
-		}
+		page.add(entry)
 	}
+	return page.result()
+}
 
-	return
+// multipartUploadPage accumulates one page of a ListMultipartUploads result.
+// Upload order is the object key kept in extended attributes, not the upload
+// id the filer sorts by, so every entry has to be seen; keeping only the
+// maxUploads smallest candidates bounds the heap by the page, not the folder.
+type multipartUploadPage struct {
+	input *s3.ListMultipartUploadsInput
+	limit int
+	top   candidateHeap
+	more  bool
+}
+
+type multipartCandidate struct {
+	key   string
+	entry *filer_pb.Entry
+}
+
+func compareMultipartCandidate(a, b multipartCandidate) int {
+	return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
+}
+
+// candidateHeap is a max-heap on (key, upload id): the root sorts last of the
+// candidates held, so popping it keeps the page's smallest entries.
+type candidateHeap []multipartCandidate
+
+func (h candidateHeap) Len() int { return len(h) }
+func (h candidateHeap) Less(i, j int) bool {
+	return compareMultipartCandidate(h[i], h[j]) > 0
+}
+func (h candidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *candidateHeap) Push(x any)   { *h = append(*h, x.(multipartCandidate)) }
+func (h *candidateHeap) Pop() any {
+	old := *h
+	n := len(old)
+	*h = old[:n-1]
+	return old[n-1]
+}
+
+func newMultipartUploadPage(input *s3.ListMultipartUploadsInput) *multipartUploadPage {
+	limit := maxUploadsList
+	if *input.MaxUploads < int64(limit) {
+		limit = int(*input.MaxUploads)
+	}
+	return &multipartUploadPage{input: input, limit: limit}
+}
+
+func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
+	if p.limit <= 0 || !isMultipartUploadEntry(entry) {
+		return
+	}
+	input := p.input
+	key := *objectKey(aws.String(string(entry.Extended[s3_constants.ExtMultipartObjectKey])))
+	if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
+		return
+	}
+	if *input.KeyMarker != "" && (key < *input.KeyMarker || key == *input.KeyMarker && (*input.UploadIdMarker == "" || entry.Name <= *input.UploadIdMarker)) {
+		return
+	}
+	c := multipartCandidate{key: key, entry: entry}
+	if p.top.Len() >= p.limit {
+		p.more = true
+		if compareMultipartCandidate(c, p.top[0]) >= 0 {
+			return
+		}
+		heap.Pop(&p.top)
+	}
+	heap.Push(&p.top, c)
+}
+
+func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
+	input := p.input
+	output := &ListMultipartUploadsResult{
+		Bucket:         input.Bucket,
+		Delimiter:      input.Delimiter,
+		KeyMarker:      input.KeyMarker,
+		MaxUploads:     aws.Int64(int64(p.limit)),
+		Prefix:         input.Prefix,
+		UploadIdMarker: input.UploadIdMarker,
+		IsTruncated:    aws.Bool(false),
+	}
+	candidates := make([]multipartCandidate, len(p.top))
+	copy(candidates, p.top)
+	slices.SortFunc(candidates, compareMultipartCandidate)
+	for _, c := range candidates {
+		upload := &s3.MultipartUpload{
+			Key:      aws.String(c.key),
+			UploadId: aws.String(c.entry.Name),
+		}
+		if c.entry.Attributes != nil {
+			upload.Initiated = aws.Time(time.Unix(c.entry.Attributes.Crtime, int64(c.entry.Attributes.CrtimeNs)))
+		}
+		output.Upload = append(output.Upload, upload)
+	}
+	if p.more {
+		last := candidates[len(candidates)-1]
+		output.IsTruncated = aws.Bool(true)
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.entry.Name)
+	}
+	if aws.StringValue(input.EncodingType) == s3.EncodingTypeUrl {
+		// AWS url-encodes these key-named elements when encoding-type=url is
+		// requested; without it XML 1.0 cannot carry the keys at all and the
+		// encoder replaces their characters with U+FFFD.
+		output.EncodingType = input.EncodingType
+		output.Delimiter = encodeMultipartUploadURLField(output.Delimiter)
+		output.Prefix = encodeMultipartUploadURLField(output.Prefix)
+		output.KeyMarker = encodeMultipartUploadURLField(output.KeyMarker)
+		output.NextKeyMarker = encodeMultipartUploadURLField(output.NextKeyMarker)
+		for _, upload := range output.Upload {
+			upload.Key = encodeMultipartUploadURLField(upload.Key)
+		}
+	} else {
+		output.KeyMarker = encodeListContinuationTokenField(output.KeyMarker)
+		output.NextKeyMarker = encodeListContinuationTokenField(output.NextKeyMarker)
+	}
+	return output
+}
+
+// urlQueryEscape url-encodes key text per segment: every "/"-separated part is
+// query-escaped and the separators are kept, so a client recovers the exact key
+// with url.QueryUnescape.
+func urlQueryEscape(key string) string {
+	segments := strings.Split(key, "/")
+	for i, segment := range segments {
+		segments[i] = url.QueryEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
+func encodeMultipartUploadURLField(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return aws.String(urlQueryEscape(*value))
 }
 
 type ListPartsResult struct {
@@ -1356,7 +1507,15 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
+	// part files are "%04d_<uuid>.part" (legacy "%04d.part"). '_' sorts after
+	// '.', so an exclusive start at "%04d.part" still returns the marker part
+	// and a page of max-parts=1 never advances. The next part number sorts
+	// past both name shapes of the marker part.
+	if *input.PartNumberMarker >= math.MaxInt64 {
+		output.IsTruncated = aws.Bool(false)
+		return output, s3err.ErrNone
+	}
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
@@ -1379,6 +1538,10 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
+			// the marker is exclusive even if a store ignores startFrom
+			if partNumber <= int(*input.PartNumberMarker) {
+				continue
+			}
 
 			partETag := getEtagFromEntry(entry)
 			part := &s3.Part{
@@ -1394,6 +1557,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 			}
 		}
+	}
+
+	// a page that surfaced no parts has no next page to claim
+	if len(output.Part) == 0 {
+		output.IsTruncated = aws.Bool(false)
+		output.NextPartNumberMarker = nil
 	}
 
 	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)

@@ -31,6 +31,21 @@ type renameTestStore struct {
 	deleteErr error
 	listErr   error         // simulates a transient store/RPC failure from a directory listing
 	findDelay time.Duration // optional: widen check-then-act windows in tests
+	findErr   error         // simulates a failing entry lookup
+	strictTx  bool          // like a SQL store: calls through a committed transaction fail
+}
+
+type renameTestTxKey struct{}
+
+type renameTestTx struct{ done bool }
+
+// txDone reports a call through a transaction that has already committed or
+// rolled back, which a SQL store refuses.
+func (s *renameTestStore) txDone(ctx context.Context) error {
+	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok && tx.done {
+		return errors.New("sql: transaction has already been committed or rolled back")
+	}
+	return nil
 }
 
 func newRenameTestStore() *renameTestStore {
@@ -44,10 +59,23 @@ func (s *renameTestStore) GetName() string                             { return 
 func (s *renameTestStore) Initialize(util.Configuration, string) error { return nil }
 func (s *renameTestStore) Shutdown()                                   {}
 func (s *renameTestStore) BeginTransaction(ctx context.Context) (context.Context, error) {
+	if s.strictTx {
+		return context.WithValue(ctx, renameTestTxKey{}, &renameTestTx{}), nil
+	}
 	return ctx, nil
 }
-func (s *renameTestStore) CommitTransaction(context.Context) error   { return s.commitErr }
-func (s *renameTestStore) RollbackTransaction(context.Context) error { return nil }
+func (s *renameTestStore) CommitTransaction(ctx context.Context) error {
+	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
+		tx.done = true
+	}
+	return s.commitErr
+}
+func (s *renameTestStore) RollbackTransaction(ctx context.Context) error {
+	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
+		tx.done = true
+	}
+	return nil
+}
 func (s *renameTestStore) KvPut(context.Context, []byte, []byte) error {
 	return nil
 }
@@ -56,27 +84,39 @@ func (s *renameTestStore) KvGet(context.Context, []byte) ([]byte, error) {
 }
 func (s *renameTestStore) KvDelete(context.Context, []byte) error { return nil }
 
-func (s *renameTestStore) InsertEntry(_ context.Context, entry *filer.Entry) error {
+func (s *renameTestStore) InsertEntry(ctx context.Context, entry *filer.Entry) error {
+	if err := s.txDone(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
 	return nil
 }
 
-func (s *renameTestStore) UpdateEntry(_ context.Context, entry *filer.Entry) error {
+func (s *renameTestStore) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
+	if err := s.txDone(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
 	return nil
 }
 
-func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.Entry, error) {
+func (s *renameTestStore) FindEntry(ctx context.Context, p util.FullPath) (*filer.Entry, error) {
+	if err := s.txDone(ctx); err != nil {
+		return nil, err
+	}
 	if s.findDelay > 0 {
 		time.Sleep(s.findDelay)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.findCalls[string(p)]++
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
 	entry, found := s.entries[string(p)]
 	if !found {
 		return nil, filer_pb.ErrNotFound
@@ -84,7 +124,10 @@ func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.
 	return entry.ShallowClone(), nil
 }
 
-func (s *renameTestStore) DeleteEntry(_ context.Context, p util.FullPath) error {
+func (s *renameTestStore) DeleteEntry(ctx context.Context, p util.FullPath) error {
+	if err := s.txDone(ctx); err != nil {
+		return err
+	}
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}

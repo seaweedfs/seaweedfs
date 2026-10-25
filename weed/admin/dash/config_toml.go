@@ -98,6 +98,19 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecConf.ReplicaPlacement = v.GetString(k)
 		ecChanged = true
 	}
+	if k := "maintenance.erasure_coding.strict_placement"; v.IsSet(k) {
+		ecConf.StrictPlacement = v.GetBool(k)
+		ecChanged = true
+	}
+	if k := "maintenance.erasure_coding.free_slots_deadband"; v.IsSet(k) {
+		ecConf.FreeSlotsDeadband = v.GetInt(k)
+		if ecConf.FreeSlotsDeadband < 0 {
+			ecConf.FreeSlotsDeadband = 0
+		} else if ecConf.FreeSlotsDeadband > 100000 {
+			ecConf.FreeSlotsDeadband = 100000
+		}
+		ecChanged = true
+	}
 
 	if !maintenanceChanged && !vacuumChanged && !balanceChanged && !ecChanged {
 		return nil
@@ -219,11 +232,13 @@ var pluginConfigSections = []pluginConfigSection{
 		jobType: "erasure_coding",
 		prefix:  "maintenance.erasure_coding",
 		workerKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
-			"fullness_ratio":    doubleValue,
-			"quiet_for_seconds": int64Value,
-			"min_size_mb":       int64Value,
-			"preferred_tags":    stringListValue,
-			"replica_placement": stringValue,
+			"fullness_ratio":      doubleValue,
+			"quiet_for_seconds":   int64Value,
+			"min_size_mb":         int64Value,
+			"preferred_tags":      stringListValue,
+			"replica_placement":   stringValue,
+			"strict_placement":    boolValue,
+			"free_slots_deadband": int64Value,
 		},
 		// workers read collection_filter from the admin values, not the worker values
 		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
@@ -238,6 +253,10 @@ func doubleValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
 
 func int64Value(v TomlConfig, key string) *plugin_pb.ConfigValue {
 	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(v.GetInt(key))}}
+}
+
+func boolValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
+	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: v.GetBool(key)}}
 }
 
 func stringValue(v TomlConfig, key string) *plugin_pb.ConfigValue {

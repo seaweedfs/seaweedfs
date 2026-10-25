@@ -98,21 +98,26 @@ var fineGrainedActionMap = map[string]string{
 // prefixed (s3:Action) and unprefixed (Action) variants in init().
 var baseS3ActionMap = map[string]string{
 	// Object operations
-	"DeleteObject":        s3_constants.ACTION_WRITE,
-	"PutObject":           s3_constants.ACTION_WRITE,
-	"GetObject":           s3_constants.ACTION_READ,
-	"DeleteObjectVersion": s3_constants.ACTION_WRITE,
-	"GetObjectVersion":    s3_constants.ACTION_READ,
+	"DeleteObject":               s3_constants.ACTION_WRITE,
+	"PutObject":                  s3_constants.ACTION_WRITE,
+	"GetObject":                  s3_constants.ACTION_READ,
+	"DeleteObjectVersion":        s3_constants.ACTION_WRITE,
+	"GetObjectVersion":           s3_constants.ACTION_READ,
+	"GetObjectAttributes":        s3_constants.ACTION_READ,
+	"GetObjectVersionAttributes": s3_constants.ACTION_READ,
 	// Tagging operations
-	"GetObjectTagging":        s3_constants.ACTION_TAGGING,
-	"GetObjectVersionTagging": s3_constants.ACTION_TAGGING,
-	"PutObjectTagging":        s3_constants.ACTION_TAGGING,
-	"DeleteObjectTagging":     s3_constants.ACTION_TAGGING,
-	"GetBucketTagging":        s3_constants.ACTION_TAGGING,
-	"PutBucketTagging":        s3_constants.ACTION_TAGGING,
-	"DeleteBucketTagging":     s3_constants.ACTION_TAGGING,
+	"GetObjectTagging":           s3_constants.ACTION_TAGGING,
+	"GetObjectVersionTagging":    s3_constants.ACTION_TAGGING,
+	"PutObjectTagging":           s3_constants.ACTION_TAGGING,
+	"PutObjectVersionTagging":    s3_constants.ACTION_TAGGING,
+	"DeleteObjectTagging":        s3_constants.ACTION_TAGGING,
+	"DeleteObjectVersionTagging": s3_constants.ACTION_TAGGING,
+	"GetBucketTagging":           s3_constants.ACTION_TAGGING,
+	"PutBucketTagging":           s3_constants.ACTION_TAGGING,
+	"DeleteBucketTagging":        s3_constants.ACTION_TAGGING,
 	// ACL operations
 	"PutObjectAcl":        s3_constants.ACTION_WRITE_ACP,
+	"PutObjectVersionAcl": s3_constants.ACTION_WRITE_ACP,
 	"GetObjectAcl":        s3_constants.ACTION_READ_ACP,
 	"GetObjectVersionAcl": s3_constants.ACTION_READ_ACP,
 	"PutBucketAcl":        s3_constants.ACTION_WRITE_ACP,
@@ -143,8 +148,14 @@ var baseS3ActionMap = map[string]string{
 	"UploadPart":              s3_constants.ACTION_WRITE,
 	"CompleteMultipartUpload": s3_constants.ACTION_WRITE,
 	"AbortMultipartUpload":    s3_constants.ACTION_WRITE,
-	"ListMultipartUploads":    s3_constants.ACTION_WRITE,
-	"ListParts":               s3_constants.ACTION_WRITE,
+	"ListMultipartUploads":    s3_constants.ACTION_LIST_MULTIPART_UPLOADS,
+	"ListParts":               s3_constants.ACTION_LIST_PARTS,
+	// AWS IAM names for the multipart listing operations get their own
+	// action names so a policy grant cannot widen into a general Read
+	// or Write grant; VerifyActionPermission matches them against the
+	// resolved request action.
+	"ListBucketMultipartUploads": s3_constants.ACTION_LIST_MULTIPART_UPLOADS,
+	"ListMultipartUploadParts":   s3_constants.ACTION_LIST_PARTS,
 	// Retention and legal hold operations
 	"GetObjectRetention":        s3_constants.ACTION_GET_OBJECT_RETENTION,
 	"PutObjectRetention":        s3_constants.ACTION_PUT_OBJECT_RETENTION,
@@ -209,6 +220,10 @@ func MapToIdentitiesAction(action string) string {
 		return "PutBucketPolicy"
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return "DeleteBucketPolicy"
+	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
+		return "ListBucketMultipartUploads"
+	case s3_constants.ACTION_LIST_PARTS:
+		return "ListMultipartUploadParts"
 	default:
 		return ""
 	}

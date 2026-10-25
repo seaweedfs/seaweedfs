@@ -15,8 +15,8 @@ on:
       - '.github/workflows/s3-sdk-v2-routing-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/s3-sdk-v2-routing-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ permissions:
 jobs:
   s3-sdk-v2-routing-tests:
     name: S3 SDK V2 Routing Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out code
@@ -34,6 +34,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Install SeaweedFS
         run: |

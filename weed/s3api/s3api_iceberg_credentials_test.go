@@ -8,7 +8,7 @@ import (
 )
 
 func TestTablePrefixSessionPolicyScopesToTheTable(t *testing.T) {
-	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events")
+	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events", false)
 	if err != nil {
 		t.Fatalf("tablePrefixSessionPolicy() error = %v", err)
 	}
@@ -42,13 +42,43 @@ func TestTablePrefixSessionPolicyScopesToTheTable(t *testing.T) {
 	}
 }
 
+// A caller the catalog would not let commit gets a session that can read the
+// table's files and nothing more.
+func TestTablePrefixSessionPolicyReadOnly(t *testing.T) {
+	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events", true)
+	if err != nil {
+		t.Fatalf("tablePrefixSessionPolicy() error = %v", err)
+	}
+
+	var policy struct {
+		Statement []struct {
+			Action []string `json:"Action"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		t.Fatalf("policy is not valid JSON: %v", err)
+	}
+
+	for _, statement := range policy.Statement {
+		for _, action := range statement.Action {
+			switch action {
+			case "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts":
+				t.Errorf("read-only session policy grants %s", action)
+			}
+		}
+	}
+	if got := policy.Statement[0].Action; len(got) != 1 || got[0] != "s3:GetObject" {
+		t.Errorf("object actions = %v, want [s3:GetObject]", got)
+	}
+}
+
 // A table at the bucket root has no prefix to scope to, and vending would hand
 // out read and write over every other table in the bucket.
 func TestTablePrefixSessionPolicyRefusesAWholeBucket(t *testing.T) {
-	if _, err := tablePrefixSessionPolicy("warehouse", ""); err == nil {
+	if _, err := tablePrefixSessionPolicy("warehouse", "", false); err == nil {
 		t.Error("tablePrefixSessionPolicy() error = nil, want a refusal for an empty prefix")
 	}
-	if _, err := tablePrefixSessionPolicy("warehouse", "/"); err == nil {
+	if _, err := tablePrefixSessionPolicy("warehouse", "/", false); err == nil {
 		t.Error("a prefix of only separators was accepted")
 	}
 }
@@ -56,7 +86,7 @@ func TestTablePrefixSessionPolicyRefusesAWholeBucket(t *testing.T) {
 // GetBucketLocation carries no prefix, so conditioning it would deny location
 // discovery to every vended credential.
 func TestTablePrefixSessionPolicyLeavesBucketLocationUnconditioned(t *testing.T) {
-	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events")
+	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events", false)
 	if err != nil {
 		t.Fatalf("tablePrefixSessionPolicy() error = %v", err)
 	}
@@ -84,7 +114,7 @@ func TestTablePrefixSessionPolicyLeavesBucketLocationUnconditioned(t *testing.T)
 }
 
 func TestIcebergSessionNameIsBounded(t *testing.T) {
-	name := icebergSessionName(strings.Repeat("principal", 10), "warehouse", "ns/table")
+	name := icebergSessionName(strings.Repeat("principal", 10), "warehouse", "ns/table", "")
 	if len(name) > 64 {
 		t.Errorf("session name is %d chars, want at most 64", len(name))
 	}
@@ -101,7 +131,7 @@ func TestIcebergSessionNameIsBounded(t *testing.T) {
 // telling clients to use their own credentials.
 func TestVendTableCredentialsDisabledWithoutRole(t *testing.T) {
 	s3a := &S3ApiServer{}
-	credentials, err := s3a.VendTableCredentials(context.Background(), "admin", "warehouse", "ns/t")
+	credentials, err := s3a.VendTableCredentials(context.Background(), "admin", "warehouse", "ns/t", false)
 	if err != nil {
 		t.Fatalf("VendTableCredentials() error = %v, want nil", err)
 	}
@@ -114,7 +144,7 @@ func TestVendTableCredentialsNeedsSTS(t *testing.T) {
 	s3a := &S3ApiServer{}
 	s3a.SetIcebergCredentialRole("arn:aws:iam::role/IcebergTableAccess", 3600)
 
-	if _, err := s3a.VendTableCredentials(context.Background(), "admin", "warehouse", "ns/t"); err == nil {
+	if _, err := s3a.VendTableCredentials(context.Background(), "admin", "warehouse", "ns/t", false); err == nil {
 		t.Error("VendTableCredentials() error = nil, want an error when STS is not configured")
 	}
 }
@@ -122,7 +152,7 @@ func TestVendTableCredentialsNeedsSTS(t *testing.T) {
 // Listing is granted on the bucket, so the prefix condition is what keeps a
 // vended credential from enumerating other tables.
 func TestTablePrefixSessionPolicyRestrictsListing(t *testing.T) {
-	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events")
+	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events", false)
 	if err != nil {
 		t.Fatalf("tablePrefixSessionPolicy() error = %v", err)
 	}
@@ -168,11 +198,11 @@ func TestTablePrefixSessionPolicyRestrictsListing(t *testing.T) {
 // tables, so it is refused instead of vended.
 func TestTablePrefixSessionPolicyRefusesWildcards(t *testing.T) {
 	for _, prefix := range []string{"analytics/*", "analytics/ev?nts", "*"} {
-		if _, err := tablePrefixSessionPolicy("warehouse", prefix); err == nil {
+		if _, err := tablePrefixSessionPolicy("warehouse", prefix, false); err == nil {
 			t.Errorf("tablePrefixSessionPolicy(%q) error = nil, want a refusal", prefix)
 		}
 	}
-	if _, err := tablePrefixSessionPolicy("ware*house", "analytics/events"); err == nil {
+	if _, err := tablePrefixSessionPolicy("ware*house", "analytics/events", false); err == nil {
 		t.Error("a wildcard in the bucket name was accepted")
 	}
 }

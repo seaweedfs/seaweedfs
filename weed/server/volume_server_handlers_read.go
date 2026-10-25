@@ -40,10 +40,20 @@ func NotFound(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func InternalError(w http.ResponseWriter) {
+func InternalError(w http.ResponseWriter, r *http.Request, err error) {
 	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
-	w.WriteHeader(http.StatusInternalServerError)
+	if err == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodHead {
+		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and error:%v",
+			r.Method, redactedURL(r), http.StatusInternalServerError, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writeJsonError(w, r, http.StatusInternalServerError, err)
 }
 
 func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Request) {
@@ -92,8 +102,8 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		r.URL.RawQuery = query.Encode()
 		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 		if err != nil {
-			glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
-			InternalError(w)
+			glog.V(0).Infof("failed to instance http request of url %s: %v", redactedURL(r), err)
+			InternalError(w, r, nil)
 			return
 		}
 		for k, vv := range r.Header {
@@ -105,8 +115,8 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		response, err := util_http.GetGlobalHttpClient().Do(request)
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.FailedReadProxyReq).Inc()
-			glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
-			InternalError(w)
+			glog.V(0).Infof("request remote url %s: %v", redactedURL(r), err)
+			InternalError(w, r, nil)
 			return
 		}
 		defer util_http.CloseResponse(response)
@@ -137,6 +147,20 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		http.Redirect(w, r, targetUrl.String(), http.StatusMovedPermanently)
 		return
 	}
+}
+
+// notModified checks If-Modified-Since only when there is no If-None-Match
+// (RFC 9110 13.2.2).
+func notModified(r *http.Request, etag string, lastModified uint64) bool {
+	if inm := r.Header.Values("If-None-Match"); len(inm) != 0 {
+		return etagListMatches(strings.Join(inm, ","), etag, true)
+	}
+	ims := r.Header.Get("If-Modified-Since")
+	if ims == "" || lastModified == 0 {
+		return false
+	}
+	t, err := time.Parse(http.TimeFormat, ims)
+	return err == nil && t.Unix() >= int64(lastModified)
 }
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
@@ -217,31 +241,34 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if invalid_needle || err == storage.ErrorDeleted {
 			NotFound(w)
 		} else {
-			InternalError(w)
+			InternalError(w, r, err)
 		}
 		return
 	}
 	if n.Cookie != cookie {
+		// A meta-only read ended the request; record its success.
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
 		NotFound(w)
 		return
 	}
 	if n.LastModified != 0 {
 		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
-		if r.Header.Get("If-Modified-Since") != "" {
-			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if t.Unix() >= int64(n.LastModified) {
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
+	}
+	SetEtag(w, n.Etag())
+	if notModified(r, n.Etag(), n.LastModified) {
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
 			}
 		}
-	}
-	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	SetEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)
@@ -308,13 +335,18 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
-	if r.Method == http.MethodHead {
-		return true, true
-	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
 	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
 	if shouldResize || shouldCrop {
+		// A transformed image's length is not the needle's; the payload is
+		// needed to answer — also true for HEAD, which reports it.
 		return false, false
+	}
+	if r.Method == http.MethodHead {
+		// Attempt only, so a needle up to PagedReadLimit is still read whole:
+		// on a spinning disk one read is cheaper than a header read followed
+		// by a trailer read.
+		return true, false
 	}
 	return true, false
 }
@@ -464,6 +496,10 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == http.MethodHead {
+		// HEAD ends at the metadata read; record its success.
+		if v := vs.store.GetVolume(volumeId); v != nil {
+			v.NoteMetaOnlySuccess()
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}

@@ -15,7 +15,7 @@ use weed_lance_worker::metrics::LanceMetrics;
 #[command(name = "weed-worker", about = "SeaweedFS maintenance worker")]
 struct Args {
     /// Admin server gRPC address.
-    #[arg(long, default_value = "localhost:23646", env = "WEED_ADMIN")]
+    #[arg(long, default_value = "localhost:12535", env = "WEED_ADMIN")]
     admin: String,
 
     /// Worker identity reported to admin.
@@ -60,6 +60,18 @@ struct Args {
     /// this worker dials.
     #[arg(long)]
     tls_server_name: Option<String>,
+
+    /// Shared secret for the admin control stream, the `jwt.filer_signing.key`
+    /// value the Go worker reads from its config file. Required by admins that
+    /// authenticate the worker stream with a signing key.
+    #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
+    filer_signing_key: Option<String>,
+
+    /// Lifetime of the token minted from the signing key, mirroring
+    /// `jwt.filer_signing.expires_after_seconds`. Zero mints a token with no
+    /// expiry.
+    #[arg(long, default_value = "0")]
+    filer_signing_key_expires_after_seconds: u64,
 
     /// Serve /health, /ready and /metrics on this port, the way
     /// `weed worker -metricsPort` does. Zero, the default, serves nothing.
@@ -131,6 +143,8 @@ async fn main() -> Result<()> {
         max_detection_concurrency: args.max_concurrency,
         max_execution_concurrency: args.max_concurrency,
         tls,
+        signing_key: args.filer_signing_key,
+        signing_key_expires_after_seconds: args.filer_signing_key_expires_after_seconds,
         ..Default::default()
     };
 

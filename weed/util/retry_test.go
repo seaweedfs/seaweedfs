@@ -25,6 +25,10 @@ func TestIsTransientError(t *testing.T) {
 		fmt.Errorf("send: %w", syscall.ETIMEDOUT),
 		&net.DNSError{Err: "operation timed out", IsTimeout: true},
 		io.ErrUnexpectedEOF,
+		// transport teardown the peer reports as Canceled, not the caller's
+		// own context cancel; also reachable through a caller's %w wrap
+		status.Error(codes.Canceled, "grpc: the client connection is closing"),
+		fmt.Errorf("create entry /x: %w", status.Error(codes.Canceled, "grpc: the client connection is closing")),
 	}
 	for _, err := range transient {
 		if !IsTransientError(err) {
@@ -37,6 +41,8 @@ func TestIsTransientError(t *testing.T) {
 		errors.New("AccessDenied: Access Denied"),
 		errors.New("NoSuchBucket: The specified bucket does not exist"),
 		context.Canceled,
+		status.Error(codes.Canceled, context.Canceled.Error()),
+		fmt.Errorf("send: %w", status.Error(codes.Canceled, context.Canceled.Error())),
 		fmt.Errorf("write: %w", context.DeadlineExceeded),
 	}
 	for _, err := range permanent {
@@ -83,6 +89,10 @@ func TestIsTransientErrorMessage(t *testing.T) {
 		"Connection reset by peer",
 		"dial tcp 10.0.0.1:8888: connect: no route to host",
 		"rpc error: code = Unavailable desc = the connection is unavailable",
+		// GCS per-object mutation limit on a hot file; the next attempt after a
+		// one-second backoff is under it
+		"googleapi: Error 429: The object bucket/samples.json exceeded the rate limit for object mutation operations (create, update, and delete). Please reduce your request rate. See https://cloud.google.com/storage/docs/gcs429., rateLimitExceeded",
+		"429 Too Many Requests",
 	}
 	for _, msg := range transient {
 		if !IsTransientErrorMessage(msg) {

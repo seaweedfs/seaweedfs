@@ -3,10 +3,12 @@ package s3api
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +28,15 @@ const (
 	postAuthzService   = "s3"
 	postAuthzBucket    = "testbucket"
 	postAuthzPrincipal = "arn:aws:iam::000000000000:user/tester"
+
+	postAclAccessKey = "AKIAACLTESTTEST"
+	postAclSecretKey = "secret-key-for-acl-tests"
+	postAclPrincipal = "arn:aws:iam::000000000000:user/aclwriter"
+
+	postPolicyAccessKey = "AKIAPOLICYONLY0000"
+	postPolicySecretKey = "secret-key-for-policy-only"
+	postReadAccessKey   = "AKIAPOLICYREAD0000"
+	postReadSecretKey   = "secret-key-for-policy-read"
 )
 
 // newPostAuthzServer builds an S3ApiServer whose non-admin "tester" identity
@@ -45,6 +56,11 @@ func newPostAuthzServer(t *testing.T) *S3ApiServer {
 			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "tester"},
 			Credentials: []*iam_pb.Credential{{AccessKey: postAuthzAccessKey, SecretKey: postAuthzSecretKey}},
 			Actions:     []string{"Read:" + postAuthzBucket, "Write:" + postAuthzBucket, "List:" + postAuthzBucket},
+		}, {
+			Name:        "aclwriter",
+			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "aclwriter"},
+			Credentials: []*iam_pb.Credential{{AccessKey: postAclAccessKey, SecretKey: postAclSecretKey}},
+			Actions:     []string{"Read:" + postAuthzBucket, "Write:" + postAuthzBucket, "WriteAcp:" + postAuthzBucket},
 		}},
 	})
 	require.NoError(t, err)
@@ -58,8 +74,14 @@ func newPostAuthzServer(t *testing.T) *S3ApiServer {
 			"Principal": {"AWS": "%s"},
 			"Action": ["s3:PutObject"],
 			"Resource": ["arn:aws:s3:::%s/denied/*"]
+		}, {
+			"Sid": "DenyAclWriterAclPrefix",
+			"Effect": "Deny",
+			"Principal": {"AWS": "%s"},
+			"Action": ["s3:PutObjectAcl"],
+			"Resource": ["arn:aws:s3:::%s/acl-denied/*"]
 		}]
-	}`, postAuthzPrincipal, postAuthzBucket))
+	}`, postAuthzPrincipal, postAuthzBucket, postAclPrincipal, postAuthzBucket))
 	require.NoError(t, err)
 	iam.policyEngine = policyEngine
 
@@ -79,26 +101,42 @@ func newPostAuthzServer(t *testing.T) *S3ApiServer {
 // policy conditions are satisfied by the form, so the handler passes signature
 // and CheckPostPolicy verification and reaches the write-authorization stage.
 func newSignedPostRequest(t *testing.T, key string) *http.Request {
+	return newSignedPostRequestFor(t, key, postAuthzAccessKey, postAuthzSecretKey, nil)
+}
+
+// extraFields are added to both the form and the policy conditions so
+// CheckPostPolicy accepts them.
+func newSignedPostRequestFor(t *testing.T, key, accessKey, secretKey string, extraFields map[string]string) *http.Request {
 	t.Helper()
 
 	now := time.Now().UTC()
 	amzDate := now.Format(iso8601Format)
 	yyyymmddStr := now.Format(yyyymmdd)
-	credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", postAuthzAccessKey, yyyymmddStr, postAuthzRegion, postAuthzService)
+	credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", accessKey, yyyymmddStr, postAuthzRegion, postAuthzService)
 	expiration := now.Add(1 * time.Hour).Format("2006-01-02T15:04:05.000Z")
 
-	policyJSON := fmt.Sprintf(
-		`{"expiration":"%s","conditions":[`+
-			`["eq","$bucket","%s"],`+
-			`["eq","$key","%s"],`+
-			`["eq","$x-amz-credential","%s"],`+
-			`["eq","$x-amz-algorithm","AWS4-HMAC-SHA256"],`+
-			`["eq","$x-amz-date","%s"]`+
-			`]}`,
-		expiration, postAuthzBucket, key, credential, amzDate,
-	)
-	encodedPolicy := base64.StdEncoding.EncodeToString([]byte(policyJSON))
-	signature := getSignature(getSigningKey(postAuthzSecretKey, yyyymmddStr, postAuthzRegion, postAuthzService), encodedPolicy)
+	extraKeys := make([]string, 0, len(extraFields))
+	for k := range extraFields {
+		extraKeys = append(extraKeys, k)
+	}
+	sort.Strings(extraKeys)
+	conditions := []any{
+		[]any{"eq", "$bucket", postAuthzBucket},
+		[]any{"eq", "$key", key},
+		[]any{"eq", "$x-amz-credential", credential},
+		[]any{"eq", "$x-amz-algorithm", "AWS4-HMAC-SHA256"},
+		[]any{"eq", "$x-amz-date", amzDate},
+	}
+	for _, k := range extraKeys {
+		conditions = append(conditions, []any{"eq", "$" + k, extraFields[k]})
+	}
+	policyJSON, err := json.Marshal(map[string]any{
+		"expiration": expiration,
+		"conditions": conditions,
+	})
+	require.NoError(t, err)
+	encodedPolicy := base64.StdEncoding.EncodeToString(policyJSON)
+	signature := getSignature(getSigningKey(secretKey, yyyymmddStr, postAuthzRegion, postAuthzService), encodedPolicy)
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -107,6 +145,9 @@ func newSignedPostRequest(t *testing.T, key string) *http.Request {
 	require.NoError(t, writer.WriteField("x-amz-credential", credential))
 	require.NoError(t, writer.WriteField("x-amz-algorithm", "AWS4-HMAC-SHA256"))
 	require.NoError(t, writer.WriteField("x-amz-date", amzDate))
+	for _, k := range extraKeys {
+		require.NoError(t, writer.WriteField(k, extraFields[k]))
+	}
 	require.NoError(t, writer.WriteField("policy", encodedPolicy))
 	require.NoError(t, writer.WriteField("x-amz-signature", signature))
 	filePart, err := writer.CreateFormFile("file", "payload.txt")
@@ -169,4 +210,187 @@ func TestAuthorizeObjectWrite(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone,
 		s3a.iam.AuthorizeObjectWrite(req, admin, postAuthzBucket, "denied/secret.txt"),
 		"an admin is not confined by the bucket policy")
+}
+
+// TestPostPolicyBucketHandlerGatesAclFields drives signed POST uploads carrying
+// an acl form field and asserts the handler rejects them the way the PUT path
+// does: a writer without the WriteAcp action is refused, and so is a writer the
+// bucket policy denies s3:PutObjectAcl on the target key.
+func TestPostPolicyBucketHandlerGatesAclFields(t *testing.T) {
+	s3a := newPostAuthzServer(t)
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt",
+		postAuthzAccessKey, postAuthzSecretKey, map[string]string{"acl": "public-read"}))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"POST with an acl field needs WriteAcp like PUT, body: %s", rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "acl-denied/secret.txt",
+		postAclAccessKey, postAclSecretKey, map[string]string{"acl": "public-read"}))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"POST with an acl field must honor the bucket-policy PutObjectAcl deny, body: %s", rec.Body.String())
+
+	for _, field := range []string{"x-amz-grant-read", "x-amz-grant-write", "x-amz-grant-read-acp", "x-amz-grant-write-acp", "x-amz-grant-full-control"} {
+		rec = httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt",
+			postAuthzAccessKey, postAuthzSecretKey,
+			map[string]string{field: `id="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`}))
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"POST with an %s field needs WriteAcp like PUT, body: %s", field, rec.Body.String())
+	}
+}
+
+func TestPostRequestsAcl(t *testing.T) {
+	for _, header := range []string{
+		s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead,
+		s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/"+postAuthzBucket, nil)
+		req.Header.Set(header, "x")
+		assert.True(t, postRequestsAcl(req), "%s must trip the ACL gate", header)
+	}
+	assert.False(t, postRequestsAcl(httptest.NewRequest(http.MethodPost, "/"+postAuthzBucket, nil)))
+}
+
+// TestAuthorizeObjectAclWrite covers the acl authorization decision at the
+// boundary, for the same reason as TestAuthorizeObjectWrite.
+func TestAuthorizeObjectAclWrite(t *testing.T) {
+	s3a := newPostAuthzServer(t)
+	tester, _, found := s3a.iam.lookupByAccessKey(postAuthzAccessKey)
+	require.True(t, found)
+	aclwriter, _, found := s3a.iam.lookupByAccessKey(postAclAccessKey)
+	require.True(t, found)
+
+	req := httptest.NewRequest(http.MethodPost, "/"+postAuthzBucket, nil)
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.iam.AuthorizeObjectAclWrite(req, tester, postAuthzBucket, "allowed/report.txt"),
+		"a writer without the WriteAcp action cannot attach an ACL")
+	assert.Equal(t, s3err.ErrNone,
+		s3a.iam.AuthorizeObjectAclWrite(req, aclwriter, postAuthzBucket, "allowed/report.txt"),
+		"the WriteAcp holder clears keys the policy does not deny")
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.iam.AuthorizeObjectAclWrite(req, aclwriter, postAuthzBucket, "acl-denied/secret.txt"),
+		"a bucket-policy PutObjectAcl deny must block the ACL-bearing upload")
+
+	admin := &Identity{Name: "admin", Actions: []Action{s3_constants.ACTION_ADMIN}}
+	assert.Equal(t, s3err.ErrNone,
+		s3a.iam.AuthorizeObjectAclWrite(req, admin, postAuthzBucket, "acl-denied/secret.txt"),
+		"an admin is not confined by the bucket policy")
+}
+
+// newPostPolicyOnlyServer builds an S3ApiServer with identities that hold no
+// legacy Write action: "poster" carries an attached IAM policy allowing
+// s3:PutObject on the test bucket, and "reader" one allowing only s3:GetObject.
+func newPostPolicyOnlyServer(t *testing.T) *S3ApiServer {
+	t.Helper()
+
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "poster",
+			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "poster"},
+			Credentials: []*iam_pb.Credential{{AccessKey: postPolicyAccessKey, SecretKey: postPolicySecretKey}},
+			Actions:     []string{"List:" + postAuthzBucket},
+			PolicyNames: []string{"post-write"},
+		}, {
+			Name:        "reader",
+			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "reader"},
+			Credentials: []*iam_pb.Credential{{AccessKey: postReadAccessKey, SecretKey: postReadSecretKey}},
+			Actions:     []string{"Read:" + postAuthzBucket, "List:" + postAuthzBucket},
+			PolicyNames: []string{"post-read"},
+		}},
+		Policies: []*iam_pb.Policy{{
+			Name: "post-write",
+			Content: fmt.Sprintf(`{
+				"Version": "2012-10-17",
+				"Statement": [{
+					"Effect": "Allow",
+					"Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+					"Resource": ["arn:aws:s3:::%s/*"]
+				}, {
+					"Effect": "Allow",
+					"Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+					"Resource": ["arn:aws:s3:::%s"]
+				}]
+			}`, postAuthzBucket, postAuthzBucket),
+		}, {
+			Name: "post-read",
+			Content: fmt.Sprintf(`{
+				"Version": "2012-10-17",
+				"Statement": [{
+					"Effect": "Allow",
+					"Action": ["s3:GetObject"],
+					"Resource": ["arn:aws:s3:::%s/*"]
+				}]
+			}`, postAuthzBucket),
+		}},
+	})
+	require.NoError(t, err)
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{BucketsPath: "/buckets"},
+		iam:    iam,
+	}
+	s3a.bucketRegistry = NewBucketRegistry(s3a)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: postAuthzBucket, IsTableBucket: false})
+	return s3a
+}
+
+// postFormValues canonicalizes the signed request's multipart fields the way
+// extractPostPolicyFormValues does, for driving doesPolicySignatureMatch.
+func postFormValues(t *testing.T, r *http.Request) http.Header {
+	t.Helper()
+	require.NoError(t, r.ParseMultipartForm(1<<20))
+	formValues := make(http.Header)
+	for k, v := range r.MultipartForm.Value {
+		formValues[http.CanonicalHeaderKey(k)] = v
+	}
+	return formValues
+}
+
+// TestPostPolicySignatureAllowsAttachedPolicyIdentity signs a POST Object form
+// with a key whose holder has no legacy Write action - only an attached IAM
+// policy granting s3:PutObject - and asserts the signature check accepts it
+// and the shared object-write authorization allows the key. Gating the
+// signature check on the Actions projection used to fail this with
+// AccessDenied before authorization ever ran.
+func TestPostPolicySignatureAllowsAttachedPolicyIdentity(t *testing.T) {
+	s3a := newPostPolicyOnlyServer(t)
+
+	req := newSignedPostRequestFor(t, "uploads/pic.png", postPolicyAccessKey, postPolicySecretKey, nil)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(req.Context(), postFormValues(t, req))
+	require.Equal(t, s3err.ErrNone, errCode,
+		"a verified POST signature must not require the legacy Write action")
+	require.NotNil(t, identity)
+
+	assert.Equal(t, s3err.ErrNone,
+		s3a.iam.AuthorizeObjectWrite(req, identity, postAuthzBucket, "uploads/pic.png"),
+		"an attached IAM policy granting s3:PutObject must authorize the key like the PUT path")
+}
+
+// TestPostPolicyAttachedPolicyDeny covers the deny leg: a verified identity
+// whose attached policy does not grant s3:PutObject is still refused by
+// AuthorizeObjectWrite and by the full handler.
+func TestPostPolicyAttachedPolicyDeny(t *testing.T) {
+	s3a := newPostPolicyOnlyServer(t)
+
+	req := newSignedPostRequestFor(t, "uploads/pic.png", postReadAccessKey, postReadSecretKey, nil)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(req.Context(), postFormValues(t, req))
+	require.Equal(t, s3err.ErrNone, errCode)
+	require.NotNil(t, identity)
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.iam.AuthorizeObjectWrite(req, identity, postAuthzBucket, "uploads/pic.png"),
+		"an attached policy without s3:PutObject must still deny the upload")
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "uploads/pic.png", postReadAccessKey, postReadSecretKey, nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"POST from a read-only identity must stay AccessDenied, body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "AccessDenied")
 }

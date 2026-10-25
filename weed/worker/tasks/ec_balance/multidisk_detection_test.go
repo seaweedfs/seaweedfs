@@ -8,6 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -331,5 +333,70 @@ func TestResolveReplicaPlacementFallsBackToMasterDefault(t *testing.T) {
 				t.Errorf("config=%q default=%q: applied=%v, want %v", tc.configRP, tc.defaultRP, rp != nil, tc.wantApplied)
 			}
 		})
+	}
+}
+
+// TestBuildBalancerTopologyKeepsSlotRemainder: a node whose single free EC slot
+// spans two physical disks must still offer it. Splitting the slot evenly would
+// floor each disk to zero and exclude the node despite usable capacity.
+func TestBuildBalancerTopologyKeepsSlotRemainder(t *testing.T) {
+	var all uint32
+	for i := 0; i < 14; i++ {
+		all |= 1 << uint(i)
+	}
+	// n2 has one free shard slot: (7-6)*DataShardsCount - 9 = 1, spread over
+	// disks 0 and 1. Volume 200 is collection-filtered out of balancing so only
+	// volume 100 moves.
+	n1 := &master_pb.DataNodeInfo{
+		Id: "n1",
+		DiskInfos: map[string]*master_pb.DiskInfo{"": {
+			Type:           "",
+			MaxVolumeCount: 10,
+			VolumeCount:    1,
+			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+				{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: all},
+			},
+			VolumeInfos: []*master_pb.VolumeInformationMessage{{Id: 90000, DiskId: 0}},
+		}},
+	}
+	n2 := &master_pb.DataNodeInfo{
+		Id: "n2",
+		DiskInfos: map[string]*master_pb.DiskInfo{"": {
+			Type:           "",
+			MaxVolumeCount: 7,
+			VolumeCount:    6,
+			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+				{Id: 200, Collection: "other", DiskId: 0, EcIndexBits: 0x1F},
+				{Id: 200, Collection: "other", DiskId: 1, EcIndexBits: 0x1E0},
+			},
+			VolumeInfos: []*master_pb.VolumeInformationMessage{
+				{Id: 90001, DiskId: 0}, {Id: 90002, DiskId: 0}, {Id: 90003, DiskId: 0},
+				{Id: 90004, DiskId: 1}, {Id: 90005, DiskId: 1}, {Id: 90006, DiskId: 1},
+			},
+		}},
+	}
+	topoInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{
+				{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{n1}},
+				{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{n2}},
+			},
+		}},
+	}
+	allowed, err := wildcard.CompileCollectionMatcher("col1")
+	if err != nil {
+		t.Fatalf("CompileCollectionMatcher: %v", err)
+	}
+	topo, _, _ := buildBalancerTopology(topoInfo, NewDefaultConfig(), allowed)
+	moves := ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01})
+	toN2 := 0
+	for _, m := range moves {
+		if m.VolumeID == 100 && m.TargetNode == "n2" {
+			toN2++
+		}
+	}
+	if toN2 != 1 {
+		t.Errorf("volume 100 moves to n2 = %d, want 1 (the node's one free slot divided across two disks must not floor to zero)", toN2)
 	}
 }

@@ -101,6 +101,14 @@ func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error 
 	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
 }
 
+func (m *SortedFileNeedleMap) removeMapping(key NeedleId) error {
+	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
+}
+
+func (m *SortedFileNeedleMap) restoreMapping(key NeedleId, offset Offset, size Size) error {
+	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
+}
+
 func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 
 	f, err := pooledIndexFiles.borrow(m.dbFileName, true)
@@ -177,6 +185,25 @@ func (m *SortedFileNeedleMap) Sync() error {
 		return err
 	}
 	m.indexNeedsSync = false
+	return nil
+}
+
+// truncateIndex drops .idx tombstones a failed batch appended. The .sdx is
+// untouched: a delete already marked there cannot be unmarked, so callers
+// treat the batch as unrecoverable before reaching this.
+func (m *SortedFileNeedleMap) truncateIndex(offset int64) error {
+	f, err := pooledIndexFiles.borrow(m.indexFileName, true)
+	if err != nil {
+		return err
+	}
+	defer pooledIndexFiles.release(f)
+
+	m.indexFileAccessLock.Lock()
+	defer m.indexFileAccessLock.Unlock()
+	if err := f.file.Truncate(offset); err != nil {
+		return err
+	}
+	m.indexFileOffset = offset
 	return nil
 }
 

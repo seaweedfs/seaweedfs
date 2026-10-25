@@ -2,14 +2,18 @@ package policy_engine
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -246,6 +250,10 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
 		}
 		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		// Preserve positive string denies on the original complete list; allows, negative conditions, and variables remain canonical.
+		if !match && stmt.Statement.Effect == PolicyEffectDeny && len(args.OriginalGrantConditions) != 0 {
+			match = evaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims, args.OriginalGrantConditions)
+		}
 		if !match {
 			return false
 		}
@@ -435,6 +443,13 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
 	// passed to EvaluatePolicy, not extracted from the request.
 
+	if tags := requestObjectTags(r); len(tags) > 0 {
+		for key, value := range tags {
+			values[RequestObjectTagPrefix+key] = []string{value}
+		}
+		values[RequestObjectTagKeys] = slices.Sorted(maps.Keys(tags))
+	}
+
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
 		values["s3:delimiter"] = []string{delimiter}
@@ -490,6 +505,94 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	}
 
 	return values
+}
+
+// requestObjectTags returns the tags that X-Amz-Tagging will store on the
+// object, or nil when the handler ignores the header — otherwise a tag
+// attached to a read or to a write that never stores it would satisfy a
+// tag-conditioned policy the object cannot meet.
+func requestObjectTags(r *http.Request) map[string]string {
+	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
+	if tagging == "" {
+		return nil
+	}
+	if !storesRequestObjectTags(r) {
+		return nil
+	}
+	// Parse the same non-empty segments the tag handlers store: url.ParseQuery
+	// caps at 10,000 parameters, so a header padded with "&" segments would
+	// hide stored tag keys from every s3:RequestObjectTag* condition. A
+	// malformed pair is rejected by the handler with InvalidTag.
+	tags := make(map[string]string)
+	for _, segment := range strings.Split(tagging, "&") {
+		if segment == "" {
+			continue
+		}
+		rawKey, rawValue, _ := strings.Cut(segment, "=")
+		key, errKey := url.QueryUnescape(rawKey)
+		value, errValue := url.QueryUnescape(rawValue)
+		if errKey != nil || errValue != nil {
+			return nil
+		}
+		// putToFiler rejects a repeated key, but CopyObject stores its last
+		// value, so that is the one the policy has to see.
+		tags[key] = value
+	}
+	return tags
+}
+
+// storesRequestObjectTags reports whether the request's handler saves the
+// X-Amz-Tagging header on the object: PutObject, a copy under
+// X-Amz-Tagging-Directive: REPLACE, and CreateMultipartUpload do; every
+// other operation — reads, deletes, part uploads, completion, tagging
+// subresources — does not.
+func storesRequestObjectTags(r *http.Request) bool {
+	query := r.URL.Query()
+	if r.Method == http.MethodPost {
+		return query.Has("uploads") && !query.Has("uploadId")
+	}
+	if r.Method != http.MethodPut {
+		return false
+	}
+	// A numeric partNumber together with uploadId routes to the part
+	// handlers — with or without a copy source — which never read
+	// X-Amz-Tagging.
+	if query.Has("partNumber") && query.Has("uploadId") && isDigits(query.Get("partNumber")) {
+		return false
+	}
+	// The PUT subresources route before CopyObject and never read
+	// X-Amz-Tagging; any other query key — presign parameters included —
+	// still reaches the object PUT handlers.
+	for _, subresource := range []string{"tagging", "renameObject", "acl", "retention", "legal-hold"} {
+		if query.Has(subresource) {
+			return false
+		}
+	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
+	}
+	if query.Has("partNumber") || query.Has("uploadId") {
+		return false
+	}
+	// An explicit directory-marker PUT stores no tags.
+	if strings.HasSuffix(r.URL.Path, "/") && r.ContentLength <= 1024 {
+		return false
+	}
+	return true
+}
+
+// isDigits reports whether s is non-empty and all ASCII digits, matching the
+// partNumber route constraint.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // IsMultipartContinuationAction returns true for actions that do not carry

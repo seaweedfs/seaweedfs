@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -251,9 +252,10 @@ func TestAuthorizeCopySource_PresignedURLSessionTokenPreserved(t *testing.T) {
 	}
 
 	// Presigned URL: session token is in the query string, no
-	// X-Amz-Security-Token header. The destination URL also carries unrelated
-	// SigV4 query params (X-Amz-Algorithm, etc.) that must not leak into the
-	// synthetic source action resolution.
+	// X-Amz-Security-Token header. The destination URL also carries the rest of
+	// the SigV4 presign params, which ride along so auth-derived policy
+	// conditions (s3:authType) match the real request; none of them steer
+	// ResolveS3Action.
 	req, err := http.NewRequest(http.MethodPut,
 		"http://s3.local/bucket-a/dst.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256"+
 			"&X-Amz-Credential=stsKey%2F20260518%2Fus-east-1%2Fs3%2Faws4_request"+
@@ -267,8 +269,12 @@ func TestAuthorizeCopySource_PresignedURLSessionTokenPreserved(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone, errCode)
 	assert.Equal(t, "presigned-session-token", capturedSessionToken,
 		"session token from presigned-URL query must reach the IAM check")
-	// versionId omitted, only the token should be present in the synthetic query.
-	assert.Equal(t, "X-Amz-Security-Token=presigned-session-token", capturedRawQuery)
+	capturedQuery, err := url.ParseQuery(capturedRawQuery)
+	require.NoError(t, err)
+	assert.Equal(t, "presigned-session-token", capturedQuery.Get("X-Amz-Security-Token"))
+	assert.Equal(t, "AWS4-HMAC-SHA256", capturedQuery.Get("X-Amz-Algorithm"))
+	assert.False(t, capturedQuery.Has("versionId"))
+	assert.False(t, capturedQuery.Has("acl"))
 }
 
 // TestAuthorizeCopySource_PreservesCopySourceHeader verifies that the synthetic

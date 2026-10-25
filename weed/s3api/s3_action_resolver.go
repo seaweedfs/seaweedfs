@@ -33,6 +33,22 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 		return baseAction
 	}
 
+	// Dedicated object-lock actions already name the operation — a query
+	// parameter must not re-map them. In particular the governance-bypass
+	// check authorizes against a synthetic DELETE ?versionId request, whose
+	// shape would otherwise resolve to s3:DeleteObjectVersion and satisfy
+	// the bypass check with the delete-version permission alone.
+	switch baseAction {
+	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_RETENTION,
+		s3_constants.ACTION_PUT_OBJECT_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
+		s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return mapBaseActionToS3Format(baseAction)
+	}
+
 	if r == nil || r.URL == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
 		// This ensures consistent behavior and avoids returning empty strings
@@ -116,11 +132,6 @@ var bucketQueryActions = map[string]map[string]string{
 		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS,
 		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS, // DELETE uses same permission as PUT
 	},
-	// SeaweedFS extension: bucket quota subresource
-	"seaweedfs-quota": {
-		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_QUOTA,
-		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_QUOTA,
-	},
 }
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
@@ -130,7 +141,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	if hasObject && query.Has("uploadId") {
 		switch method {
 		case http.MethodPut:
-			if query.Has("partNumber") {
+			// Match the multipart route's [0-9]+ pattern; invalid part parameters fall through to regular uploads.
+			partNumber := query.Get("partNumber")
+			if partNumber != "" && strings.Trim(partNumber, "0123456789") == "" {
 				return s3_constants.S3_ACTION_UPLOAD_PART
 			}
 		case http.MethodPost:
@@ -153,15 +166,25 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// ACL operations
+	// ACL operations. A versionId retargets the request at a specific
+	// version, so the version ACL action applies, not the current-object one.
 	if query.Has("acl") {
+		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
-		case http.MethodGet, http.MethodHead:
+		// HEAD has no acl route; it lands on HeadObjectHandler and should
+		// resolve like a read — s3:GetObject, or s3:GetObjectVersion below.
+		case http.MethodGet:
+			if versioned {
+				return s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_ACL
 			}
 			return s3_constants.S3_ACTION_GET_BUCKET_ACL
 		case http.MethodPut:
+			if versioned {
+				return s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_ACL
 			}
@@ -169,20 +192,33 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Tagging operations
+	// Tagging operations. The routes match ?tagging whenever the key is
+	// present (gorilla/mux does not compare the value), so any value counts.
+	// A versionId retargets the request at a specific version, so the
+	// version-tagging action applies, not the current-object one.
 	if query.Has("tagging") {
+		versioned := hasObject && query.Get("versionId") != ""
 		switch method {
 		case http.MethodGet:
+			if versioned {
+				return s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_TAGGING
 			}
 			return s3_constants.S3_ACTION_GET_BUCKET_TAGGING
 		case http.MethodPut:
+			if versioned {
+				return s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
 			}
 			return s3_constants.S3_ACTION_PUT_BUCKET_TAGGING
 		case http.MethodDelete:
+			if versioned {
+				return s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+			}
 			if hasObject {
 				return s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
 			}
@@ -194,6 +230,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Must be checked before versionId, because GET /bucket/key?attributes&versionId=xyz
 	// is a GetObjectAttributes request, not a GetObjectVersion request
 	if hasObject && query.Has("attributes") && method == http.MethodGet {
+		if query.Get("versionId") != "" {
+			return s3_constants.S3_ACTION_GET_OBJECT_VERSION_ATTRIBUTES
+		}
 		return s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
 	}
 
@@ -265,6 +304,17 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Example: POST /bucket?delete (not POST /bucket/object?delete)
 	if query.Has("delete") && method == http.MethodPost && !hasObject {
 		return s3_constants.S3_ACTION_DELETE_OBJECT
+	}
+
+	// SeaweedFS extension: the quota routes are registered last among the
+	// bucket subresource routes, so resolve seaweedfs-quota last to match.
+	if !hasObject && query.Has("seaweedfs-quota") {
+		switch method {
+		case http.MethodGet:
+			return s3_constants.S3_ACTION_GET_BUCKET_QUOTA
+		case http.MethodPut:
+			return s3_constants.S3_ACTION_PUT_BUCKET_QUOTA
+		}
 	}
 
 	return ""

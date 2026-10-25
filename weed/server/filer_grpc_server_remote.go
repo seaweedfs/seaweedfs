@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
@@ -50,12 +54,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
 		}
 		if res.Err != nil {
-			// The sentinel would cross gRPC as codes.Unknown; make it canonical
-			// so remote callers can classify a vanished entry.
-			if errors.Is(res.Err, filer_pb.ErrNotFound) {
-				return nil, status.Error(codes.NotFound, res.Err.Error())
-			}
-			return nil, res.Err
+			return nil, cacheRemoteObjectError(res.Err)
 		}
 		if res.Val == nil {
 			return nil, fmt.Errorf("unexpected nil result from singleflight")
@@ -97,7 +96,8 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
 
-	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, req.Directory, req.Name)
+	readDir, readName := fs.filer.RemoteReadPath(entry, req.Directory, req.Name)
+	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, readDir, readName)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 					RemoteLocation:      remoteLocation,
 				})
 				if fetchErr != nil {
-					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, remoteLocation.Path, fetchErr)
+					return fetchAndWriteError(assignResult.Url, remoteLocation.Path, fetchErr)
 				}
 				etag = resp.ETag
 				return nil
@@ -269,6 +269,15 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		if len(chunks) > 0 {
 			fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		}
+		if fs.option.RemoteCacheEvictThreshold > 0 && isRemoteCacheCapacityError(err) {
+			fileIds := make([]string, 0, len(chunks))
+			for _, chunk := range chunks {
+				fileIds = append(fileIds, chunk.GetFileIdString())
+			}
+			fs.notePendingRemoteCacheVids(fileIds)
+			go fs.reclaimRemoteCacheSpace(fs.evictCtx(), entry.Remote.RemoteSize, nil)
+		}
+		fs.pruneEntryMissingFromRemote(ctx, lockPath, entry, err)
 		return nil, err
 	}
 
@@ -355,4 +364,78 @@ func (fs *FilerServer) resolveMountedRemote(ctx context.Context, dir, name strin
 
 	remoteLocation := filer.MapFullPathToRemoteStorageLocation(util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(dir).Child(name))
 	return storageConf, remoteLocation, nil
+}
+
+// fetchAndWriteError restores the remote's not-found sentinel from the volume
+// server's answer, so it is told apart from failures worth retrying.
+func fetchAndWriteError(volumeServer, path string, err error) error {
+	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound && strings.Contains(st.Message(), remote_storage.ErrRemoteObjectNotFound.Error()) {
+		return fmt.Errorf("volume server %s fetchAndWrite %s: %w", volumeServer, path, remote_storage.ErrRemoteObjectNotFound)
+	}
+	return fmt.Errorf("volume server %s fetchAndWrite %s: %v", volumeServer, path, err)
+}
+
+// cacheRemoteObjectError makes the not-found sentinels canonical: they would
+// cross gRPC as codes.Unknown, and remote callers classify a vanished entry or
+// remote object by codes.NotFound.
+func cacheRemoteObjectError(err error) error {
+	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	return err
+}
+
+// pruneEntryMissingFromRemote converges the filer on the remote once the remote
+// confirms the object is gone. It removes the entry only while it is still the
+// one the failed fetch read: any write since then owns the path. The check and
+// delete run as an object transaction so they land on the path's write owner,
+// under the lock the S3 object writes take.
+func (fs *FilerServer) pruneEntryMissingFromRemote(ctx context.Context, p util.FullPath, fetched *filer.Entry, fetchErr error) bool {
+	if !errors.Is(fetchErr, remote_storage.ErrRemoteObjectNotFound) || !isPrunableRemoteEntry(fetched) {
+		return false
+	}
+	dir, name := p.DirAndName()
+	resp, err := fs.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
+		LockKey:  string(p),
+		RouteKey: entryRouteKey(p),
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: fetched.ToProtoEntry(),
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:             filer_pb.ObjectMutation_DELETE,
+			Directory:        dir,
+			Name:             name,
+			KeepRemoteObject: true,
+		}},
+	})
+	if err != nil {
+		glog.WarningfCtx(ctx, "prune %s missing from remote: %v", p, err)
+		return false
+	}
+	if resp.Error != "" {
+		if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+			glog.WarningfCtx(ctx, "prune %s missing from remote: %s", p, resp.Error)
+		}
+		return false
+	}
+	glog.V(0).InfofCtx(ctx, "pruned %s: its remote object no longer exists", p)
+	return true
+}
+
+// isPrunableRemoteEntry admits only a file whose content lives solely on the
+// remote. Version entries are left alone because their parent's latest-version
+// pointer would dangle, and locked objects because pruning would bypass the
+// lock.
+func isPrunableRemoteEntry(entry *filer.Entry) bool {
+	if entry == nil || entry.IsDirectory() || !entry.IsInRemoteOnly() {
+		return false
+	}
+	if len(entry.Content) > 0 || len(entry.HardLinkId) > 0 {
+		return false
+	}
+	if dir, _ := entry.FullPath.DirAndName(); strings.HasSuffix(dir, s3_constants.VersionsFolder) {
+		return false
+	}
+	return !s3_objectlock.EntryHasActiveLock(entry.ToProtoEntry(), time.Now())
 }

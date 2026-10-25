@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     paths:
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - 'test/volume_server/**'
       - 'weed/pb/volume_server.proto'
       - 'weed/pb/volume_server_pb/**'
@@ -13,14 +14,15 @@ on:
     branches: [ master, main ]
     paths:
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - 'test/volume_server/**'
       - 'weed/pb/volume_server.proto'
       - 'weed/pb/volume_server_pb/**'
       - '.github/workflows/rust-volume-server-tests.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -43,16 +45,75 @@ jobs:
 
       - name: Filter changed paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             rust:
               - 'seaweed-volume/**'
               - '.github/workflows/rust-volume-server-tests.yml'
 
+  build-test-binaries:
+    name: Build Test Binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-common/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ steps.toolchain.outputs.fingerprint }}-
+
+      - name: Build Go weed binary
+        run: |
+          cd weed
+          go build -tags 5BytesOffset -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Build Rust volume binary
+        run: cd seaweed-volume && cargo build --release
+
+      - name: Package binaries
+        run: tar cf rust-test-binaries.tar weed/weed seaweed-volume/target/release/weed-volume
+
+      - name: Upload test binaries
+        uses: actions/upload-artifact@v7
+        with:
+          # archive layout mirrors the workspace: weed/weed and
+          # seaweed-volume/target/release/weed-volume
+          name: rust-test-binaries
+          if-no-files-found: error
+          retention-days: 1
+          path: rust-test-binaries.tar
+
   rust-unit-tests:
     name: Rust Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -69,13 +130,14 @@ jobs:
         run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-common/Cargo.lock') }}
           restore-keys: |
             rust-${{ steps.toolchain.outputs.fingerprint }}-
 
@@ -92,6 +154,16 @@ jobs:
       # Uncomment to keep it that way.
       # - name: Check formatting
       #   run: cd seaweed-volume && cargo fmt --check
+
+      # seaweed-common is a path dependency of this crate, not a member of its
+      # workspace, so the run below does not reach its own tests. It builds into
+      # this job's cached target directory, and the cache key above covers the
+      # shared crate's lock, so the aws-lc-sys that rustls pulls in is restored
+      # with the cache instead of compiled from scratch on every run.
+      - name: Run shared-crate unit tests
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-volume/target
+        run: cd seaweed-common && cargo test
 
       - name: Run Rust unit tests
         run: cd seaweed-volume && cargo test
@@ -122,6 +194,7 @@ jobs:
         run: echo "fingerprint=windows-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v6
         with:
           path: |
@@ -140,8 +213,9 @@ jobs:
 
   rust-integration-tests:
     name: Rust Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    needs: [build-test-binaries]
 
     steps:
       - name: Checkout code
@@ -151,36 +225,18 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
-      # target/ can carry C objects built against a different glibc than we link against.
-      - name: Fingerprint build toolchain
-        id: toolchain
-        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache cargo registry and target
-        uses: actions/cache@v6
+      - name: Download test binaries
+        uses: actions/download-artifact@v7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            seaweed-volume/target
-          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
-          restore-keys: |
-            rust-${{ steps.toolchain.outputs.fingerprint }}-
+          name: rust-test-binaries
 
-      - name: Build Go weed binary
+      - name: Restore binaries
         run: |
-          cd weed
-          go build -tags 5BytesOffset -o weed .
-          chmod +x weed
-          ./weed version
-
-      - name: Build Rust volume binary
-        run: cd seaweed-volume && cargo build --release
+          tar xf rust-test-binaries.tar
+          chmod +x weed/weed seaweed-volume/target/release/weed-volume
+          ./weed/weed version
 
       - name: Run integration tests
         env:
@@ -214,8 +270,9 @@ jobs:
 
   rust-volume-go-tests:
     name: Go Tests with Rust Volume (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
+    needs: [build-test-binaries]
     env:
       # Keep in step with the length of matrix.shard below.
       SHARD_COUNT: 3
@@ -233,36 +290,19 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
-      # target/ can carry C objects built against a different glibc than we link against.
-      - name: Fingerprint build toolchain
-        id: toolchain
-        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache cargo registry and target
-        uses: actions/cache@v6
+      - name: Download test binaries
+        uses: actions/download-artifact@v7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            seaweed-volume/target
-          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
-          restore-keys: |
-            rust-${{ steps.toolchain.outputs.fingerprint }}-
+          name: rust-test-binaries
 
-      - name: Build Go weed binary
+      - name: Restore binaries
         run: |
-          cd weed
-          go build -tags 5BytesOffset -o weed .
-          chmod +x weed
-          ./weed version
-
-      - name: Build Rust volume binary
-        run: cd seaweed-volume && cargo build --release
+          tar xf rust-test-binaries.tar
+          chmod +x weed/weed seaweed-volume/target/release/weed-volume
+          ./weed/weed version
+          ./seaweed-volume/target/release/weed-volume --help >/dev/null || true
 
       # Dealing the listed tests out one by one keeps the shards even. Bucketing
       # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of

@@ -364,7 +364,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -378,7 +378,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -869,6 +871,11 @@ func requireClickHouseRuntime(t *testing.T) {
 	if !hasDocker() {
 		t.Skip("Docker not available, skipping ClickHouse integration test")
 	}
+	// ClickHouse builds for x86-64-v3 (AVX2) since 26.5; on a CPU without it
+	// the binary dies on SIGILL inside the entrypoint before the server can
+	// come up.
+	testutil.RequireImageRunnable(t,
+		"--entrypoint", "clickhouse", clickhouseImage(), "local", "--query", "SELECT 1")
 }
 
 // hasDocker reports whether `docker version` can run, which we treat as a

@@ -108,7 +108,7 @@ func TestCreateMergePlan_DirectedRejectsIneligible(t *testing.T) {
 			from:    &master_pb.VolumeInformationMessage{Id: 87, Size: 100, Collection: "other"},
 			to:      &master_pb.VolumeInformationMessage{Id: 83, Size: 100, Collection: "other"},
 			coll:    "wanted",
-			wantErr: "volume 87 is not in collection",
+			wantErr: "volume 87 does not match collection filter",
 		},
 	}
 	for _, tc := range cases {
@@ -230,6 +230,54 @@ func TestParseTargetVolumeIds(t *testing.T) {
 	}
 	if _, err = parseTargetVolumeIds("4294967297"); err == nil {
 		t.Fatal("expected uint32 overflow rejection")
+	}
+}
+
+// The collection filter speaks the shared vocabulary: "_default" selects the
+// empty-named collection, a name or pattern only its matches, and "*" (or no
+// flag) every collection.
+func TestCreateMergePlan_CollectionFilter(t *testing.T) {
+	mb := uint64(1024 * 1024)
+	mk := func(id uint32, sizeMB uint64, collection string) *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Id: id, Size: sizeMB * mb, Collection: collection}
+	}
+	newCmd := func() *commandFsMergeVolumes {
+		return newMergeCmd(250000, mk(1, 10, ""), mk(2, 80, ""), mk(3, 10, "x"), mk(4, 80, "x"))
+	}
+
+	// "_default" merges only the unnamed-collection volumes.
+	plan, err := newCmd().createMergePlan(CollectionDefault, nil, 0)
+	if err != nil {
+		t.Fatalf("%s: %v", CollectionDefault, err)
+	}
+	if got := plan.targets[needle.VolumeId(1)]; len(got) != 1 || got[0] != needle.VolumeId(2) {
+		t.Fatalf("expected 1->2, got %v", plan.targets)
+	}
+	if plan.isSource(needle.VolumeId(3)) {
+		t.Fatalf("named-collection volume must not merge under _default, got %v", plan.targets)
+	}
+
+	// A literal name still selects its collection.
+	plan, err = newCmd().createMergePlan("x", nil, 0)
+	if err != nil {
+		t.Fatalf("x: %v", err)
+	}
+	if got := plan.targets[needle.VolumeId(3)]; len(got) != 1 || got[0] != needle.VolumeId(4) {
+		t.Fatalf("expected 3->4, got %v", plan.targets)
+	}
+	if plan.isSource(needle.VolumeId(1)) {
+		t.Fatalf("unnamed volume must not merge under x, got %v", plan.targets)
+	}
+
+	// "*" keeps covering every collection.
+	plan, err = newCmd().createMergePlan("*", nil, 0)
+	if err != nil {
+		t.Fatalf("*: %v", err)
+	}
+	for src, dest := range map[needle.VolumeId]needle.VolumeId{1: 2, 3: 4} {
+		if got := plan.targets[src]; len(got) != 1 || got[0] != dest {
+			t.Fatalf("expected %d->%d, got %v", src, dest, plan.targets)
+		}
 	}
 }
 

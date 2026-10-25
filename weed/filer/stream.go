@@ -85,14 +85,16 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	slices.SortFunc(a, func(i, j *filer_pb.FileChunk) int {
+	sortedA := slices.Clone(a)
+	sortedB := slices.Clone(b)
+	slices.SortFunc(sortedA, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	slices.SortFunc(b, func(i, j *filer_pb.FileChunk) int {
+	slices.SortFunc(sortedB, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	for i := 0; i < len(a); i++ {
-		if a[i].ETag != b[i].ETag {
+	for i := 0; i < len(sortedA); i++ {
+		if sortedA[i].ETag != sortedB[i].ETag {
 			return false
 		}
 	}
@@ -384,9 +386,18 @@ var _ = io.ReadSeeker(&ChunkStreamReader{})
 var _ = io.ReaderAt(&ChunkStreamReader{})
 var _ = io.Closer(&ChunkStreamReader{})
 
+// doNewChunkStreamReader builds a reader over chunks. If their manifests cannot
+// be resolved, the reader fails every read with that error and reports it as its
+// SourceError.
 func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	chunkViews, err := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if err != nil {
+		return &ChunkStreamReader{
+			lookupFileId: lookupFileIdFn,
+			sourceErr:    err,
+		}
+	}
 
 	var totalSize int64
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -404,11 +415,7 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 
 func NewChunkStreamReaderFromFiler(ctx context.Context, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrl []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
-
-	return doNewChunkStreamReader(ctx, lookupFileIdFn, chunks)
+	return doNewChunkStreamReader(ctx, masterClient.GetLookupFileIdFunction(), chunks)
 }
 
 // NewChunkStreamReaderFromLookup creates a ChunkStreamReader from a lookup function.
@@ -485,6 +492,10 @@ func insideChunk(offset int64, chunk *ChunkView) bool {
 }
 
 func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
+	// a reader without chunk views has a source error only if ViewFromChunks failed
+	if c.head == nil && c.sourceErr != nil {
+		return c.sourceErr
+	}
 	// stay in the same chunk
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil

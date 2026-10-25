@@ -185,11 +185,20 @@ var listObjectsQueryParams = map[string]bool{
 // catch-all, so anything left is a subresource it does not implement - and answering
 // it with a bucket listing is worse than saying so.
 func unroutedBucketSubresource(r *http.Request) (string, bool) {
+	return unroutedSubresource(r, listObjectsQueryParams)
+}
+
+// unroutedSubresource names a query key that no route claimed, outside the
+// request's own parameters, SigV2 presign keys, and SigV4 presign keys
+// (all "X-Amz-" prefixed).
+func unroutedSubresource(r *http.Request, allowed map[string]bool) (string, bool) {
 	for key := range r.URL.Query() {
-		if listObjectsQueryParams[key] || strings.HasPrefix(key, "X-Amz-") {
-			continue
+		switch {
+		case allowed[key], strings.HasPrefix(key, "X-Amz-"):
+		case key == "x-id", key == "AWSAccessKeyId", key == "Signature", key == "Expires":
+		default:
+			return key, true
 		}
-		return key, true
 	}
 	return "", false
 }

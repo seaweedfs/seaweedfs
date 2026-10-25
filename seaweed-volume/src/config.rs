@@ -1,8 +1,30 @@
 use clap::Parser;
+use std::ffi::OsString;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 
 use crate::security::tls::TlsPolicy;
+
+/// How this module reads the environment.
+///
+/// Production passes [`process_env`]; tests pass a map. Injecting the lookup
+/// is what lets the tests cover `HOME` and the `WEED_*` overrides without
+/// `std::env::set_var`, which is `unsafe` in Rust 2024 because it races with
+/// every other thread in the process — and the lib test binary runs tokio
+/// runtimes, TLS stacks and AWS clients that read the environment lazily on
+/// threads no test mutex can reach.
+type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+/// The real process environment, as an [`EnvLookup`].
+fn process_env(key: &str) -> Option<OsString> {
+    std::env::var_os(key)
+}
+
+/// `std::env::var`'s view of an [`EnvLookup`]: unset and non-UTF-8 both read
+/// as absent, exactly as `std::env::var(key).ok()` does.
+fn env_string(env: EnvLookup<'_>, key: &str) -> Option<String> {
+    env(key).and_then(|value| value.into_string().ok())
+}
 
 /// SeaweedFS Volume Server (Rust implementation)
 ///
@@ -103,6 +125,11 @@ pub struct Cli {
     #[arg(long = "maintenanceMBps", default_value_t = 0)]
     pub maintenance_mb_per_second: u32,
 
+    /// Limit how many vacuum commits run at once on this server; queued
+    /// commits hold no volume lock. 0 means unlimited.
+    #[arg(long = "compactionMaxParallelCommits", default_value_t = 0)]
+    pub max_parallel_vacuum_commits: usize,
+
     /// Limit file size to avoid out of memory.
     #[arg(long = "fileSizeLimitMB", default_value_t = 256)]
     pub file_size_limit_mb: u32,
@@ -156,12 +183,22 @@ pub struct Cli {
     pub min_free_space: String,
 
     /// Inflight upload data wait timeout of volume servers.
-    #[arg(long = "inflightUploadDataTimeout", default_value = "60s")]
-    pub inflight_upload_data_timeout: String,
+    /// Go `time.Duration` syntax: `300ms`, `1.5h`, `2h45m`; a bare number other than `0` is rejected.
+    #[arg(
+        long = "inflightUploadDataTimeout",
+        default_value = "60s",
+        value_parser = parse_go_duration
+    )]
+    pub inflight_upload_data_timeout: std::time::Duration,
 
     /// Inflight download data wait timeout of volume servers.
-    #[arg(long = "inflightDownloadDataTimeout", default_value = "60s")]
-    pub inflight_download_data_timeout: String,
+    /// Go `time.Duration` syntax: `300ms`, `1.5h`, `2h45m`; a bare number other than `0` is rejected.
+    #[arg(
+        long = "inflightDownloadDataTimeout",
+        default_value = "60s",
+        value_parser = parse_go_duration
+    )]
+    pub inflight_download_data_timeout: std::time::Duration,
 
     /// <experimental> if true, prevents slow reads from blocking other requests,
     /// but large file read P99 latency will increase.
@@ -195,6 +232,25 @@ pub struct Cli {
     /// metadata endpoints.
     #[arg(long = "volume.allowUntrustedRemoteEndpoints", default_value_t = false)]
     pub allow_untrusted_remote_endpoints: bool,
+
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchBytes", default_value_t = 1024 * 1024)]
+    pub fsync_min_batch_bytes: u64,
+
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchRequests", default_value_t = 128)]
+    pub fsync_min_batch_requests: usize,
+
+    /// How long a below-minimum fsync batch waits for more requests once the
+    /// queue drains; 0 flushes immediately.
+    #[arg(
+        long = "fsyncBatchWait",
+        default_value = "500us",
+        value_parser = parse_go_duration
+    )]
+    pub fsync_batch_wait: std::time::Duration,
 
     /// A file of command line options, each line in optionName=optionValue format.
     #[arg(long = "options", default_value = "")]
@@ -231,6 +287,8 @@ pub struct VolumeServerConfig {
     pub mem_profile: String,
     pub compaction_byte_per_second: i64,
     pub maintenance_byte_per_second: i64,
+    /// Max concurrent vacuum commits; 0 means unlimited.
+    pub max_parallel_vacuum_commits: usize,
     pub file_size_limit_bytes: i64,
     pub concurrent_upload_limit: i64,
     pub concurrent_download_limit: i64,
@@ -264,13 +322,19 @@ pub struct VolumeServerConfig {
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
-    /// Enable batched write queue for improved throughput under load.
-    pub enable_write_queue: bool,
     /// Path to security.toml — stored for SIGHUP reload.
     pub security_file: String,
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation
     /// (allows loopback / link-local / metadata hosts).
     pub allow_untrusted_remote_endpoints: bool,
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_bytes: u64,
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_requests: usize,
+    /// How long a below-minimum fsync batch waits for stragglers.
+    pub fsync_batch_wait: std::time::Duration,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -334,7 +398,7 @@ pub fn parse_cli() -> VolumeServerConfig {
     let normalized = normalize_args_vec(args);
     let merged = merge_options_file(normalized);
     let cli = Cli::parse_from(merged);
-    resolve_config(cli)
+    resolve_config_with_env(cli, &process_env)
 }
 
 /// Find `-options`/`--options` in args, parse the referenced file, and inject
@@ -449,99 +513,214 @@ fn find_options_arg(args: &[String]) -> String {
     String::new()
 }
 
-/// Parse a duration string like "60s", "5m", "1h" into a std::time::Duration.
-fn parse_duration(s: &str) -> std::time::Duration {
-    let s = s.trim();
+/// Parse a duration with Go's `time.ParseDuration` grammar, as Go's
+/// `flag.Duration` flags do: `[0-9]*(\.[0-9]*)?<unit>` repeated, units
+/// `ns`/`us`/`µs`/`μs`/`ms`/`s`/`m`/`h`. A bare `0` is the only unit-less
+/// value; a leading sign parses in Go but a negative has no
+/// `std::time::Duration`, so it is an error, not a clamp.
+fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
+    let orig = s;
+    let invalid = || format!("time: invalid duration {:?}", orig);
+
+    let mut s = s;
+    if let Some(rest) = s.strip_prefix('-') {
+        if rest.is_empty() {
+            return Err(invalid());
+        }
+        return Err(format!("negative duration {:?} is not supported", orig));
+    }
+    if let Some(rest) = s.strip_prefix('+') {
+        s = rest;
+    }
+    if s == "0" {
+        return Ok(std::time::Duration::ZERO);
+    }
     if s.is_empty() {
-        return std::time::Duration::from_secs(60);
+        return Err(invalid());
     }
-    if let Some(secs) = s.strip_suffix('s')
-        && let Ok(v) = secs.parse::<u64>()
-    {
-        return std::time::Duration::from_secs(v);
+
+    // Go bounds the total by 1<<63 (int64 nanoseconds): overflow is an error.
+    const MAX: u64 = 1 << 63;
+    let mut total: u64 = 0;
+    let mut bytes = s.as_bytes();
+    while !bytes.is_empty() {
+        if !(bytes[0] == b'.' || bytes[0].is_ascii_digit()) {
+            return Err(invalid());
+        }
+
+        // Consume [0-9]*
+        let mut i = 0;
+        let mut v: u64 = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            v = v
+                .checked_mul(10)
+                .and_then(|v| v.checked_add(u64::from(bytes[i] - b'0')))
+                .filter(|v| *v <= MAX)
+                .ok_or_else(invalid)?;
+            i += 1;
+        }
+        let pre = i != 0;
+        bytes = &bytes[i..];
+
+        // Consume (\.[0-9]*)?
+        let mut f: u64 = 0;
+        let mut scale: f64 = 1.0;
+        let mut post = false;
+        if let Some((b'.', rest)) = bytes.split_first() {
+            bytes = rest;
+            let mut i = 0;
+            let mut overflow = false;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                if !overflow {
+                    // Like Go's leadingFraction, digits past ~19 are dropped.
+                    match f
+                        .checked_mul(10)
+                        .and_then(|f| f.checked_add(u64::from(bytes[i] - b'0')))
+                        .filter(|f| *f <= MAX)
+                    {
+                        Some(next) => {
+                            f = next;
+                            scale *= 10.0;
+                        }
+                        None => overflow = true,
+                    }
+                }
+                i += 1;
+            }
+            post = i != 0;
+            bytes = &bytes[i..];
+        }
+        if !pre && !post {
+            return Err(invalid());
+        }
+
+        // Consume the unit: everything up to the next digit or '.'.
+        let unit_len = bytes
+            .iter()
+            .position(|c| *c == b'.' || c.is_ascii_digit())
+            .unwrap_or(bytes.len());
+        if unit_len == 0 {
+            return Err(format!("time: missing unit in duration {:?}", orig));
+        }
+        // The boundary is an ASCII byte or the end, so it is a char boundary.
+        let unit = std::str::from_utf8(&bytes[..unit_len]).map_err(|_| invalid())?;
+        bytes = &bytes[unit_len..];
+        let unit_nanos: u64 = match unit {
+            "ns" => 1,
+            "us" | "\u{00b5}s" | "\u{03bc}s" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60 * 1_000_000_000,
+            "h" => 3600 * 1_000_000_000,
+            _ => {
+                return Err(format!(
+                    "time: unknown unit {:?} in duration {:?}",
+                    unit, orig
+                ));
+            }
+        };
+
+        if v > MAX / unit_nanos {
+            return Err(invalid());
+        }
+        v *= unit_nanos;
+        if f > 0 {
+            // Go's float math, so `1.5h` rounds the same way on both sides.
+            v += (f as f64 * (unit_nanos as f64 / scale)) as u64;
+            if v > MAX {
+                return Err(invalid());
+            }
+        }
+        total = total
+            .checked_add(v)
+            .filter(|t| *t <= MAX)
+            .ok_or_else(invalid)?;
     }
-    if let Some(mins) = s.strip_suffix('m')
-        && let Ok(v) = mins.parse::<u64>()
-        && let Some(seconds) = v.checked_mul(60)
-    {
-        return std::time::Duration::from_secs(seconds);
+    if total > MAX - 1 {
+        return Err(invalid());
     }
-    if let Some(hours) = s.strip_suffix('h')
-        && let Ok(v) = hours.parse::<u64>()
-        && let Some(seconds) = v.checked_mul(3600)
-    {
-        return std::time::Duration::from_secs(seconds);
-    }
-    // Fallback: try parsing as raw seconds
-    if let Ok(v) = s.parse::<u64>() {
-        return std::time::Duration::from_secs(v);
-    }
-    std::time::Duration::from_secs(60)
+    Ok(std::time::Duration::from_nanos(total))
 }
 
-/// Parse minFreeSpace / minFreeSpacePercent into MinFreeSpace values.
-/// Mirrors Go's `util.MustParseMinFreeSpace()`.
-fn parse_min_free_spaces(min_free_space: &str, min_free_space_percent: &str) -> Vec<MinFreeSpace> {
-    // If --minFreeSpace is provided, use it (takes precedence).
+/// Byte-size suffixes of Go's `util.ParseBytes`, lower-cased: SI (`kb`, `k`)
+/// and IEC (`kib`, `ki`) forms, `b`, and no suffix.
+fn byte_unit_multiplier(unit: &str) -> Option<u64> {
+    const K: u64 = 1_000;
+    const KI: u64 = 1 << 10;
+    Some(match unit {
+        "" | "b" => 1,
+        "kb" | "k" => K,
+        "kib" | "ki" => KI,
+        "mb" | "m" => K * K,
+        "mib" | "mi" => KI * KI,
+        "gb" | "g" => K * K * K,
+        "gib" | "gi" => KI * KI * KI,
+        "tb" | "t" => K * K * K * K,
+        "tib" | "ti" => KI * KI * KI * KI,
+        "pb" | "p" => K * K * K * K * K,
+        "pib" | "pi" => KI * KI * KI * KI * KI,
+        "eb" | "e" => K * K * K * K * K * K,
+        "eib" | "ei" => KI * KI * KI * KI * KI * KI,
+        _ => return None,
+    })
+}
+
+/// Parse a human-readable byte count with Go's `util.ParseBytes` grammar:
+/// decimal number, optional whitespace, then a [`byte_unit_multiplier`]
+/// suffix, case-insensitive. `10GiB` → 10737418240, `1.5TB` → 1500000000000.
+///
+/// Thousands commas parse as in Go but never arrive from `-minFreeSpace`,
+/// which is split on commas into per-directory entries first.
+fn parse_bytes(s: &str) -> Result<u64, String> {
+    let digits_end = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
+        .unwrap_or(s.len());
+    let num = s[..digits_end].replace(',', "");
+    let value: f64 = num
+        .parse()
+        .map_err(|e| format!("invalid byte size {:?}: {}", s, e))?;
+    let unit = s[digits_end..].trim().to_lowercase();
+    let multiplier =
+        byte_unit_multiplier(&unit).ok_or_else(|| format!("unhandled size name: {}", unit))?;
+    let bytes = value * multiplier as f64;
+    if bytes >= u64::MAX as f64 {
+        return Err(format!("too large: {}", s));
+    }
+    Ok(bytes as u64)
+}
+
+/// Parse one `-minFreeSpace` entry like Go's `util.ParseMinFreeSpace()`: a
+/// plain number is a percentage in `0..=100`, anything else a byte size
+/// above 100 bytes. `150` errors rather than reading as bytes.
+fn parse_min_free_space(s: &str) -> Result<MinFreeSpace, String> {
+    let s = s.trim();
+    if let Ok(percent) = s.parse::<f64>() {
+        // Go's range check lets NaN through; rejecting it is the one
+        // intentional difference.
+        if !(0.0..=100.0).contains(&percent) {
+            return Err(format!("minFreeSpace is invalid: {:?}", s));
+        }
+        return Ok(MinFreeSpace::Percent(percent));
+    }
+    match parse_bytes(s) {
+        Ok(bytes) if bytes > 100 => Ok(MinFreeSpace::Bytes(bytes)),
+        _ => Err(format!("minFreeSpace is invalid: {:?}", s)),
+    }
+}
+
+/// Parse minFreeSpace / minFreeSpacePercent like Go's
+/// `util.MustParseMinFreeSpace()`: `--minFreeSpace` wins when set, and any
+/// invalid comma-separated entry fails the whole list.
+fn parse_min_free_spaces(
+    min_free_space: &str,
+    min_free_space_percent: &str,
+) -> Result<Vec<MinFreeSpace>, String> {
     let source = if !min_free_space.is_empty() {
         min_free_space
     } else {
         min_free_space_percent
     };
-
-    source
-        .split(',')
-        .map(|s| {
-            let s = s.trim();
-            // Try parsing as a percentage (value <= 100)
-            if let Ok(v) = s.parse::<f64>() {
-                if v <= 100.0 {
-                    return MinFreeSpace::Percent(v);
-                }
-                // Treat as bytes if > 100
-                return MinFreeSpace::Bytes(v as u64);
-            }
-            // Try parsing human-readable bytes: e.g. "10GiB", "500MiB", "1TiB"
-            let s_upper = s.to_uppercase();
-            if let Some(rest) = s_upper.strip_suffix("TIB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0 * 1024.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("GIB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("MIB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("KIB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1024.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("TB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1_000_000_000_000.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("GB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1_000_000_000.0) as u64);
-            }
-            if let Some(rest) = s_upper.strip_suffix("MB")
-                && let Ok(v) = rest.trim().parse::<f64>()
-            {
-                return MinFreeSpace::Bytes((v * 1_000_000.0) as u64);
-            }
-            // Default: 1%
-            MinFreeSpace::Percent(1.0)
-        })
-        .collect()
+    source.split(',').map(parse_min_free_space).collect()
 }
 
 /// Parse comma-separated tag groups like "fast:ssd,archive" into per-folder tag vectors.
@@ -584,7 +763,7 @@ fn parse_volume_tags(tags_arg: &str, folder_count: usize) -> Vec<Vec<String>> {
     folder_tags
 }
 
-fn resolve_config(cli: Cli) -> VolumeServerConfig {
+fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
     // Backward compatibility: --mserver overrides --master
     let master_string = if !cli.mserver.is_empty() {
         &cli.mserver
@@ -635,7 +814,9 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
 
     // Parse min free spaces
     let mut min_free_spaces =
-        parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent);
+        parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent).unwrap_or_else(
+            |e| panic!("The value specified in -minFreeSpace not a valid value: {e}"),
+        );
     if min_free_spaces.len() == 1 && folder_count > 1 {
         let v = min_free_spaces[0].clone();
         min_free_spaces.resize(folder_count, v);
@@ -739,7 +920,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     };
 
     // Parse security config from TOML file
-    let sec = parse_security_config(&cli.security_file);
+    let sec = parse_security_config_with_env(&cli.security_file, env);
 
     // Parse whitelist: merge CLI --whiteList with guard.white_list from security.toml
     let mut white_list: Vec<String> = cli
@@ -749,10 +930,6 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         .filter(|s| !s.is_empty())
         .collect();
     white_list.extend(sec.guard_white_list.iter().cloned());
-
-    // Parse durations
-    let inflight_upload_data_timeout = parse_duration(&cli.inflight_upload_data_timeout);
-    let inflight_download_data_timeout = parse_duration(&cli.inflight_download_data_timeout);
 
     VolumeServerConfig {
         port: cli.port,
@@ -782,11 +959,15 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         mem_profile: cli.mem_profile,
         compaction_byte_per_second: cli.compaction_mb_per_second as i64 * 1024 * 1024,
         maintenance_byte_per_second: cli.maintenance_mb_per_second as i64 * 1024 * 1024,
+        max_parallel_vacuum_commits: cli.max_parallel_vacuum_commits,
         file_size_limit_bytes: cli.file_size_limit_mb as i64 * 1024 * 1024,
         concurrent_upload_limit: cli.concurrent_upload_limit_mb as i64 * 1024 * 1024,
         concurrent_download_limit: cli.concurrent_download_limit_mb as i64 * 1024 * 1024,
-        inflight_upload_data_timeout,
-        inflight_download_data_timeout,
+        inflight_upload_data_timeout: cli.inflight_upload_data_timeout,
+        inflight_download_data_timeout: cli.inflight_download_data_timeout,
+        fsync_min_batch_bytes: cli.fsync_min_batch_bytes,
+        fsync_min_batch_requests: cli.fsync_min_batch_requests,
+        fsync_batch_wait: cli.fsync_batch_wait,
         has_slow_read: cli.has_slow_read,
         read_buffer_size_mb: cli.read_buffer_size_mb,
         ldb_timeout: cli.ldb_timeout,
@@ -815,9 +996,6 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
         grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
         tls_policy: sec.tls_policy,
-        enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(false),
         security_file: cli.security_file,
         allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
     }
@@ -895,9 +1073,13 @@ const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
 /// allowed_commonNames = "volume-a.internal,volume-b.internal"
 /// ```
 pub fn parse_security_config(path: &str) -> SecurityConfig {
-    let Some(config_path) = resolve_security_config_path(path) else {
+    parse_security_config_with_env(path, &process_env)
+}
+
+fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityConfig {
+    let Some(config_path) = resolve_security_config_path(path, env) else {
         let mut cfg = SecurityConfig::default();
-        apply_env_overrides(&mut cfg);
+        apply_env_overrides(&mut cfg, env);
         return cfg;
     };
 
@@ -905,7 +1087,7 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         Ok(c) => c,
         Err(_) => {
             let mut cfg = SecurityConfig::default();
-            apply_env_overrides(&mut cfg);
+            apply_env_overrides(&mut cfg, env);
             return cfg;
         }
     };
@@ -1061,19 +1243,19 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
     // Override with WEED_ environment variables (matches Go's Viper convention:
     // prefix WEED_, uppercase, replace . with _).
     // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
-    apply_env_overrides(&mut cfg);
+    apply_env_overrides(&mut cfg, env);
 
     cfg
 }
 
-fn resolve_security_config_path(path: &str) -> Option<PathBuf> {
+fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBuf> {
     if !path.is_empty() {
         return Some(PathBuf::from(path));
     }
 
     default_security_config_candidates(
         std::env::current_dir().ok().as_deref(),
-        home_dir_from_env().as_deref(),
+        home_dir_from_env(env).as_deref(),
     )
     .into_iter()
     .find(|candidate| candidate.is_file())
@@ -1095,12 +1277,12 @@ fn default_security_config_candidates(
     candidates
 }
 
-fn home_dir_from_env() -> Option<PathBuf> {
-    std::env::var_os("HOME")
+fn home_dir_from_env(env: EnvLookup<'_>) -> Option<PathBuf> {
+    env("HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var_os("USERPROFILE")
+            env("USERPROFILE")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
         })
@@ -1108,80 +1290,80 @@ fn home_dir_from_env() -> Option<PathBuf> {
 
 /// Apply WEED_ environment variable overrides to a SecurityConfig.
 /// Matches Go's Viper convention: WEED_ prefix, uppercase, dots replaced with underscores.
-fn apply_env_overrides(cfg: &mut SecurityConfig) {
-    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_KEY") {
+fn apply_env_overrides(cfg: &mut SecurityConfig, env: EnvLookup<'_>) {
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_KEY") {
         cfg.jwt_signing_key = v.into_bytes();
     }
-    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
         cfg.jwt_signing_expires = v.parse().unwrap_or(cfg.jwt_signing_expires);
     }
-    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_KEY") {
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_KEY") {
         cfg.jwt_read_signing_key = v.into_bytes();
     }
-    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS") {
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS") {
         cfg.jwt_read_signing_expires = v.parse().unwrap_or(cfg.jwt_read_signing_expires);
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CERT") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_CERT") {
         cfg.https_cert_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_KEY") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_KEY") {
         cfg.https_key_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CA") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_CA") {
         cfg.https_ca_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_ENABLED") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_ENABLED") {
         cfg.https_client_enabled = v == "true" || v == "1";
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CERT") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_CERT") {
         cfg.https_client_cert_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_KEY") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_KEY") {
         cfg.https_client_key_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CA") {
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_CA") {
         cfg.https_client_ca_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CERT") {
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CERT") {
         cfg.grpc_cert_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_KEY") {
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_KEY") {
         cfg.grpc_key_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CLIENT_CERT") {
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CLIENT_CERT") {
         cfg.grpc_client_cert_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CLIENT_KEY") {
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CLIENT_KEY") {
         cfg.grpc_client_key_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_CA") {
+    if let Some(v) = env_string(env, "WEED_GRPC_CA") {
         cfg.grpc_ca_file = v;
-    } else if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
+    } else if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CA") {
         cfg.grpc_ca_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_ALLOWED_WILDCARD_DOMAIN") {
+    if let Some(v) = env_string(env, "WEED_GRPC_ALLOWED_WILDCARD_DOMAIN") {
         cfg.grpc_allowed_wildcard_domain = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
         cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
     }
-    if let Ok(v) = std::env::var("WEED_TLS_MIN_VERSION") {
+    if let Some(v) = env_string(env, "WEED_TLS_MIN_VERSION") {
         cfg.tls_policy.min_version = v;
     }
-    if let Ok(v) = std::env::var("WEED_TLS_MAX_VERSION") {
+    if let Some(v) = env_string(env, "WEED_TLS_MAX_VERSION") {
         cfg.tls_policy.max_version = v;
     }
-    if let Ok(v) = std::env::var("WEED_TLS_CIPHER_SUITES") {
+    if let Some(v) = env_string(env, "WEED_TLS_CIPHER_SUITES") {
         cfg.tls_policy.cipher_suites = v;
     }
-    if let Ok(v) = std::env::var("WEED_GUARD_WHITE_LIST") {
+    if let Some(v) = env_string(env, "WEED_GUARD_WHITE_LIST") {
         cfg.guard_white_list = v
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
     }
-    if let Ok(v) = std::env::var("WEED_ACCESS_UI") {
+    if let Some(v) = env_string(env, "WEED_ACCESS_UI") {
         cfg.access_ui = v == "true" || v == "1";
     }
 }
@@ -1202,39 +1384,19 @@ fn detect_host_address() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
+    use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
+    /// Serialises the tests that move the process working directory against
+    /// the ones that read it. `set_current_dir` is safe, but it is still
+    /// process-global: without this, a `parse_security_config("")` in one test
+    /// would search another test's temporary directory.
+    ///
+    /// Nothing here guards the environment any more — tests inject an
+    /// [`EnvLookup`] instead of mutating the real one.
     fn process_state_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
-
-    // SAFETY (all env mutation in this module): `set_var`/`remove_var` are
-    // unsafe as of Rust 2024 because they race with concurrent readers in
-    // other threads. Every test that reaches these helpers holds
-    // `process_state_lock()` for the duration, so only one test at a time
-    // touches the environment and none observes another's edit.
-    fn with_temp_env_var<F: FnOnce()>(key: &str, value: Option<&str>, f: F) {
-        let previous = std::env::var_os(key);
-        unsafe {
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        f();
-        restore_env_var(key, previous);
-    }
-
-    fn restore_env_var(key: &str, value: Option<OsString>) {
-        unsafe {
-            if let Some(value) = value {
-                std::env::set_var(key, value);
-            } else {
-                std::env::remove_var(key);
-            }
-        }
     }
 
     fn with_temp_current_dir<F: FnOnce()>(dir: &Path, f: F) {
@@ -1244,73 +1406,235 @@ mod tests {
         std::env::set_current_dir(previous).unwrap();
     }
 
-    fn with_cleared_security_env<F: FnOnce()>(f: F) {
-        const KEYS: &[&str] = &[
-            "WEED_JWT_SIGNING_KEY",
-            "WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS",
-            "WEED_JWT_SIGNING_READ_KEY",
-            "WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS",
-            "WEED_HTTPS_VOLUME_CERT",
-            "WEED_HTTPS_VOLUME_KEY",
-            "WEED_HTTPS_VOLUME_CA",
-            "WEED_HTTPS_CLIENT_ENABLED",
-            "WEED_HTTPS_CLIENT_CERT",
-            "WEED_HTTPS_CLIENT_KEY",
-            "WEED_HTTPS_CLIENT_CA",
-            "WEED_GRPC_VOLUME_CERT",
-            "WEED_GRPC_VOLUME_KEY",
-            "WEED_GRPC_VOLUME_CLIENT_CERT",
-            "WEED_GRPC_VOLUME_CLIENT_KEY",
-            "WEED_GRPC_CA",
-            "WEED_GRPC_VOLUME_CA",
-            "WEED_GRPC_ALLOWED_WILDCARD_DOMAIN",
-            "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES",
-            "WEED_TLS_MIN_VERSION",
-            "WEED_TLS_MAX_VERSION",
-            "WEED_TLS_CIPHER_SUITES",
-            "WEED_GUARD_WHITE_LIST",
-            "WEED_ACCESS_UI",
-        ];
-
-        let previous: Vec<(&str, Option<OsString>)> = KEYS
+    /// The whole environment a test wants the config layer to see, ready to
+    /// pass as `&env`. `&|_| None` is an environment with nothing set at all.
+    fn fake_env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let map: HashMap<String, OsString> = pairs
             .iter()
-            .map(|key| (*key, std::env::var_os(key)))
+            .map(|(key, value)| ((*key).to_string(), OsString::from(*value)))
             .collect();
+        move |key| map.get(key).cloned()
+    }
 
-        for key in KEYS {
-            // SAFETY: as above — the caller holds `process_state_lock()`.
-            unsafe {
-                std::env::remove_var(key);
-            }
-        }
-
-        f();
-
-        for (key, value) in previous {
-            restore_env_var(key, value);
+    #[test]
+    fn test_parse_go_duration_accepts_go_grammar() {
+        use std::time::Duration;
+        let cases = [
+            ("60s", Duration::from_secs(60)),
+            ("5m", Duration::from_secs(300)),
+            ("1h", Duration::from_secs(3600)),
+            ("1.5h", Duration::from_secs(5400)),
+            ("2h45m", Duration::from_secs(2 * 3600 + 45 * 60)),
+            ("300ms", Duration::from_millis(300)),
+            ("1.5s", Duration::from_millis(1500)),
+            ("250us", Duration::from_micros(250)),
+            ("250\u{00b5}s", Duration::from_micros(250)),
+            ("250\u{03bc}s", Duration::from_micros(250)),
+            ("7ns", Duration::from_nanos(7)),
+            (".5s", Duration::from_millis(500)),
+            ("5.s", Duration::from_secs(5)),
+            ("+10s", Duration::from_secs(10)),
+            ("0", Duration::ZERO),
+            ("0s", Duration::ZERO),
+            // Go: fraction digits past the 19th are ignored, not an error.
+            ("1.00000000000000000001s", Duration::from_secs(1)),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_go_duration(input), Ok(expected), "input={:?}", input);
         }
     }
 
     #[test]
-    fn test_parse_duration() {
-        assert_eq!(parse_duration("60s"), std::time::Duration::from_secs(60));
-        assert_eq!(parse_duration("5m"), std::time::Duration::from_secs(300));
-        assert_eq!(parse_duration("1h"), std::time::Duration::from_secs(3600));
-        assert_eq!(parse_duration("30"), std::time::Duration::from_secs(30));
-        assert_eq!(parse_duration(""), std::time::Duration::from_secs(60));
+    fn test_parse_go_duration_rejects_what_go_rejects() {
+        // Each of these makes Go's flag.Duration fail flag parsing; the old
+        // Rust parser turned them all into the 60 s default.
+        let rejected = [
+            "30",                    // bare number other than 0
+            "30sec",                 // unknown unit
+            "abc",                   // no number at all
+            "",                      // empty
+            "1h ",                   // trailing space is not a unit
+            "s",                     // unit without number
+            ".s",                    // dot without digits
+            "1.5",                   // fraction without unit
+            "1h-30m",                // sign is only allowed at the front
+            "-",                     // sign alone
+            "5124095576030432h",     // overflows int64 nanoseconds
+            "307445734561825861m",   // overflows int64 nanoseconds
+            "9223372036854775808ns", // 1<<63, one past int64
+        ];
+        for input in rejected {
+            let result = parse_go_duration(input);
+            assert!(result.is_err(), "input={:?} parsed as {:?}", input, result);
+            let message = result.unwrap_err();
+            assert!(
+                message.contains(&format!("{:?}", input)) || input.is_empty(),
+                "error for {:?} does not name the value: {}",
+                input,
+                message
+            );
+        }
+        // Largest value Go accepts: 1<<63 - 1 nanoseconds.
         assert_eq!(
-            parse_duration("307445734561825861m"),
+            parse_go_duration("9223372036854775807ns"),
+            Ok(std::time::Duration::from_nanos(i64::MAX as u64))
+        );
+        // Go accepts negatives; std::time::Duration cannot, so it errors.
+        let negative = parse_go_duration("-1s").unwrap_err();
+        assert!(negative.contains("negative"), "{}", negative);
+    }
+
+    /// Clap refuses the flag so the process exits with a usage error, exactly
+    /// where Go's flag package does.
+    #[test]
+    fn test_cli_rejects_invalid_duration_flags() {
+        for value in ["30sec", "abc", "30"] {
+            let result = Cli::try_parse_from(["bin", "--inflightUploadDataTimeout", value]);
+            assert!(
+                result.is_err(),
+                "--inflightUploadDataTimeout={} was accepted as {:?}",
+                value,
+                result.map(|cli| cli.inflight_upload_data_timeout)
+            );
+            let err = Cli::try_parse_from(["bin", "--inflightDownloadDataTimeout", value])
+                .err()
+                .unwrap_or_else(|| panic!("--inflightDownloadDataTimeout={} was accepted", value));
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(err.to_string().contains(value), "{}", err);
+        }
+        let cli = Cli::parse_from(["bin", "--inflightUploadDataTimeout", "1.5h"]);
+        assert_eq!(
+            cli.inflight_upload_data_timeout,
+            std::time::Duration::from_secs(5400)
+        );
+        // The default still parses through the same grammar.
+        let cli = Cli::parse_from(["bin"]);
+        assert_eq!(
+            cli.inflight_upload_data_timeout,
             std::time::Duration::from_secs(60)
         );
         assert_eq!(
-            parse_duration("5124095576030432h"),
+            cli.inflight_download_data_timeout,
             std::time::Duration::from_secs(60)
         );
+    }
+
+    #[test]
+    fn test_parse_bytes_matches_go_parse_bytes() {
+        // Expected values are what Go's util.ParseBytes returns (weed/util/bytes_test.go).
+        let cases: [(&str, u64); 14] = [
+            ("42", 42),
+            ("42MB", 42_000_000),
+            ("42 MB", 42_000_000),
+            ("42 mib", 44_040_192),
+            ("42M", 42_000_000),
+            ("100Ki", 100 * 1024),
+            ("10GiB", 10 * 1024 * 1024 * 1024),
+            ("10gib", 10 * 1024 * 1024 * 1024),
+            ("10GB", 10_000_000_000),
+            ("1.5TB", 1_500_000_000_000),
+            // Go's ParseBytes accepts thousands commas; the -minFreeSpace flag
+            // never delivers one (see test_min_free_space_flag_commas_are_list_separators).
+            ("1,024MB", 1_024_000_000),
+            ("1,024", 1024),
+            ("1PiB", 1 << 50),
+            ("1eb", 1_000_000_000_000_000_000),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_bytes(input), Ok(expected), "input={:?}", input);
+        }
+        for input in [
+            "10GiBx",
+            "GiB",
+            "",
+            "-5GB",
+            "1.2.3GB",
+            "10 Gi B",
+            "99999999999999999999EB",
+        ] {
+            assert!(
+                parse_bytes(input).is_err(),
+                "input={:?} was accepted",
+                input
+            );
+        }
+    }
+
+    fn expect_percent(result: Result<MinFreeSpace, String>, expected: f64, input: &str) {
+        match result {
+            Ok(MinFreeSpace::Percent(v)) => {
+                assert!(
+                    (v - expected).abs() < f64::EPSILON,
+                    "input={:?}: {}",
+                    input,
+                    v
+                )
+            }
+            other => panic!(
+                "input={:?}: expected Percent({}), got {:?}",
+                input, expected, other
+            ),
+        }
+    }
+
+    fn expect_bytes(result: Result<MinFreeSpace, String>, expected: u64, input: &str) {
+        match result {
+            Ok(MinFreeSpace::Bytes(v)) => assert_eq!(v, expected, "input={:?}", input),
+            other => panic!(
+                "input={:?}: expected Bytes({}), got {:?}",
+                input, expected, other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_space_matches_go() {
+        // Fixtures from weed/util/minfreespace_test.go plus the byte-unit table.
+        expect_percent(parse_min_free_space("42"), 42.0, "42");
+        expect_percent(parse_min_free_space(" 42 "), 42.0, " 42 ");
+        expect_percent(parse_min_free_space("50"), 50.0, "50");
+        expect_percent(parse_min_free_space("100"), 100.0, "100");
+        expect_percent(parse_min_free_space("0"), 0.0, "0");
+        expect_percent(parse_min_free_space("2.5"), 2.5, "2.5");
+        expect_bytes(parse_min_free_space("100Ki"), 100 * 1024, "100Ki");
+        expect_bytes(parse_min_free_space("100GiB"), 100 << 30, "100GiB");
+        expect_bytes(parse_min_free_space("42M"), 42_000_000, "42M");
+        expect_bytes(parse_min_free_space(" 42M "), 42_000_000, " 42M ");
+        expect_bytes(parse_min_free_space("10GiB"), 10 << 30, "10GiB");
+        expect_bytes(parse_min_free_space("10gib"), 10 << 30, "10gib");
+        expect_bytes(parse_min_free_space("1.5TB"), 1_500_000_000_000, "1.5TB");
+        // Comma inputs never arrive whole from the flag; see
+        // test_min_free_space_flag_commas_are_list_separators.
+        expect_bytes(parse_min_free_space("1,024MB"), 1_024_000_000, "1,024MB");
+        expect_bytes(parse_min_free_space("1,000"), 1000, "1,000");
+
+        // Go: percent outside 0..=100, or a byte size of at most 100 bytes.
+        for input in [
+            "150", "101", "-1", "1e3", "inf", "nan", "100B", "50B", "0B", "10GiBx", "", "abc",
+            "10 Gi B",
+        ] {
+            let result = parse_min_free_space(input);
+            assert!(
+                result.is_err(),
+                "input={:?} was accepted as {:?}",
+                input,
+                result
+            );
+            assert!(
+                result
+                    .as_ref()
+                    .unwrap_err()
+                    .contains(&format!("{:?}", input.trim())),
+                "error for {:?} does not name the value: {:?}",
+                input,
+                result
+            );
+        }
     }
 
     #[test]
     fn test_parse_min_free_spaces_percent() {
-        let result = parse_min_free_spaces("", "1");
+        let result = parse_min_free_spaces("", "1").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
             MinFreeSpace::Percent(v) => assert!((v - 1.0).abs() < f64::EPSILON),
@@ -1320,12 +1644,93 @@ mod tests {
 
     #[test]
     fn test_parse_min_free_spaces_bytes() {
-        let result = parse_min_free_spaces("10GiB", "");
+        let result = parse_min_free_spaces("10GiB", "").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
             MinFreeSpace::Bytes(v) => assert_eq!(*v, 10 * 1024 * 1024 * 1024),
             _ => panic!("Expected Bytes"),
         }
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_list_and_precedence() {
+        // --minFreeSpace wins over --minFreeSpacePercent, as in Go's EmptyTo().
+        let result = parse_min_free_spaces("5, 10GiB", "1").unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], MinFreeSpace::Percent(v) if v == 5.0));
+        assert!(matches!(result[1], MinFreeSpace::Bytes(v) if v == 10 << 30));
+        // One bad entry fails the whole list and names that entry.
+        let err = parse_min_free_spaces("5,10GiBx", "1").unwrap_err();
+        assert!(err.contains("\"10GiBx\""), "{}", err);
+        // Both flags empty: Go fatals (ParseMinFreeSpace("") fails) rather than
+        // assuming 1%.
+        assert!(parse_min_free_spaces("", "").is_err());
+    }
+
+    /// A comma in `-minFreeSpace` separates per-directory entries, as in Go's
+    /// `MustParseMinFreeSpace`: `1,024MB` is `1` (percent) and `024MB`, and
+    /// one `-dir` fails the count check.
+    #[test]
+    fn test_min_free_space_flag_commas_are_list_separators() {
+        let result = parse_min_free_spaces("1,024MB", "").unwrap();
+        assert_eq!(result.len(), 2, "{result:?}");
+        assert!(
+            matches!(result[0], MinFreeSpace::Percent(v) if v == 1.0),
+            "{result:?}"
+        );
+        assert!(
+            matches!(result[1], MinFreeSpace::Bytes(v) if v == 24_000_000),
+            "{result:?}"
+        );
+
+        let _guard = process_state_lock();
+        let cli = Cli::parse_from(["bin", "--dir", "/tmp/a", "--minFreeSpace", "1,024MB"]);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve_config_with_env(cli, &|_| None).min_free_spaces
+        }));
+        assert!(
+            outcome.is_err(),
+            "one -dir with two minFreeSpace entries must abort"
+        );
+    }
+
+    /// Negative control at the startup layer: resolving the config with an
+    /// invalid --minFreeSpace must abort, as Go's MustParseMinFreeSpace does.
+    #[test]
+    fn test_resolve_config_rejects_invalid_min_free_space() {
+        // The security-config search reads the working directory.
+        let _guard = process_state_lock();
+        for (flag, value) in [
+            ("--minFreeSpace", "10GiBx"),
+            ("--minFreeSpace", "150"),
+            ("--minFreeSpace", "50B"),
+            ("--minFreeSpacePercent", "150"),
+            ("--minFreeSpacePercent", "abc"),
+        ] {
+            let cli = Cli::parse_from(["bin", flag, value]);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resolve_config_with_env(cli, &|_| None).min_free_spaces
+            }));
+            let payload = match outcome {
+                Ok(spaces) => panic!("{}={} was accepted as {:?}", flag, value, spaces),
+                Err(payload) => payload,
+            };
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            assert!(
+                message.contains("-minFreeSpace") && message.contains(value),
+                "{}={}: unexpected panic message {:?}",
+                flag,
+                value,
+                message
+            );
+        }
+        let cfg =
+            resolve_config_with_env(Cli::parse_from(["bin", "--minFreeSpace", "100"]), &|_| None);
+        assert!(matches!(cfg.min_free_spaces[0], MinFreeSpace::Percent(v) if v == 100.0));
     }
 
     #[test]
@@ -1425,17 +1830,17 @@ mod tests {
 
     #[test]
     fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
-        // resolve_config reads HOME/USERPROFILE and the WEED_* set, so it has to
-        // hold the same lock the mutation helpers take — a concurrent set_var
-        // during this read is exactly what makes those calls unsafe.
+        // With no --securityFile, the security-config search reads the process
+        // working directory, so this has to hold the lock against
+        // `with_temp_current_dir`. The environment is injected, not shared.
         let _guard = process_state_lock();
-        let cfg = resolve_config(Cli::parse_from(["bin"]));
+        let cfg = resolve_config_with_env(Cli::parse_from(["bin"]), &|_| None);
         assert_eq!(cfg.folders, vec![default_volume_dir()]);
     }
 
     #[test]
     fn test_resolve_config_index_accepts_redb_and_leveldb_aliases() {
-        // As above: resolve_config reads the environment.
+        // As above: the security-config search reads the working directory.
         let _guard = process_state_lock();
         let pairs = [
             ("memory", NeedleMapKind::InMemory),
@@ -1447,14 +1852,14 @@ mod tests {
             ("leveldbLarge", NeedleMapKind::RedbLarge),
         ];
         for (input, expected) in pairs {
-            let cfg = resolve_config(Cli::parse_from(["bin", "--index", input]));
+            let cfg =
+                resolve_config_with_env(Cli::parse_from(["bin", "--index", input]), &|_| None);
             assert_eq!(cfg.index_type, expected, "input={}", input);
         }
     }
 
     #[test]
     fn test_parse_security_config_access_ui() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1468,11 +1873,9 @@ ui = true
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(cfg.jwt_signing_key, b"secret");
-            assert!(cfg.access_ui);
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.jwt_signing_key, b"secret");
+        assert!(cfg.access_ui);
     }
 
     #[test]
@@ -1489,10 +1892,8 @@ key = "cwd-secret"
         .unwrap();
 
         with_temp_current_dir(tmp.path(), || {
-            with_temp_env_var("WEED_JWT_SIGNING_KEY", None, || {
-                let cfg = parse_security_config("");
-                assert_eq!(cfg.jwt_signing_key, b"cwd-secret");
-            });
+            let cfg = parse_security_config_with_env("", &|_| None);
+            assert_eq!(cfg.jwt_signing_key, b"cwd-secret");
         });
     }
 
@@ -1512,19 +1913,15 @@ key = "home-secret"
         )
         .unwrap();
 
+        let env = fake_env(&[("HOME", home_dir.path().to_str().unwrap())]);
         with_temp_current_dir(current_dir.path(), || {
-            with_temp_env_var("WEED_JWT_SIGNING_KEY", None, || {
-                with_temp_env_var("HOME", Some(home_dir.path().to_str().unwrap()), || {
-                    let cfg = parse_security_config("");
-                    assert_eq!(cfg.jwt_signing_key, b"home-secret");
-                });
-            });
+            let cfg = parse_security_config_with_env("", &env);
+            assert_eq!(cfg.jwt_signing_key, b"home-secret");
         });
     }
 
     #[test]
     fn test_parse_security_config_uses_grpc_root_ca() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1539,17 +1936,14 @@ key = "/etc/seaweedfs/volume-key.pem"
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
-            assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
-            assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
+        assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
+        assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
     }
 
     #[test]
     fn test_parse_security_config_uses_grpc_volume_client_cert() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1563,22 +1957,19 @@ client_key = "/etc/seaweedfs/volume-client-key.pem"
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(
-                cfg.grpc_client_cert_file,
-                "/etc/seaweedfs/volume-client-cert.pem"
-            );
-            assert_eq!(
-                cfg.grpc_client_key_file,
-                "/etc/seaweedfs/volume-client-key.pem"
-            );
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(
+            cfg.grpc_client_cert_file,
+            "/etc/seaweedfs/volume-client-cert.pem"
+        );
+        assert_eq!(
+            cfg.grpc_client_key_file,
+            "/etc/seaweedfs/volume-client-key.pem"
+        );
     }
 
     #[test]
     fn test_parse_security_config_uses_grpc_peer_name_policy() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1592,22 +1983,19 @@ allowed_commonNames = "volume-a.internal,volume-b.internal"
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(cfg.grpc_allowed_wildcard_domain, ".example.com");
-            assert_eq!(
-                cfg.grpc_volume_allowed_common_names,
-                vec![
-                    String::from("volume-a.internal"),
-                    String::from("volume-b.internal")
-                ]
-            );
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.grpc_allowed_wildcard_domain, ".example.com");
+        assert_eq!(
+            cfg.grpc_volume_allowed_common_names,
+            vec![
+                String::from("volume-a.internal"),
+                String::from("volume-b.internal")
+            ]
+        );
     }
 
     #[test]
     fn test_parse_security_config_uses_https_client_settings() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1621,18 +2009,15 @@ ca = "/etc/seaweedfs/client-ca.pem"
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert!(cfg.https_client_enabled);
-            assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
-            assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
-            assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert!(cfg.https_client_enabled);
+        assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
+        assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
+        assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
     }
 
     #[test]
     fn test_parse_security_config_uses_tls_policy_settings() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1645,15 +2030,13 @@ cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
         )
         .unwrap();
 
-        with_cleared_security_env(|| {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(cfg.tls_policy.min_version, "TLS 1.2");
-            assert_eq!(cfg.tls_policy.max_version, "TLS 1.3");
-            assert_eq!(
-                cfg.tls_policy.cipher_suites,
-                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
-            );
-        });
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.tls_policy.min_version, "TLS 1.2");
+        assert_eq!(cfg.tls_policy.max_version, "TLS 1.3");
+        assert_eq!(
+            cfg.tls_policy.cipher_suites,
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+        );
     }
 
     #[test]
@@ -1754,16 +2137,15 @@ cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
 
     #[test]
     fn test_env_override_jwt_signing_key() {
+        // No file path, so the search reads the working directory.
         let _guard = process_state_lock();
-        with_temp_env_var("WEED_JWT_SIGNING_KEY", Some("env-secret"), || {
-            let cfg = parse_security_config("");
-            assert_eq!(cfg.jwt_signing_key, b"env-secret");
-        });
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
     }
 
     #[test]
     fn test_env_override_takes_precedence_over_file() {
-        let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -1774,31 +2156,26 @@ key = "file-secret"
         )
         .unwrap();
 
-        with_temp_env_var("WEED_JWT_SIGNING_KEY", Some("env-secret"), || {
-            let cfg = parse_security_config(tmp.path().to_str().unwrap());
-            assert_eq!(cfg.jwt_signing_key, b"env-secret");
-        });
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &env);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
     }
 
     #[test]
     fn test_env_override_guard_white_list() {
+        // No file path, so the search reads the working directory.
         let _guard = process_state_lock();
-        with_temp_env_var(
-            "WEED_GUARD_WHITE_LIST",
-            Some("10.0.0.0/8, 192.168.1.0/24"),
-            || {
-                let cfg = parse_security_config("");
-                assert_eq!(cfg.guard_white_list, vec!["10.0.0.0/8", "192.168.1.0/24"]);
-            },
-        );
+        let env = fake_env(&[("WEED_GUARD_WHITE_LIST", "10.0.0.0/8, 192.168.1.0/24")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert_eq!(cfg.guard_white_list, vec!["10.0.0.0/8", "192.168.1.0/24"]);
     }
 
     #[test]
     fn test_env_override_access_ui() {
+        // No file path, so the search reads the working directory.
         let _guard = process_state_lock();
-        with_temp_env_var("WEED_ACCESS_UI", Some("true"), || {
-            let cfg = parse_security_config("");
-            assert!(cfg.access_ui);
-        });
+        let env = fake_env(&[("WEED_ACCESS_UI", "true")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert!(cfg.access_ui);
     }
 }

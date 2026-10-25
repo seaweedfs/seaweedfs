@@ -14,6 +14,7 @@ type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
 	replicationAsMin         bool
+	maxWritableVolumes       int
 	storageType2VolumeLayout *util.ConcurrentReadMap
 }
 
@@ -40,7 +41,9 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, t
 		keyString += string(diskType)
 	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
-		return NewVolumeLayout(rp, ttl, diskType, c.volumeSizeLimit, c.replicationAsMin)
+		layout := NewVolumeLayout(rp, ttl, diskType, c.volumeSizeLimit, c.replicationAsMin)
+		layout.maxWritableVolumes = c.maxWritableVolumes
+		return layout
 	})
 	return vl.(*VolumeLayout)
 }

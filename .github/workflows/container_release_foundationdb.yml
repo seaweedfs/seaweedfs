@@ -11,6 +11,11 @@ on:
         required: true
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || format('refs/tags/{0}', github.event.inputs.release_tag) || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 
@@ -46,7 +51,7 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@v4.3.0
+        uses: docker/setup-qemu-action@v4.4.0
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

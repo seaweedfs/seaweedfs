@@ -11,8 +11,8 @@ import (
 // lookupOIDCProviderForAccount; the lookup never calls Authenticate.
 type stubIdentityProvider struct{ name string }
 
-func (s *stubIdentityProvider) Name() string                       { return s.name }
-func (s *stubIdentityProvider) Initialize(interface{}) error       { return nil }
+func (s *stubIdentityProvider) Name() string                 { return s.name }
+func (s *stubIdentityProvider) Initialize(interface{}) error { return nil }
 func (s *stubIdentityProvider) Authenticate(context.Context, string) (*providers.ExternalIdentity, error) {
 	return nil, nil
 }
@@ -101,5 +101,53 @@ func TestLookupOIDCProviderForAccountFallsBackToStatic(t *testing.T) {
 	got, ok := s.lookupOIDCProviderForAccount(issuer, "111111111111")
 	if !ok || got != static {
 		t.Fatalf("expected static-config provider as last resort, got %v ok=%v", got, ok)
+	}
+}
+
+// shutdownTrackingProvider records Shutdown calls so tests can observe which
+// replaced providers the swap released.
+type shutdownTrackingProvider struct {
+	stubIdentityProvider
+	shutdownCalls int32
+}
+
+func (s *shutdownTrackingProvider) Shutdown(context.Context) error {
+	s.shutdownCalls++
+	return nil
+}
+
+// A provider dropped from the managed map owns a background JTI cleanup
+// worker; replacing the map must shut it down, while providers that stay in
+// the map keep running.
+func TestSetIAMManagedOIDCProvidersShutsDownDroppedProviders(t *testing.T) {
+	dropped := &shutdownTrackingProvider{stubIdentityProvider{name: "dropped"}, 0}
+	kept := &shutdownTrackingProvider{stubIdentityProvider{name: "kept"}, 0}
+	added := &shutdownTrackingProvider{stubIdentityProvider{name: "added"}, 0}
+
+	s := &STSService{issuerToProvider: map[string]providers.IdentityProvider{}}
+	s.SetIAMManagedOIDCProviders(map[string][]ScopedOIDCProvider{
+		"https://a.example.com": {{Provider: dropped}},
+		"https://b.example.com": {{Provider: kept}, {AccountID: "111111111111", Provider: kept}},
+	})
+
+	s.SetIAMManagedOIDCProviders(map[string][]ScopedOIDCProvider{
+		"https://b.example.com": {{Provider: kept}},
+		"https://c.example.com": {{Provider: added}},
+	})
+
+	if dropped.shutdownCalls != 1 {
+		t.Fatalf("dropped provider was shut down %d times, want 1", dropped.shutdownCalls)
+	}
+	if kept.shutdownCalls != 0 {
+		t.Fatalf("kept provider was shut down %d times, want 0", kept.shutdownCalls)
+	}
+	if added.shutdownCalls != 0 {
+		t.Fatalf("newly added provider was shut down %d times, want 0", added.shutdownCalls)
+	}
+
+	// Clearing the map releases the remaining providers.
+	s.SetIAMManagedOIDCProviders(nil)
+	if kept.shutdownCalls != 1 || added.shutdownCalls != 1 {
+		t.Fatalf("clearing the map shut down kept=%d added=%d, want 1 each", kept.shutdownCalls, added.shutdownCalls)
 	}
 }

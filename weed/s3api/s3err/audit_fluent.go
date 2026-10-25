@@ -29,6 +29,7 @@ type AccessLog struct {
 	Requester         string `msg:"requester" json:"requester,omitempty"`                   // IAM user id
 	RequesterArn      string `msg:"requester_arn" json:"requester_arn,omitempty"`           // arn:aws:sts::0:assumed-role/Role/session
 	RequesterIdentity string `msg:"requester_identity" json:"requester_identity,omitempty"` // authoritative OIDC identity claim (preferred_username/email/sub)
+	AccessKeyId       string `msg:"access_key_id" json:"access_key_id,omitempty"`           // the key the request was signed with; an STS session's temporary key id
 	RequestID         string `msg:"request_id" json:"request_id,omitempty"`                 // 3E57427F33A59F07
 	Operation         string `msg:"operation" json:"operation,omitempty"`                   // REST.HTTP_method.resource_type REST.PUT.OBJECT
 	Key               string `msg:"key" json:"key,omitempty"`                               // /photos/2019/08/puppy.jpg
@@ -174,6 +175,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 		Requester:         s3_constants.GetIdentityNameFromContext(r), // Get from context, not header (secure)
 		RequesterArn:      s3_constants.GetPrincipalArnFromContext(r),
 		RequesterIdentity: s3_constants.GetIdentityClaimFromContext(r),
+		AccessKeyId:       s3_constants.GetAccessKeyIdFromContext(r),
 		SignatureVersion:  r.Header.Get(s3_constants.AmzAuthType),
 		UserAgent:         r.Header.Get("user-agent"),
 		HostId:            hostname,

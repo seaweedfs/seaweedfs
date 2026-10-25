@@ -1,11 +1,36 @@
 package filer_pb
 
 import (
+	"errors"
 	"os"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+func TestAssignVolumeResponseError(t *testing.T) {
+	if err := AssignVolumeResponseError(&AssignVolumeResponse{FileId: "3,01"}); err != nil {
+		t.Fatalf("success response: err = %v, want nil", err)
+	}
+
+	// A filer that predates error_code: the text survives, no sentinel is implied.
+	err := AssignVolumeResponseError(&AssignVolumeResponse{Error: "assign volume: no free volumes"})
+	if err == nil || err.Error() != "assign volume: no free volumes" {
+		t.Fatalf("uncoded response: err = %v, want the filer's text", err)
+	}
+	if errors.Is(err, ErrReadOnly) {
+		t.Fatal("uncoded response must not match ErrReadOnly")
+	}
+
+	msg := "assign volume: read only: /buckets/b (e.g. bucket over quota)"
+	err = AssignVolumeResponseError(&AssignVolumeResponse{Error: msg, ErrorCode: FilerError_READ_ONLY})
+	if !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("READ_ONLY response: err = %v, want ErrReadOnly", err)
+	}
+	if err.Error() != msg {
+		t.Fatalf("READ_ONLY response: message = %q, want %q", err.Error(), msg)
+	}
+}
 
 func TestIsDirectoryKeyObject(t *testing.T) {
 	chunk := []*FileChunk{{FileId: "1,01", Size: 75}}

@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -23,6 +22,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -49,6 +49,15 @@ var (
 // allowUntrustedRemoteEndpointsUsage documents the flag shared by the filer and
 // S3 gateway, whose remote-mount read paths dial the mounted endpoint directly.
 const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only entry accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints."
+
+// iamSelfServiceRequiresGrantUsage documents the flag shared by every command
+// that runs the embedded IAM API.
+const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit iam: grant to manage its own access keys (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys, GetUser), as on AWS. Default allows it to every authenticated identity."
+
+// allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
+// object-key character instead of normalizing it to '/'. Repeated '//' in a
+// key still collapses: a filer entry name cannot contain an empty segment.
+const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
 
 type FilerOptions struct {
 	masters                   *pb.ServerDiscovery
@@ -89,6 +98,7 @@ type FilerOptions struct {
 	s3ConfigFile              *string // optional path to static S3 identity config
 
 	allowUntrustedRemoteEndpoints *bool
+	remoteCacheEvictThreshold     *float64
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
@@ -134,6 +144,7 @@ func init() {
 	f.tusMaxSizeMB = cmdFiler.Flag.Int("tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
 	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 	f.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	f.remoteCacheEvictThreshold = cmdFiler.Flag.Float64("remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -151,7 +162,7 @@ func init() {
 	filerS3Options.metricsHttpPort = cmdFiler.Flag.Int("s3.metricsPort", 0, "Prometheus metrics listen port")
 	filerS3Options.metricsHttpIp = cmdFiler.Flag.String("s3.metricsIp", "", "metrics listen ip. If empty, default to same as -s3.ip.bind option.")
 	cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
-	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", false, "allow recursive deleting all entries along with bucket")
 	filerS3Options.autoCreateBucket = cmdFiler.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	filerS3Options.tlsCACertificate = cmdFiler.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
@@ -170,6 +181,8 @@ func init() {
 	filerS3Options.cacheSizeMB = cmdFiler.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	filerS3Options.readerCacheSizeMB = cmdFiler.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
+	filerS3Options.iamSelfServiceRequiresGrant = cmdFiler.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -188,6 +201,7 @@ func init() {
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
 	filerIamOptions.ip = cmdFiler.Flag.String("iam.ip", *f.ip, "iam server http listen ip address")
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
+	filerIamOptions.selfServiceRequiresGrant = filerS3Options.iamSelfServiceRequiresGrant
 
 	filerStartSftp = cmdFiler.Flag.Bool("sftp", false, "whether to start the SFTP server")
 	filerSftpOptions.port = cmdFiler.Flag.Int("sftp.port", 2022, "SFTP server listen port")
@@ -277,9 +291,6 @@ func runFiler(cmd *Command, args []string) bool {
 			filerS3Options.bindIp = f.bindIp
 		}
 		filerS3Options.localFilerSocket = f.localSocket
-		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
-			filerS3Options.dataCenter = f.dataCenter
-		}
 		// Set S3 metrics IP based on bind IP if not explicitly set
 		if *filerS3Options.metricsHttpIp == "" {
 			*filerS3Options.metricsHttpIp = *filerS3Options.bindIp
@@ -320,9 +331,6 @@ func runFiler(cmd *Command, args []string) bool {
 		filerSftpOptions.filer = &filerAddress
 		if *filerSftpOptions.bindIp == "" {
 			filerSftpOptions.bindIp = f.bindIp
-		}
-		if *f.dataCenter != "" && *filerSftpOptions.dataCenter == "" {
-			filerSftpOptions.dataCenter = f.dataCenter
 		}
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
@@ -379,8 +387,10 @@ func (fo *FilerOptions) startFiler() {
 		}
 	}
 
+	announce := make(chan struct{})
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
+		AnnounceCh:                announce,
 		FilerGroup:                *fo.filerGroup,
 		Collection:                *fo.collection,
 		DefaultReplication:        *fo.defaultReplicaPlacement,
@@ -407,6 +417,7 @@ func (fo *FilerOptions) startFiler() {
 		CredentialManager:         credentialManager,
 
 		AllowUntrustedRemoteEndpoints: *fo.allowUntrustedRemoteEndpoints,
+		RemoteCacheEvictThreshold:     *fo.remoteCacheEvictThreshold,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
@@ -472,9 +483,18 @@ func (fo *FilerOptions) startFiler() {
 	if credentialManager != nil {
 		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
 		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+		// The OIDC provider and role RPCs write where S3 servers configured with
+		// filer-typed "oidcProviderStore" and "roleStore" read: this filer, at
+		// the stores' default base paths.
+		selfAddress := func() string { return string(filerAddress) }
+		if roleStore, err := integration.NewFilerRoleStore(nil, selfAddress); err != nil {
+			glog.Warningf("IAM gRPC: role RPCs disabled: %v", err)
+		} else {
+			iamGrpcServer.SetSTSStores(integration.NewFilerOIDCProviderStore(nil, selfAddress), roleStore)
+		}
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 		if len(adminSigningKey) == 0 {
-			glog.V(0).Info("Registered IAM gRPC service on filer (unauthenticated; set jwt.filer_signing.key in security.toml to require admin Bearer token)")
+			glog.Warning("IAM gRPC service on filer is UNAUTHENTICATED: anyone who can reach this port can create users and policies, and its OIDC provider and role RPCs are refused; set jwt.filer_signing.key in security.toml to require an admin Bearer token")
 		} else {
 			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")
 		}
@@ -487,43 +507,31 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
+	// Membership in the master's filer list routes S3 and peer traffic here;
+	// announce once the gRPC port is serving and the metadata replay has
+	// caught up with the peers found at startup, so the filer does not take
+	// lock-ring ownership while a peer's older events can still land on top
+	// of its fresh writes. A cap bounds the wait.
+	go fs.AnnounceOnceCaughtUp(announce, time.Now())
+
 	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
 	gracefulTimeout := fo.gracefulStopTimeout
 	if gracefulTimeout <= 0 {
 		gracefulTimeout = 15 * time.Second
 	}
-	stopGrpcServer := func() {
-		glog.V(0).Infof("Gracefully stopping gRPC server")
-		stopped := make(chan struct{})
-		go func() {
-			grpcS.GracefulStop()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-			glog.V(0).Infof("gRPC server stopped gracefully")
-		case <-time.After(gracefulTimeout):
-			glog.V(0).Infof("gRPC server graceful stop timed out after %s, forcing stop", gracefulTimeout)
-			grpcS.Stop()
-		}
-	}
+	stopGrpcServer := func() { gracefulStopGrpc(grpcS, gracefulTimeout) }
 
-	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
-		if localSocket == "" {
+		explicit := localSocket != ""
+		if !explicit {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
-		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+		if filerSocketListener := pb.ListenOnLocalSocket(localSocket); filerSocketListener != nil {
+			socketServer := newHttpServer(defaultHandler, nil)
+			httpServers = append(httpServers, socketServer)
+			go socketServer.Serve(filerSocketListener)
 		}
-		filerSocketListener, err := net.Listen("unix", localSocket)
-		if err != nil {
-			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-		}
-		socketServer = newHttpServer(defaultHandler, nil)
-		httpServers = append(httpServers, socketServer)
-		go socketServer.Serve(filerSocketListener)
 	}
 
 	if viper.GetString("https.filer.key") != "" {
@@ -575,7 +583,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, tlsConfig)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, fs.StopSubscriptions, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -604,7 +612,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, nil)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, fs.StopSubscriptions, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -624,26 +632,15 @@ func (fo *FilerOptions) startFiler() {
 }
 
 // newFilerShutdown joins shutdown callers while gRPC and HTTP drain concurrently.
-func newFilerShutdown(stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+// The filer leaves the lock ring first: peers and S3 gateways route keys to it
+// until the ring changes, and would hit refused connections once gRPC stops.
+// Then it ends its metadata subscriptions, so gRPC GracefulStop does not wait
+// out its timeout on streams whose subscribers sit in this same process.
+func newFilerShutdown(leaveLockRing, stopSubscriptions, stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+	drain := newGracefulShutdown(stopGrpc, shutdownFiler, httpServers...)
 	return sync.OnceFunc(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		var drained sync.WaitGroup
-		drained.Add(1)
-		go func() {
-			defer drained.Done()
-			stopGrpc()
-		}()
-		for _, server := range httpServers {
-			drained.Add(1)
-			go func() {
-				defer drained.Done()
-				if err := server.Shutdown(shutdownCtx); err != nil {
-					glog.Warningf("filer HTTP shutdown: %v", err)
-				}
-			}()
-		}
-		drained.Wait()
-		shutdownFiler()
+		leaveLockRing()
+		stopSubscriptions()
+		drain()
 	})
 }

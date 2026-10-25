@@ -46,6 +46,8 @@ func (ms *MasterServer) heartbeatResponse() *master_pb.HeartbeatResponse {
 	return &master_pb.HeartbeatResponse{
 		VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 		Preallocate:     ms.preallocateSize > 0,
+		MaxVolumeId:     uint32(ms.Topo.GetMaxVolumeId()),
+		TopologyId:      ms.Topo.GetTopologyId(),
 	}
 }
 
@@ -101,6 +103,55 @@ func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote, isR
 	}
 }
 
+// reportsPriorClusterState tells whether a heartbeat could come from a server
+// still carrying cluster state from before this leader's term: it holds a
+// volume or shard id above the bound this master has issued, has seen a
+// higher volume id bound, or last synced with a different topology id.
+// Echoes of this term's own allocations stay under the bound and do not count.
+func reportsPriorClusterState(heartbeat *master_pb.Heartbeat, topologyId string, bound needle.VolumeId) bool {
+	if needle.VolumeId(heartbeat.MaxVolumeIdSeen) > bound ||
+		(heartbeat.LastSeenTopologyId != "" && heartbeat.LastSeenTopologyId != topologyId) {
+		return true
+	}
+	unissued := func(id uint32) bool { return needle.VolumeId(id) > bound }
+	for _, v := range heartbeat.Volumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.NewVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.ChangedVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.DeletedVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.EcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.NewEcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.DeletedEcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	return false
+}
+
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 
@@ -137,6 +188,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 	}()
 
+	var echoedVid needle.VolumeId
+	var echoedTopoId string
 	for {
 		heartbeat, err := stream.Recv()
 		if err != nil {
@@ -178,7 +231,14 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
+		if (dn == nil && heartbeat.Ip != "") || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
+			ms.Topo.NoteAllocationEvidence()
+		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
+		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
+		if len(heartbeat.Volumes) > 0 {
+			ms.Topo.CheckReportedTopologyId(heartbeat.LastSeenTopologyId)
+		}
 		if dn == nil {
 			// Skip delta heartbeat for volume server versions  better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
 			if heartbeat.Ip == "" {
@@ -206,6 +266,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
 			dn.Counter++
 		}
@@ -342,6 +403,19 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
+		}
+
+		// Every connected server keeps a durable copy of the bound. Echo it
+		// whenever it moved so one veteran can restore it after state loss,
+		// even while the offline server that held the high ids never rejoins.
+		if vid, topoId := ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId(); vid != echoedVid || topoId != echoedTopoId {
+			response := ms.heartbeatResponse()
+			if err := stream.Send(response); err != nil {
+				glog.Warningf("SendHeartbeat.Send bound echo %v", err)
+				return err
+			}
+			echoedVid, echoedTopoId = needle.VolumeId(response.MaxVolumeId), response.TopologyId
 		}
 	}
 }
@@ -422,7 +496,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
-	if req.ClientType == cluster.FilerType {
+	if req.ClientType == cluster.FilerType && !req.LeaveLockRing {
 		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 	}
 	if req.ClientType == cluster.MasterType {
@@ -484,7 +558,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 	go func() {
 		for {
-			_, err := stream.Recv()
+			message, err := stream.Recv()
 			if err != nil {
 				glog.V(2).Infof("- client %v: %v", clientName, err)
 				go func() {
@@ -496,6 +570,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 				close(stopChan)
 				return
 			}
+			ms.onKeepConnectedMessage(req, peerAddress, message)
 		}
 	}()
 
@@ -530,6 +605,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+func (ms *MasterServer) onKeepConnectedMessage(registered *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress, message *master_pb.KeepConnectedRequest) {
+	if registered.ClientType == cluster.FilerType && message.LeaveLockRing {
+		glog.V(0).Infof("LockRing: filer %s leaving group '%s'", peerAddress, registered.FilerGroup)
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(registered.FilerGroup), peerAddress)
+	}
 }
 
 func (ms *MasterServer) initialLockRingUpdate(clientType string, filerGroup string) *master_pb.KeepConnectedResponse {

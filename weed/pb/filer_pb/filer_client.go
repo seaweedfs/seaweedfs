@@ -67,6 +67,16 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 // consumers would mistake for an entry.
 const ListSnapshotTsNsTrailerKey = "sw-list-snapshot-ts-ns"
 
+// TraverseModeHeaderKey is gRPC metadata on a TraverseBfsMetadata stream. As
+// request metadata, TraverseModeSnapshot asks for the entries from one store
+// snapshot (any order, entry_ts_ns left 0) instead of a breadth-first walk; as
+// a response header it says what the filer did. An older filer sends none.
+const (
+	TraverseModeHeaderKey = "sw-traverse-mode"
+	TraverseModeSnapshot  = "snapshot"
+	TraverseModeBfs       = "bfs"
+)
+
 type EachEntryFunction func(entry *Entry, isLast bool) error
 
 func ReadDirAllEntries(ctx context.Context, filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction) (err error) {
@@ -244,7 +254,31 @@ func Mkdir(ctx context.Context, filerClient FilerClient, parentDirectoryPath str
 	})
 }
 
+// MkdirExclusive is Mkdir that never replaces an entry already at the path:
+// the create is O_EXCL and a taken name answers ErrEntryAlreadyExists. The
+// taken name leaves the callback as a result, not an error: failover counts a
+// callback error against the filer and retries on the next one.
+func MkdirExclusive(ctx context.Context, filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	var taken error
+	err := filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
+		err := doMkdir(ctx, client, parentDirectoryPath, dirName, true, fn)
+		if errors.Is(err, ErrEntryAlreadyExists) {
+			taken = err
+			return nil
+		}
+		return err
+	})
+	if err == nil {
+		err = taken
+	}
+	return err
+}
+
 func DoMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	return doMkdir(ctx, client, parentDirectoryPath, dirName, false, fn)
+}
+
+func doMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, dirName string, exclusive bool, fn func(entry *Entry)) error {
 	entry := &Entry{
 		Name:        dirName,
 		IsDirectory: true,
@@ -264,6 +298,7 @@ func DoMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath
 	request := &CreateEntryRequest{
 		Directory: parentDirectoryPath,
 		Entry:     entry,
+		OExcl:     exclusive,
 	}
 
 	glog.V(1).InfofCtx(ctx, "mkdir: %v", request)
@@ -340,6 +375,10 @@ func DoRemoveWithResponse(ctx context.Context, client SeaweedFilerClient, parent
 		IsFromOtherCluster:   isFromOtherCluster,
 		Signatures:           signatures,
 	}
+	return DoRemoveRequest(ctx, client, deleteEntryRequest)
+}
+
+func DoRemoveRequest(ctx context.Context, client SeaweedFilerClient, deleteEntryRequest *DeleteEntryRequest) (*DeleteEntryResponse, error) {
 	if resp, err := client.DeleteEntry(ctx, deleteEntryRequest); err != nil {
 		if strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, nil

@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -302,6 +303,14 @@ func newTestIAM() *IdentityAccessManagement {
 	return iam
 }
 
+// newTestIAMWithTrustedProxy returns a test IAM that trusts the proxy peer
+// (10.0.0.1) used by the forwarded-header tests.
+func newTestIAMWithTrustedProxy() *IdentityAccessManagement {
+	iam := newTestIAM()
+	iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{"10.0.0.1"}))
+	return iam
+}
+
 // Test X-Forwarded-Prefix support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	tests := []struct {
@@ -323,7 +332,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a request with X-Forwarded-Prefix header
 			r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
@@ -340,6 +349,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Sign the request with the expected normalized path
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
@@ -391,7 +401,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a request with the URL path that has a trailing slash
 			r, err := newTestRequest("GET", "https://example.com"+tt.urlPath, 0, nil)
@@ -405,6 +415,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Sign the request with the full path including the trailing slash
 			// This simulates what S3 SDK does for listObjects operations
@@ -826,7 +837,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a presigned request that simulates reverse proxy scenario:
 			// 1. Client generates presigned URL with prefixed path
@@ -859,6 +870,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Test presigned signature verification
 			_, _, errCode := iam.doesPresignedSignatureMatch(r)
@@ -900,7 +912,7 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iam := newTestIAM()
+			iam := newTestIAMWithTrustedProxy()
 
 			// Create a presigned request that simulates reverse proxy scenario with trailing slashes:
 			// 1. Client generates presigned URL with prefixed path including trailing slash
@@ -927,6 +939,7 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
 			r.Header.Set("Host", "example.com")
 			r.Header.Set("X-Forwarded-Host", "example.com")
+			r.RemoteAddr = "10.0.0.1:1234"
 
 			// Test presigned signature verification - this should succeed with trailing slashes
 			_, _, errCode := iam.doesPresignedSignatureMatch(r)
@@ -936,6 +949,53 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A presigned URL holder may replay the signed query against a different
+// request path and claim the skipped part via X-Forwarded-Prefix. The header
+// is only meaningful when the direct peer is a configured trusted proxy.
+func TestPresignedSignatureV4ForwardedPrefixPeerTrust(t *testing.T) {
+	const proxyIP = "10.0.0.1"
+
+	newRetargetedRequest := func(t *testing.T) *http.Request {
+		// Sign over the full external path, as a client of the reverse proxy would.
+		r, err := newTestRequest("GET", "https://example.com/shared/tenanta/report.txt", 0, nil)
+		if err != nil {
+			t.Fatalf("Failed to create test request: %v", err)
+		}
+		if err = preSignV4WithPath(newTestIAM(), r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, "/shared/tenanta/report.txt"); err != nil {
+			t.Fatalf("Failed to presign request: %v", err)
+		}
+
+		// Replay the same query string at a suffix path, supplying the
+		// skipped segment as the forwarded prefix.
+		r.URL.Path = "/tenanta/report.txt"
+		r = mux.SetURLVars(r, map[string]string{
+			"bucket": "tenanta",
+			"object": "report.txt",
+		})
+		r.Header.Set("X-Forwarded-Prefix", "/shared")
+		r.Header.Set("Host", "example.com")
+		r.RemoteAddr = proxyIP + ":54321"
+		return r
+	}
+
+	t.Run("untrusted peer", func(t *testing.T) {
+		iam := newTestIAM()
+		_, _, errCode := iam.doesPresignedSignatureMatch(newRetargetedRequest(t))
+		if errCode != s3err.ErrSignatureDoesNotMatch {
+			t.Errorf("Expected ErrSignatureDoesNotMatch for untrusted peer, got: %v (code: %d)", errCode, int(errCode))
+		}
+	})
+
+	t.Run("trusted proxy", func(t *testing.T) {
+		iam := newTestIAM()
+		iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{proxyIP}))
+		_, _, errCode := iam.doesPresignedSignatureMatch(newRetargetedRequest(t))
+		if errCode != s3err.ErrNone {
+			t.Errorf("Expected successful presigned signature validation from trusted proxy, got: %v (code: %d)", errCode, int(errCode))
+		}
+	})
 }
 
 // preSignV4WithPath adds presigned URL parameters to the request with a custom path

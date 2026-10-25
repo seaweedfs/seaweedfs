@@ -1,7 +1,9 @@
 package mount
 
 import (
+	"context"
 	"fmt"
+	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -9,12 +11,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
+func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
 	// If there is an in-flight async flush for this inode, wait for it to
 	// complete before reopening.  Otherwise the new handle would be built
 	// from pre-close filer metadata and its next flush could overwrite the
 	// data that was just written asynchronously.
-	wfs.waitForPendingAsyncFlush(inode)
+	if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+		return nil, fuse.EINTR
+	}
 
 	path, pathStatus := wfs.inodeToPath.GetPath(inode)
 	if pathStatus != fuse.OK {
@@ -37,7 +41,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		})
 		entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
 	} else {
-		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(path)
+		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(ctx, path)
 		if status != fuse.OK {
 			return nil, status
 		}
@@ -77,6 +81,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 			string(path), owner, lock_manager.LiveLockTTL,
 		)
+		if fileHandle.dlmLock == nil {
+			// No lock server is reachable: proceeding would silently drop
+			// cross-mount write serialization, so fail the open instead.
+			wfs.fhMap.ReleaseByHandle(fileHandle.fh)
+			return nil, fuse.Status(syscall.EAGAIN)
+		}
 		glog.V(1).Infof("DLM lock acquired for %s", path)
 	}
 	return fileHandle, fuse.OK
@@ -118,14 +128,20 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 // waitForPendingAsyncFlush blocks until any in-flight async flush for
 // the given inode completes.  Called from AcquireHandle before building
 // new handle state, so the filer metadata reflects the flushed data.
-func (wfs *WFS) waitForPendingAsyncFlush(inode uint64) {
+func (wfs *WFS) waitForPendingAsyncFlush(ctx context.Context, inode uint64) bool {
 	wfs.pendingAsyncFlushMu.Lock()
 	done, found := wfs.pendingAsyncFlush[inode]
 	wfs.pendingAsyncFlushMu.Unlock()
 
-	if found {
-		glog.V(3).Infof("waitForPendingAsyncFlush: waiting for inode %d", inode)
-		<-done
+	if !found {
+		return true
+	}
+	glog.V(3).Infof("waitForPendingAsyncFlush: waiting for inode %d", inode)
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

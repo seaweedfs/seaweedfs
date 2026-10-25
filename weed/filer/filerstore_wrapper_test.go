@@ -205,3 +205,41 @@ func TestFilerStoreWrapperRollbackSucceedsWithCancelledContext(t *testing.T) {
 	assert.NoError(t, wrapper.RollbackTransaction(cancelledCtx()))
 	assert.NoError(t, wrapper.RollbackTransaction(expiredCtx()))
 }
+
+type noPrefixListStore struct {
+	*stubFilerStore
+}
+
+func (s *noPrefixListStore) ListDirectoryPrefixedEntries(context.Context, util.FullPath, string, bool, int64, string, ListEachEntryFunc) (string, error) {
+	return "", ErrUnsupportedListDirectoryPrefixed
+}
+
+// The wrapper fallback must return the last delivered name as the cursor, not
+// the end of the raw page, and must keep paging while prefix matches can still
+// follow the raw cursor.
+func TestPrefixFilterEntriesCursorStaysAtLastDelivered(t *testing.T) {
+	store := &noPrefixListStore{newStubFilerStore()}
+	wrapper := NewFilerStoreWrapper(store)
+	ctx := context.Background()
+	for _, name := range []string{"a", "b1", "b2", "b3", "b4"} {
+		require.NoError(t, store.InsertEntry(ctx, &Entry{FullPath: util.FullPath("/d/" + name)}))
+	}
+
+	var delivered []string
+	lastFileName, err := wrapper.ListDirectoryPrefixedEntries(ctx, util.FullPath("/d"), "", false, 2, "b", func(entry *Entry) (bool, error) {
+		delivered = append(delivered, entry.Name())
+		return true, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b1", "b2"}, delivered)
+	assert.Equal(t, "b2", lastFileName)
+
+	delivered = delivered[:0]
+	lastFileName, err = wrapper.ListDirectoryPrefixedEntries(ctx, util.FullPath("/d"), lastFileName, false, 10, "b", func(entry *Entry) (bool, error) {
+		delivered = append(delivered, entry.Name())
+		return true, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b3", "b4"}, delivered)
+	assert.Equal(t, "b4", lastFileName)
+}

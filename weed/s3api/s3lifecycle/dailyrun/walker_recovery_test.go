@@ -66,23 +66,23 @@ func TestRunShard_WalkerInvokedOnRecoveryBranch(t *testing.T) {
 	require.NoError(t, p.Save(context.Background(), 3, Cursor{TsNs: 1234, RuleSetHash: stale}))
 
 	var gotView *engine.Snapshot
-	var gotShard int
+	var gotShards []int
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, view *engine.Snapshot, shardID int) error {
+		Walker: func(_ context.Context, view *engine.Snapshot, shards []int) error {
 			calls++
 			gotView = view
-			gotShard = shardID
+			gotShards = shards
 			return nil
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 3, nil))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 3, nil, nil))
 
 	assert.Equal(t, 1, calls, "walker must fire exactly once on recovery")
 	require.NotNil(t, gotView, "walker received the RecoveryView")
-	assert.Equal(t, 3, gotShard)
+	assert.Equal(t, []int{3}, gotShards)
 
 	// Cursor rewound to runNow - maxTTL with the new hashes persisted.
 	got, ok, err := p.Load(context.Background(), 3)
@@ -106,7 +106,7 @@ func TestRunShard_NilWalkerOnRecoveryIsNoop(t *testing.T) {
 
 	cfg := Config{Persister: p} // Walker nil
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, nil))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, nil, nil))
 
 	got, ok, err := p.Load(context.Background(), 0)
 	require.NoError(t, err)
@@ -128,12 +128,12 @@ func TestRunShard_WalkerErrorPropagates(t *testing.T) {
 
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
 			return errors.New("walker boom")
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	err := runShard(context.Background(), cfg, snap, runNow, 7, nil)
+	err := runShard(context.Background(), cfg, snap, runNow, 7, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "walker boom")
 

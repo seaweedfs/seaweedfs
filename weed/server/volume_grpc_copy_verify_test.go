@@ -79,8 +79,9 @@ func runVolumeCopyWithStatusFailure(t *testing.T, failStatusCall int32) (error, 
 
 	targetStore := newVolumeCopyTestStore(t, t.TempDir())
 	target := &VolumeServer{
-		store:          targetStore,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:                         targetStore,
+		grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+		AllowUntrustedRemoteEndpoints: true,
 	}
 	err := target.VolumeCopy(&volume_server_pb.VolumeCopyRequest{
 		VolumeId:       uint32(vid),
@@ -151,8 +152,9 @@ func TestVolumeCopyKeepsExistingReplicaWhenDestinationFull(t *testing.T) {
 	targetStore.Locations[0].AvailableSpace.Store(0)
 
 	target := &VolumeServer{
-		store:          targetStore,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:                         targetStore,
+		grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+		AllowUntrustedRemoteEndpoints: true,
 	}
 	err := target.VolumeCopy(&volume_server_pb.VolumeCopyRequest{
 		VolumeId:       uint32(vid),
@@ -191,8 +193,9 @@ func TestVolumeCopyReplacesReplicaAtSlotLimit(t *testing.T) {
 	targetStore.Locations[0].MaxVolumeCount = 1
 
 	target := &VolumeServer{
-		store:          targetStore,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:                         targetStore,
+		grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+		AllowUntrustedRemoteEndpoints: true,
 	}
 	err := target.VolumeCopy(&volume_server_pb.VolumeCopyRequest{
 		VolumeId:       uint32(vid),
@@ -245,8 +248,9 @@ func TestVolumeCopy_KeepsExistingReplicaWhenSourceUnreachable(t *testing.T) {
 	}
 
 	vs := &VolumeServer{
-		store:          store,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:                         store,
+		grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+		AllowUntrustedRemoteEndpoints: true,
 	}
 
 	// 127.0.0.1:1 is unreachable, so ReadVolumeFileStatus on the source fails.
@@ -261,5 +265,26 @@ func TestVolumeCopy_KeepsExistingReplicaWhenSourceUnreachable(t *testing.T) {
 
 	if store.GetVolume(vid) == nil {
 		t.Fatalf("existing replica %d was destroyed before the source was verified", vid)
+	}
+}
+
+// The copy and tail handlers dial a caller-supplied source address. With the
+// default posture (AllowUntrustedRemoteEndpoints unset) a source on a blocked
+// address must be rejected before any dial; the opt-out flag restores the old
+// behavior for operators whose sources legitimately sit on those ranges.
+func TestCopyTailHandlersRejectUntrustedSources(t *testing.T) {
+	for _, source := range []string{"127.0.0.1:1.10001", "169.254.169.254:0.80"} {
+		vs := &VolumeServer{
+			grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}
+		if err := vs.VolumeCopy(&volume_server_pb.VolumeCopyRequest{VolumeId: 1, SourceDataNode: source}, &fakeVolumeCopyStream{}); err == nil {
+			t.Errorf("VolumeCopy accepted source %q", source)
+		}
+		if _, err := vs.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{VolumeId: 1, SourceDataNode: source}); err == nil {
+			t.Errorf("VolumeEcShardsCopy accepted source %q", source)
+		}
+		if _, err := vs.VolumeTailReceiver(context.Background(), &volume_server_pb.VolumeTailReceiverRequest{VolumeId: 1, SourceVolumeServer: source}); err == nil {
+			t.Errorf("VolumeTailReceiver accepted source %q", source)
+		}
 	}
 }

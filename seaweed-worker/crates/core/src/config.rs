@@ -3,7 +3,7 @@ use std::time::Duration;
 /// How one worker process connects and how much work it will take on.
 #[derive(Clone, Debug)]
 pub struct WorkerOptions {
-    /// Admin gRPC address, e.g. "localhost:23646".
+    /// Admin gRPC address, e.g. "localhost:12535".
     pub admin_address: String,
     pub worker_id: String,
     pub worker_version: String,
@@ -17,6 +17,15 @@ pub struct WorkerOptions {
     /// section of security.toml. None means plaintext, which is the default the
     /// Go worker also takes when no certificates are configured.
     pub tls: Option<TlsOptions>,
+    /// The shared secret the admin stream requires when the cluster configures
+    /// `jwt.filer_signing.key`; mirrored from that config value. Empty means no
+    /// token is attached, which only works against admins that either bound
+    /// their worker listener to loopback or authenticate with mTLS instead.
+    pub signing_key: Option<String>,
+    /// Seconds the minted admin token lives, mirroring
+    /// `jwt.filer_signing.expires_after_seconds`. Zero mints a token without an
+    /// expiry, matching the Go default.
+    pub signing_key_expires_after_seconds: u64,
 }
 
 /// Certificates for the control stream. All three are required together: the
@@ -35,7 +44,7 @@ pub struct TlsOptions {
 impl Default for WorkerOptions {
     fn default() -> Self {
         Self {
-            admin_address: "localhost:23646".to_string(),
+            admin_address: "localhost:12535".to_string(),
             worker_id: String::new(),
             worker_version: env!("CARGO_PKG_VERSION").to_string(),
             worker_address: String::new(),
@@ -44,6 +53,8 @@ impl Default for WorkerOptions {
             max_detection_concurrency: 1,
             max_execution_concurrency: 1,
             tls: None,
+            signing_key: None,
+            signing_key_expires_after_seconds: 0,
         }
     }
 }

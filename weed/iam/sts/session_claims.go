@@ -24,6 +24,14 @@ func ComputeParentUser(sub, iss string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// IsParentUserID reports whether s has the shape ComputeParentUser produces —
+// a base64url-encoded SHA-256 — i.e. an already issuer-scoped id rather than a
+// bare subject string.
+func IsParentUserID(s string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && len(b) == sha256.Size
+}
+
 // identityClaimPriority is the order in which ResolveIdentityClaim looks for a
 // human-readable, authoritative identity attribute in an STS request context.
 // The context is populated at federation time from the validated OIDC token
@@ -65,9 +73,10 @@ type STSSessionClaims struct {
 	TokenType   string `json:"typ"`  // token_type
 
 	// Role information
-	RoleArn     string `json:"role"`      // role_arn
-	AssumedRole string `json:"assumed"`   // assumed_role_user
-	Principal   string `json:"principal"` // principal_arn
+	RoleArn     string `json:"role"`          // role_arn
+	RoleId      string `json:"rid,omitempty"` // unique ID of the assumed role
+	AssumedRole string `json:"assumed"`       // assumed_role_user
+	Principal   string `json:"principal"`     // principal_arn
 
 	// Authorization data
 	Policies []string `json:"pol,omitempty"` // policies (abbreviated)
@@ -91,6 +100,18 @@ type STSSessionClaims struct {
 	// guaranteed stable per OpenID Connect Core 1.0. Empty for non-federated
 	// session types.
 	ParentUser string `json:"puid,omitempty"`
+
+	// SourceAccessKeyId is the access key the caller authenticated with when
+	// a SeaweedFS service minted the session for it (AssumeRoleForPrincipal);
+	// empty for every other session type.
+	SourceAccessKeyId string `json:"src_ak,omitempty"`
+
+	// BoundAccessKeyId is the stored credential the session is bound to: the
+	// session ends when that key is gone. It is a claim of its own because
+	// tokens minted before the binding existed carry SourceAccessKeyId as an
+	// audit field, never a binding — enforcing those would break them.
+	BoundAccessKeyId          string `json:"bind_ak,omitempty"`
+	BoundAccessKeyFingerprint string `json:"bind_fp,omitempty"`
 }
 
 // NewSTSSessionClaims creates new STS session claims with all required information
@@ -136,6 +157,7 @@ func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionI
 		SessionId:        c.SessionId,
 		SessionName:      c.SessionName,
 		RoleArn:          c.RoleArn,
+		RoleId:           c.RoleId,
 		AssumedRoleUser:  c.AssumedRole,
 		Principal:        c.Principal,
 		Policies:         c.Policies,
@@ -146,6 +168,11 @@ func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionI
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
 		ParentUser:       c.ParentUser,
+		// The access key the session was minted for, if recorded
+		SourceAccessKeyId: c.SourceAccessKeyId,
+		// The stored credential the session is bound to, if any
+		BoundAccessKeyId:          c.BoundAccessKeyId,
+		BoundAccessKeyFingerprint: c.BoundAccessKeyFingerprint,
 		// Provide the Subject (sub) from registered claims
 		Subject:     c.Subject,
 		Credentials: credentials,
@@ -196,6 +223,13 @@ func (c *STSSessionClaims) WithRoleInfo(roleArn, assumedRole, principal string) 
 }
 
 // WithPolicies sets the policies associated with this session
+// WithRoleId binds the session to the assumed role's unique ID. An empty ID
+// leaves the session unbound (roles that predate role IDs).
+func (c *STSSessionClaims) WithRoleId(roleId string) *STSSessionClaims {
+	c.RoleId = roleId
+	return c
+}
+
 func (c *STSSessionClaims) WithPolicies(policies []string) *STSSessionClaims {
 	c.Policies = policies
 	return c
@@ -230,6 +264,20 @@ func (c *STSSessionClaims) WithMaxDuration(duration time.Duration) *STSSessionCl
 // WithSessionName sets the session name
 func (c *STSSessionClaims) WithSessionName(sessionName string) *STSSessionClaims {
 	c.SessionName = sessionName
+	return c
+}
+
+// WithSourceAccessKeyId records the access key the session was minted for.
+func (c *STSSessionClaims) WithSourceAccessKeyId(accessKeyId string) *STSSessionClaims {
+	c.SourceAccessKeyId = accessKeyId
+	return c
+}
+
+// WithBoundAccessKey binds the session to a stored credential: the key id it
+// was vended for and a fingerprint of its secret at mint time.
+func (c *STSSessionClaims) WithBoundAccessKey(accessKeyId, fingerprint string) *STSSessionClaims {
+	c.BoundAccessKeyId = accessKeyId
+	c.BoundAccessKeyFingerprint = fingerprint
 	return c
 }
 

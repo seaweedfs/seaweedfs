@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -675,5 +678,60 @@ func TestExtractSignedHeadersCase(t *testing.T) {
 				t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, actual)
 			}
 		})
+	}
+}
+
+// A client may sign content-length even when the request carries no body
+// (aws-cli's checksum HEAD does). The Go server strips the header into
+// r.ContentLength, so extraction rebuilds it rather than dropping it.
+func TestExtractSignedHeadersContentLength(t *testing.T) {
+	r, _ := http.NewRequest("HEAD", "http://bucket.domain.com/bucket/key", nil)
+	r.Host = "bucket.domain.com"
+	r.ContentLength = 0
+	extracted, errCode := extractSignedHeaders([]string{"host", "content-length"}, r, "")
+	if errCode != s3err.ErrNone {
+		t.Fatalf("extractSignedHeaders failed: %v", errCode)
+	}
+	if got := getCanonicalHeaders(extracted); got != "content-length:0\nhost:bucket.domain.com\n" {
+		t.Fatalf("unexpected canonical headers %q", got)
+	}
+}
+
+// A router that internally rewrites the request path (the Iceberg catalog
+// collapses a doubled /v1 prefix) must still verify the signature against
+// the path the client signed, which is kept in the request context.
+func TestVerifyV4SignatureUsesOriginalRequestPath(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "someone",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "access_key_1",
+						SecretKey: "secret_key_1",
+					},
+				},
+				Actions: []string{"Admin", "Read", "Write"},
+			},
+		},
+	})
+
+	req := mustNewSignedRequest(http.MethodGet, "http://127.0.0.1:9000/v1/v1/bucket/namespaces", 0, nil, t)
+
+	// Simulate the rewrite: the routed path is collapsed while the signature
+	// still covers the doubled path the client sent.
+	rewritten := req.Clone(req.Context())
+	rewritten.URL.Path = "/v1/bucket/namespaces"
+	if _, errCode := iam.reqSignatureV4Verify(rewritten); errCode == s3err.ErrNone {
+		t.Fatal("rewritten request verified without the original path; expected a signature mismatch")
+	}
+
+	rewritten = rewritten.WithContext(s3_constants.SetOriginalRequestPathInContext(rewritten.Context(), "/v1/v1/bucket/namespaces"))
+	if _, errCode := iam.reqSignatureV4Verify(rewritten); errCode != s3err.ErrNone {
+		t.Fatalf("signed request rejected after path rewrite: %d", errCode)
 	}
 }

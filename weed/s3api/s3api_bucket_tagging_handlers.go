@@ -68,9 +68,14 @@ func (s3a *S3ApiServer) PutBucketTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	tags := tagging.ToTags()
+	// A key may appear only once in a tag set; the map keeps one of them.
+	if len(tags) != len(tagging.TagSet.Tag) {
+		glog.Errorf("PutBucketTagging duplicate tag keys %s", r.URL)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+		return
+	}
 
-	// Validate tags using existing validation
-	err = ValidateTags(tags)
+	err = ValidateBucketTags(tags)
 	if err != nil {
 		glog.Errorf("PutBucketTagging ValidateTags error %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)

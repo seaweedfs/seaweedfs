@@ -339,7 +339,7 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
 			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 		}
-		bucketPolicy, err = h.readBucketPolicy(r, client, bucketPath)
+		bucketPolicy, err = h.readPolicy(r, client, bucketPath)
 		return err
 	})
 	if err != nil {
@@ -349,9 +349,11 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	if !CheckPermissionWithContext(operation, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		IdentityActions: getIdentityActions(r),
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  getIdentityActions(r),
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		return "", NewAuthError(operation, principal, "not authorized to "+operation)
 	}
@@ -366,7 +368,8 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 	bucketPath := GetTableBucketPath(bucketName)
 
 	var metadata tableMetadataInternal
-	var bucketPolicy string
+	var bucketPolicy, tablePolicy string
+	var bucketTags, tableTags map[string]string
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		if err != nil {
@@ -375,7 +378,16 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
-		bucketPolicy, err = h.readBucketPolicy(r, client, bucketPath)
+		if bucketPolicy, err = h.readPolicy(r, client, bucketPath); err != nil {
+			return err
+		}
+		if bucketTags, err = h.readTags(r.Context(), client, bucketPath); err != nil {
+			return err
+		}
+		if tablePolicy, err = h.readPolicy(r, client, tablePath); err != nil {
+			return err
+		}
+		tableTags, err = h.readTags(r.Context(), client, tablePath)
 		return err
 	})
 	if err != nil {
@@ -384,28 +396,34 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CheckPermissionWithContext(operation, principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		IdentityActions: getIdentityActions(r),
-		DefaultAllow:    h.defaultAllowFor(r),
-	}) {
+	ctx := &PolicyContext{
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     tableTags,
+		IdentityActions:  getIdentityActions(r),
+		DefaultAllow:     h.defaultAllowFor(r),
+	}
+	if deniedByPolicy(operation, principal, tablePolicy, tableARN, ctx) ||
+		!CheckPermissionWithContext(operation, principal, metadata.OwnerAccountID, bucketPolicy, tableARN, ctx) {
 		return "", NewAuthError(operation, principal, "not authorized to "+operation)
 	}
 
 	return tableARN, nil
 }
 
-// readBucketPolicy returns the bucket policy, or an empty string when the
-// bucket has none.
-func (h *S3TablesHandler) readBucketPolicy(r *http.Request, client filer_pb.SeaweedFilerClient, bucketPath string) (string, error) {
-	data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+// readPolicy returns the policy stored on path, or an empty string when the
+// resource has none.
+func (h *S3TablesHandler) readPolicy(r *http.Request, client filer_pb.SeaweedFilerClient, path string) (string, error) {
+	data, err := h.getExtendedAttribute(r.Context(), client, path, ExtendedKeyPolicy)
 	if err != nil {
 		if errors.Is(err, ErrAttributeNotFound) {
 			return "", nil
 		}
-		return "", fmt.Errorf("failed to read bucket policy: %w", err)
+		return "", fmt.Errorf("failed to read policy: %w", err)
 	}
 	return string(data), nil
 }

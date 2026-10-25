@@ -61,6 +61,7 @@ type VolumeServerOptions struct {
 	memProfile                *string
 	compactionMBPerSecond     *int
 	maintenanceMBPerSecond    *int
+	maxParallelVacuumCommits  *int
 	fileSizeLimitMB           *int
 	concurrentUploadLimitMB   *int
 	concurrentDownloadLimitMB *int
@@ -75,6 +76,9 @@ type VolumeServerOptions struct {
 	readBufferSizeMB              *int
 	ldbTimeout                    *int64
 	allowUntrustedRemoteEndpoints *bool
+	fsyncMinBatchBytes            *int64
+	fsyncMinBatchRequests         *int
+	fsyncBatchWait                *time.Duration
 	debug                         *bool
 	debugPort                     *int
 	diskIOProbe                   *bool
@@ -146,6 +150,22 @@ func (v *VolumeServerOptions) setDiskIOProbeDefaults() {
 	}
 }
 
+// syncBatchOption resolves the fsync batch window, defaulting each field so
+// commands or embedders that leave the option pointers unset still start.
+func (v *VolumeServerOptions) syncBatchOption() storage.SyncBatchOption {
+	option := storage.DefaultSyncBatchOption
+	if v.fsyncMinBatchBytes != nil {
+		option.MinBytes = *v.fsyncMinBatchBytes
+	}
+	if v.fsyncMinBatchRequests != nil {
+		option.MinRequests = *v.fsyncMinBatchRequests
+	}
+	if v.fsyncBatchWait != nil {
+		option.Wait = *v.fsyncBatchWait
+	}
+	return option
+}
+
 func (v *VolumeServerOptions) applyDiskIOProbeConfig() {
 	v.setDiskIOProbeDefaults()
 
@@ -215,6 +235,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.maintenanceMBPerSecond = cmdVolume.Flag.Int("maintenanceMBps", 0, "limit maintenance (replication / balance) IO rate in MB/s. Unset is 0, no limitation.")
+	v.maxParallelVacuumCommits = cmdVolume.Flag.Int("compactionMaxParallelCommits", 0, "limit how many vacuum commits run at once on this server; queued commits hold no volume lock. 0 means unlimited")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
@@ -228,6 +249,9 @@ func init() {
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 	v.allowUntrustedRemoteEndpoints = cmdVolume.Flag.Bool("volume.allowUntrustedRemoteEndpoints", false, "if true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints.")
+	v.fsyncMinBatchBytes = cmdVolume.Flag.Int64("fsyncMinBatchBytes", 1*1024*1024, "minimum bytes an fsync batch gathers before a drained queue flushes without waiting")
+	v.fsyncMinBatchRequests = cmdVolume.Flag.Int("fsyncMinBatchRequests", 128, "minimum requests an fsync batch gathers before a drained queue flushes without waiting")
+	v.fsyncBatchWait = cmdVolume.Flag.Duration("fsyncBatchWait", 500*time.Microsecond, "how long a below-minimum fsync batch waits for more requests once the queue drains; 0 flushes immediately")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
 	v.setDiskIOProbeDefaults()
@@ -447,6 +471,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,
 		*v.maintenanceMBPerSecond,
+		*v.maxParallelVacuumCommits,
 		*v.fileSizeLimitMB,
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
@@ -457,6 +482,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ldbTimeout,
 		*v.allowUntrustedRemoteEndpoints,
 		diskProbeConfig,
+		v.syncBatchOption(),
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
@@ -570,15 +596,54 @@ func (v VolumeServerOptions) isSeparatedPublicPort() bool {
 	return *v.publicPort != *v.port
 }
 
+// multiHttpdownServer gracefully stops an http server serving on both the
+// bound ip and the localhost listeners as if it were a single server.
+type multiHttpdownServer []httpdown.Server
+
+// Wait returns the first member's non-nil error as soon as it happens, so a
+// failing localhost listener is reported even while the bound-ip listener
+// keeps serving, and nil once every member has finished cleanly.
+func (m multiHttpdownServer) Wait() error {
+	errs := make(chan error, len(m))
+	for _, s := range m {
+		go func(s httpdown.Server) { errs <- s.Wait() }(s)
+	}
+	for range m {
+		if err := <-errs; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stop stops all members concurrently so the localhost listener closes as
+// soon as shutdown begins instead of after the bound-ip listener drains.
+func (m multiHttpdownServer) Stop() error {
+	errs := make(chan error, len(m))
+	for _, s := range m {
+		go func(s httpdown.Server) { errs <- s.Stop() }(s)
+	}
+	var firstErr error
+	for range m {
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
 	grpcPort := *v.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*v.bindIp, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*v.bindIp, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, vs)
 	reflection.Register(grpcS)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go func() {
 		if err := grpcS.Serve(grpcL); err != nil {
 			glog.Fatalf("start gRPC service failed, %s", err)
@@ -591,13 +656,16 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
 	glog.V(0).Infoln("Start Seaweed volume server", version.Version(), "public at", publicListeningAddress)
-	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	publicListener, publicLocalListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.publicPort, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
 
 	pubHttp := httpdown.HTTP{StopTimeout: 5 * time.Minute, KillTimeout: 5 * time.Minute}
-	publicHttpDown := pubHttp.Serve(&http.Server{Handler: handler}, publicListener)
+	publicHttpDown := multiHttpdownServer{pubHttp.Serve(&http.Server{Handler: handler}, publicListener)}
+	if publicLocalListener != nil {
+		publicHttpDown = append(publicHttpDown, pubHttp.Serve(&http.Server{Handler: handler}, publicLocalListener))
+	}
 	go func() {
 		if err := publicHttpDown.Wait(); err != nil {
 			glog.Errorf("public http down wait failed, %v", err)
@@ -624,7 +692,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 
 	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", version.Version(), listeningAddress)
-	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
+	listener, localListener, e := util.NewIpAndLocalListeners(*v.bindIp, *v.port, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
@@ -656,11 +724,15 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 		httpS.TLSConfig.GetCertificate = getCert
 	}
 
-	clusterHttpServer := httpDown.Serve(httpS, listener)
+	clusterHttpServers := multiHttpdownServer{httpDown.Serve(httpS, listener)}
+	if localListener != nil {
+		localHttpS := &http.Server{Handler: handler, TLSConfig: httpS.TLSConfig}
+		clusterHttpServers = append(clusterHttpServers, httpDown.Serve(localHttpS, localListener))
+	}
 	go func() {
-		if e := clusterHttpServer.Wait(); e != nil {
+		if e := clusterHttpServers.Wait(); e != nil {
 			glog.Fatalf("Volume server fail to serve: %v", e)
 		}
 	}()
-	return clusterHttpServer, closeCert
+	return clusterHttpServers, closeCert
 }

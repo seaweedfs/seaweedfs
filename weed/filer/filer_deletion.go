@@ -66,8 +66,9 @@ type DeletionRetryItem struct {
 	RetryCount  int
 	NextRetryAt time.Time
 	LastError   string
-	heapIndex   int  // index in the heap (for heap.Interface)
-	inFlight    bool // true when item is being processed, prevents duplicate additions
+	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
+	heapIndex   int    // index in the heap (for heap.Interface)
+	inFlight    bool   // true when item is being processed, prevents duplicate additions
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -163,7 +164,7 @@ func calculateBackoff(retryCount int) time.Duration {
 
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
-func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
+func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -173,6 +174,13 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
+		// Keep the recorded epoch while the item is in flight: an expiry or
+		// permanent outcome from that attempt must forget only the record it
+		// started with, not a newer enqueue for the same id. This also keeps
+		// the field immutable once the worker can read it without the lock.
+		if !item.inFlight {
+			item.ledgerEpoch = ledgerEpoch
+		}
 		if item.inFlight {
 			glog.V(2).Infof("retry for %s in-flight: attempt %d, will preserve retry state", fileId, item.RetryCount)
 		} else {
@@ -188,6 +196,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 		RetryCount:  1,
 		NextRetryAt: time.Now().Add(delay),
 		LastError:   errorMsg,
+		ledgerEpoch: ledgerEpoch,
 		inFlight:    false,
 	}
 	heap.Push(&q.heap, item)
@@ -216,18 +225,19 @@ func (q *DeletionRetryQueue) RequeueForRetry(item *DeletionRetryItem, errorMsg s
 	heap.Push(&q.heap, item)
 }
 
-// GetReadyItems returns items that are ready to be retried and marks them as in-flight
+// GetReadyItems returns items that are ready to be retried and marks them as in-flight.
+// Expired reports fileIds dropped for exceeding MaxRetryAttempts — permanent
+// dropouts the caller must also forget in the durable deletion ledger.
 // Time complexity: O(K log N) where K is the number of ready items
 // Items are processed in order of NextRetryAt (earliest first)
-func (q *DeletionRetryQueue) GetReadyItems(maxItems int) []*DeletionRetryItem {
+func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetryItem, expired []*DeletionRetryItem) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	now := time.Now()
-	var readyItems []*DeletionRetryItem
 
 	// Peek at items from the top of the heap (earliest NextRetryAt)
-	for len(q.heap) > 0 && len(readyItems) < maxItems {
+	for len(q.heap) > 0 && len(ready) < maxItems {
 		item := q.heap[0]
 
 		// If the earliest item is not ready yet, no other items are ready either
@@ -240,15 +250,16 @@ func (q *DeletionRetryQueue) GetReadyItems(maxItems int) []*DeletionRetryItem {
 
 		if item.RetryCount <= MaxRetryAttempts {
 			item.inFlight = true // Mark as being processed
-			readyItems = append(readyItems, item)
+			ready = append(ready, item)
 		} else {
 			// Max attempts reached, log and discard completely
 			delete(q.itemIndex, item.FileId)
+			expired = append(expired, item)
 			glog.Warningf("max retry attempts (%d) reached for %s, last error: %s", MaxRetryAttempts, item.FileId, item.LastError)
 		}
 	}
 
-	return readyItems
+	return ready, expired
 }
 
 // Remove removes an item from the queue (called when deletion succeeds or fails permanently)
@@ -306,24 +317,29 @@ func (f *Filer) loopProcessingDeletion() {
 			glog.V(0).Infof("deletion processor shutting down")
 			return
 		case <-ticker.C:
-			f.FileIdDeletionQueue.Consume(func(fileIds []string) {
-				for i := 0; i < len(fileIds); i += DeletionBatchSize {
-					end := i + DeletionBatchSize
-					if end > len(fileIds) {
-						end = len(fileIds)
-					}
-					toDeleteFileIds := fileIds[i:end]
-					f.processDeletionBatch(toDeleteFileIds, lookupFunc)
-				}
-			})
+			f.FlushFileIdDeletionQueue(context.Background(), lookupFunc)
 		}
 	}
+}
+
+func (f *Filer) FlushFileIdDeletionQueue(ctx context.Context, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) (consumed []string) {
+	f.FileIdDeletionQueue.Consume(func(fileIds []string) {
+		consumed = fileIds
+		for i := 0; i < len(fileIds); i += DeletionBatchSize {
+			end := i + DeletionBatchSize
+			if end > len(fileIds) {
+				end = len(fileIds)
+			}
+			f.processDeletionBatch(ctx, fileIds[i:end], lookupFunc)
+		}
+	})
+	return consumed
 }
 
 // processDeletionBatch handles deletion of a batch of file IDs and processes results.
 // It classifies errors into retryable and permanent categories, adds retryable failures
 // to the retry queue, and logs appropriate messages.
-func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
+func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
 	// Deduplicate file IDs to prevent incorrect retry count increments for the same file ID within a single batch.
 	uniqueFileIdsSlice := make([]string, 0, len(toDeleteFileIds))
 	processed := make(map[string]struct{}, len(toDeleteFileIds))
@@ -338,8 +354,15 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 		return
 	}
 
+	// Remember each id's ledger epoch before the remote deletes run: a
+	// permanent outcome below must not erase a record re-queued mid-flight.
+	epochs := make(map[string]uint64, len(uniqueFileIdsSlice))
+	for _, fileId := range uniqueFileIdsSlice {
+		epochs[fileId] = f.deletionEpoch(fileId)
+	}
+
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
+	outcomes := deleteFilesAndClassify(ctx, f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -351,16 +374,21 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
+			f.forgetDeletion(fileId) // confirmed gone: drop from durable ledger
 		case deletionOutcomeNotFound:
 			notFoundCount++
+			f.forgetDeletion(fileId) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
-			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg)
+			// Keep in the durable ledger: not confirmed, must survive restarts.
+			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg, f.deletionEpoch(fileId))
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (will retry)")
 			}
 		case deletionOutcomePermanent:
 			permanentErrorCount++
+			// gave up: drop the record, unless the id was re-queued meanwhile
+			f.forgetDeletionEpoch(fileId, epochs[fileId])
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (permanent)")
 			}
@@ -405,9 +433,9 @@ type deletionOutcome struct {
 }
 
 // deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
-func deleteFilesAndClassify(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
+func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
 	// Perform deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
+	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, lookupFunc)
 
 	// Group results by file ID to handle multiple results for replicated volumes
 	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
@@ -518,7 +546,16 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			// Process all ready items in batches until queue is empty
 			totalProcessed := 0
 			for {
-				readyItems := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+				readyItems, expired := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+				for _, item := range expired {
+					// Permanently discarded — drop the ledger record, but only
+					// if the id was not re-queued after this retry item was
+					// recorded. A surviving newer record still needs work, so
+					// it goes back through the hot queue.
+					if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
+						f.queueDeletions(item.FileId)
+					}
+				}
 				if len(readyItems) == 0 {
 					break
 				}
@@ -545,7 +582,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(f.GrpcDialOption, fileIds, lookupFunc)
+	outcomes := deleteFilesAndClassify(context.Background(), f.GrpcDialOption, fileIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
@@ -556,19 +593,27 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 		case deletionOutcomeSuccess:
 			successCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (success)
+			f.forgetDeletion(item.FileId)     // confirmed gone: drop from durable ledger
 			glog.V(2).Infof("retry successful for %s after %d attempts", item.FileId, item.RetryCount)
 		case deletionOutcomeNotFound:
 			notFoundCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (already deleted)
+			f.forgetDeletion(item.FileId)     // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryCount++
 			if outcome.status == deletionOutcomeNoResult {
 				glog.Warningf("no deletion result for retried file %s, re-queuing to avoid loss", item.FileId)
 			}
+			// Keep in the durable ledger: still not confirmed.
 			f.DeletionRetryQueue.RequeueForRetry(item, outcome.errorMsg)
 		case deletionOutcomePermanent:
 			permanentErrorCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (permanent failure)
+			// gave up: drop the record, unless the id was re-queued meanwhile
+			// — a surviving newer record goes back through the hot queue.
+			if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
+				f.queueDeletions(item.FileId)
+			}
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
 	}
@@ -599,7 +644,7 @@ func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks
 func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+			f.queueDeletions(chunk.GetFileIdString())
 			continue
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
@@ -607,15 +652,15 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
-			f.FileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
+			f.queueDeletions(dChunk.GetFileIdString())
 		}
-		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.queueDeletions(chunk.GetFileIdString())
 	}
 }
 
 func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.queueDeletions(chunk.GetFileIdString())
 	}
 }
 

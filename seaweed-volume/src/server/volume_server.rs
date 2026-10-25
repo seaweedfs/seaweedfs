@@ -63,6 +63,12 @@ pub struct VolumeServerState {
     pub file_size_limit_bytes: i64,
     /// Default IO rate limit for maintenance copy/replication work.
     pub maintenance_byte_per_second: i64,
+    /// Bounds concurrent vacuum commits; None means unlimited. Queued commits
+    /// wait on the semaphore, not on the store lock, so reads keep flowing.
+    /// Mirrors Go's `vacuumCommitSlots`.
+    pub vacuum_commit_slots: Option<tokio::sync::Semaphore>,
+    /// Vacuum commits currently waiting for a slot.
+    pub vacuum_commits_waiting: AtomicU32,
     /// Whether the server is connected to master (heartbeat active).
     pub is_heartbeating: AtomicBool,
     /// Whether master addresses are configured.
@@ -71,16 +77,17 @@ pub struct VolumeServerState {
     pub pre_stop_seconds: u32,
     /// Notify heartbeat to send an immediate update when volume state changes.
     pub volume_state_notify: tokio::sync::Notify,
-    /// Optional batched write queue for improved throughput under load.
+    /// Per-volume write workers that group-commit durable (fsync) uploads.
+    /// Set once at startup in production; a test state may leave it unset,
+    /// which sends every write down the synchronous path.
     pub write_queue: std::sync::OnceLock<WriteQueue>,
-    /// Registry of S3 tier backends for tiered storage operations.
-    pub s3_tier_registry: std::sync::RwLock<crate::remote_storage::s3_tier::S3TierRegistry>,
     /// Read mode: local, proxy, or redirect for non-local volumes.
     pub read_mode: ReadMode,
     /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation,
     /// allowing arbitrary (incl. loopback / link-local / metadata) hosts.
     pub allow_untrusted_remote_endpoints: bool,
-    /// First master address for volume lookups (e.g., "localhost:9333").
+    /// First configured master address (e.g., "localhost:9333"). A seed, not a
+    /// lookup target: lookups go to `current_master_url`.
     pub master_url: String,
     /// Seed master addresses for UI rendering.
     pub master_urls: Vec<String>,
@@ -88,10 +95,12 @@ pub struct VolumeServerState {
     /// Built once at construction so Ping admission stays O(1). Mirrors
     /// Go's `seedMasterSet` on `VolumeServer`.
     pub seed_master_set: std::collections::HashSet<String>,
-    /// Current master this server is heartbeating with, in canonical http
-    /// `host:port` form. Empty when no heartbeat connection is active. The
-    /// heartbeat goroutine writes; admission reads — the lock keeps them
-    /// from racing on a leader change. Mirrors Go's `currentMaster` plus
+    /// Master this server takes as leader, in its announced
+    /// `host:port[.grpcPort]` form — callers pick http or gRPC form per use.
+    /// Empty until the heartbeat confirms one — a peer that answered a
+    /// stream without naming a leader, or the leader a follower named — and
+    /// cleared again when no master reports one. The heartbeat writes;
+    /// admission and lookups read. Mirrors Go's `currentMaster` plus
     /// `currentMasterLock`.
     pub current_master_url: tokio::sync::RwLock<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
@@ -116,9 +125,31 @@ pub struct VolumeServerState {
     pub cli_white_list: Vec<String>,
     /// Path to state.pb file for persisting VolumeServerState across restarts.
     pub state_file_path: String,
+    /// Volumes with an EC decode in flight. A dropped request leaves the
+    /// blocking job running; this keeps a retry from racing it on the
+    /// same volume files.
+    pub ec_decodes_in_flight:
+        std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    /// Volumes whose EC decode is in its publishing tail (journal catch-up,
+    /// .idx write, compaction). Local .ecj appenders wait on
+    /// `ec_decode_tail_notify` while their vid is listed, so no committed
+    /// delete falls between the last catch_up and the .cpd/.cpx swap —
+    /// the per-volume slice of Go's EcVolume.ecjFileAccessLock.
+    pub ec_decode_tail:
+        std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    /// Wakes .ecj appenders waiting on `ec_decode_tail` when a decode's
+    /// publishing tail ends.
+    pub ec_decode_tail_notify: tokio::sync::Notify,
 }
 
 impl VolumeServerState {
+    /// The master lookups should go to: the leader the heartbeat confirmed,
+    /// or empty while none is known, in its announced `host:port[.grpcPort]`
+    /// form. Mirrors Go's `vs.getCurrentMaster()`.
+    pub async fn current_master(&self) -> String {
+        self.current_master_url.read().await.clone()
+    }
+
     /// Check if the server is in maintenance mode; return gRPC error if so.
     pub fn check_maintenance(&self) -> Result<(), tonic::Status> {
         if self.maintenance.load(Ordering::Relaxed) {
@@ -129,6 +160,40 @@ impl VolumeServerState {
             )));
         }
         Ok(())
+    }
+
+    /// Wait for a vacuum commit slot without touching the store lock; the wait
+    /// counts against the caller's `grpc-timeout`. An already-expired deadline
+    /// is refused even when a slot is free, matching Go's post-acquire
+    /// `ctx.Err()` check in `acquireVacuumCommitSlot`.
+    pub async fn acquire_vacuum_commit_slot(
+        &self,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Option<tokio::sync::SemaphorePermit<'_>>, tonic::Status> {
+        let Some(slots) = &self.vacuum_commit_slots else {
+            return Ok(None);
+        };
+        self.vacuum_commits_waiting.fetch_add(1, Ordering::Relaxed);
+        let acquired = match deadline {
+            Some(d) => match tokio::time::timeout_at(d, slots.acquire()).await {
+                Ok(permit) => permit.map_err(|e| tonic::Status::internal(e.to_string())),
+                Err(_) => Err(tonic::Status::deadline_exceeded(
+                    "timed out waiting for a vacuum commit slot",
+                )),
+            },
+            None => slots
+                .acquire()
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string())),
+        };
+        self.vacuum_commits_waiting.fetch_sub(1, Ordering::Relaxed);
+        let permit = acquired?;
+        if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+            return Err(tonic::Status::deadline_exceeded(
+                "timed out waiting for a vacuum commit slot",
+            ));
+        }
+        Ok(Some(permit))
     }
 
     /// Build the seed master set from a list of raw `host:port[.grpcPort]`
@@ -154,7 +219,7 @@ impl VolumeServerState {
             return false;
         }
         let current = self.current_master_url.read().await.clone();
-        if !current.is_empty() && current == key {
+        if !current.is_empty() && to_http_address(&current) == key {
             return true;
         }
         self.seed_master_set.contains(&key)

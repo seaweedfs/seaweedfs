@@ -13,13 +13,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64) {
+func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, concurrentVacuumLimitPerRack int, growThreshold float64, preallocate int64, vacuumInterval time.Duration, deleteEmptyAfter time.Duration) {
+	if vacuumInterval <= 0 {
+		vacuumInterval = 14 * time.Minute
+	}
 	go func() {
 		for {
 			if t.IsLeader() {
 				freshThreshHold := time.Now().Unix() - 3*t.pulse //3 times of sleep interval
 				t.CollectDeadNodeAndFullVolumes(freshThreshHold, t.volumeSizeLimit, growThreshold)
 				t.DecayQuietVolumeSizes()
+				t.retryPendingQuarantineReleases()
 			}
 			time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
@@ -36,12 +40,12 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 					t.EnableVacuumByPlugin()
 				}
 				if !t.IsVacuumDisabled() {
-					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate, true)
+					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, concurrentVacuumLimitPerRack, 0, "", preallocate, true, deleteEmptyAfter)
 				}
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()
 			}
-			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+			time.Sleep(vacuumInterval + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}(garbageThreshold)
 	go func() {
@@ -115,6 +119,8 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.SetVolumeUnavailable(dn, v.Id)
+		// this node may have been the conflicting copy pinning a quarantine
+		defer t.releaseResolvedQuarantine(v.Id)
 	}
 
 	// unregister ec shards when volume server disconnected

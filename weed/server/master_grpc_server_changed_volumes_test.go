@@ -220,7 +220,7 @@ func TestRegistrationRacingCollectionDeleteDoesNotLeak(t *testing.T) {
 	topo.DeleteCollection("c")
 
 	// the interleaved registration must refuse the dropped layout
-	if stale.RegisterVolume(&vi, dn) {
+	if stale.RegisterVolume(&vi, dn, nil) {
 		t.Fatal("registered into a layout dropped with its collection")
 	}
 

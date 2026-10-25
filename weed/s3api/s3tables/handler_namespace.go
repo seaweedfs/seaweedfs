@@ -11,14 +11,34 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+// errOwnerlessBucket marks a table bucket that has the marker but no
+// metadata: damaged, and answered with the operation's own denial rather than
+// letting the caller name itself the bucket's owner before any check runs.
+var errOwnerlessBucket = fmt.Errorf("table bucket has no owner metadata")
+
+// mayRepairOwnerlessBucket reports whether the caller may repair a bucket in
+// that state: the admin or a trusted internal handler. hasAdminAction also
+// answers s3tables:*, an operation grant, not administrator status.
+func (h *S3TablesHandler) mayRepairOwnerlessBucket(r *http.Request) bool {
+	if h.trusted || h.getAccountID(r) == s3_constants.AccountAdminId {
+		return true
+	}
+	for _, action := range getIdentityActions(r) {
+		if action == s3_constants.ACTION_ADMIN {
+			return true
+		}
+	}
+	return false
+}
 
 // handleCreateNamespace creates a new namespace in a table bucket
 func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	glog.Errorf("S3Tables: handleCreateNamespace called")
+	glog.V(3).Infof("S3Tables: handleCreateNamespace called")
 	var req CreateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
-		glog.Errorf("S3Tables: handleCreateNamespace failed to read request body: %v", err)
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -66,16 +86,29 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 				if entryResp.Entry == nil || !IsTableBucketEntry(entryResp.Entry) {
 					return filer_pb.ErrNotFound
 				}
-				bucketMetadata = tableBucketMetadata{
-					Name:           bucketName,
-					CreatedAt:      time.Now(),
-					OwnerAccountID: ownerAccountID,
+				if !h.mayRepairOwnerlessBucket(r) {
+					return errOwnerlessBucket
 				}
-				metadataBytes, err := json.Marshal(&bucketMetadata)
-				if err != nil {
-					return fmt.Errorf("failed to marshal bucket metadata: %w", err)
-				}
-				if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+				// Repair the marker-only entry under the entry lock so a
+				// creator finishing its own create in the meantime keeps its
+				// owner: adopt whatever metadata is there, write only when it
+				// is still absent.
+				if err := h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+					if data, ok := extended[ExtendedKeyMetadata]; ok {
+						return json.Unmarshal(data, &bucketMetadata)
+					}
+					bucketMetadata = tableBucketMetadata{
+						Name:           bucketName,
+						CreatedAt:      time.Now(),
+						OwnerAccountID: ownerAccountID,
+					}
+					metadataBytes, err := json.Marshal(&bucketMetadata)
+					if err != nil {
+						return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+					}
+					extended[ExtendedKeyMetadata] = metadataBytes
+					return nil
+				}); err != nil {
 					return err
 				}
 			} else {
@@ -101,7 +134,15 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	})
 
 	if err != nil {
+		if errors.Is(err, errOwnerlessBucket) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+			return ErrAccessDenied
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
+			if !h.authorizeAbsentTarget(r, filerClient, "CreateNamespace", bucketName, namespaceName, "", "") {
+				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
+				return ErrAccessDenied
+			}
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
@@ -114,11 +155,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	identityActions := getIdentityActions(r)
 	glog.Infof("S3Tables: CreateNamespace permission check - principal=%s, owner=%s, actions=%v", principal, bucketMetadata.OwnerAccountID, identityActions)
 	if !CheckPermissionWithContext("CreateNamespace", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		glog.Infof("S3Tables: Permission denied for CreateNamespace - principal=%s, owner=%s", principal, bucketMetadata.OwnerAccountID)
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
@@ -157,20 +200,22 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Create namespace directory
-		if err := h.createDirectory(r.Context(), client, namespacePath); err != nil {
-			return err
+		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, map[string][]byte{ExtendedKeyMetadata: metadataBytes})
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			taken = err // an answer, not a filer failure
+			return nil
 		}
-
-		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
-
+	if err == nil && taken != nil {
+		err = taken
+	}
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
+		return err
+	}
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create namespace")
 		return err
@@ -255,11 +300,13 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied
@@ -345,11 +392,13 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("UpdateNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied
@@ -435,7 +484,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespaces: %v", err))
@@ -447,10 +496,12 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("ListNamespaces", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -631,11 +682,13 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied

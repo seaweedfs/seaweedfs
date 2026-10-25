@@ -61,6 +61,6 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		defer cancel()
 	}
 
-	return deleteVolume(ctx, commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false, false)
+	return deleteVolume(ctx, commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false, false, false)
 
 }

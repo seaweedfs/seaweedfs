@@ -142,7 +142,7 @@ mod tests {
         let old_idx = old_idx_dir.to_str().unwrap();
         let new_idx = new_idx_dir.to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             data,
             old_idx,
             VolumeId(1),
@@ -196,7 +196,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         let dir = root.path().to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -242,7 +242,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         let dir = root.path().to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),
@@ -291,7 +291,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         let dir = root.path().to_str().unwrap();
 
-        let mut v = Volume::new(
+        let v = Volume::new(
             dir,
             dir,
             VolumeId(1),

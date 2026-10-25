@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -73,4 +77,58 @@ func UnmountAndDeleteEcShards(
 			}
 			return nil
 		})
+}
+
+// EcFileGeneration parses the generation of a 2PC-staged <base>.v<N> file:
+// -1 means the name is not a generation file of base.
+func EcFileGeneration(name, base string) int64 {
+	suffix, ok := strings.CutPrefix(name, base+".v")
+	if !ok {
+		return -1
+	}
+	generation, err := strconv.ParseInt(suffix, 10, 64)
+	if err != nil || generation <= 0 {
+		return -1
+	}
+	return generation
+}
+
+// RemoveEcGenerationFiles removes 2PC generation files staged under base:
+// <base>.ecNN.v<N>, <base>.ecx.v<N>, <base>.ecj.v<N>, <base>.ecsum.v<N> and
+// <base>.vif.v<N>. generationsOlderThan == 0 removes every generation;
+// otherwise only generations strictly below it. Returns the first real
+// removal failure.
+func RemoveEcGenerationFiles(baseFileName string, generationsOlderThan uint32) error {
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	dir, fileName := filepath.Dir(baseFileName), filepath.Base(baseFileName)
+	ecPrefix, vifName := fileName+".ec", fileName+".vif"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		// A generation file is <artifact>.v<N>; the last dot separates the
+		// staged-generation suffix from the artifact name.
+		artifact := name[:max(strings.LastIndexByte(name, '.'), 0)]
+		if artifact != vifName && !strings.HasPrefix(artifact, ecPrefix) {
+			continue
+		}
+		generation := EcFileGeneration(name, artifact)
+		if generation < 0 || (generationsOlderThan > 0 && generation >= int64(generationsOlderThan)) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			record(err)
+		}
+	}
+	return firstErr
 }

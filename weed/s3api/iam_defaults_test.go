@@ -277,3 +277,66 @@ func TestLoadIAMManagerFromConfig_ExplicitFileEnforcesUserScopedPolicy(t *testin
 	assert.NoError(t, err)
 	assert.True(t, allowed, "user-scoped bucket creation should be allowed")
 }
+
+func TestLoadIAMManagerFromConfig_HonorsOIDCProviderStore(t *testing.T) {
+	// The documented oidcProviderStore key must reach the IAM manager; without
+	// it, providers created through the IAM API live in one gateway's memory.
+	cases := []struct {
+		name  string
+		store string
+		filer bool
+	}{
+		{"absent keeps memory", ``, false},
+		{"filer persists", `,"oidcProviderStore":{"storeType":"filer"}`, true},
+		{"no config file persists", "no-file", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := ""
+			if tc.store != "no-file" {
+				configPath = filepath.Join(t.TempDir(), "iam_config.json")
+				configContent := `{"sts":{"providers":[]},"policy":{"storeType":"memory","defaultEffect":"Deny"}` + tc.store + `}`
+				assert.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644))
+			}
+
+			manager, err := loadIAMManagerFromConfig(configPath, func() string { return "localhost:8888" }, func() string { return "oidc-store-signing-key" })
+			assert.NoError(t, err)
+			_, isFiler := manager.GetOIDCProviderStore().(*integration.FilerOIDCProviderStore)
+			assert.Equal(t, tc.filer, isFiler)
+		})
+	}
+}
+
+func TestLoadIAMManagerFromConfig_HonorsRoleStoreAndMarksStaticRoles(t *testing.T) {
+	cases := []struct {
+		name  string
+		store string
+		filer bool
+	}{
+		{"absent keeps memory", ``, false},
+		{"filer persists", `,"roleStore":{"storeType":"filer"}`, true},
+		{"no config file persists", "no-file", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := ""
+			if tc.store != "no-file" {
+				configPath = filepath.Join(t.TempDir(), "iam_config.json")
+				configContent := `{"sts":{"providers":[]},"policy":{"storeType":"memory","defaultEffect":"Deny"},` +
+					`"roles":[{"roleName":"from-file","trustPolicy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"https://issuer.example"},"Action":["sts:AssumeRoleWithWebIdentity"]}]}}]` +
+					tc.store + `}`
+				assert.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644))
+			}
+
+			manager, err := loadIAMManagerFromConfig(configPath, func() string { return "localhost:8888" }, func() string { return "role-store-signing-key" })
+			assert.NoError(t, err)
+			_, inMemory := manager.GetRoleStore().(*integration.MemoryRoleStore)
+			assert.Equal(t, tc.filer, !inMemory)
+			if !tc.filer {
+				role, err := manager.GetRole(context.Background(), "from-file")
+				assert.NoError(t, err)
+				assert.Equal(t, integration.RoleSourceStaticConfig, role.Source)
+			}
+		})
+	}
+}

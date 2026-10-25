@@ -45,6 +45,23 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 	ms.broadcastVolumeLocationsToClients(newVidLocations)
 }
 
+// periodicGrowCount decides how many volumes the periodic growth scan adds to
+// a layout ahead of its rack-aware pass, from the writableVolumeCount clients
+// last asked for (lastGrowCount) and the layout's writable and crowded counts.
+// mustGrow reports a refill back up to lastGrowCount writable volumes, which
+// the caller only grows when there is room for all of it. A layout that never
+// received a writableVolumeCount (lastGrowCount 0) is left to the rack-aware
+// pass.
+func periodicGrowCount(lastGrowCount uint32, writable, crowded int) (count uint32, mustGrow bool) {
+	if n := int(lastGrowCount) - writable; n > 0 {
+		return uint32(n), true
+	}
+	if lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold {
+		return volumeGrowStepCount, false
+	}
+	return 0, false
+}
+
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
@@ -67,25 +84,25 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					continue
 				}
 				writable, crowded := vl.GetWritableVolumeCount()
-				mustGrow := int(lastGrowCount) - writable
 				vgr := vlc.ToVolumeGrowRequest()
 				underReplicated := vl.CountUnderReplicatedVolumes()
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
 				stats.MasterUnderReplicatedVolumes.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(underReplicated))
 
+				growCount, mustGrow := periodicGrowCount(lastGrowCount, writable, crowded)
 				switch {
-				case mustGrow > 0:
+				case mustGrow:
 					if rp, rpErr := super_block.NewReplicaPlacementFromString(vgr.Replication); rpErr != nil {
 						glog.V(0).Infof("failed to parse replica placement %s: %v", vgr.Replication, rpErr)
 					} else {
-						vgr.WritableVolumeCount = uint32(mustGrow)
+						vgr.WritableVolumeCount = growCount
 						if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
 							_, err = ms.VolumeGrow(ctx, vgr)
 						}
 					}
-				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
-					vgr.WritableVolumeCount = volumeGrowStepCount
+				case growCount > 0:
+					vgr.WritableVolumeCount = growCount
 					_, err = ms.VolumeGrow(ctx, vgr)
 				}
 				if err != nil {
@@ -382,7 +399,7 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 
 	resp := &master_pb.VacuumVolumeResponse{}
 
-	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), ms.option.MaxParallelVacuumPerServer, req.VolumeId, req.Collection, ms.preallocateSize, false)
+	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), ms.option.MaxParallelVacuumPerServer, ms.option.MaxParallelVacuumPerRack, req.VolumeId, req.Collection, ms.preallocateSize, false, 0)
 
 	return resp, nil
 }
@@ -454,6 +471,13 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	return resp, nil
 }
 
+func (ms *MasterServer) ResumeVolumeGrowth(ctx context.Context, req *master_pb.ResumeVolumeGrowthRequest) (*master_pb.ResumeVolumeGrowthResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+	return &master_pb.ResumeVolumeGrowthResponse{WasFrozen: ms.Topo.ResumeVolumeGrowth()}, nil
+}
+
 func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGrowRequest) (*master_pb.VolumeGrowResponse, error) {
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
@@ -492,6 +516,27 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 		Force:  true,
 		Reason: "grpc volume grow",
 	}
+
+	// Report the layout's fill observed at request time whether or not
+	// growth was triggered, so callers can tell an empty layout from a
+	// skipped one. A missing collection/layout reports zeros.
+	var avgFill float64
+	var writableCount int
+	if vl := ms.Topo.FindVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType)); vl != nil {
+		avgFill, writableCount = vl.WritableAvgFill(&volumeGrowOption)
+	}
+
+	// Conditional grow: with a threshold set, grow only when the layout's
+	// writable volumes have reached this average fill. A layout with no
+	// writable volumes (none yet, or all just filled) skips the check — that
+	// is the case growth exists to fix.
+	if req.GrowAvgFillThreshold > 0 && writableCount > 0 && avgFill < float64(req.GrowAvgFillThreshold) {
+		return &master_pb.VolumeGrowResponse{
+			AvgFill:       float32(avgFill),
+			WritableCount: uint32(writableCount),
+		}, nil
+	}
+
 	replicaCount := int64(req.WritableVolumeCount * uint32(replicaPlacement.GetCopyCount()))
 
 	if ms.Topo.AvailableSpaceFor(&volumeGrowOption) < replicaCount {
@@ -500,5 +545,8 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 
 	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
 
-	return &master_pb.VolumeGrowResponse{}, nil
+	return &master_pb.VolumeGrowResponse{
+		AvgFill:       float32(avgFill),
+		WritableCount: uint32(writableCount),
+	}, nil
 }

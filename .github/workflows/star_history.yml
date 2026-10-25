@@ -10,12 +10,11 @@ permissions:
   contents: write
 
 concurrency:
-  # Only one chart regeneration per branch at a time; a newer run on the same
-  # branch cancels an in-flight one so overlapping runs never conflict on
-  # note/star_history.svg during rebase. Scoped by ref so a manual run on
-  # another branch can't cancel the daily master update.
+  # Only one chart regeneration per branch at a time so overlapping runs never
+  # conflict on note/star_history.svg during rebase. Scoped by ref so a manual
+  # run on another branch can't cancel the daily master update.
   group: star-history-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 jobs:
   render:
@@ -33,7 +32,7 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.x"
-          cache: pip
+          cache: ${{ runner.environment == 'github-hosted' && 'pip' || '' }}
           cache-dependency-path: .github/scripts/star_history.py
 
       - name: Install matplotlib

@@ -19,8 +19,8 @@ on:
       - '.github/workflows/e2e.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/e2e
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ defaults:
 jobs:
   e2e:
     name: FUSE Mount
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
     - name: Check out code into the Go module directory
@@ -42,6 +42,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Configure Docker Hub mirror
       run: |
@@ -52,6 +53,7 @@ jobs:
       uses: docker/setup-buildx-action@v4
       
     - name: Cache Docker layers
+      if: runner.environment == 'github-hosted'
       uses: actions/cache@v6
       with:
         path: /tmp/.buildx-cache

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       rocksdb_version:
-        description: 'RocksDB git tag or branch to build (e.g. v10.10.1)'
+        description: 'RocksDB git tag or branch to build (e.g. v11.1.2)'
         required: true
-        default: 'v10.10.1'
+        default: 'v11.1.2'
       seaweedfs_ref:
         description: 'SeaweedFS git tag, branch, or commit to build'
         required: true
@@ -15,6 +15,11 @@ on:
         description: 'Optional Docker tag suffix (defaults to rocksdb_<rocksdb>_seaweedfs_<ref>)'
         required: false
         default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.image_tag || format('rocksdb_{0}_seaweedfs_{1}', github.event.inputs.rocksdb_version, github.event.inputs.seaweedfs_ref) }}
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -85,7 +90,7 @@ jobs:
           echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v1
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v1
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v1

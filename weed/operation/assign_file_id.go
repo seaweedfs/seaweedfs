@@ -157,11 +157,11 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 	return ret, lastError
 }
 
-func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
+func LookupJwt(ctx context.Context, master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	WithMasterServerClient(context.Background(), false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	WithMasterServerClient(ctx, false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
-		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
+		resp, grpcErr := masterClient.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
 		})
 		if grpcErr != nil {
@@ -193,12 +193,20 @@ type StorageOption struct {
 	MaxFileNameLength uint32
 	Fsync             bool
 	SaveInside        bool
+	// EnforceLocation marks a location that came from a placement rule or an
+	// explicit request rather than a filer-level default: it must fail the
+	// assign when unsatisfiable instead of widening to anywhere.
+	EnforceLocation bool
 }
 
 func (so *StorageOption) TtlString() string {
 	return needle.SecondsToTTL(so.TtlSeconds)
 }
 
+// ToAssignRequests builds the assign request for this storage option. When the
+// location came from a filer-level default rather than a placement rule or an
+// explicit request, it also returns a location-stripped fallback for the case
+// where the preferred location cannot serve the write at all.
 func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, altRequest *VolumeAssignRequest) {
 	ar = &VolumeAssignRequest{
 		Count:               uint64(count),
@@ -211,16 +219,13 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		DataNode:            so.DataNode,
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
-	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
+	if !so.EnforceLocation && (so.DataCenter != "" || so.Rack != "" || so.DataNode != "") {
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,
 			Collection:          so.Collection,
 			Ttl:                 so.TtlString(),
 			DiskType:            so.DiskType,
-			DataCenter:          "",
-			Rack:                "",
-			DataNode:            "",
 			WritableVolumeCount: so.VolumeGrowthCount,
 		}
 	}

@@ -115,7 +115,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
@@ -159,6 +159,17 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	writeDeleteResult(err, count, w, r)
 
+}
+
+// deleteReadOption returns the read option used by deletes: read only the
+// needle's header and trailer.
+//
+// A delete needs to know that the needle exists, what its cookie is, and
+// whether it is a chunk manifest. None of that requires the payload. If the
+// needle turns out to be a chunk manifest, the read loads its data as well,
+// because the delete needs the manifest to delete the chunks.
+func deleteReadOption() *storage.ReadOption {
+	return &storage.ReadOption{AttemptMetaOnly: true, MustMetaOnly: true}
 }
 
 func writeDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Request) {

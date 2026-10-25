@@ -7,6 +7,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -22,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -44,17 +47,22 @@ var (
 )
 
 type Filer struct {
-	UniqueFilerId                 int32
-	UniqueFilerEpoch              int32
-	Store                         VirtualFilerStore
-	MasterClient                  *wdclient.MasterClient
-	FileIdDeletionQueue           *util.UnboundedQueue
-	GrpcDialOption                grpc.DialOption
-	DirBucketsPath                string
-	Cipher                        bool
-	LocalMetaLogBuffer            *log_buffer.LogBuffer
-	metaLogCollection             string
-	metaLogReplication            string
+	UniqueFilerId       int32
+	UniqueFilerEpoch    int32
+	Store               VirtualFilerStore
+	MasterClient        *wdclient.MasterClient
+	FileIdDeletionQueue *util.UnboundedQueue
+	GrpcDialOption      grpc.DialOption
+	DirBucketsPath      string
+	Cipher              bool
+	LocalMetaLogBuffer  *log_buffer.LogBuffer
+	metaLogCollection   string
+	metaLogReplication  string
+	// Override where system metadata-log chunks are assigned, keeping the
+	// internal log out of the default collection; empty keeps today's
+	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
+	metaLogTargetCollection       string
+	metaLogTargetReplication      string
 	DefaultDiskType               string
 	MetaAggregator                *MetaAggregator
 	Signature                     int32
@@ -73,6 +81,52 @@ type Filer struct {
 	EmptyFolderCleanupDelay       time.Duration
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
+	remoteTombstones              *remoteDeletionTombstones
+	// EntryLockTable serializes mutations per entry path. The filer server
+	// holds it across local read-modify-write mutations and the meta
+	// aggregator across a replayed peer change's check-and-apply, so the two
+	// cannot interleave on the same path.
+	EntryLockTable *util.LockTable[util.FullPath]
+	// remoteTombstonesDone, when non-nil, is closed once the startup tombstone
+	// rebuild finishes; lazy remote reads wait on it so a pending delete
+	// cannot resurrect in the gap.
+	remoteTombstonesDone atomic.Pointer[chan struct{}]
+
+	// Durable deletion ledger (see filer_deletion_persist.go). The set of
+	// fileIds that still need deleting but are not yet confirmed gone, mirrored
+	// to the store so a restart does not leak chunks. Guarded by
+	// deletionLedgerLock; nil-safe for Filer literals in tests.
+	// pendingDeletions maps each id to its enqueue epoch so an expiry-forget
+	// cannot erase a re-queued id.
+	deletionLedgerLock  sync.Mutex
+	pendingDeletions    map[string]uint64
+	deletionSeq         uint64
+	deletionLedgerDirty bool
+	deletionLedgerParts int
+	deletionLedgerGen   int
+	// deletionLedgerStale holds orphan part keys from abandoned multipart
+	// writes, retried on the next snapshot.
+	deletionLedgerStale []string
+	// deletionSnapshotLock serializes ledger writes in copy order so an
+	// in-flight timer snapshot cannot overwrite a newer shutdown snapshot.
+	deletionSnapshotLock sync.Mutex
+	// deletionLedgerBlocked is set when the startup ledger read fails: the
+	// persisted set is then unknown, so snapshots retry the read instead of
+	// overwriting the unread ledger with a partial set.
+	deletionLedgerBlocked atomic.Bool
+	deletionLedgerFlush   chan struct{}
+	// metaTsPending holds per-path commit records whose KV write failed,
+	// keyed by path; ordering reads consult it until the retry lands them
+	// (see meta_path_ts.go). metaTsRepairing marks paths with a live
+	// repair goroutine so failures neither strand a record nor pile on.
+	metaTsPending   sync.Map
+	metaTsRepairing sync.Map
+	// flushCtx is the context metadata-log flushes append under. It stays
+	// live for the process lifetime and is cancelled once during Shutdown,
+	// bounding every retry - in-flight and queued alike - to one deadline.
+	// Nil for Filer literals built without NewFiler.
+	flushCtx    context.Context
+	flushCancel context.CancelFunc
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -86,9 +140,13 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
+		deletionLedgerFlush: make(chan struct{}, 1),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
+		remoteTombstones:    newRemoteDeletionTombstones(),
+		EntryLockTable:      util.NewLockTable[util.FullPath](),
 	}
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
@@ -102,6 +160,19 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
+
+	// Optional override for where the system metadata-log chunks land, so
+	// operators can keep internal log volumes out of the default collection.
+	// Unset (""), this changes nothing: meta logs keep following the filer
+	// default exactly as before.
+	v := util.GetViper()
+	v.SetDefault("filer.options.metaLog.collection", "")
+	v.SetDefault("filer.options.metaLog.replication", "")
+	f.metaLogTargetCollection = v.GetString("filer.options.metaLog.collection")
+	f.metaLogTargetReplication = v.GetString("filer.options.metaLog.replication")
+	if f.metaLogTargetCollection != "" {
+		glog.V(0).Infof("system metadata logs will be stored in collection %q", f.metaLogTargetCollection)
+	}
 
 	if newPlacementOverlay != nil {
 		f.placementOverlay = newPlacementOverlay(f)
@@ -119,7 +190,7 @@ func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote
 	return remote_storage.GetRemoteStorage(remoteConf)
 }
 
-func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
+func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
 	if len(existingNodes) == 0 {
 		return
 	}
@@ -134,8 +205,13 @@ func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes [
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 
 	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.StreamBfs(client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
-			return f.Store.InsertEntry(context.Background(), FromPbEntry(string(parentPath), entry))
+		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
+			entry := FromPbEntry(string(parentPath), pbEntry)
+			peerTsNs := entryTsNs
+			if peerTsNs == 0 {
+				peerTsNs = entry.Attr.Mtime.UnixNano()
+			}
+			return f.applyTraversedEntry(ctx, entry, peerTsNs)
 		})
 	})
 
@@ -174,6 +250,10 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
 		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
+	f.MasterClient.SetOnMasterChangeFn(func(previous, current pb.ServerAddress) {
+		glog.V(0).Infof("LockRing: master changed %s -> %s, resetting ring", previous, current)
+		f.Dlm.LockRing.Reset()
+	})
 
 	// Subscribe to the local filer first: its events reach the aggregated
 	// buffer only through this subscription, and the peer watermarks must
@@ -191,14 +271,111 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 
 }
 
-func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate) {
-	return cluster.ListExistingPeerUpdates(f.GetMaster(ctx), f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+// peerLookupTimeout bounds each master query so one unresponsive master
+// cannot stall the peer scan.
+const peerLookupTimeout = 10 * time.Second
+
+// leaderSettleTimeout bounds how long an empty peer list from the leader is
+// re-polled: a freshly elected leader may not yet have the filers' reconnects,
+// so an immediate empty answer can just mean membership has not migrated yet.
+// It must stay below the health window a fresh filer gets to start serving
+// (weed mini allows 6s) — a filerless cluster pays the whole window per start.
+const leaderSettleTimeout = 3 * time.Second
+const leaderSettleInterval = time.Second
+
+// ListExistingPeerUpdates returns the peer list to bootstrap from. The
+// leader's list is authoritative: after a leader change an old master keeps
+// its registrations until its streams end, so the longest answer is not
+// necessarily the current one. A non-empty answer from the leader wins; a
+// leader that is unreachable or reports an empty list falls back to the
+// fullest answer from the other masters. It returns an error when
+// no master answers, so a failed lookup is not mistaken for an empty cluster.
+func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate, err error) {
+	masters := f.MasterClient.ListMasters()
+	var queryErrs []error
+
+	var leader pb.ServerAddress
+	for _, master := range masters {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		l, lookErr := cluster.LookupClusterLeader(lookupCtx, master, f.GrpcDialOption)
+		cancel()
+		if lookErr != nil {
+			queryErrs = append(queryErrs, lookErr)
+			continue
+		}
+		if l != "" {
+			leader = l
+			break
+		}
+	}
+	if leader != "" {
+		settleDeadline := time.Now().Add(leaderSettleTimeout)
+		for {
+			lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+			nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+			cancel()
+			if listErr != nil {
+				queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
+				break
+			}
+			if len(nodes) > 0 {
+				return nodes, nil
+			}
+			if ctx.Err() != nil || !time.Now().Before(settleDeadline) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(leaderSettleInterval):
+			}
+		}
+	}
+
+	answered := false
+	for _, master := range masters {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		cancel()
+		if listErr != nil {
+			queryErrs = append(queryErrs, listErr)
+			continue
+		}
+		answered = true
+		if len(nodes) > len(existingNodes) {
+			existingNodes = nodes
+		}
+	}
+	if !answered {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if err = errors.Join(queryErrs...); err == nil {
+			err = fmt.Errorf("no masters configured")
+		}
+		return nil, fmt.Errorf("list existing peers: %w", err)
+	}
+	return existingNodes, nil
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 	f.Store = NewFilerStoreWrapper(store)
 
-	return f.setOrLoadFilerStoreSignature(store)
+	isFresh = f.setOrLoadFilerStoreSignature(store)
+
+	// Recover deletions that were pending when a previous process died, and keep
+	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
+	// A failed ledger read leaves writes blocked until a snapshot retries and
+	// the read succeeds, so the unread ledger is never overwritten.
+	f.reloadDeletionLedger()
+	f.startDeletionLedgerSnapshotter()
+
+	return isFresh
 }
 
 func (f *Filer) setOrLoadFilerStoreSignature(store FilerStore) (isFresh bool) {
@@ -241,6 +418,28 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
+type syncWriteKey struct{}
+
+// WithSyncWrite marks the entry writes under ctx durable-on-ack: a store that
+// buffers writes by default must flush them before returning.
+func WithSyncWrite(ctx context.Context) context.Context {
+	return context.WithValue(ctx, syncWriteKey{}, true)
+}
+
+// SyncWrite reports whether ctx carries a durability request for entry writes.
+func SyncWrite(ctx context.Context) bool {
+	return ctx.Value(syncWriteKey{}) != nil
+}
+
+// syncWriteContext flags ctx when the storage rule on p asks for fsync, so the
+// store write is held to the same durability as the data path.
+func (f *Filer) syncWriteContext(ctx context.Context, p util.FullPath) context.Context {
+	if f.FilerConf != nil && f.FilerConf.MatchStorageRule(string(p)).GetFsync() {
+		return WithSyncWrite(ctx)
+	}
+	return ctx
+}
+
 // CreateEntry creates or replaces an entry. When existing is non-nil the caller
 // has already fetched the current entry at this path under a path lock, and it
 // is reused instead of looking the store up again; pass nil to have CreateEntry
@@ -250,6 +449,8 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if string(entry.FullPath) == "/" {
 		return nil
 	}
+
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
 
 	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
 		return filer_pb.ErrEntryNameTooLong
@@ -265,7 +466,13 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 
 	oldEntry := existing
 	if oldEntry == nil {
-		oldEntry, _ = f.FindEntry(ctx, entry.FullPath)
+		var findErr error
+		oldEntry, findErr = f.FindEntry(ctx, entry.FullPath)
+		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+			// A create cannot decide whether the path exists when the lookup
+			// itself failed; proceeding would upsert over it.
+			return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
+		}
 	}
 
 	/*
@@ -310,7 +517,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
-		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
+		if err := f.UpdateEntry(ctx, oldEntry, entry, isFromOtherCluster); err != nil {
 			if errors.Is(err, filer_pb.ErrExistingIsDirectory) || errors.Is(err, filer_pb.ErrExistingIsFile) {
 				glog.V(2).InfofCtx(ctx, "update entry %s: %v", entry.FullPath, err)
 			} else {
@@ -450,6 +657,7 @@ func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) 
 // deleted with, so a restore cannot hand back a directory more permissive than the one
 // it replaces - including when someone else already put it back with wider ones.
 func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath, attrs empty_folder_cleanup.DirectoryAttributes) error {
+	ctx = f.syncWriteContext(ctx, dirPath)
 	existing, err := f.FindEntry(ctx, dirPath)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return err
@@ -465,7 +673,7 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 		narrowed := existing.ShallowClone()
 		narrowed.Mode = existing.Mode&^restorableModeBits | kept
 		glog.V(1).InfofCtx(ctx, "restore directory %s: narrowing %v to %v", dirPath, existing.Mode, narrowed.Mode)
-		if err := f.UpdateEntry(ctx, existing, narrowed); err != nil {
+		if err := f.UpdateEntry(ctx, existing, narrowed, false); err != nil {
 			return err
 		}
 		f.NotifyUpdateEvent(ctx, existing, narrowed, false, false, nil)
@@ -498,7 +706,8 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 	return nil
 }
 
-func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
+func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, isFromOtherCluster bool) (err error) {
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.Attr.Inode != 0 {
@@ -517,6 +726,17 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
 			glog.V(2).InfofCtx(ctx, "existing %s is a file", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
+		}
+		// A local write to a remote-backed entry leaves the copy on remote
+		// stale until a sync re-uploads it. Content changes that arrive
+		// without a fresh sync stamp are unsynced; clear the stamp so nothing
+		// mistakes the still-local chunks for a re-fetchable cache copy.
+		// Replicated updates carry the writer's authoritative stamp.
+		if !isFromOtherCluster && oldEntry.Remote != nil && entry.Remote != nil &&
+			oldEntry.Remote.LastLocalSyncTsNs == entry.Remote.LastLocalSyncTsNs &&
+			!chunksEqual(oldEntry.Chunks, entry.Chunks) {
+			entry.Remote = proto.Clone(entry.Remote).(*filer_pb.RemoteEntry)
+			entry.Remote.LastLocalSyncTsNs = 0
 		}
 	}
 	if entry.Attr.Atime.IsZero() {
@@ -589,7 +809,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
 		case <-ctx.Done():
-			glog.Errorf("Context is done.")
+			glog.V(1).InfofCtx(ctx, "listing %q canceled: %v", p, ctx.Err())
 			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 			if entry.TtlSec > 0 && !entry.IsDirectory() {
@@ -701,7 +921,7 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, _ := dirPath.DirAndName()
 	if dirEntry, findErr := f.FindEntry(ctx, dirPath); findErr == nil {
-		if delErr := f.doDeleteEntryMetaAndData(ctx, dirEntry, false, false, nil); delErr == nil {
+		if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr == nil {
 			// Successfully deleted, continue checking upwards
 			f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
 		} else {
@@ -726,9 +946,25 @@ func (f *Filer) Shutdown() {
 	if f.EmptyFolderCleaner != nil {
 		f.EmptyFolderCleaner.Stop()
 	}
+	// Bound the remaining flush retries: with the cluster already gone each
+	// append keeps failing, and an unbounded retry would hold the shutdown
+	// drain open indefinitely. One shared deadline covers every in-flight and
+	// queued window; the flush loop drops what it cannot write.
+	if f.flushCancel != nil {
+		time.AfterFunc(shutdownMetadataLogFlushBudget, f.flushCancel)
+	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	// The final metadata-log flush still needs the store to append its entry.
 	f.LocalMetaLogBuffer.WaitForShutdown()
+	// Stop peer subscriptions and let each persist its last applied offset;
+	// the replay on the next start otherwise resumes from a stale offset and
+	// applies those old events over newer local state.
+	if f.MetaAggregator != nil {
+		f.MetaAggregator.Shutdown()
+	}
+	// Persist the deletion ledger one last time before the store closes, so a
+	// clean shutdown leaves the recovery set exactly consistent with reality.
+	f.snapshotDeletionLedger()
 	f.Store.Shutdown()
 }
 

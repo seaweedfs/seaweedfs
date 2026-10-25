@@ -67,6 +67,9 @@ func (fs *SftpServer) CheckFilePermission(path string, perm string) error {
 		// check permissions on the parent directory instead
 		if err == os.ErrNotExist {
 			parentPath := stdpath.Dir(path)
+			if parentPath == path {
+				return os.ErrPermission
+			}
 			// Check if user can write to the parent directory
 			return fs.CheckFilePermission(parentPath, perm)
 		}

@@ -69,7 +69,7 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 		},
 	}
 
-	if err := wfs.handleRenameResponse(context.Background(), resp); err != nil {
+	if err := wfs.handleRenameResponse(context.Background(), resp, targetPath, nil); err != nil {
 		t.Fatalf("handle rename response: %v", err)
 	}
 

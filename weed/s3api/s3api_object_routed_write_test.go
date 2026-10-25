@@ -15,7 +15,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func reqWith(headers map[string]string) *http.Request {
@@ -418,6 +420,30 @@ func TestObjectTxnFailsOverStaleOwner(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&live.calls); got != 2 {
 		t.Fatalf("live filer calls = %d, want 2", got)
+	}
+}
+
+// Issue 11631: a transaction the owner may have applied must not be re-sent to
+// another filer — a lost response is indistinguishable from a commit. Failover
+// is only for channels that never came up, which provably sent nothing.
+func TestObjectTxnNoReplayAfterSend(t *testing.T) {
+	owner := &fakeTxnFiler{err: status.Error(codes.Unavailable, "response lost")}
+	ownerAddr := startFakeFiler(t, owner)
+	backup := &fakeTxnFiler{}
+	backupAddr := startFakeFiler(t, backup)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{ownerAddr, backupAddr}, dialOption, ""),
+	}
+	req := &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}
+
+	if _, err := s3a.objectTxnOnFiler(ownerAddr, req); err == nil {
+		t.Fatal("expected the lost response to surface as an error")
+	}
+	if got := atomic.LoadInt32(&backup.calls); got != 0 {
+		t.Fatalf("backup filer calls = %d — replayed a possibly-committed transaction", got)
 	}
 }
 

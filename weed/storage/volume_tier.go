@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -80,9 +81,46 @@ func (v *Volume) HasRemoteFile() bool {
 // backend concurrently. load() must instead use loadRemoteFileLocked, since it
 // can be reached with the lock already held (CommitCompact).
 func (v *Volume) LoadRemoteFile() error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	return v.loadRemoteFileLocked()
+}
+
+// MarkTieredDeletable gives a volume whose data has just moved to the remote
+// tier the flags a restart gives it (load(): a tiered volume refuses writes and
+// accepts deletes). volume.tier.upload marks the volume read-only without
+// deletes before the upload; left that way, every delete until the next
+// restart is refused, the filer drops it, and the needle's bytes stay in the
+// remote object where no vacuum can find them.
+//
+// Only for a single-copy volume: the shell copies the uploaded replica's .idx
+// and .vif to the other replicas after the upload, and a tombstone written
+// before that copy would reach one replica only; a replicated volume keeps
+// refusing deletes until its next load, as before. An I/O quarantine is left
+// alone, and so is a volume past the I/O error tolerance that the next
+// heartbeat will quarantine. Otherwise the flags are the ones load() gives
+// every tiered volume.
+func (v *Volume) MarkTieredDeletable() bool {
+	if rp := v.SuperBlock.ReplicaPlacement; rp != nil && rp.GetCopyCount() > 1 {
+		return false
+	}
+	// Check the I/O state under noWriteLock: CollectHeartbeat marks the
+	// quarantine before it takes noWriteLock to refuse deletes, so either the
+	// check below sees the quarantine, or the heartbeat's refusal lands after
+	// this change and stays.
+	v.noWriteLock.Lock()
+	defer v.noWriteLock.Unlock()
+	if !v.HasRemoteFile() {
+		return false
+	}
+	if ioErr, ioCount, quarantined := v.getIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+		return false
+	}
+	v.noWriteOrDelete = false
+	v.noWriteCanDelete = true
+	return true
 }
 
 // loadRemoteFileLocked swaps the data backend to the remote tier object. The
@@ -105,6 +143,41 @@ func (v *Volume) loadRemoteFileLocked() error {
 	return nil
 }
 
+// AttachRemoteDatFile records remoteFile, a copy of the .dat read from source,
+// in the volume's .vif and switches the data backend to it. It refuses when
+// source is no longer the volume's data backend: a compaction commit since the
+// copy replaced the .dat and the index, and the copy has the old layout. The
+// check, the .vif write and the switch happen under the data-file locks, so a
+// commit either lands before (and is seen here) or after (and refuses a tiered
+// volume).
+func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFile *volume_server_pb.RemoteFile) error {
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.DataBackend != source {
+		return fmt.Errorf("volume %d data file changed during the copy (compacted or reloaded)", v.Id)
+	}
+	files := v.volumeInfo.GetFiles()
+	v.volumeInfo.Files = append(files, remoteFile)
+	if err := v.SaveVolumeInfo(); err != nil {
+		// A NotCrashDurableError means the rename committed: the .vif names
+		// the copy, so keep the entry and serve from the copy, and still
+		// report the error so the caller keeps the local .dat. Any other
+		// failure left the old .vif in place.
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			v.volumeInfo.Files = files
+			return fmt.Errorf("save remote file info: %w", err)
+		}
+		if loadErr := v.loadRemoteFileLocked(); loadErr != nil {
+			return fmt.Errorf("save remote file info: %w; load remote file: %v", err, loadErr)
+		}
+		return fmt.Errorf("save remote file info: %w", err)
+	}
+	return v.loadRemoteFileLocked()
+}
+
 func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
@@ -112,6 +185,9 @@ func (v *Volume) SaveVolumeInfo() error {
 		v.volumeInfo.ExpireAtSec = expireAtSec
 	}
 
-	return volume_info.SaveVolumeInfo(tierFileName, v.volumeInfo)
+	return saveVolumeInfoFile(tierFileName, v.volumeInfo)
 
 }
+
+// saveVolumeInfoFile writes a .vif; tests replace it to inject failures.
+var saveVolumeInfoFile = volume_info.SaveVolumeInfo

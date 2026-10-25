@@ -396,11 +396,7 @@ window.Dashboard = {
 // Initialize event handlers
 function initializeEventHandlers() {
     // S3 Bucket Management
-    const createBucketForm = document.getElementById('createBucketForm');
-    if (createBucketForm) {
-        createBucketForm.addEventListener('submit', handleCreateBucket);
-    }
-
+   
     // Delete bucket buttons
     document.addEventListener('click', function (e) {
         if (e.target.closest('.delete-bucket-btn')) {

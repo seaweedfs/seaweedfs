@@ -23,7 +23,7 @@ else
 fi
 
 echo -e "${BLUE}2. Checking if required ports are available...${NC}"
-for port in 9333 8080 8081 8082 8083 8084 8085 8888 23646; do
+for port in 9333 8080 8081 8082 8083 8084 8085 8888 12535; do
     if lsof -i :$port > /dev/null 2>&1; then
         echo -e "${YELLOW}⚠️  Port $port is in use${NC}"
     else
@@ -41,7 +41,7 @@ else
 fi
 
 echo -e "${BLUE}4. Verifying admin server configuration...${NC}"
-if docker-compose -f docker-compose-ec-test.yml config | grep -q "admin:23646"; then
+if docker-compose -f docker-compose-ec-test.yml config | grep -q "admin:12535"; then
     echo -e "${GREEN}✅ Admin server port configuration is correct${NC}"
 else
     echo -e "${RED}❌ Admin server port configuration is incorrect${NC}"

@@ -23,8 +23,8 @@ on:
       - '.github/workflows/kafka-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/kafka-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 # Force different runners for better isolation
 env:
@@ -53,6 +53,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v7
       with:
+        cache: ${{ runner.environment == 'github-hosted' }}
         go-version: ^1.26
       id: go
 
@@ -98,6 +99,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v7
       with:
+        cache: ${{ runner.environment == 'github-hosted' }}
         go-version: ^1.26
       id: go
 
@@ -149,7 +151,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ^1.26
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -328,7 +330,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ^1.26
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -490,7 +492,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ^1.26
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -648,7 +650,7 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version: ^1.26
-        cache: true
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -805,6 +807,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v7
       with:
+        cache: ${{ runner.environment == 'github-hosted' }}
         go-version: ^1.26
       id: go
 

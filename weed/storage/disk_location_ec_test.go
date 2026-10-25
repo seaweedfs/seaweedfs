@@ -847,6 +847,113 @@ func TestLoadEcShardDuplicateReleasesTheNewShard(t *testing.T) {
 	}
 }
 
+// TestLoadEcShardWaitsForPendingDestroy: DestroyEcVolume deletes the map entry
+// and destroys files outside ecVolumesLock, so a remount could otherwise open
+// shard files mid-unlink. The ecVolumesDestroying tombstone must hold the mount
+// until the destroy closes it, and the mount must then proceed and clear it.
+func TestLoadEcShardWaitsForPendingDestroy(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "125.ec00"), []byte("shard bytes"), 0o644); err != nil {
+		t.Fatalf("seed .ec00: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "125.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	done := make(chan struct{})
+	diskLocation.ecVolumesLock.Lock()
+	diskLocation.ecVolumesDestroying[needle.VolumeId(125)] = done
+	diskLocation.ecVolumesLock.Unlock()
+
+	mounted := make(chan error, 1)
+	go func() {
+		_, err := diskLocation.LoadEcShard("", needle.VolumeId(125), erasure_coding.ShardId(0))
+		mounted <- err
+	}()
+
+	select {
+	case <-mounted:
+		t.Fatal("LoadEcShard returned while a destroy generation was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(done)
+	select {
+	case err := <-mounted:
+		if err != nil {
+			t.Fatalf("LoadEcShard after destroy completion: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadEcShard did not proceed after the destroy finished")
+	}
+
+	if _, found := diskLocation.FindEcShard(needle.VolumeId(125), erasure_coding.ShardId(0)); !found {
+		t.Fatal("shard must be registered once the pending destroy is over")
+	}
+	diskLocation.ecVolumesLock.RLock()
+	_, tombstoneLeft := diskLocation.ecVolumesDestroying[needle.VolumeId(125)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if tombstoneLeft {
+		t.Error("a successful remount must clear the vid's destroy tombstone")
+	}
+}
+
+// TestDestroyEcVolumeClosesTombstone: once DestroyEcVolume returns, the
+// tombstone is closed so waits unblock, and a fresh remount re-opens the
+// regenerated files rather than anything the destroy unlinked.
+func TestDestroyEcVolumeClosesTombstone(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close()
+
+	seedShard := func() {
+		if err := os.WriteFile(filepath.Join(dir, "126.ec00"), []byte("shard bytes"), 0o644); err != nil {
+			t.Fatalf("seed .ec00: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "126.ecx"), make([]byte, 16), 0o644); err != nil {
+			t.Fatalf("seed .ecx: %v", err)
+		}
+	}
+	seedShard()
+
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(126), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("initial LoadEcShard: %v", err)
+	}
+	diskLocation.DestroyEcVolume(needle.VolumeId(126))
+
+	if _, found := diskLocation.FindEcVolume(needle.VolumeId(126)); found {
+		t.Fatal("destroyed volume must not stay in ecVolumes")
+	}
+	diskLocation.ecVolumesLock.RLock()
+	done, ok := diskLocation.ecVolumesDestroying[needle.VolumeId(126)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if !ok {
+		t.Fatal("destroy must leave a tombstone behind for remounts to compare against")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tombstone must be closed once DestroyEcVolume returns")
+	}
+	if util.FileExists(filepath.Join(dir, "126.ec00")) {
+		t.Fatal("destroy must have removed the shard file")
+	}
+
+	seedShard()
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(126), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("remount after destroy: %v", err)
+	}
+	diskLocation.ecVolumesLock.RLock()
+	_, tombstoneLeft := diskLocation.ecVolumesDestroying[needle.VolumeId(126)]
+	diskLocation.ecVolumesLock.RUnlock()
+	if tombstoneLeft {
+		t.Error("remount must clear the stale destroy tombstone")
+	}
+}
+
 // TestLoadAllEcShardsSplitDirZeroSizedCleanup: the scan merges Directory and
 // IdxDirectory listings, so a stale zero-sized file in one directory and a
 // fresh same-named file in the other are different files behind one entry

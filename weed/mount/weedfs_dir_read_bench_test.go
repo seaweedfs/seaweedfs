@@ -163,7 +163,7 @@ func walkOnce(tb testing.TB, wfs *WFS, dirInode uint64, sink *benchSink, forgets
 	offset := uint64(0)
 	for {
 		sink.reset()
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,

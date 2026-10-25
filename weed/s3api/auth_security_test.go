@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -554,6 +555,111 @@ func TestRealSDKSignerWithForwardedHeaders(t *testing.T) {
 				"Signature from real AWS SDK signer must verify successfully")
 			require.NotNil(t, identity)
 			assert.Equal(t, "test_user", identity.Name)
+		})
+	}
+}
+
+// GHSA-8rrx-349w-6396: ?prefix= was promoted into the object for every action,
+// so PUT /cache?versioning&prefix=x authorized as Write:cache/x. An identity
+// holding only Write:cache/* could then change bucket versioning, lifecycle,
+// cors, and object-lock configuration.
+func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
+	resetMemoryStore()
+	defer resetMemoryStore()
+
+	configContent := `{
+  "identities": [
+    {"name":"admin","credentials":[{"accessKey":"ADMINKEY","secretKey":"adminsecret0000000000000000000001"}],"actions":["Admin"]},
+    {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret000000000000000000001"}],"actions":["Read:cache","Write:cache/*","List:cache"]},
+    {"name":"uploadreader","credentials":[{"accessKey":"UPREADERKEY","secretKey":"upreadersecret00000000000000001"}],"actions":["Read:cache/uploads/*"]},
+    {"name":"policywriter","credentials":[{"accessKey":"POLICYKEY","secretKey":"policysecret00000000000000000001"}],"policyNames":["WriterPolicy"]},
+    {"name":"uploadlister","credentials":[{"accessKey":"UPLISTERKEY","secretKey":"uplistersecret00000000000000001"}],"policyNames":["UploadsPolicy"]},
+    {"name":"getonly","credentials":[{"accessKey":"GETONLYKEY","secretKey":"getonlysecret0000000000000000001"}],"policyNames":["GetOnlyPolicy"]}
+  ],
+  "policies":[
+    {"name":"WriterPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"},
+    {"name":"UploadsPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucketMultipartUploads\"],\"Resource\":[\"arn:aws:s3:::cache\"]}]}"},
+    {"name":"GetOnlyPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"}
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmpFile.Name()}, nil, "memory")
+	require.True(t, iam.isEnabled(), "Auth should be enabled")
+
+	for _, tc := range []struct {
+		name   string
+		access string
+		secret string
+		object string
+		query  string
+		action Action
+		want   s3err.ErrorCode
+	}{
+		{"writer put object", "WRITERKEY", "writersecret000000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"writer put versioning", "WRITERKEY", "writersecret000000000000000000001", "", "versioning", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put versioning with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put lifecycle with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "lifecycle&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer list with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "list-type=2&prefix=x", s3_constants.ACTION_LIST, s3err.ErrNone},
+		{"policywriter put object", "POLICYKEY", "policysecret00000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"policywriter put versioning with prefix", "POLICYKEY", "policysecret00000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"uploadreader lists uploads under prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=uploads/foo", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"uploadreader cannot list outside prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=other/", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
+		{"uploadlister lists uploads", "UPLISTERKEY", "uplistersecret00000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"getonly cannot list uploads", "GETONLYKEY", "getonlysecret0000000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url := "http://localhost:8333/cache"
+			if tc.object != "" {
+				url += "/" + tc.object
+			}
+			if tc.query != "" {
+				url += "?" + tc.query
+			}
+			r := httptest.NewRequest(http.MethodPut, url, nil)
+			if tc.action == s3_constants.ACTION_LIST || tc.action == s3_constants.ACTION_READ {
+				r.Method = http.MethodGet
+			}
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache", "object": tc.object})
+			require.NoError(t, signRawHTTPRequest(context.Background(), r, tc.access, tc.secret, "us-east-1"))
+
+			_, errCode := iam.authRequest(r, tc.action)
+			assert.Equal(t, tc.want, errCode)
+		})
+	}
+}
+
+// The admin explicit-deny path resolves the same action and resource the
+// policy engine sees, so a promoted prefix must not hide a listing variant:
+// ?uploads resolves s3:ListBucketMultipartUploads on the bucket ARN, and
+// ?versions resolves s3:ListBucketVersions, both at bucket level.
+func TestResolveS3AuthTarget_BucketListings(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		url          string
+		action       Action
+		object       string
+		wantAction   string
+		wantResource string
+	}{
+		{"uploads listing keeps its action", "/cache?uploads&prefix=uploads/", s3_constants.ACTION_READ, "uploads/",
+			s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS, "arn:aws:s3:::cache"},
+		{"versions listing keeps its action", "/cache?versions&prefix=a/", s3_constants.ACTION_LIST, "a/",
+			s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS, "arn:aws:s3:::cache"},
+		{"plain list keeps its action", "/cache?list-type=2&prefix=a/", s3_constants.ACTION_LIST, "a/",
+			s3_constants.S3_ACTION_LIST_BUCKET, "arn:aws:s3:::cache"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache"})
+			action, resource := resolveS3AuthTarget(tt.action, "cache", tt.object, r)
+			assert.Equal(t, tt.wantAction, action)
+			assert.Equal(t, tt.wantResource, resource)
 		})
 	}
 }

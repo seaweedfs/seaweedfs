@@ -23,14 +23,20 @@ type SqlGenerator interface {
 	GetSqlDeleteFolderChildren(tableName string) string
 	GetSqlListExclusive(tableName string) string
 	GetSqlListInclusive(tableName string) string
+	// GetSqlScanPage returns the query and arguments selecting dirhash, name,
+	// directory and meta of up to limit rows after the (dirhash, name) cursor.
+	GetSqlScanPage(tableName string, dirhash int64, name string, limit int) (string, []interface{})
 	GetSqlCreateTable(tableName string) string
 	GetSqlDropTable(tableName string) string
 }
 
 type AbstractSqlStore struct {
 	SqlGenerator
-	DB                     *sql.DB
-	KvDB                   *sql.DB
+	DB   *sql.DB
+	KvDB *sql.DB
+	// ScanDB, when set, is the pool snapshot scans run on (SQLite's main pool
+	// is a single connection that a long scan must not hold).
+	ScanDB                 *sql.DB
 	SupportBucketTable     bool
 	SkipDDL                bool
 	dbs                    map[string]bool
@@ -390,6 +396,14 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return doDeleteFolderChildren()
 }
 
+var likeEscaper = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+
+// LikePattern escapes LIKE wildcards so the prefix matches literally;
+// '!' pairs with the ESCAPE '!' clause emitted by the SqlGenerators.
+func LikePattern(prefix string) string {
+	return likeEscaper.Replace(prefix) + "%"
+}
+
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
@@ -402,7 +416,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		sqlText = store.GetSqlListInclusive(bucket)
 	}
 
-	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", limit+1)
+	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), LikePattern(prefix), limit+1)
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
@@ -448,6 +462,9 @@ func (store *AbstractSqlStore) Shutdown() {
 	store.DB.Close()
 	if store.KvDB != nil {
 		store.KvDB.Close()
+	}
+	if store.ScanDB != nil {
+		store.ScanDB.Close()
 	}
 }
 

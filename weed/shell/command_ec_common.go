@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -142,13 +143,37 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	return ec.EcBalance(commandEnv.ecEnv(), collections, dc, ecReplicaPlacement, diskType, maxParallelization, ioBytePerSecond, applyBalancing, excludeNodes, volumeIds, nil)
 }
 
-// compileCollectionPattern compiles the -collection value shared by the ec and
-// tier commands: a comma-separated list of collection names, wildcards, and
-// regex patterns. An empty value matches the empty-named collection only, the
-// same as CollectionDefault.
+// compileCollectionPattern compiles the -collection value shared by commands
+// where an empty value means the collection with no name: a comma-separated
+// list of collection names, wildcards, and regex patterns, or CollectionDefault
+// for the empty-named collection.
 func compileCollectionPattern(pattern string) (*wildcard.CollectionMatcher, error) {
 	if strings.TrimSpace(pattern) == "" {
 		pattern = CollectionDefault
 	}
 	return wildcard.CompileCollectionMatcher(pattern)
+}
+
+// resolveEcCollections expands the ec commands' -collection value into
+// collection names. An empty value means the empty-named collection, the same
+// as CollectionDefault. Literal names pass through even when the master does
+// not list them — the listing only contains collections with registered
+// volumes, and ec.rebuild exists to bring back a collection whose volumes all
+// lost their index. Wildcard and regex entries resolve against the listing.
+func resolveEcCollections(commandEnv *CommandEnv, filter string) (collections []string, err error) {
+	if strings.TrimSpace(filter) == "" {
+		filter = CollectionDefault
+	}
+	names, err := ListCollectionNames(commandEnv, false, true)
+	if err != nil {
+		return nil, err
+	}
+	collections, err = wildcard.ExpandCollectionFilter(filter, names)
+	if err != nil {
+		return nil, fmt.Errorf("invalid collection pattern %q: %w", filter, err)
+	}
+	if len(collections) == 0 {
+		return nil, fmt.Errorf("no collections match %q", filter)
+	}
+	return collections, nil
 }

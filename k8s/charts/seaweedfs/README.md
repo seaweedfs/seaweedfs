@@ -27,6 +27,19 @@ so your deployment will be spread/HA.
 * cert config exists and can be enabled, but not been tested, requires cert-manager to be installed.
 
 ## Prerequisites
+
+The chart's templates render with Helm 3.16.3 and newer versions tested in CI.
+Earlier Helm versions are not covered by this chart's compatibility checks.
+When JWT signing is enabled, a live upgrade reuses keys from the existing
+security ConfigMap (including the legacy ConfigMap name); a key absent from
+that ConfigMap is generated. Plain `helm template` does not read cluster state;
+use an install and upgrade against a cluster to check key persistence.
+
+The key reader supports single-line quoted TOML strings in JWT sections,
+including indented assignments, quoted key names, and bare or simply quoted
+section-name segments. An unsupported value or quoted header fails the upgrade
+rather than silently rotating a key.
+
 ### Database
 
 leveldb is the default database, this supports multiple filer replicas that will [sync automatically](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication), with some [limitations](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication#limitation).
@@ -332,8 +345,9 @@ To enable the admin interface, add the following to your values.yaml:
 ```yaml
 admin:
   enabled: true
-  port: 23646
-  grpcPort: 33646  # For worker connections
+  port: 12535
+  grpcPort: 22535  # For worker connections
+  legacyPort: 23646  # Compat: also serve http + gRPC (+10000) for pre-12535 clients
   secret:
     adminUser: "admin"
     adminPassword: "your-secure-password"  # Leave empty to disable auth
@@ -351,7 +365,9 @@ admin:
     className: "nginx"
 ```
 
-The admin interface will be available at `http://<admin-service>:23646` (or via ingress). Workers connect to the admin server via gRPC on port `33646`.
+The admin interface will be available at `http://<admin-service>:12535` (or via ingress). Workers connect to the admin server via gRPC on port `22535`.
+
+For backward compatibility with older clients and workers, admin also serves the previous default ports: HTTP on `23646` and gRPC on `33646` (legacyPort + 10000). The Service and NetworkPolicy expose both. Set `admin.legacyPort: 0` to disable.
 
 ### Admin Authentication
 
@@ -376,7 +392,10 @@ start on a non-loopback address without `-adminPassword`, so the chart fails at
 render time if `admin.ip` is non-loopback and authentication is not configured via
 `admin.secret.adminPassword`, `admin.secret.existingSecret`, or
 `WEED_ADMIN_PASSWORD` supplied through `admin.extraEnvironmentVars` /
-`admin.secretExtraEnvironmentVars`. The whole `127.0.0.0/8` range and `::1` are
+`admin.secretExtraEnvironmentVars`. Setting `admin.allowInsecureBind` renders
+`-allowInsecureBind` and bypasses this guard; it leaves the admin API
+unauthenticated on the network, so use it only when access is otherwise
+restricted (e.g. network policies). The whole `127.0.0.0/8` range and `::1` are
 treated as loopback (matching `weed admin`); `localhost` is treated as
 non-loopback. Set `admin.ip` to a loopback address only if you also replace the
 httpGet probes (e.g. with an `exec` probe that checks `127.0.0.1`).
@@ -420,7 +439,7 @@ worker:
   # Auto-discovery only works if the admin is in the same namespace and same Helm release.
   # For cross-namespace or separate release scenarios, explicitly set this value.
   # Example: If main SeaweedFS is deployed in "production" namespace:
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
   adminServer: ""
   
   # Workers need storage for task execution
@@ -486,8 +505,8 @@ worker:
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 **values-worker-balance.yaml** (for balance operations):
@@ -512,8 +531,8 @@ worker:
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 Deploy the specialized workers as separate releases:
@@ -525,6 +544,26 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 # Deploy balance workers
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
+
+## Gateway API
+
+Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.
+
+```yaml
+s3:
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: my-gateway
+        namespace: gateway-system
+        sectionName: https
+    hostnames:
+      - s3.example.com
+```
+
+With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
 
 ## Network Policies
 
@@ -567,6 +606,23 @@ Two things worth knowing before you turn this on:
 
 The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
+## Pod and container security contexts
+
+Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
+
+SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. When `readOnlyRootFilesystem` is enabled for a built-in component, the chart mounts a writable `emptyDir` at `/tmp` for its chart-managed containers. Its optional size limit can be configured globally:
+
+```yaml
+global:
+  seaweedfs:
+    tmpDir:
+      sizeLimit: 1Gi
+```
+
+The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
+
+Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context and writable mounts.
+
 ## OpenShift Support
 
 SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.
@@ -575,6 +631,7 @@ To deploy on OpenShift, use the provided `openshift-values.yaml` which overrides
 1. Use `PersistentVolumeClaims` instead of `hostPath`.
 2. Enable `runAsNonRoot` and omit hardcoded UIDs to allow OpenShift to assign valid UIDs automatically.
 3. Apply appropriate `seccompProfile` and drop capabilities.
+4. Use a read-only root filesystem with writable temporary storage at `/tmp`.
 
 Usage:
 ```bash

@@ -1215,6 +1215,7 @@ func (c *chaosCluster) startVolumeServer(ctx context.Context, i int, logName str
 		"-max", strings.Join(maxVolumes, ","),
 		"-minFreeSpace", "0",
 		"-master", chaosMasterAddr,
+		"-volume.allowUntrustedRemoteEndpoints",
 		"-ip", "127.0.0.1",
 		"-dataCenter", "dc1",
 		"-rack", fmt.Sprintf("rack%d", i),

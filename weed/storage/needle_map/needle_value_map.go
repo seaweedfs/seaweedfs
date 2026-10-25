@@ -7,6 +7,7 @@ import (
 type NeedleValueMap interface {
 	Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size)
 	Delete(key NeedleId) Size
+	Remove(key NeedleId) bool
 	Get(key NeedleId) (*NeedleValue, bool)
 	AscendingVisit(visit func(NeedleValue) error) error
 }

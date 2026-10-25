@@ -32,7 +32,7 @@ templ Admin(data dash.AdminData) {
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
                                     Total Volumes
                                 </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                <div class="h5 mb-0 font-weight-bold text-body-emphasis">
                                     {fmt.Sprintf("%d", data.TotalVolumes)}
                                 </div>
                             </div>
@@ -256,11 +256,13 @@ templ Admin(data dash.AdminData) {
                                                     if tier.IsRemote {
                                                         <span class="text-muted">-</span>
                                                     } else {
-                                                        <div class="progress" style="height: 20px;">
-                                                            <div class="progress-bar" role="progressbar"
-                                                                 style={fmt.Sprintf("width: %d%%", tier.UsagePercent())}>
-                                                                {fmt.Sprintf("%d%%", tier.UsagePercent())}
+                                                        <div class="d-flex align-items-center">
+                                                            <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
+                                                                <div class="progress-bar" role="progressbar"
+                                                                     style={fmt.Sprintf("width: %d%%", tier.UsagePercent())}>
+                                                                </div>
                                                             </div>
+                                                            <span class="ms-2 text-nowrap">{fmt.Sprintf("%d%%", tier.UsagePercent())}</span>
                                                         </div>
                                                     }
                                                 </td>
@@ -445,11 +447,13 @@ templ Admin(data dash.AdminData) {
                                             <td>{vs.DataCenter}</td>
                                             <td>{vs.Rack}</td>
                                             <td>
-                                                <div class="progress" style="height: 20px;">
-                                                    <div class="progress-bar" role="progressbar" 
-                                                         style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
-                                                        {fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes)}
+                                                <div class="d-flex align-items-center">
+                                                    <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
+                                                        <div class="progress-bar" role="progressbar" 
+                                                             style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
+                                                        </div>
                                                     </div>
+                                                    <span class="ms-2 text-nowrap">{fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes)}</span>
                                                 </div>
                                             </td>
                                             <td>

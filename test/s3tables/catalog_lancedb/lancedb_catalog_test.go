@@ -137,7 +137,7 @@ func (env *environment) start(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -151,7 +151,9 @@ func (env *environment) start(t *testing.T) {
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(testutil.MustFreeMiniPort(t, "admin"))...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.iceberg=0")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -270,6 +272,9 @@ func (env *environment) runClient(t *testing.T, bucket string) {
 	out, err := cmd.CombinedOutput()
 	t.Logf("LanceDB client output:\n%s", out)
 	if err != nil {
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("LanceDB client image cannot run on this CPU: %v", err)
+		}
 		t.Fatalf("the LanceDB client failed: %v", err)
 	}
 	if !strings.Contains(string(out), "PASS") {

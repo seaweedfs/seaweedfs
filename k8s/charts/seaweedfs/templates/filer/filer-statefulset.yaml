@@ -48,7 +48,7 @@ spec:
       {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
       {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
       {{- else }}
-      {{- $_ := set $podAnnotations "checksum/s3config" (include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum) }}
+      {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
       {{- end }}
       annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
@@ -170,9 +170,6 @@ spec:
               {{- if .Values.filer.metricsIp }}
               -metricsIp={{ .Values.filer.metricsIp }} \
               {{- end }}
-              {{- if .Values.filer.redirectOnRead }}
-              -redirectOnRead \
-              {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \
               {{- end }}
@@ -229,6 +226,7 @@ spec:
               {{ . }} \
               {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.filer.containerSecurityContext (tpl (.Values.filer.extraVolumeMounts | default "") .) (tpl (.Values.filer.extraVolumes | default "") .)) | nindent 12 }}
             {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
@@ -337,6 +335,7 @@ spec:
         {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.filer.containerSecurityContext (tpl (.Values.filer.extraVolumeMounts | default "") .) (tpl (.Values.filer.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:

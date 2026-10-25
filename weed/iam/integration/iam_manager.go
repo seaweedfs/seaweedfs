@@ -2,7 +2,10 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,11 +30,36 @@ const maxPoliciesForEvaluation = 1024
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService           *sts.STSService
-	policyEngine         *policy.PolicyEngine
-	roleStore            RoleStore
-	userStore            UserStore
-	oidcProviderStore    OIDCProviderStore
+	stsService        *sts.STSService
+	policyEngine      *policy.PolicyEngine
+	roleStore         RoleStore
+	userStore         UserStore
+	oidcProviderStore OIDCProviderStore
+	// staticOIDCProviders are the OIDC providers of this server's IAM config
+	// file, by ARN. With an in-memory store they are also written to the
+	// store; a persistent store never holds them (see installOIDCProviderStore).
+	staticOIDCProviders map[string]*OIDCProviderRecord
+	// staticRoles are the roles of this server's IAM config file, by name, once
+	// LoadStaticRoles has run (see installRoleStore).
+	staticRoles map[string]*RoleDefinition
+	// oidcRetryMu guards the background refresh retry and which store is
+	// current: cancelOIDCLoad stops the retry, oidcRetryGen names the one
+	// running (0 when none) so at most one runs, and oidcRetryAgain records a
+	// refresh that failed while it ran, so the retry runs once more.
+	oidcRetryMu    sync.Mutex
+	cancelOIDCLoad context.CancelFunc
+	oidcRetryGen   uint64
+	oidcRetrySeq   uint64
+	oidcRetryAgain bool
+	// oidcRefreshMu serializes refreshes from reading the store to handing
+	// STS the result, so an older snapshot cannot replace a newer one.
+	oidcRefreshMu sync.Mutex
+	// oidcManagedProviders caches providers refreshOIDCProvidersFrom built,
+	// keyed by record identity, so an unchanged record reuses its provider:
+	// rebuilding would drop the provider's consumed-token (jti) replay cache
+	// and let an already-used token be presented again. Guarded by
+	// oidcRefreshMu.
+	oidcManagedProviders map[string]*oidcManagedProvider
 	oidcAuditSink        OIDCProviderAuditSink
 	revocationStore      SessionRevocationStore
 	filerAddressProvider func() string // Function to get current filer address
@@ -108,17 +136,32 @@ func (m *IAMManager) PurgeRevokedSessions(ctx context.Context) (int, error) {
 }
 
 // SetOIDCProviderStore configures the IAM-managed OIDC provider store. When
-// nil, OIDC provider IAM actions return ServiceNotReady. The store is the
-// source of truth for AssumeRoleWithWebIdentity provider resolution once
-// Phase 2b lands; in Phase 2a it is read-only and populated from static
-// configuration at boot.
+// nil, OIDC provider IAM actions return ServiceNotReady.
 func (m *IAMManager) SetOIDCProviderStore(store OIDCProviderStore) {
-	m.oidcProviderStore = store
+	var stsConfig *sts.STSConfig
+	if m.stsService != nil {
+		stsConfig = m.stsService.Config
+	}
+	m.installOIDCProviderStore(store, stsConfig)
 }
 
 // GetOIDCProviderStore returns the configured store (may be nil).
 func (m *IAMManager) GetOIDCProviderStore() OIDCProviderStore {
 	return m.oidcProviderStore
+}
+
+// GetRoleStore returns the configured role store.
+func (m *IAMManager) GetRoleStore() RoleStore {
+	return m.roleStore
+}
+
+// SetRoleStore replaces the role store. An S3 server builds the list of
+// directories it watches for peers' changes once, at startup, from the store
+// installed then (RoleStoreDirectory): a filer-backed store installed later
+// with a different basePath is not watched, so peers' changes to it reach this
+// server's cached roles only when the cache expires.
+func (m *IAMManager) SetRoleStore(store RoleStore) {
+	m.installRoleStore(context.Background(), store)
 }
 
 // GetOIDCProvider returns the record for the given ARN, or an error if the
@@ -127,7 +170,13 @@ func (m *IAMManager) GetOIDCProvider(ctx context.Context, arn string) (*OIDCProv
 	if m.oidcProviderStore == nil {
 		return nil, fmt.Errorf("OIDC provider store not configured")
 	}
-	return m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if errors.Is(err, ErrOIDCProviderNotFound) {
+		if static, ok := m.staticOIDCProviders[arn]; ok {
+			return copyOIDCProviderRecord(static), nil
+		}
+	}
+	return rec, err
 }
 
 // ListOIDCProviders enumerates all configured OIDC providers.
@@ -135,7 +184,33 @@ func (m *IAMManager) ListOIDCProviders(ctx context.Context) ([]*OIDCProviderReco
 	if m.oidcProviderStore == nil {
 		return nil, fmt.Errorf("OIDC provider store not configured")
 	}
-	return m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	if err != nil {
+		return nil, err
+	}
+	// A persistent store does not hold the config file's providers.
+	seen := make(map[string]bool, len(records))
+	for _, rec := range records {
+		seen[rec.ARN] = true
+	}
+	for arn, static := range m.staticOIDCProviders {
+		if !seen[arn] {
+			records = append(records, copyOIDCProviderRecord(static))
+		}
+	}
+	return records, nil
+}
+
+// mutableOIDCProvider loads a stored provider for a change. A provider only
+// the IAM config file defines is refused with ErrOIDCProviderStatic.
+func (m *IAMManager) mutableOIDCProvider(ctx context.Context, arn string) (*OIDCProviderRecord, error) {
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if errors.Is(err, ErrOIDCProviderNotFound) {
+		if _, ok := m.staticOIDCProviders[arn]; ok {
+			return nil, fmt.Errorf("%w: %s", ErrOIDCProviderStatic, arn)
+		}
+	}
+	return rec, err
 }
 
 // CreateOIDCProvider persists a new IAM-managed OIDC provider record. Refuses
@@ -149,6 +224,9 @@ func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRe
 	}
 	if err := validateOIDCProviderRecord(rec); err != nil {
 		return err
+	}
+	if _, static := m.staticOIDCProviders[rec.ARN]; static {
+		return fmt.Errorf("%w: %s", ErrOIDCProviderAlreadyExists, rec.ARN)
 	}
 	existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN)
 	if err == nil && existing != nil {
@@ -173,6 +251,9 @@ func (m *IAMManager) DeleteOIDCProvider(ctx context.Context, arn string) error {
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
+	if _, err := m.mutableOIDCProvider(ctx, arn); errors.Is(err, ErrOIDCProviderStatic) {
+		return err
+	}
 	if err := m.oidcProviderStore.DeleteProvider(ctx, m.getFilerAddress(), arn); err != nil {
 		return err
 	}
@@ -190,7 +271,7 @@ func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientI
 	if clientID == "" {
 		return fmt.Errorf("ClientID cannot be empty")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -218,7 +299,7 @@ func (m *IAMManager) RemoveClientIDFromOIDCProvider(ctx context.Context, arn, cl
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -255,7 +336,7 @@ func (m *IAMManager) UpdateOIDCProviderThumbprints(ctx context.Context, arn stri
 			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
 		}
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -274,7 +355,7 @@ func (m *IAMManager) TagOIDCProvider(ctx context.Context, arn string, tags map[s
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -297,7 +378,7 @@ func (m *IAMManager) UntagOIDCProvider(ctx context.Context, arn string, keys []s
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -415,6 +496,88 @@ type RoleDefinition struct {
 	// set it must satisfy AWS bounds: 3600 ≤ MaxSessionDuration ≤ 43200.
 	// Honoured by AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithCredentials.
 	MaxSessionDuration int64 `json:"maxSessionDuration,omitempty"`
+
+	// Source records where the role came from. RoleSourceStaticConfig marks a
+	// role loaded from the IAM config file; empty means it was created at
+	// runtime. Only static-config roles are pruned when they leave the file.
+	Source string `json:"source,omitempty"`
+
+	// CreatedAt is when the role was created through the IAM API. Zero for
+	// roles loaded from the config file.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+
+	// RoleId uniquely identifies this role, as AWS's RoleId does. A role
+	// deleted and created again under the same name gets a new ID, and a
+	// session is honoured only while the role it was issued for still has
+	// the ID the session carries — so a session outlives neither the role's
+	// deletion nor a later role that reuses its name.
+	RoleId string `json:"roleId,omitempty"`
+}
+
+// NewRoleID returns a fresh, random role ID in AWS's AROA form.
+func NewRoleID() string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	b := make([]byte, 17)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("read random role id: %v", err))
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return "AROA" + string(b)
+}
+
+// StaticRoleID is the ID of a role defined in the IAM config file. Such a
+// role is created again at every start, so its ID is derived rather than
+// random, to keep sessions valid across restarts. It is derived from the name
+// and the trust policy together: a role removed from the file and replaced by
+// a different one under the same name trusts different principals, and must
+// not inherit the old role's sessions. Restoring the same role restores its ID.
+func StaticRoleID(role *RoleDefinition) string {
+	h := sha256.New()
+	h.Write([]byte("static-role:" + role.RoleName + "\x00"))
+	if role.TrustPolicy != nil {
+		trust, err := json.Marshal(role.TrustPolicy)
+		if err != nil {
+			// A trust policy that cannot be encoded cannot be matched on
+			// either; give the role an ID no session can carry.
+			return NewRoleID()
+		}
+		h.Write(trust)
+	}
+	return "AROA" + strings.ToUpper(hex.EncodeToString(h.Sum(nil)))[:17]
+}
+
+// RoleSourceStaticConfig is the Source of a role loaded from the IAM config
+// file.
+const RoleSourceStaticConfig = "static-config"
+
+// checkSessionRoleBinding refuses a session issued for a role that has since
+// been deleted, or replaced by a role reusing its name: the role's current ID
+// must be the one the session carries. It runs for every session carrying a
+// role ID, whatever policies the session embeds — the policies a session
+// embeds are the ones its role had, and outlive the role otherwise. A session
+// issued before role IDs were recorded carries none and is not bound. It
+// returns the role it checked, nil for an unbound session.
+func (m *IAMManager) checkSessionRoleBinding(ctx context.Context, sessionInfo *sts.SessionInfo) (*RoleDefinition, error) {
+	if sessionInfo == nil || sessionInfo.RoleId == "" {
+		return nil, nil
+	}
+	roleName := utils.ExtractRoleNameFromArn(sessionInfo.RoleArn)
+	if roleName == "" {
+		return nil, nil
+	}
+	role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+	if errors.Is(err, ErrRoleNotFound) {
+		return nil, fmt.Errorf("session was issued for role %s, which no longer exists", roleName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve role %s for session: %w", roleName, err)
+	}
+	if role.RoleId != sessionInfo.RoleId {
+		return nil, fmt.Errorf("session was issued for an earlier role named %s", roleName)
+	}
+	return role, nil
 }
 
 // ActionRequest represents a request to perform an action
@@ -557,55 +720,174 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 	if err != nil {
 		return err
 	}
-	m.oidcProviderStore = store
+	m.installOIDCProviderStore(store, config.STS)
+	return nil
+}
 
-	if config.STS == nil {
-		return nil
+// installOIDCProviderStore makes store the manager's OIDC provider store.
+//
+// The IAM config file's providers are reported by the IAM API alongside the
+// stored ones. An in-memory store holds them as records, as it always has. A
+// persistent store never does: it outlives this process and may be shared by
+// S3 servers with different config files, so a record written from one file
+// would outlive its removal from that file and be trusted by every server.
+// Those providers stay in memory (staticOIDCProviders) and STS keeps serving
+// them from its static configuration; the store holds only providers created
+// through the IAM API, and those are loaded into STS here.
+//
+// A provider stored under the same ARN as a config-file provider takes
+// precedence, in the IAM API as in STS, which already prefers IAM-managed
+// providers so that an API call can shadow a bootstrap entry. Deleting the
+// stored provider brings the config-file one back.
+func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig *sts.STSConfig) {
+	// Cancel the old store's retry and switch stores in one step, so a failed
+	// refresh of the old store cannot start a retry after the cancel.
+	m.oidcRetryMu.Lock()
+	m.stopOIDCRetryLocked()
+	m.oidcProviderStore = store
+	m.oidcRetryMu.Unlock()
+	m.staticOIDCProviders = staticOIDCProviderRecords(stsConfig)
+	if _, inMemory := store.(*MemoryOIDCProviderStore); inMemory {
+		ctx := context.Background()
+		now := time.Now().UTC()
+		for _, rec := range m.staticOIDCProviders {
+			mirrored := copyOIDCProviderRecord(rec)
+			mirrored.CreatedAt, mirrored.UpdatedAt = now, now
+			if err := store.StoreProvider(ctx, m.getFilerAddress(), mirrored); err != nil {
+				glog.Warningf("mirror static OIDC provider %s into store: %v", rec.ARN, err)
+			}
+		}
+		// The store now holds them and the API may change them, as before;
+		// the overlay is only for stores that must not hold them.
+		m.staticOIDCProviders = nil
+		return
 	}
-	for _, pc := range config.STS.Providers {
+	// The metadata subscription only reports changes made from now on, so
+	// providers already in the store would stay unknown until one changes; a
+	// failed load is retried (RefreshOIDCProvidersFromStore).
+	if err := m.RefreshOIDCProvidersFromStore(context.Background()); err != nil {
+		glog.Warningf("load OIDC providers from the store at startup: %v; retrying in the background", err)
+	}
+}
+
+// startOIDCRetry retries loading store in the background until it succeeds.
+// A store that is no longer current gets no retry: nothing would cancel it,
+// and its eventual success would replace the current store's providers. When
+// a retry is already running, it is asked to run once more instead, because
+// it may already have listed a snapshot older than this failure.
+func (m *IAMManager) startOIDCRetry(store OIDCProviderStore) {
+	m.oidcRetryMu.Lock()
+	defer m.oidcRetryMu.Unlock()
+	if store != m.oidcProviderStore {
+		return
+	}
+	if m.oidcRetryGen != 0 {
+		m.oidcRetryAgain = true
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.oidcRetrySeq++
+	gen := m.oidcRetrySeq
+	m.cancelOIDCLoad, m.oidcRetryGen = cancel, gen
+	bounds := oidcHydrateRetry // read here, not in the goroutine: it outlives its caller
+	go func() {
+		defer cancel()
+		for {
+			m.retryOIDCProviderLoad(ctx, store, bounds)
+			m.oidcRetryMu.Lock()
+			if m.oidcRetryGen != gen {
+				m.oidcRetryMu.Unlock()
+				return // cancelled: another store was installed
+			}
+			if m.oidcRetryAgain && ctx.Err() == nil {
+				m.oidcRetryAgain = false
+				m.oidcRetryMu.Unlock()
+				continue
+			}
+			m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+			m.oidcRetryMu.Unlock()
+			return
+		}
+	}()
+}
+
+// stopOIDCRetryLocked cancels a running retry, as installing another store
+// must. The caller holds oidcRetryMu.
+func (m *IAMManager) stopOIDCRetryLocked() {
+	if m.cancelOIDCLoad != nil {
+		m.cancelOIDCLoad()
+	}
+	m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+}
+
+// currentOIDCProviderStore is the installed store, read under oidcRetryMu.
+func (m *IAMManager) currentOIDCProviderStore() OIDCProviderStore {
+	m.oidcRetryMu.Lock()
+	defer m.oidcRetryMu.Unlock()
+	return m.oidcProviderStore
+}
+
+// staticOIDCProviderRecords describes the enabled OIDC providers of the IAM
+// config file as provider records.
+func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProviderRecord {
+	out := map[string]*OIDCProviderRecord{}
+	if stsConfig == nil {
+		return out
+	}
+	for _, pc := range stsConfig.Providers {
 		if pc == nil || !pc.Enabled || pc.Type != sts.ProviderTypeOIDC {
 			continue
 		}
 		issuer, _ := pc.Config["issuer"].(string)
 		if issuer == "" {
-			glog.Warningf("OIDC provider %s in static config has empty issuer; skipping mirror to store", pc.Name)
+			glog.Warningf("OIDC provider %s in static config has empty issuer; skipping", pc.Name)
 			continue
 		}
-		accountID := ""
-		if config.STS != nil {
-			accountID = config.STS.AccountId
-		}
-		arn, err := DeriveOIDCProviderARN(accountID, issuer)
+		arn, err := DeriveOIDCProviderARN(stsConfig.AccountId, issuer)
 		if err != nil {
 			glog.Warningf("derive ARN for static OIDC provider %s: %v", pc.Name, err)
 			continue
 		}
-		clientIDs := extractClientIDs(pc.Config)
-		ctx := context.Background()
-		// Preserve CreatedAt across reboots when a persistent store already
-		// has this provider — IAM's GetOpenIDConnectProvider response
-		// shouldn't shift its CreateDate every time the server restarts.
-		now := time.Now().UTC()
-		createdAt := now
-		if existing, err := store.GetProviderByARN(ctx, m.getFilerAddress(), arn); err == nil && existing != nil && !existing.CreatedAt.IsZero() {
-			createdAt = existing.CreatedAt
-		}
-		rec := &OIDCProviderRecord{
-			AccountID:               accountID,
+		out[arn] = &OIDCProviderRecord{
+			AccountID:               stsConfig.AccountId,
 			ARN:                     arn,
 			URL:                     issuer,
-			ClientIDs:               clientIDs,
+			ClientIDs:               extractClientIDs(pc.Config),
 			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
 			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
 			PolicyClaim:             extractString(pc.Config, "policyClaim"),
-			CreatedAt:               createdAt,
-			UpdatedAt:               now,
-		}
-		if err := store.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
-			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
+			// No CreatedAt: a config-file provider has no creation time the
+			// server could report consistently across restarts.
 		}
 	}
-	return nil
+	return out
+}
+
+// oidcHydrateRetry bounds the backoff between startup load attempts.
+var oidcHydrateRetry = struct{ initial, max time.Duration }{initial: time.Second, max: 30 * time.Second}
+
+// retryOIDCProviderLoad retries loading store, the store it was started for,
+// until it succeeds or ctx is cancelled because another store was installed.
+// It calls refreshOIDCProvidersFrom, not RefreshOIDCProvidersFromStore, so it
+// never schedules a retry of its own.
+func (m *IAMManager) retryOIDCProviderLoad(ctx context.Context, store OIDCProviderStore, bounds struct{ initial, max time.Duration }) {
+	delay := bounds.initial
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		err := m.refreshOIDCProvidersFrom(ctx, store)
+		if err == nil {
+			glog.V(0).Infof("loaded OIDC providers from the store after retrying")
+			return
+		}
+		glog.V(1).Infof("load OIDC providers from the store: %v; retrying in %v", err, delay)
+		if delay *= 2; delay > bounds.max {
+			delay = bounds.max
+		}
+	}
 }
 
 // refreshOIDCProvidersBestEffort calls RefreshOIDCProvidersFromStore and
@@ -626,23 +908,106 @@ func (m *IAMManager) refreshOIDCProvidersBestEffort(ctx context.Context, op, arn
 // the store is empty (clears the IAM-managed map). Records with empty URLs
 // or invalid configuration are logged and skipped so a single bad entry
 // does not stop the rest from refreshing.
+//
+// A refresh that fails keeps retrying in the background until the store
+// answers. Every caller needs that: a metadata-subscription event reports each
+// change ONCE, so a refresh that found the filer unreachable on it would leave
+// a peer's new provider untrusted, or a deleted one trusted, until an unrelated
+// later change; the refresh after a local IAM API mutation and the startup load
+// have the same shape. At most one retry runs.
 func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
-	if m.oidcProviderStore == nil || m.stsService == nil {
+	store := m.currentOIDCProviderStore()
+	err := m.refreshOIDCProvidersFrom(ctx, store)
+	if err != nil && store != nil {
+		m.startOIDCRetry(store)
+	}
+	return err
+}
+
+// refreshOIDCProvidersFrom is RefreshOIDCProvidersFromStore for a given store.
+func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCProviderStore) error {
+	if store == nil || m.stsService == nil {
 		return nil
 	}
-	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	// Refreshes run concurrently: after an IAM API change, on a peer's change
+	// and in the startup retry. Unserialized, a refresh that read the store
+	// before a DeleteOIDCProvider could finish after that call's own refresh
+	// and keep the deleted provider trusted.
+	m.oidcRefreshMu.Lock()
+	defer m.oidcRefreshMu.Unlock()
+	records, err := store.ListProviders(ctx, m.getFilerAddress())
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
 	}
+	// A snapshot of a store that has since been replaced must not replace the
+	// current store's providers: a retry is cancelled when another store is
+	// installed, and a refresh may have listed the old store just before.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if store != m.currentOIDCProviderStore() {
+		return fmt.Errorf("list OIDC providers: the store was replaced during the refresh")
+	}
 	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
+	if m.oidcManagedProviders == nil {
+		m.oidcManagedProviders = make(map[string]*oidcManagedProvider)
+	}
+	seen := make(map[string]struct{}, len(records))
+	// Records for one issuer with identical validation settings share a single
+	// provider — and with it the consumed-token (jti) replay store — so a token
+	// spent through one account's record stays spent through the other's too.
+	sharedProviders := make(map[string]*oidc.OIDCProvider)
 	for _, rec := range records {
 		if rec == nil || rec.URL == "" {
 			continue
 		}
-		provider, err := buildOIDCProviderFromRecord(rec)
-		if err != nil {
-			glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
-			continue
+		key := rec.ARN
+		if key == "" {
+			key = rec.URL + "\x00" + rec.AccountID
+		}
+		seen[key] = struct{}{}
+		fingerprint := oidcProviderFingerprint(rec)
+		configFingerprint := oidcProviderConfigFingerprint(rec)
+		var provider *oidc.OIDCProvider
+		cached := m.oidcManagedProviders[key]
+		if shared, ok := sharedProviders[configFingerprint]; ok {
+			provider = shared
+			if cached != nil && cached.provider != nil && cached.provider != shared {
+				// The record's own provider is superseded; its consumed
+				// tokens move to the shared store so none reopen for replay.
+				shared.MergeReplayStateFrom(cached.provider)
+			}
+			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
+			if cached != nil && cached.provider != nil && cached.provider != shared && !m.oidcProviderStillReferenced(cached.provider) {
+				if err := cached.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown superseded OIDC provider %s: %v", rec.ARN, err)
+				}
+			}
+		} else if cached != nil && cached.fingerprint == fingerprint {
+			provider = cached.provider
+			sharedProviders[configFingerprint] = provider
+		} else {
+			var err error
+			provider, err = buildOIDCProviderFromRecord(rec)
+			if err != nil {
+				delete(m.oidcManagedProviders, key)
+				glog.Warningf("skip refreshing OIDC provider %s: %v", rec.ARN, err)
+				continue
+			}
+			if cached != nil && cached.provider != nil {
+				// The rebuild must keep rejecting tokens the replaced
+				// provider consumed; carry its replay store over, then stop
+				// its cleanup worker so only the new one sweeps the store —
+				// unless another record still references that provider.
+				provider.AdoptReplayStateFrom(cached.provider)
+			}
+			sharedProviders[configFingerprint] = provider
+			m.oidcManagedProviders[key] = &oidcManagedProvider{fingerprint: fingerprint, provider: provider}
+			if cached != nil && cached.provider != nil && !m.oidcProviderStillReferenced(cached.provider) {
+				if err := cached.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown replaced OIDC provider %s: %v", rec.ARN, err)
+				}
+			}
 		}
 		// Multiple records may share an issuer when each is scoped to a
 		// different account; STS picks the right one at validation time
@@ -652,8 +1017,69 @@ func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
 			Provider:  provider,
 		})
 	}
+	for key, managed := range m.oidcManagedProviders {
+		if _, ok := seen[key]; !ok {
+			delete(m.oidcManagedProviders, key)
+			// A removed record's provider may be shared by records that are
+			// still present; shut it down only when nothing references it.
+			if managed.provider != nil && !m.oidcProviderStillReferenced(managed.provider) {
+				if err := managed.provider.Shutdown(ctx); err != nil {
+					glog.Warningf("shutdown removed OIDC provider %s: %v", key, err)
+				}
+			}
+		}
+	}
 	m.stsService.SetIAMManagedOIDCProviders(byIssuer)
 	return nil
+}
+
+// oidcManagedProvider is a runtime provider together with the fingerprint of
+// the record it was built from.
+type oidcManagedProvider struct {
+	fingerprint string
+	provider    *oidc.OIDCProvider
+}
+
+// oidcProviderStillReferenced reports whether any managed record still points
+// at the provider, so a shared provider is not shut down with a removed record.
+func (m *IAMManager) oidcProviderStillReferenced(provider *oidc.OIDCProvider) bool {
+	for _, managed := range m.oidcManagedProviders {
+		if managed.provider == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// oidcProviderFingerprint identifies the record content a provider was built
+// from, so a refresh rebuilds the provider only when that content changed.
+func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
+	key, _ := json.Marshal(struct {
+		ARN                     string
+		AccountID               string
+		URL                     string
+		ClientIDs               []string
+		Thumbprints             []string
+		AllowedPrincipalTagKeys []string
+		PolicyClaim             string
+	}{rec.ARN, rec.AccountID, rec.URL, rec.ClientIDs, rec.Thumbprints, rec.AllowedPrincipalTagKeys, rec.PolicyClaim})
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
+}
+
+// oidcProviderConfigFingerprint identifies the validation settings a provider
+// is built from — everything buildOIDCProviderFromRecord consumes except the
+// record's name — so records that differ only in identity reuse one provider.
+func oidcProviderConfigFingerprint(rec *OIDCProviderRecord) string {
+	key, _ := json.Marshal(&oidc.OIDCConfig{
+		Issuer:                  rec.URL,
+		ClientIDs:               rec.ClientIDs,
+		Thumbprints:             rec.Thumbprints,
+		AllowedPrincipalTagKeys: rec.AllowedPrincipalTagKeys,
+		PolicyClaim:             rec.PolicyClaim,
+	})
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
 }
 
 // buildOIDCProviderFromRecord turns a stored record into a runtime
@@ -664,9 +1090,11 @@ func buildOIDCProviderFromRecord(rec *OIDCProviderRecord) (*oidc.OIDCProvider, e
 		return nil, fmt.Errorf("record cannot be nil")
 	}
 	cfg := &oidc.OIDCConfig{
-		Issuer:      rec.URL,
-		ClientIDs:   append([]string(nil), rec.ClientIDs...),
-		Thumbprints: append([]string(nil), rec.Thumbprints...),
+		Issuer:                  rec.URL,
+		ClientIDs:               append([]string(nil), rec.ClientIDs...),
+		Thumbprints:             append([]string(nil), rec.Thumbprints...),
+		AllowedPrincipalTagKeys: append([]string(nil), rec.AllowedPrincipalTagKeys...),
+		PolicyClaim:             rec.PolicyClaim,
 	}
 	provider := oidc.NewOIDCProvider(rec.ARN)
 	if err := provider.Initialize(cfg); err != nil {
@@ -800,13 +1228,50 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
+	if err := PrepareRoleDefinition(roleName, roleDef); err != nil {
+		return err
+	}
+	if roleDef.RoleId == "" {
+		roleDef.RoleId = NewRoleID()
+	}
 
+	// Store role definition
+	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
+}
+
+// UpdateRole changes a role atomically in the role store (see
+// RoleStore.UpdateRole). update receives the role's current definition, nil
+// when it does not exist, and its result is validated like CreateRole's; a
+// nil result deletes the role.
+// The IAM API's role actions use it, so a change made on one S3 server is
+// neither lost to a concurrent change on another nor written over a delete.
+func (m *IAMManager) UpdateRole(ctx context.Context, roleName string, update RoleUpdate) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	return m.roleStore.UpdateRole(ctx, "", roleName, func(current *RoleDefinition) (*RoleDefinition, error) {
+		next, err := update(current)
+		if err != nil || next == nil {
+			return next, err
+		}
+		if err := PrepareRoleDefinition(roleName, next); err != nil {
+			return nil, err
+		}
+		return next, nil
+	})
+}
+
+// PrepareRoleDefinition applies CreateRole's defaults and validation to a role
+// about to be stored or loaded.
+func PrepareRoleDefinition(roleName string, roleDef *RoleDefinition) error {
 	if roleName == "" {
 		return fmt.Errorf("role name cannot be empty")
 	}
-
 	if roleDef == nil {
 		return fmt.Errorf("role definition cannot be nil")
+	}
+	if roleDef.RoleName == "" {
+		roleDef.RoleName = roleName
 	}
 
 	// Set role ARN if not provided
@@ -827,12 +1292,122 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 			return fmt.Errorf("MaxSessionDuration must be between 3600 and 43200 seconds, got %d", roleDef.MaxSessionDuration)
 		}
 	}
+	return nil
+}
 
-	// Store role definition
-	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
+// LoadStaticRoles installs the roles of the IAM config file.
+//
+// An in-memory store holds them as records, as it always has. A persistent
+// store never does: it outlives this process and may be shared by S3 servers
+// with different config files, so a record written from one file would
+// outlive its removal from that file and be honoured by every server. Those
+// roles are served from memory instead, ahead of the store, and cannot be
+// changed or deleted through the store (ErrRoleStatic). A role stored under
+// the same name takes precedence. They report no creation time.
+func (m *IAMManager) LoadStaticRoles(ctx context.Context, roles []*RoleDefinition) {
+	defs := make(map[string]*RoleDefinition, len(roles))
+	for _, role := range roles {
+		if role == nil {
+			continue
+		}
+		role.Source = RoleSourceStaticConfig
+		if role.RoleId == "" {
+			role.RoleId = StaticRoleID(role)
+		}
+		if err := PrepareRoleDefinition(role.RoleName, role); err != nil {
+			glog.Warningf("Failed to load role %s: %v", role.RoleName, err)
+			continue
+		}
+		defs[role.RoleName] = role
+	}
+	m.staticRoles = defs
+	m.installRoleStore(ctx, m.roleStore)
+}
+
+// installRoleStore makes store the role store, with the config-file roles
+// installed in it as LoadStaticRoles describes, so a store set after startup
+// behaves like the one set at startup.
+func (m *IAMManager) installRoleStore(ctx context.Context, store RoleStore) {
+	if overlay, ok := store.(*staticRoleOverlay); ok {
+		store = overlay.inner
+	}
+	if store == nil || m.staticRoles == nil {
+		m.roleStore = store
+		return
+	}
+	if _, inMemory := store.(*MemoryRoleStore); inMemory {
+		for name, role := range m.staticRoles {
+			if err := store.StoreRole(ctx, "", name, role); err != nil {
+				glog.Warningf("Failed to create role %s: %v", name, err)
+			}
+		}
+		m.roleStore = store
+		return
+	}
+	m.roleStore = &staticRoleOverlay{static: m.staticRoles, inner: store}
 }
 
 // GetRole retrieves a role definition by name.
+// ListRoles returns every stored role definition.
+func (m *IAMManager) ListRoles(ctx context.Context) ([]*RoleDefinition, error) {
+	if !m.initialized {
+		return nil, fmt.Errorf("IAM manager not initialized")
+	}
+	names, err := m.roleStore.ListRoles(ctx, m.getFilerAddress())
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	roles := make([]*RoleDefinition, 0, len(names))
+	for _, name := range names {
+		role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), name)
+		if errors.Is(err, ErrRoleNotFound) {
+			continue // deleted between list and read
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get role %s: %w", name, err)
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
+}
+
+// DeleteRole removes a role definition.
+func (m *IAMManager) DeleteRole(ctx context.Context, roleName string) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	return m.roleStore.DeleteRole(ctx, m.getFilerAddress(), roleName)
+}
+
+// InvalidateRoleCache drops any cached role definitions, so a change written
+// to the store by a peer is seen on the next lookup rather than after the
+// cache TTL.
+func (m *IAMManager) InvalidateRoleCache() {
+	if cached, ok := m.roleStore.(interface{ ClearCache() }); ok {
+		cached.ClearCache()
+	}
+}
+
+// RoleStoreDirectory is the filer directory the role store keeps roles in,
+// its configured basePath; empty when the store is not filer-backed. S3
+// servers watch it to drop cached roles when a peer changes one.
+func (m *IAMManager) RoleStoreDirectory() string {
+	store := m.roleStore
+	if overlay, ok := store.(*staticRoleOverlay); ok {
+		store = overlay.inner
+	}
+	if cached, ok := store.(*GenericCachedRoleStore); ok {
+		store = cached.adapter.store
+	}
+	if filerStore, ok := store.(*FilerRoleStore); ok {
+		return filerStore.basePath
+	}
+	return ""
+}
+
 func (m *IAMManager) GetRole(ctx context.Context, roleName string) (*RoleDefinition, error) {
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
@@ -942,7 +1517,8 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	// Apply role-level MaxSessionDuration cap. The STS service still applies
 	// the global MaxSessionLength and the source-token-expiry cap on top of
 	// this; per-role takes precedence whenever it is the tightest bound.
-	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds(), m.maxSessionLengthSeconds())
+	request.RoleId = roleDef.RoleId
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
@@ -1005,22 +1581,54 @@ func extractIssuerFromJWT(token string) (string, error) {
 	return iss, nil
 }
 
-// capDurationByRole returns the requested duration clamped to the role's
-// MaxSessionDuration. A nil requested duration is left nil so the STS
-// service's calculateSessionDuration applies the global default (typically
-// 1 hour) — substituting the role's max here would silently mint a 12h
-// session for any caller who omitted DurationSeconds, which AWS does not
-// do. The role-max upper bound still applies in the downstream cap chain
-// once the request has a concrete duration.
-func capDurationByRole(requested *int64, roleMax int64) *int64 {
-	if roleMax <= 0 || requested == nil {
-		return requested
+// capDurationByRole returns the session duration clamped to the role's
+// MaxSessionDuration. An omitted DurationSeconds resolves to the configured
+// default first, so the role bound caps defaults and explicit values alike.
+// A nil request is only materialized when something tightened the default
+// and the explicit value still passes the service's own input validation —
+// everything else is left nil so the service resolves the default and its
+// MaxSessionLength cap itself.
+func capDurationByRole(requested *int64, roleMax, defaultSec, serviceMaxSec int64) *int64 {
+	if requested != nil {
+		d := *requested
+		if roleMax > 0 && d > roleMax {
+			d = roleMax
+		}
+		return &d
 	}
-	if *requested > roleMax {
-		v := roleMax
-		return &v
+	d := defaultSec
+	if roleMax > 0 && d > roleMax {
+		d = roleMax
 	}
-	return requested
+	if d > serviceMaxSec {
+		d = serviceMaxSec
+	}
+	if d < 900 && roleMax > 0 {
+		d = 900
+	}
+	if d >= defaultSec || d < 900 {
+		return nil
+	}
+	return &d
+}
+
+func (m *IAMManager) defaultTokenDurationSeconds() int64 {
+	if m.stsService == nil || m.stsService.Config == nil {
+		return sts.DefaultTokenDuration
+	}
+	return int64(m.stsService.Config.TokenDuration.Duration / time.Second)
+}
+
+// maxSessionLengthSeconds mirrors validateSessionDurationSeconds so a
+// materialized default stays inside the bound the service will enforce.
+func (m *IAMManager) maxSessionLengthSeconds() int64 {
+	maxSec := int64(sts.DefaultMaxSessionLength)
+	if m.stsService != nil && m.stsService.Config != nil && m.stsService.Config.MaxSessionLength.Duration > 0 {
+		if configured := int64(m.stsService.Config.MaxSessionLength.Duration / time.Second); configured >= 900 {
+			maxSec = configured
+		}
+	}
+	return maxSec
 }
 
 // AssumeRoleWithCredentials assumes a role using credentials (LDAP)
@@ -1044,9 +1652,10 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	}
 
 	// Apply role-level MaxSessionDuration cap.
-	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds(), m.maxSessionLengthSeconds())
 
 	// Use STS service to assume the role
+	request.RoleId = roleDef.RoleId
 	return m.stsService.AssumeRoleWithCredentials(ctx, request)
 }
 
@@ -1060,6 +1669,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// We always try to validate with the internal STS service first if it's a SeaweedFS token.
 	// This ensures that session policies embedded in the token are correctly extracted and enforced.
 	var sessionInfo *sts.SessionInfo
+	// boundRole is the role a session carrying a role ID was checked against;
+	// its policies are the ones evaluated, so the check and the evaluation
+	// see one definition even if the role is replaced in between.
+	var boundRole *RoleDefinition
 	if request.SessionToken != "" {
 		// Parse unverified to check issuer
 		parsed, _, err := new(jwt.Parser).ParseUnverified(request.SessionToken, jwt.MapClaims{})
@@ -1091,6 +1704,9 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				if revoked {
 					return false, fmt.Errorf("session has been revoked")
 				}
+			}
+			if boundRole, err = m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
+				return false, err
 			}
 		}
 	}
@@ -1188,9 +1804,12 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				policies = user.GetPolicyNames()
 			} else {
 				// Get role definition
-				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-				if err != nil {
-					return false, fmt.Errorf("role not found: %s", roleName)
+				roleDef := boundRole
+				if roleDef == nil || roleDef.RoleName != roleName {
+					roleDef, err = m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+					if err != nil {
+						return false, fmt.Errorf("role not found: %s", roleName)
+					}
 				}
 
 				hasManagedSubject = true
@@ -1653,4 +2272,25 @@ func (m *IAMManager) ValidateTrustPolicyForCredentials(ctx context.Context, role
 
 	// Use existing trust policy validation logic
 	return m.validateTrustPolicyForCredentials(ctx, roleDef, mockRequest)
+}
+
+// PrepareOIDCProviderRecord builds and validates the record that
+// CreateOpenIDConnectProvider stores for an issuer, deriving its ARN from the
+// account ID and issuer URL.
+func PrepareOIDCProviderRecord(accountID, issuerURL string, clientIDs, thumbprints []string) (*OIDCProviderRecord, error) {
+	arn, err := DeriveOIDCProviderARN(accountID, issuerURL)
+	if err != nil {
+		return nil, err
+	}
+	rec := &OIDCProviderRecord{
+		AccountID:   accountID,
+		ARN:         arn,
+		URL:         issuerURL,
+		ClientIDs:   append([]string(nil), clientIDs...),
+		Thumbprints: append([]string(nil), thumbprints...),
+	}
+	if err := validateOIDCProviderRecord(rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }

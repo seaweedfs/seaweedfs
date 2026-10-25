@@ -1,8 +1,10 @@
 package ec
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/stretchr/testify/assert"
 )
@@ -99,4 +101,83 @@ func TestEcShardStringRoundTrips(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, []*ShardRef{s}, got)
 	}
+}
+
+func unmountTestTopology(nodes map[string]map[string][]uint32) *master_pb.TopologyInfo {
+	var dataNodes []*master_pb.DataNodeInfo
+	for addr, disks := range nodes {
+		diskInfos := map[string]*master_pb.DiskInfo{}
+		for disk, shardIds := range disks {
+			si := erasure_coding.NewShardsInfo()
+			for _, sid := range shardIds {
+				si.Set(erasure_coding.NewShardInfo(erasure_coding.ShardId(sid), 1))
+			}
+			diskInfos[disk] = &master_pb.DiskInfo{
+				Type:           "hdd",
+				MaxVolumeCount: 100,
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+					Id:          100,
+					Collection:  "c1",
+					EcIndexBits: si.Bitmap(),
+					ShardSizes:  si.SizesInt64(),
+					DiskType:    "hdd",
+				}},
+			}
+		}
+		dataNodes = append(dataNodes, &master_pb.DataNodeInfo{
+			Id:        addr,
+			Address:   addr,
+			DiskInfos: diskInfos,
+		})
+	}
+	return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+		Id:        "dc1",
+		RackInfos: []*master_pb.RackInfo{{Id: "r1", DataNodeInfos: dataNodes}},
+	}}}
+}
+
+// A shard held on two disks of one node is a single unmount target: the
+// unmount RPC addresses the node, not the disk.
+func TestUnmountResolvesShardDuplicatedOnOneNode(t *testing.T) {
+	topo := unmountTestTopology(map[string]map[string][]uint32{
+		"vs3:8080": {"hdd:0": {12}, "hdd:1": {12}},
+		"vs4:8080": {"hdd:0": {13}},
+	})
+
+	for _, shards := range [][]*ShardRef{
+		{{ShardID: 12}},
+		{{ShardID: 12, NodeAddress: "vs3:8080"}},
+	} {
+		var out bytes.Buffer
+		err := UnmountShards(&Env{}, &out, ShardUnmountRequest{
+			Topology: topo,
+			VolumeID: 100,
+			Shards:   shards,
+		})
+		assert.NoError(t, err, "shard %+v", shards)
+		assert.Contains(t, out.String(), "Will unmount 1 shard(s)")
+	}
+}
+
+func TestUnmountStillRejectsShardOnTwoNodes(t *testing.T) {
+	topo := unmountTestTopology(map[string]map[string][]uint32{
+		"vs3:8080": {"hdd:0": {12}},
+		"vs4:8080": {"hdd:0": {12}},
+	})
+
+	var out bytes.Buffer
+	err := UnmountShards(&Env{}, &out, ShardUnmountRequest{
+		Topology: topo,
+		VolumeID: 100,
+		Shards:   []*ShardRef{{ShardID: 12}},
+	})
+	assert.ErrorContains(t, err, "ambiguous")
+
+	out.Reset()
+	err = UnmountShards(&Env{}, &out, ShardUnmountRequest{
+		Topology: topo,
+		VolumeID: 100,
+		Shards:   []*ShardRef{{ShardID: 12, NodeAddress: "vs3:8080"}},
+	})
+	assert.NoError(t, err)
 }

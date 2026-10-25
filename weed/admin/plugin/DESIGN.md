@@ -180,9 +180,9 @@ Phase 4 status (starter)
 
 Run example:
 - Start admin: `weed admin -master=localhost:9333`
-- Start worker: `weed worker -admin=localhost:23646`
-- Optional explicit job type: `weed worker -admin=localhost:23646 -jobType=vacuum`
-- Optional stable worker ID persistence: `weed worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin`
+- Start worker: `weed worker -admin=localhost:12535`
+- Optional explicit job type: `weed worker -admin=localhost:12535 -jobType=vacuum`
+- Optional stable worker ID persistence: `weed worker -admin=localhost:12535 -workingDir=/var/lib/seaweedfs-plugin`
 
 Phase 5
 - Migrate remaining job types and deprecate old mechanism.

@@ -131,6 +131,12 @@ impl Store {
                     let Some(base) = name.strip_suffix(".ecx") else {
                         continue;
                     };
+                    // A 0-byte .ecx is a corrupt stub from a failed copy, not a
+                    // credible owner — skip it so the scan keeps looking for a
+                    // real index on a sibling disk (Go's indexEcxOwners).
+                    if !ent.metadata().is_ok_and(|m| m.len() > 0) {
+                        continue;
+                    }
                     let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
                         continue;
                     };
@@ -416,5 +422,34 @@ mod tests {
 
         let post = fs::read(dir0.join(format!("{}_{}.ecx", collection, vid))).unwrap();
         assert_eq!(post, ecx_local, "mirror overwrote dir0's existing .ecx");
+    }
+
+    /// The mirror shares Go's indexEcxOwners, which skips a 0-byte `.ecx`:
+    /// a stub must not be chosen as the source to mirror from.
+    #[test]
+    fn mirror_owner_index_skips_zero_byte_ecx() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        fs::create_dir_all(&dir0).unwrap();
+        fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "video-recordings";
+        let vid = 4123u32;
+        plant_ecx(&dir0, collection, vid, b"");
+        plant_ecx(&dir1, collection, vid, &[0xA1u8; 20]);
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        add_loc(&mut store, &dir0);
+        add_loc(&mut store, &dir1);
+
+        let owners = store.index_ecx_owners_for_mirror();
+        let owner = owners
+            .get(&EcKey {
+                collection: collection.to_string(),
+                vid: VolumeId(vid),
+            })
+            .expect("the valid .ecx on disk 1 must be indexed");
+        assert_eq!(owner.location, 1);
     }
 }

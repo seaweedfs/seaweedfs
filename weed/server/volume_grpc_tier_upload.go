@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -92,8 +93,9 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}
 
-	// save the remote file to volume tier info
-	v.GetVolumeInfo().Files = append(v.GetVolumeInfo().GetFiles(), &volume_server_pb.RemoteFile{
+	// record the remote file and switch to it, unless a compaction commit
+	// replaced the .dat while it was being copied
+	if err := v.AttachRemoteDatFile(diskFile, &volume_server_pb.RemoteFile{
 		BackendType:  backendType,
 		BackendId:    backendId,
 		Key:          key,
@@ -101,15 +103,23 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		FileSize:     uint64(size),
 		ModifiedTime: uint64(modTime.Unix()),
 		Extension:    ".dat",
-	})
-
-	if err := v.SaveVolumeInfo(); err != nil {
-		return fmt.Errorf("volume %d failed to save remote file info: %v", v.Id, err)
+	}); err != nil {
+		// Remove the copy unless the .vif already names it.
+		recorded := false
+		for _, f := range v.GetVolumeInfo().GetFiles() {
+			if f.Key == key && f.BackendType == backendType && f.BackendId == backendId {
+				recorded = true
+			}
+		}
+		if !recorded {
+			if delErr := backendStorage.DeleteFile(key); delErr != nil {
+				glog.Warningf("volume %d: remove unused remote copy %s: %v", v.Id, key, delErr)
+			}
+		}
+		return fmt.Errorf("volume %d failed to attach remote file: %v", v.Id, err)
 	}
-
-	if err := v.LoadRemoteFile(); err != nil {
-		return fmt.Errorf("volume %d failed to load remote file: %v", v.Id, err)
-	}
+	// Deletes must reach the index now, not only after the next restart.
+	v.MarkTieredDeletable()
 
 	if !req.KeepLocalDatFile {
 		os.Remove(v.FileName(".dat"))

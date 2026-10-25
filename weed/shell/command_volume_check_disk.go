@@ -759,6 +759,7 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 			vcd.writeVerbose("delete %s %s => %s", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 		}
 		deleteResults := operation.DeleteFileIdsAtOneVolumeServer(
+			context.Background(),
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
 			vcd.grpcDialOption(), fidList, false)
 

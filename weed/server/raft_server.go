@@ -60,6 +60,10 @@ func (s StateMachine) Save() ([]byte, error) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 		TopologyId:  s.topo.GetTopologyId(),
 	}
+	if s.topo.IsGrowthFrozen() {
+		state.GrowthFrozen = new(bool)
+		*state.GrowthFrozen = true
+	}
 	glog.V(1).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
 }
@@ -75,6 +79,12 @@ func (s StateMachine) Recovery(data []byte) error {
 	if state.TopologyId != "" {
 		s.topo.SetTopologyId(state.TopologyId)
 		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
+	}
+	if state.GrowthFrozen != nil {
+		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 	return nil
 }
@@ -95,16 +105,25 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
 	}
+	if state.GrowthFrozen != nil {
+		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
+	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
 	return nil
 }
 
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
-	return &topology.MaxVolumeIdCommand{
-		MaxVolumeId: s.topo.GetMaxVolumeId(),
-		TopologyId:  s.topo.GetTopologyId(),
-	}, nil
+	frozen := s.topo.IsGrowthFrozen()
+	state := &topology.MaxVolumeIdCommand{
+		MaxVolumeId:  s.topo.GetMaxVolumeId(),
+		TopologyId:   s.topo.GetTopologyId(),
+		GrowthFrozen: &frozen,
+	}
+	return state, nil
 }
 
 func (s *StateMachine) Restore(r io.ReadCloser) error {
@@ -163,6 +182,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), os.ModePerm); err != nil {
 		return nil, err
 	}
+	option.Topo.SetMaxVolumeIdFile(path.Join(s.dataDir, "max_volume_id"))
 
 	stateMachine := StateMachine{topo: option.Topo}
 	s.raftServer, err = raft.NewServer(string(s.serverAddr), s.dataDir, transporter, stateMachine, option.Topo, s.serverAddr.ToGrpcAddress())

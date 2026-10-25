@@ -30,8 +30,14 @@ func recoverTopologyIdFromState(fsmState []byte, topo *topology.Topology) {
 // It uses the provided checkLeaderFn to verify leadership and persistFn to save the new ID.
 func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persistFn func(string) error) {
 	if topo.GetTopologyId() != "" {
+		// The id arrived through raft replay or the mirror file; reports
+		// stashed while it was unknown can now be checked.
+		topo.SetTopologyInitPending(false)
 		return
 	}
+
+	topo.SetTopologyInitPending(true)
+	defer topo.SetTopologyInitPending(false)
 
 	topologyId := uuid.New().String()
 	for {
@@ -59,6 +65,7 @@ func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persis
 		} else {
 			glog.V(0).Infof("TopologyId generated: %s", topologyId)
 		}
+		topo.DeferAllocation(topo.AllocationDeferralDuration())
 		break
 	}
 }

@@ -125,6 +125,7 @@ Support for all AWS condition operators:
 - **Boolean**: `Bool`
 - **ARN**: `ArnEquals`, `ArnLike`
 - **Null**: `Null`
+- **Set qualifiers**: `ForAllValues:` and `ForAnyValue:` before any of the above, for multi-valued keys such as `s3:RequestObjectTagKeys`
 
 ### 4. Condition Keys
 
@@ -193,9 +194,13 @@ This allows anonymous access only to objects that have a tag `status=public`.
 **Supported Operations for Tag-Based Conditions:**
 
 Tag-based conditions (`s3:ExistingObjectTag/<key>`) are evaluated for the following operations:
-- `s3:GetObject` (GET object)
-- `s3:GetObjectVersion` (GET object with versionId)
-- `s3:HeadObject` (HEAD object)
+- `s3:GetObject` / `s3:GetObjectVersion` / `s3:HeadObject` (object reads, including the source of CopyObject, UploadPartCopy and RenameObject)
+- `s3:DeleteObject` / `s3:DeleteObjectVersion` (single and batch deletes)
+- `s3:GetObjectAcl` / `s3:PutObjectAcl`
+- `s3:GetObjectTagging` / `s3:PutObjectTagging` / `s3:DeleteObjectTagging`
+- `s3:GetObjectAttributes`
+- `s3:GetObjectRetention` / `s3:PutObjectRetention`
+- `s3:GetObjectLegalHold` / `s3:PutObjectLegalHold`
 
 Note: For these conditions to be evaluated, the object must exist and the policy engine re-checks access after fetching the object metadata.
 
@@ -352,6 +357,8 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 | `aws:SecureTransport` | Require HTTPS |
 | `aws:CurrentTime` | Time-based access control |
 | `s3:ExistingObjectTag/<key>` | Tag-based access control for existing objects |
+| `s3:RequestObjectTag/<key>` | Tag conditions on the tags a PUT request sets |
+| `s3:RequestObjectTagKeys` | The set of tag keys a PUT request sets |
 | Wildcard Patterns | Support for `*` and `?` in actions and resources |
 | Principal Matching | `*`, account IDs, and user ARNs |
 
@@ -359,8 +366,6 @@ The policy engine provides a seamless upgrade path from SeaweedFS's existing sim
 
 | Feature | GitHub Issue |
 |---------|--------------|
-| `s3:RequestObjectTag/<key>` | For tag conditions on PUT requests |
-| `s3:RequestObjectTagKeys` | Check which tag keys are in request |
 | `s3:x-amz-content-sha256` | Content hash condition |
 | `s3:x-amz-server-side-encryption` | SSE condition |
 | `s3:x-amz-storage-class` | Storage class condition |

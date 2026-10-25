@@ -46,17 +46,19 @@ const (
 )
 
 type MasterOptions struct {
-	port                       *int
-	portGrpc                   *int
-	ip                         *string
-	ipBind                     *string
-	metaFolder                 *string
-	peers                      *string
-	mastersDeprecated          *string // deprecated, for backward compatibility in master.follower
-	volumeSizeLimitMB          *uint
-	fileSizeLimitMB            *int
-	volumePreallocate          *bool
-	maxParallelVacuumPerServer *int
+	port                          *int
+	portGrpc                      *int
+	ip                            *string
+	ipBind                        *string
+	metaFolder                    *string
+	peers                         *string
+	mastersDeprecated             *string // deprecated, for backward compatibility in master.follower
+	volumeSizeLimitMB             *uint
+	fileSizeLimitMB               *int
+	volumePreallocate             *bool
+	maxParallelVacuumPerServer    *int
+	vacuumIntervalSeconds         *int
+	vacuumDeleteEmptyAfterSeconds *int
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -92,7 +94,9 @@ func init() {
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
 	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
-	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
+	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server; 0 for no limit (deprecated, use master.vacuum.max_parallel_per_server in master.toml)")
+	m.vacuumIntervalSeconds = cmdMaster.Flag.Int("vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
+	m.vacuumDeleteEmptyAfterSeconds = cmdMaster.Flag.Int("vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
@@ -467,12 +471,14 @@ func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
-		Master:                     masterAddress,
-		MetaFolder:                 *m.metaFolder,
-		VolumeSizeLimitMB:          uint32(*m.volumeSizeLimitMB),
-		FileSizeLimitMB:            *m.fileSizeLimitMB,
-		VolumePreallocate:          *m.volumePreallocate,
-		MaxParallelVacuumPerServer: *m.maxParallelVacuumPerServer,
+		Master:                        masterAddress,
+		MetaFolder:                    *m.metaFolder,
+		VolumeSizeLimitMB:             uint32(*m.volumeSizeLimitMB),
+		FileSizeLimitMB:               *m.fileSizeLimitMB,
+		VolumePreallocate:             *m.volumePreallocate,
+		MaxParallelVacuumPerServer:    *m.maxParallelVacuumPerServer,
+		VacuumIntervalSeconds:         *m.vacuumIntervalSeconds,
+		VacuumDeleteEmptyAfterSeconds: *m.vacuumDeleteEmptyAfterSeconds,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,
@@ -482,5 +488,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,
+		SingleMaster:            isSingleMasterMode(*m.peers),
 	}
 }

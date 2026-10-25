@@ -79,6 +79,15 @@ func (store *LevelDBStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
+var syncWriteOptions = &opt.WriteOptions{Sync: true}
+
+func writeOptions(ctx context.Context) *opt.WriteOptions {
+	if filer.SyncWrite(ctx) {
+		return syncWriteOptions
+	}
+	return nil
+}
+
 func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 
@@ -91,7 +100,7 @@ func (store *LevelDBStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		value = weed_util.MaybeGzipData(value)
 	}
 
-	err = store.db.Put(key, value, nil)
+	err = store.db.Put(key, value, writeOptions(ctx))
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -168,7 +177,7 @@ func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 func (store *LevelDBStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
-	err = store.db.Delete(key, nil)
+	err = store.db.Delete(key, writeOptions(ctx))
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -195,7 +204,7 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	}
 	iter.Release()
 
-	err = store.db.Write(batch, nil)
+	err = store.db.Write(batch, writeOptions(ctx))
 
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -212,7 +221,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
-	if startFileName != "" {
+	if startFileName > prefix {
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 

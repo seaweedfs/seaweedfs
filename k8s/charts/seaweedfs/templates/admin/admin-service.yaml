@@ -37,6 +37,16 @@ spec:
     nodePort: {{ $nodePorts.grpc }}
     {{- end }}
     protocol: TCP
+  {{- if gt (int .Values.admin.legacyPort) 0 }}
+  - name: "legacy-http"
+    port: {{ .Values.admin.legacyPort }}
+    targetPort: {{ .Values.admin.legacyPort }}
+    protocol: TCP
+  - name: "legacy-grpc"
+    port: {{ add (int .Values.admin.legacyPort) 10000 }}
+    targetPort: {{ add (int .Values.admin.legacyPort) 10000 }}
+    protocol: TCP
+  {{- end }}
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}

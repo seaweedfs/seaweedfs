@@ -50,10 +50,10 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	}
 	w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
 
-	ifMatchETagHeader := r.Header.Get("If-Match")
+	ifMatchValues := r.Header.Values("If-Match")
 	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
-	if ifMatchETagHeader != "" {
-		if util.CanonicalizeETag(etag) != util.CanonicalizeETag(ifMatchETagHeader) {
+	if len(ifMatchValues) != 0 {
+		if !etagListMatches(strings.Join(ifMatchValues, ","), etag, false) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return true
 		}
@@ -66,10 +66,10 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	}
 
-	ifNoneMatchETagHeader := r.Header.Get("If-None-Match")
+	ifNoneMatchValues := r.Header.Values("If-None-Match")
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
-	if ifNoneMatchETagHeader != "" {
-		if util.CanonicalizeETag(etag) == util.CanonicalizeETag(ifNoneMatchETagHeader) {
+	if len(ifNoneMatchValues) != 0 {
+		if etagListMatches(strings.Join(ifNoneMatchValues, ","), etag, true) {
 			SetEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
@@ -85,6 +85,52 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	}
 
 	return false
+}
+
+// etagListMatches reports whether an If-Match or If-None-Match value, "*" or a
+// list of entity tags, matches etag (RFC 9110 13.1.1, 13.1.2). If-Match uses the
+// strong comparison, so a weak tag never matches; If-None-Match the weak one.
+func etagListMatches(header, etag string, weak bool) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	for _, tag := range splitETagList(header) {
+		tag = strings.TrimSpace(tag)
+		if strings.HasPrefix(tag, "W/") {
+			if !weak {
+				continue
+			}
+			tag = tag[len("W/"):]
+		}
+		// Empty list elements are ignored, so padding like a trailing
+		// comma cannot match an empty opaque tag.
+		if tag == "" {
+			continue
+		}
+		if util.CanonicalizeETag(tag) == util.CanonicalizeETag(etag) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitETagList splits an entity-tag list on the commas between tags; a comma
+// inside a quoted opaque tag does not split.
+func splitETagList(header string) []string {
+	var tags []string
+	start, quoted := 0, false
+	for i := 0; i < len(header); i++ {
+		switch header[i] {
+		case '"':
+			quoted = !quoted
+		case ',':
+			if !quoted {
+				tags = append(tags, header[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(tags, header[start:])
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
@@ -206,15 +252,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Every part of a multipart Range is prepared on its own, so the origin
 	// preflight below is memoized to one stat per request.
-	statOrigin := sync.OnceValue(func() error {
-		dir, name := entry.FullPath.DirAndName()
-		client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
-		if err != nil {
+	statOriginAt := func(readDir, readName string) func() error {
+		return sync.OnceValue(func() error {
+			client, remoteLocation, err := fs.mountedRemoteClient(ctx, readDir, readName)
+			if err != nil {
+				return err
+			}
+			_, err = client.StatFile(remoteLocation)
 			return err
-		}
-		_, err = client.StatFile(remoteLocation)
-		return err
-	})
+		})
+	}
+	entryDir, entryName := entry.FullPath.DirAndName()
+	statOrigin := statOriginAt(fs.filer.RemoteReadPath(entry, entryDir, entryName))
 
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
@@ -230,13 +279,23 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
+			readDir, readName := fs.filer.RemoteReadPath(entry, dir, name)
 			var mountedLocation *remote_pb.RemoteStorageLocation
 			if fs.filer.RemoteStorage != nil {
 				_, mountedLocation = fs.filer.RemoteStorage.FindMountDirectory(entry.FullPath)
 			}
 			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
 			if cacheWait <= 0 {
-				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size, statOrigin)
+				streamFn, err := fs.streamFromRemoteOnly(ctx, r, readDir, readName, offset, size, statOrigin)
+				if errors.Is(err, filer_pb.ErrNotFound) && (readDir != dir || readName != name) {
+					// the pending copy finished and its source went away since
+					// the entry was read; serve what the entry names now
+					if fresh, findErr := fs.filer.FindEntry(ctx, entry.FullPath); findErr == nil {
+						freshDir, freshName := fs.filer.RemoteReadPath(fresh, dir, name)
+						return fs.streamFromRemoteOnly(ctx, r, freshDir, freshName, offset, size, statOriginAt(freshDir, freshName))
+					}
+				}
+				return streamFn, err
 			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
@@ -264,7 +323,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				// when a later prepare fails; keep those on the 503 retry path.
 				if !strings.Contains(r.Header.Get("Range"), ",") {
 					glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
-					if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {
+					if streamFn, remoteErr := fs.streamFromRemote(ctx, readDir, readName, offset, size); remoteErr == nil {
 						return streamFn, nil
 					} else {
 						glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)

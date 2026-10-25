@@ -29,6 +29,10 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -74,7 +78,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
-		tags, err := s3a.getTags(dir, name)
+		entry, err = s3a.getEntry(dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("GetObjectTaggingHandler %s: %v", r.URL, err)
@@ -85,8 +89,14 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 			}
 			return
 		}
+	}
 
-		writeSuccessResponseXML(w, r, FromTags(tags))
+	action := s3_constants.S3_ACTION_GET_OBJECT_TAGGING
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -129,6 +139,12 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	tags := tagging.ToTags()
+	// A key may appear only once in a tag set; the map keeps one of them.
+	if len(tags) != len(tagging.TagSet.Tag) {
+		glog.Errorf("PutObjectTaggingHandler duplicate tag keys %s", r.URL)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+		return
+	}
 	err = ValidateTags(tags)
 	if err != nil {
 		glog.Errorf("PutObjectTaggingHandler ValidateTags error %s: %v", r.URL, err)
@@ -138,6 +154,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -183,6 +203,15 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
+		putAction := s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
+		if versionId != "" {
+			putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+		}
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, putAction, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
 		if err = s3a.setTags(dir, name, tags); err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("PutObjectTaggingHandler setTags %s: %v", r.URL, err)
@@ -196,6 +225,15 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 		w.WriteHeader(http.StatusOK)
 		s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
+		return
+	}
+
+	putAction := s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
+	if versionId != "" {
+		putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, putAction, entry.Extended, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -256,6 +294,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -301,6 +343,15 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
+		deleteAction := s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
+		if versionId != "" {
+			deleteAction = s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+		}
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, deleteAction, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
 		err := s3a.rmTags(dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
@@ -315,6 +366,15 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 		w.WriteHeader(http.StatusNoContent)
 		s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
+		return
+	}
+
+	deleteAction := s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
+	if versionId != "" {
+		deleteAction = s3_constants.S3_ACTION_DELETE_OBJECT_VERSION_TAGGING
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, deleteAction, entry.Extended, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 

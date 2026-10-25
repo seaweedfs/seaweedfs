@@ -62,6 +62,14 @@ func (v *Volume) garbageLevel() float64 {
 	return float64(deletedSize) / float64(fileSize)
 }
 
+// errTieredVolumeCompact refuses a compaction of a volume whose .dat is in the
+// remote tier: the copy reads the local .dat, which tiering removes (or leaves
+// behind as a stale copy), and the reload after a commit would read the remote
+// object through the compacted index.
+func errTieredVolumeCompact(vid needle.VolumeId) error {
+	return fmt.Errorf("volume %d is tiered to remote storage, cannot compact", vid)
+}
+
 type CompactOptions struct {
 	PreallocateBytes  int64
 	MaxBytesPerSecond int64
@@ -87,6 +95,9 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compacting volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -132,6 +143,9 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 		return nil
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
+	if v.HasRemoteFile() {
+		return errTieredVolumeCompact(v.Id)
+	}
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
@@ -177,10 +191,27 @@ func (v *Volume) CommitCompact() error {
 	}
 	defer v.isCompactionInProgress.Store(false)
 
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
+	if v.HasRemoteFile() {
+		// The volume was tiered after the copy started: the reload would read
+		// the remote object through the compacted index. Drop the copy and its
+		// temporary needle map; no later vacuum of this volume would.
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+		for _, ext := range []string{".cpd", ".cpx", ".cpldb"} {
+			if e := os.RemoveAll(v.FileName(ext)); e != nil {
+				glog.V(0).Infof("remove %s: %v", v.FileName(ext), e)
+			}
+		}
+		return errTieredVolumeCompact(v.Id)
+	}
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
@@ -222,7 +253,17 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e := v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
+	// The write watermark already equals what recoverLastModifiedTs would
+	// rescan, so keep the clock instead of paying for the scan under the lock.
+	// If its write was itself deleted, the reload recovers the newest
+	// surviving write instead.
+	if v.lastWriteAppendAtNs != 0 {
+		v.lastModifiedTsSeconds = v.lastWriteAppendAtNs / uint64(time.Second)
+	}
+	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0 && !v.lastWriteDeleted
+	e := v.load(true, false, v.needleMapKind, 0, v.Version())
+	v.keepLastModifiedTsOnLoad = false
+	if e != nil {
 		return e
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)
@@ -357,6 +398,8 @@ func (v *Volume) cleanupCompact() error {
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll
 	// forward to, so removing them mid-commit would strand a decided swap.
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if util.FileExists(v.FileName(".cpc")) {
@@ -541,7 +584,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
-			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
+			idxEntryBytes = needle_map.ToBytes(key, ToOffset(offset), increIdxEntry.size)
 		} else { //deleted needle
 			//fakeDelNeedle's default Data field is nil
 			fakeDelNeedle := new(needle.Needle)

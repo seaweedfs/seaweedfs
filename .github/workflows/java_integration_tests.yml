@@ -14,6 +14,10 @@ on:
       - 'weed/**'
       - '.github/workflows/java_integration_tests.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 jobs:
   test:
     name: Java Integration Tests
@@ -31,6 +35,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
       
       - name: Set up Java
@@ -38,7 +43,7 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
-          cache: 'maven'
+          cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
       
       - name: Build SeaweedFS
         run: |
@@ -55,6 +60,7 @@ jobs:
           # Start SeaweedFS with optimized settings for CI
           # Include S3 API for s3copier integration tests
           weed server -dir="$WEED_DATA_DIR" \
+            -ip=127.0.0.1 -ip.bind=127.0.0.1 \
             -master.raftHashicorp \
             -master.electionTimeout=1s \
             -master.volumeSizeLimitMB=100 \

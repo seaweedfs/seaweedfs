@@ -15,6 +15,7 @@
 #      automatically assign a valid UID from the namespace's allocated range.
 #   3. Dropping all Linux capabilities and setting allowPrivilegeEscalation: false
 #   4. Enabling RuntimeDefault seccompProfile
+#   5. Using a read-only root filesystem with writable temporary storage
 #
 # Usage:
 #   helm install seaweedfs seaweedfs/seaweedfs \
@@ -49,6 +50,7 @@ master:
   containerSecurityContext:
     enabled: true
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
     runAsNonRoot: true
@@ -76,6 +78,7 @@ volume:
   containerSecurityContext:
     enabled: true
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
     runAsNonRoot: true
@@ -101,6 +104,7 @@ filer:
   containerSecurityContext:
     enabled: true
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
     runAsNonRoot: true
@@ -125,6 +129,7 @@ s3:
   containerSecurityContext:
     enabled: true
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
     runAsNonRoot: true

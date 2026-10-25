@@ -176,10 +176,19 @@ async fn serve_once(
         metadata: Default::default(),
     }))?;
 
-    let mut inbound = client
-        .worker_stream(UnboundedReceiverStream::new(rx))
-        .await?
-        .into_inner();
+    let mut request = tonic::Request::new(UnboundedReceiverStream::new(rx));
+    if let Some(token) = crate::token::admin_token(
+        options.signing_key.as_deref().unwrap_or("").as_bytes(),
+        options.signing_key_expires_after_seconds,
+    ) {
+        request.metadata_mut().insert(
+            "authorization",
+            format!("Bearer {token}")
+                .parse()
+                .context("minted admin token is not valid metadata")?,
+        );
+    }
+    let mut inbound = client.worker_stream(request).await?.into_inner();
 
     let heartbeat = spawn_heartbeat(
         sender.clone(),

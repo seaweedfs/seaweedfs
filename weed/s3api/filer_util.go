@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,23 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 
 	return filer_pb.Mkdir(context.Background(), s3a, parentDirectoryPath, dirName, fn)
 
+}
+
+// mkdirExclusive never replaces an entry already at the path: PutBucket uses
+// it so a plain bucket cannot replace a table bucket created in its
+// check-to-create window.
+func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
+
+	return filer_pb.MkdirExclusive(context.Background(), s3a, parentDirectoryPath, dirName, fn)
+
+}
+
+// concurrentEntryIsForeign: after PutBucket's exclusive mkdir met an entry,
+// whether that entry must be answered BucketAlreadyExists without looking at
+// its owner: a table bucket (it carries no S3 owner and must never read as
+// "owned by you"), or an entry that could not be read.
+func concurrentEntryIsForeign(entry *filer_pb.Entry, err error) bool {
+	return err != nil || entry == nil || s3tables.IsTableBucketEntry(entry)
 }
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {
@@ -75,22 +93,32 @@ func isRetryableListError(err error) bool {
 	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
 }
 
-// listWithRetry replays doList while the filer answers with a transient error.
+// listRetry replays doList while the filer answers with a transient error.
 // Both failure points, the ListEntries call itself and the stream.Recv that
 // follows it, surface as a plain error out of filer_pb.List, so a single retry
-// point above it covers both.
-func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+// point above it covers both. A replayed attempt may re-deliver entries the
+// last attempt already saw, so a doList that accumulates must reset first.
+func listRetry(parentDirectoryPath string, doList func() error) (err error) {
 
 	backoff := listRetryInitialBackoff
 	for attempt := 1; ; attempt++ {
-		entries, isLast, err = doList()
-		if err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
-			return entries, isLast, err
+		if err = doList(); err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
+			return err
 		}
 		glog.V(1).Infof("list %s attempt %d/%d hit a transient error, retrying in %v: %v", parentDirectoryPath, attempt, listRetryAttempts, backoff, err)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
+
+}
+
+func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+
+	err = listRetry(parentDirectoryPath, func() error {
+		entries, isLast, err = doList()
+		return err
+	})
+	return entries, isLast, err
 
 }
 

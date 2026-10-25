@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -34,7 +35,12 @@ const (
 
 type ReadOption struct {
 	// request
-	ReadDeleted     bool
+	ReadDeleted bool
+	// AttemptMetaOnly alone skips the payload only for needles larger than
+	// PagedReadLimit. Setting MustMetaOnly as well skips it at any size.
+	// A compressed needle or a chunk manifest is always read in full, because
+	// the caller needs its data. After the read, IsMetaOnly reports whether
+	// the payload was skipped.
 	AttemptMetaOnly bool
 	MustMetaOnly    bool
 	// response
@@ -56,14 +62,25 @@ type ReadOption struct {
 	ReadBufferSize int
 }
 
+// masterAddress returns the master to ask for volume and shard locations, or
+// "" while no leader is known.
+func (s *Store) masterAddress() pb.ServerAddress {
+	if s.MasterFn == nil {
+		return ""
+	}
+	return s.MasterFn()
+}
+
 /*
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       pb.ServerAddress
+	// MasterFn reports the master the volume server currently takes as leader.
+	// The heartbeat loop owns that answer; the store only reads it.
+	MasterFn            func() pb.ServerAddress
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64      // read from the master
-	preallocate         atomic.Bool // read from the master
+	volumeSizeLimit     atomic.Uint64 // read from the master
+	preallocate         atomic.Bool   // read from the master
 	Ip                  string
 	Port                int
 	GrpcPort            int
@@ -92,6 +109,11 @@ type Store struct {
 	// the heartbeat that saw it. Written only from the heartbeat goroutine.
 	reportedCollections   map[string]struct{}
 	reportedEcCollections map[string]struct{}
+	maxVolumeIdSeen       atomic.Uint32
+	lastSeenTopologyId    atomic.Value // string
+	vidStampReady         atomic.Bool
+	vidStampDirty         atomic.Bool
+	vidStampLock          sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -140,6 +162,7 @@ func NewStore(
 		diskId := uint32(i) // Track disk ID
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
+			s.UpdateMaxVolumeIdSeen(vid)
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 
@@ -205,6 +228,8 @@ func NewStore(
 	if err != nil {
 		glog.Fatalf("failed to resolve state for volume %s: %v", id, err)
 	}
+
+	s.bootstrapMaxVolumeIdSeen()
 
 	return
 }
@@ -315,6 +340,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 	return ret
 }
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+	s.UpdateMaxVolumeIdSeen(vid)
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
@@ -590,7 +616,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false, false)
+				found, err := location.deleteVolumeById(vid, false, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -681,27 +707,29 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	stats.VolumeServerIoQuarantineGauge.WithLabelValues("ec_shard").Set(float64(quarantinedEcShards))
 
 	return &master_pb.Heartbeat{
-		Ip:              s.Ip,
-		Port:            uint32(s.Port),
-		GrpcPort:        uint32(s.GrpcPort),
-		PublicUrl:       s.PublicUrl,
-		Id:              s.Id,
-		MaxVolumeCounts: maxVolumeCounts,
-		DiskTotalBytes:  diskTotalBytes,
-		DiskFreeBytes:   diskFreeBytes,
-		MaxFileKey:      NeedleIdToUint64(maxFileKey),
-		DataCenter:      s.dataCenter,
-		Rack:            s.rack,
-		Volumes:         heartbeatVolumes,
-		ChangedVolumes:  changedVolumes,
-		DeletedVolumes:  departedVolumes,
-		VolumeDigest:    &volumeDigest,
-		DeletedEcShards: deletedEcVolumes,
-		HasNoVolumes:    hasNoVolumes,
-		HasNoEcShards:   len(ecVolumeMessages) == 0,
-		LocationUuids:   uuidList,
-		DiskTags:        diskTags,
-		State:           state,
+		Ip:                 s.Ip,
+		Port:               uint32(s.Port),
+		GrpcPort:           uint32(s.GrpcPort),
+		PublicUrl:          s.PublicUrl,
+		Id:                 s.Id,
+		MaxVolumeCounts:    maxVolumeCounts,
+		DiskTotalBytes:     diskTotalBytes,
+		DiskFreeBytes:      diskFreeBytes,
+		MaxFileKey:         NeedleIdToUint64(maxFileKey),
+		DataCenter:         s.dataCenter,
+		Rack:               s.rack,
+		Volumes:            heartbeatVolumes,
+		ChangedVolumes:     changedVolumes,
+		DeletedVolumes:     departedVolumes,
+		VolumeDigest:       &volumeDigest,
+		DeletedEcShards:    deletedEcVolumes,
+		HasNoVolumes:       hasNoVolumes,
+		HasNoEcShards:      len(ecVolumeMessages) == 0,
+		LocationUuids:      uuidList,
+		DiskTags:           diskTags,
+		State:              state,
+		MaxVolumeIdSeen:    uint32(s.MaxVolumeIdSeen()),
+		LastSeenTopologyId: s.LastSeenTopologyId(),
 	}
 
 }
@@ -853,7 +881,10 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
-		if v.noWriteOrDelete {
+		v.noWriteLock.RLock()
+		noWriteOrDelete := v.noWriteOrDelete
+		v.noWriteLock.RUnlock()
+		if noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
 		return v.deleteNeedle2(n)
@@ -895,10 +926,16 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	// Wait for in-flight appends so a mark acked mid-write cannot race an
+	// encode that reads the index and deletes the replica the write lands on.
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	if canDelete && !v.HasRemoteFile() {
 		// deletes append tombstones to .idx, which a readonly boot opened
 		// O_RDONLY; remote volumes already delete through a RDWR idx
-		if err := v.reopenIdxForWrite(); err != nil {
+		if err := v.reopenIdxForWriteLocked(); err != nil {
 			return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 		}
 	}
@@ -935,6 +972,9 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, err)
+	}
 	// If the volume booted with .vif ReadOnly=true, .idx is opened O_RDONLY
 	// and v.nm is a SortedFileNeedleMap that rejects Put. Swap to writable
 	// form before flipping the flag so the next write doesn't race past a
@@ -943,13 +983,17 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	if v.ioUnavailable {
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, v.UnavailableError())
+	}
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
-	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
-	if !v.HasRemoteFile() {
-		v.noWriteCanDelete = false
-	}
+	// A remote-tiered volume keeps the delete-only mode load() derives: its
+	// .dat cannot take appends, so "writable" resolves to can-delete rather
+	// than advertising writable with no local data file.
+	v.noWriteCanDelete = v.HasRemoteFile()
 	persistErr := v.PersistReadOnly(false, false)
 	if persistErr != nil {
 		var ndErr *volume_info.NotCrashDurableError
@@ -1011,6 +1055,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ..
 				ReadOnly:          readOnly,
 				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
+			s.UpdateMaxVolumeIdSeen(i)
 			return nil
 		}
 	}
@@ -1119,10 +1164,13 @@ func RenameOrCopyFile(src, dst string) error {
 	return nil
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	// Delete every copy of the volume id across disks, not just the first match, so
 	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
 	// guard) cannot survive a delete and re-register as the volume's content.
+	if onlyEmpty || onlyGarbage {
+		return s.deleteVolumeGuarded(i, onlyEmpty, onlyGarbage, keepRemoteData)
+	}
 	deletedAny := false
 	var errs []error
 	for _, location := range s.Locations {
@@ -1139,7 +1187,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 			DiskType:         string(location.DiskType),
 			DiskId:           v.diskId,
 		}
-		err := location.DeleteVolume(i, onlyEmpty, keepRemoteData)
+		err := location.DeleteVolume(i, onlyEmpty, onlyGarbage, keepRemoteData)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
 			s.DeletedVolumesChan <- &message
@@ -1166,7 +1214,89 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 	return nil
 }
 
+// deleteVolumeGuarded removes a volume only when every duplicate copy passes
+// the emptiness guards. Each copy's locks are held across validation and
+// removal, so a write or mount cannot slip between the check on one copy and
+// the destroy of another and leave a partial delete.
+func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
+	var lockedLocations []*DiskLocation
+	var lockedVolumes []*Volume
+	unlockAll := func() {
+		for _, v := range lockedVolumes {
+			v.dataFileAccessLock.Unlock()
+			v.dataFileSyncLock.Unlock()
+		}
+		for _, location := range lockedLocations {
+			location.volumesLock.Unlock()
+		}
+		lockedVolumes, lockedLocations = nil, nil
+	}
+	defer unlockAll()
+	for _, location := range s.Locations {
+		location.volumesLock.Lock()
+		if v, ok := location.volumes[i]; ok {
+			v.dataFileSyncLock.Lock()
+			v.dataFileAccessLock.Lock()
+			lockedLocations = append(lockedLocations, location)
+			lockedVolumes = append(lockedVolumes, v)
+		} else {
+			location.volumesLock.Unlock()
+		}
+	}
+
+	for _, v := range lockedVolumes {
+		if err := v.checkDeletableLocked(onlyEmpty, onlyGarbage); err != nil {
+			return fmt.Errorf("DeleteVolume %d: %w", i, err)
+		}
+	}
+
+	deletedAny := false
+	var errs []error
+	var deletedMessages []*master_pb.VolumeShortInformationMessage
+	for _, location := range lockedLocations {
+		v := location.volumes[i]
+		message := &master_pb.VolumeShortInformationMessage{
+			Id:               uint32(v.Id),
+			Collection:       v.Collection,
+			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+			Version:          uint32(v.Version()),
+			Ttl:              v.Ttl.ToUint32(),
+			DiskType:         string(location.DiskType),
+			DiskId:           v.diskId,
+		}
+		if err := v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData); err != nil {
+			// A real failure on one disk must not be masked by another copy's
+			// success: a stale copy left on the failing disk would re-register.
+			glog.Errorf("DeleteVolume %d: %v", i, err)
+			errs = append(errs, err)
+			continue
+		}
+		delete(location.volumes, i)
+		glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
+		deletedMessages = append(deletedMessages, message)
+		deletedAny = true
+	}
+	// Send after the locks are released: a full channel would otherwise block
+	// here while the draining heartbeat loop waits on these same locks.
+	unlockAll()
+	for _, m := range deletedMessages {
+		s.DeletedVolumesChan <- m
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
+	}
+	if !deletedAny {
+		return fmt.Errorf("delete volume %d not found on disk: %w", i, ErrVolumeNotFound)
+	}
+	return nil
+}
+
 func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
+
+	rp, err := super_block.NewReplicaPlacementFromString(replication)
+	if err != nil {
+		return fmt.Errorf("volume %d replication %q: %v", i, replication, err)
+	}
 
 	for _, location := range s.Locations {
 		fileInfo, found := location.LocateVolume(i)
@@ -1185,18 +1315,56 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		if err != nil {
 			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
-		return nil
+		if v := s.GetVolume(i); v != nil {
+			return v.UpdateReplicaPlacement(rp)
+		}
+		return updateDatReplicaPlacement(filepath.Join(location.Directory, baseFileName+".dat"), i, rp)
 	}
 
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
+// updateDatReplicaPlacement rewrites the replica placement in a .dat header
+// for a volume that is not mounted; a mounted volume goes through
+// UpdateReplicaPlacement so the change lands under its data-file locks.
+func updateDatReplicaPlacement(datFileName string, vid needle.VolumeId, rp *super_block.ReplicaPlacement) error {
+	f, err := os.OpenFile(datFileName, os.O_RDWR, 0644)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // remote-only volume: the .vif carries the placement
+		}
+		return fmt.Errorf("volume %d failed to open %s: %v", vid, datFileName, err)
+	}
+	defer f.Close()
+	datBackend := backend.NewDiskFile(f)
+	superBlock, err := super_block.ReadSuperBlock(datBackend)
+	if err != nil {
+		return fmt.Errorf("volume %d failed to parse superblock: %v", vid, err)
+	}
+	superBlock.ReplicaPlacement = rp
+	if _, err := datBackend.WriteAt(superBlock.Bytes(), 0); err != nil {
+		return fmt.Errorf("volume %d failed to write superblock: %v", vid, err)
+	}
+	if err := datBackend.Sync(); err != nil {
+		return fmt.Errorf("volume %d failed to sync superblock: %v", vid, err)
+	}
+	return nil
+}
+
 func (s *Store) SetVolumeSizeLimit(x uint64) {
-	atomic.StoreUint64(&s.volumeSizeLimit, x)
+	s.volumeSizeLimit.Store(x)
 }
 
 func (s *Store) GetVolumeSizeLimit() uint64 {
-	return atomic.LoadUint64(&s.volumeSizeLimit)
+	return s.volumeSizeLimit.Load()
+}
+
+// SetSyncBatchOption applies the durable-write batch window to every disk.
+// It runs at startup, before any volume takes a write.
+func (s *Store) SetSyncBatchOption(syncBatch SyncBatchOption) {
+	for _, location := range s.Locations {
+		location.syncBatch = syncBatch
+	}
 }
 
 func (s *Store) SetPreallocate(x bool) {
@@ -1217,12 +1385,8 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
-			var unusedSpace uint64 = 0
-			unclaimedSpaces := int64(diskStatus.Free)
-			if !s.GetPreallocate() {
-				unusedSpace = diskLocation.UnUsedSpace(volumeSizeLimit)
-				unclaimedSpaces -= int64(unusedSpace)
-			}
+			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
+			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)

@@ -139,7 +139,7 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 		routeKey = s3a.objectRouteKey(bucket, object)
 	}
 	conditionKey, condition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
-	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, condition, conditionKey, []*filer_pb.ObjectMutation{
+	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, condition, conditionKey, "", []*filer_pb.ObjectMutation{
 		s3a.removeUploadDirMutation(bucket, uploadID),
 		s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true),
 	})

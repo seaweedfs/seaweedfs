@@ -18,7 +18,9 @@ use crate::storage::erasure_coding::ec_shard::{
     DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
     EcVolumeShard, ShardId,
 };
-use crate::storage::erasure_coding::ec_volume::EcVolume;
+use crate::storage::erasure_coding::ec_volume::{
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
@@ -35,7 +37,7 @@ pub struct DiskLocation {
     pub tags: Vec<String>,
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
-    volumes: HashMap<VolumeId, Volume>,
+    volumes: HashMap<VolumeId, Arc<Volume>>,
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
@@ -235,6 +237,7 @@ impl DiskLocation {
         }
 
         for (collection, vid, v) in self.open_volumes(to_load, needle_map_kind) {
+            let v = Arc::new(v);
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&collection, "volume"])
                 .inc();
@@ -460,13 +463,16 @@ impl DiskLocation {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
-        // Remove index files from idx directory (.ecx, .ecj)
+        // Remove index files from idx directory (.ecx, .ecj, and a compaction
+        // tmp a crash may have left beside the .ecj)
         rm_if_present(format!("{}.ecx", idx_base))?;
         rm_if_present(format!("{}.ecj", idx_base))?;
+        rm_if_present(format!("{}{}", idx_base, ECJ_COMPACT_TMP_EXT))?;
         // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
         if self.idx_directory != self.directory {
             rm_if_present(format!("{}.ecx", base))?;
             rm_if_present(format!("{}.ecj", base))?;
+            rm_if_present(format!("{}{}", base, ECJ_COMPACT_TMP_EXT))?;
         }
 
         // Remove all EC shard files (.ec00 ~ .ec31)
@@ -478,6 +484,13 @@ impl DiskLocation {
         remove_bitrot_sidecars(&base)?;
         if self.idx_directory != self.directory {
             remove_bitrot_sidecars(&idx_base)?;
+        }
+
+        // Staged 2PC generations (<base>.ecNN.v<N>, versioned .ecx/.ecj/.vif)
+        // belong to this volume's EC state too; leaving them orphans the files.
+        crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&base, 0)?;
+        if self.idx_directory != self.directory {
+            crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&idx_base, 0)?;
         }
         Ok(())
     }
@@ -537,20 +550,23 @@ impl DiskLocation {
         None
     }
 
-    /// Find a volume by ID.
-    pub fn find_volume(&self, vid: VolumeId) -> Option<&Volume> {
-        self.volumes.get(&vid)
-    }
-
-    /// Find a volume by ID (mutable).
-    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<&mut Volume> {
-        self.volumes.get_mut(&vid)
+    /// Find a volume by ID. Returns a shared handle like Go's findVolume:
+    /// the lookup borrows the map briefly and I/O runs on the handle after.
+    pub fn find_volume(&self, vid: VolumeId) -> Option<Arc<Volume>> {
+        self.volumes.get(&vid).cloned()
     }
 
     /// Add a volume to this location.
     pub fn set_volume(&mut self, vid: VolumeId, volume: Volume) {
         let collection = volume.collection.clone();
-        self.volumes.insert(vid, volume);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(volume)) {
+            // A held handle would keep writing the same files against a stale
+            // in-memory index; close it so the stale handle fails closed.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[&collection, "volume"])
             .inc();
@@ -574,13 +590,20 @@ impl DiskLocation {
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[spec.collection, "volume"])
             .inc();
-        self.volumes.insert(vid, v);
+        if let Some(old) = self.volumes.insert(vid, Arc::new(v)) {
+            // Same fail-closed rule as set_volume: a stale handle must not
+            // keep writing the files the replacement just reopened.
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&old.collection, "volume"])
+                .dec();
+            old.close();
+        }
         Ok(())
     }
 
     /// Remove and close a volume.
-    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Volume> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
+    pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Arc<Volume>> {
+        if let Some(v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
@@ -598,14 +621,30 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         only_empty: bool,
+        only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
-        if let Some(mut v) = self.volumes.remove(&vid) {
-            crate::metrics::VOLUME_GAUGE
-                .with_label_values(&[&v.collection, "volume"])
-                .dec();
-            v.destroy(only_empty, keep_remote_data)?;
-            Ok(())
+        // Refuse before removing: a refused destroy must leave it mounted.
+        if let Some(v) = self.volumes.get(&vid)
+            && v.is_compacting()
+        {
+            return Err(v.compacting_error());
+        }
+        if let Some(v) = self.volumes.remove(&vid) {
+            match v.destroy(only_empty, only_garbage, keep_remote_data) {
+                Ok(()) => {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
+                    Ok(())
+                }
+                Err(e) => {
+                    // A failed destroy left the local files in place, so the
+                    // replica stays registered rather than becoming a phantom.
+                    self.volumes.insert(vid, v);
+                    Err(e)
+                }
+            }
         } else {
             Err(VolumeError::NotFound)
         }
@@ -621,12 +660,14 @@ impl DiskLocation {
             .collect();
 
         for vid in vids {
-            if let Some(mut v) = self.volumes.remove(&vid) {
-                crate::metrics::VOLUME_GAUGE
-                    .with_label_values(&[&v.collection, "volume"])
-                    .dec();
-                if let Err(e) = v.destroy(false, false) {
+            if let Some(v) = self.volumes.remove(&vid) {
+                if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
+                    self.volumes.insert(vid, v);
+                } else {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
                 }
             }
         }
@@ -667,7 +708,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn iter_volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Number of free volume slots.
@@ -688,12 +729,7 @@ impl DiskLocation {
 
     /// Iterate over all volumes.
     pub fn volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
-        self.volumes.iter()
-    }
-
-    /// Iterate over all volumes (mutable).
-    pub fn volumes_mut(&mut self) -> impl Iterator<Item = (&VolumeId, &mut Volume)> {
-        self.volumes.iter_mut()
+        self.volumes.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     /// Sum of unused space in writable volumes (volumeSizeLimit - actual size per volume).
@@ -704,7 +740,11 @@ impl DiskLocation {
             if vol.is_read_only() {
                 continue;
             }
-            let dat_size = vol.dat_file_size().unwrap_or(0);
+            // A preallocated volume already holds its space on disk.
+            let dat_size = vol
+                .dat_file_size()
+                .unwrap_or(0)
+                .max(vol.dat_allocated_size());
             let idx_size = vol.idx_file_size();
             let used = dat_size + idx_size;
             if volume_size_limit > used {
@@ -779,21 +819,17 @@ impl DiskLocation {
     /// Mirrors `DiskLocation.HasEcxFileOnDisk` in
     /// `weed/storage/disk_location_ec.go`. Skips entries that are
     /// directories so a stray dir named `<collection>_<vid>.ecx` doesn't
-    /// register as a present index file.
+    /// register as a present index file. A 0-byte `.ecx` is a corrupt stub
+    /// left by a failed EC distribute copy; it must not steer placement
+    /// toward this disk, so it counts as absent (Go requires `Size() > 0`).
     pub fn has_ecx_file_on_disk(&self, collection: &str, vid: VolumeId) -> bool {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
-        let idx_path = format!("{}.ecx", idx_base);
-        if let Ok(meta) = fs::metadata(&idx_path)
-            && !meta.is_dir()
-        {
+        if is_usable_ecx_file(&format!("{}.ecx", idx_base)) {
             return true;
         }
         if self.idx_directory != self.directory {
             let data_base = volume_file_name(&self.directory, collection, vid);
-            let data_path = format!("{}.ecx", data_base);
-            if let Ok(meta) = fs::metadata(&data_path)
-                && !meta.is_dir()
-            {
+            if is_usable_ecx_file(&format!("{}.ecx", data_base)) {
                 return true;
             }
         }
@@ -803,6 +839,20 @@ impl DiskLocation {
     /// Remove an EC volume, returning it.
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         self.ec_volumes.remove(&vid)
+    }
+
+    /// Drop the in-memory EC volume for vid and close its descriptors without
+    /// deleting files, so a following unlink frees the inodes instead of
+    /// leaving open fds serving the old bytes. Mirrors Go's unloadEcVolume.
+    pub fn unload_ec_volume(&mut self, vid: VolumeId) {
+        if let Some(mut ec_vol) = self.ec_volumes.remove(&vid) {
+            for _ in 0..ec_vol.shard_count() {
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&ec_vol.collection, "ec_shards"])
+                    .dec();
+            }
+            ec_vol.close();
+        }
     }
 
     /// Mount EC shards for a volume on this location.
@@ -1133,15 +1183,20 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
             Ok(p) => p,
             Err(_) => return (0, 0),
         };
-        unsafe {
-            let mut stat: libc::statvfs = std::mem::zeroed();
-            if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                let all = stat.f_blocks as u64 * stat.f_frsize as u64;
-                let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-                return (all, free);
-            }
+        // SAFETY: `libc::statvfs` is plain data — integers and reserved
+        // padding, no pointers and no restricted niches — so the all-zero
+        // value is a valid one for the call to overwrite.
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `c_path` is a live NUL-terminated `CString` that outlives
+        // the call, and `&mut stat` is a live, aligned, exclusive pointer the
+        // kernel only writes through; the fields are read below only after
+        // the call reports success.
+        if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+            return (0, 0);
         }
-        (0, 0)
+        let all = stat.f_blocks as u64 * stat.f_frsize as u64;
+        let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+        (all, free)
     }
     #[cfg(windows)]
     {
@@ -1732,7 +1787,7 @@ mod tests {
             .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
-        loc.delete_volume(VolumeId(1), false, false).unwrap();
+        loc.delete_volume(VolumeId(1), false, false, false).unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_none());
     }
@@ -1785,6 +1840,34 @@ mod tests {
         assert!(loc.find_volume(VolumeId(3)).is_some());
     }
 
+    /// A 0-byte `.ecx` is the stub a failed EC distribute copy leaves behind.
+    /// Go's HasEcxFileOnDisk requires Size() > 0 so the stub cannot pin
+    /// placement to a disk that has no usable index.
+    #[test]
+    fn test_has_ecx_file_on_disk_ignores_zero_byte_stub() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&idx).unwrap();
+        let loc = DiskLocation::new(
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        fs::write(idx.join("pics_7.ecx"), b"").unwrap();
+        assert!(!loc.has_ecx_file_on_disk("pics", VolumeId(7)));
+
+        // A real index in the data dir still counts, stub or no stub.
+        fs::write(data.join("pics_7.ecx"), [0u8; 16]).unwrap();
+        assert!(loc.has_ecx_file_on_disk("pics", VolumeId(7)));
+    }
+
     #[test]
     fn test_disk_location_delete_collection_removes_ec_volumes() {
         let tmp = TempDir::new().unwrap();
@@ -1801,6 +1884,8 @@ mod tests {
 
         let shard_path = format!("{}/pics_7.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/pics_7.ecx", dir), [0u8; 16]).unwrap();
 
         loc.mount_ec_shards(VolumeId(7), "pics", &[0], "").unwrap();
         assert!(loc.has_ec_volume(VolumeId(7)));
@@ -1838,6 +1923,7 @@ mod tests {
         // mount_ec_shards with source_disk_type="ssd" — simulating the
         // VolumeEcShardsMount RPC path.
         std::fs::write(format!("{}/pics_7.ec00", dir), b"ec-shard").unwrap();
+        std::fs::write(format!("{}/pics_7.ecx", dir), [0u8; 16]).unwrap();
         loc.mount_ec_shards(VolumeId(7), "pics", &[0], "ssd")
             .unwrap();
         {
@@ -1937,6 +2023,7 @@ mod tests {
         // A collection name unique to this test: the gauge is process-global
         // and sibling tests running in parallel touch other labels.
         std::fs::write(format!("{}/dupmount_11.ec00", dir), b"shard bytes").unwrap();
+        std::fs::write(format!("{}/dupmount_11.ecx", dir), [0u8; 16]).unwrap();
         let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&["dupmount", "ec_shards"]);
         let before = gauge.get();
 

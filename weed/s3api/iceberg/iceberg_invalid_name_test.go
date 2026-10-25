@@ -58,6 +58,12 @@ func TestWriteManagerError(t *testing.T) {
 			// say how to name a real one.
 			wantMessage: []string{"table bucket warehouse not found", "warehouse=s3://<table-bucket>/", "/v1/<table-bucket>/"},
 		},
+		{
+			name:     "denied catalog write is forbidden, not a server fault",
+			err:      &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "not authorized to update table"},
+			wantCode: http.StatusForbidden,
+			wantType: "ForbiddenException",
+		},
 		{name: "everything else is a server fault", err: fmt.Errorf("all filers failed, last error: connection refused"), wantCode: http.StatusInternalServerError, wantType: "InternalServerError"},
 	}
 	for _, c := range cases {

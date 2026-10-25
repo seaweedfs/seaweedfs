@@ -15,18 +15,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVolumeDeleteStatusErrorDistinguishesAbsentFromTransportFailure(t *testing.T) {
-	notFound := volumeDeleteStatusError(fmt.Errorf("delete volume 17 not found on disk: %w", storage.ErrVolumeNotFound))
+func TestVolumeStatusErrorDistinguishesAbsentFromTransportFailure(t *testing.T) {
+	notFound := volumeStatusError(fmt.Errorf("delete volume 17 not found on disk: %w", storage.ErrVolumeNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(notFound))
 	assert.Contains(t, notFound.Error(), "not found", "the store message must survive for callers that match on it")
 
 	transport := errors.New("connection reset")
-	require.ErrorIs(t, volumeDeleteStatusError(transport), transport)
+	require.ErrorIs(t, volumeStatusError(transport), transport)
 	assert.NotEqual(t, codes.NotFound, status.Code(transport))
 
-	notEmpty := volumeDeleteStatusError(storage.ErrVolumeNotEmpty)
+	notEmpty := volumeStatusError(storage.ErrVolumeNotEmpty)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(notEmpty))
 	assert.Contains(t, notEmpty.Error(), "volume not empty")
+
+	noSpace := volumeStatusError(fmt.Errorf("compact volume 17: %w", storage.ErrInsufficientSpace))
+	assert.Equal(t, codes.ResourceExhausted, status.Code(noSpace))
+	assert.Contains(t, noSpace.Error(), "insufficient free space")
 }
 
 func TestVolumeDeleteMapsAbsentStoreVolumeToNotFound(t *testing.T) {

@@ -63,6 +63,18 @@ func TestIsBucketVersioned_RejectsOtherValues(t *testing.T) {
 	}
 }
 
+func TestIsBucketVersioned_ObjectLockImpliesVersioned(t *testing.T) {
+	// Object Lock requires versioning; every writer sets both attrs,
+	// but a lock flag alone must still classify as versioned so a
+	// hand-mutated or legacy entry can't hide its version siblings.
+	e := &filer_pb.Entry{Extended: map[string][]byte{
+		s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled),
+	}}
+	assert.True(t, IsBucketVersioned(e))
+	e.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte("false")
+	assert.False(t, IsBucketVersioned(e))
+}
+
 func TestAllActivePriorStates_EmptyInputs(t *testing.T) {
 	assert.Empty(t, AllActivePriorStates(nil))
 	assert.Empty(t, AllActivePriorStates([]engine.CompileInput{}))

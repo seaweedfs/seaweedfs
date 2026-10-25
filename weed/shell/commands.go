@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -26,12 +29,13 @@ type ShellOptions struct {
 	Masters        *string
 	GrpcDialOption grpc.DialOption
 	// shell transient context
-	FilerHost    string
-	FilerPort    int64
-	FilerGroup   *string
-	FilerAddress pb.ServerAddress
-	Directory    string
-	Debug        bool
+	FilerHost      string
+	FilerPort      int64
+	FilerGroup     *string
+	FilerAddress   pb.ServerAddress
+	Directory      string
+	Debug          bool
+	ConnectTimeout time.Duration
 }
 
 type CommandEnv struct {
@@ -42,6 +46,7 @@ type CommandEnv struct {
 	noLock       bool
 	forceNoLock  bool
 	verbose      bool
+	filerMu      sync.Mutex
 }
 
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
@@ -146,8 +151,73 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcFilerClient(streamingMode, 0, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, ce.FilerAddress(), ce.option.GrpcDialOption, fn)
 
+}
+
+// FilerAddress returns the discovered or configured filer, running discovery
+// on first use so commands that never need a filer skip the wait entirely.
+// A failed or empty discovery is not cached: each later call retries until a
+// filer registers, so a long-lived shell can still find one.
+func (ce *CommandEnv) FilerAddress() pb.ServerAddress {
+	ce.filerMu.Lock()
+	defer ce.filerMu.Unlock()
+	ce.discoverFiler()
+	return ce.option.FilerAddress
+}
+
+func (ce *CommandEnv) discoverFiler() {
+	if ce.option.FilerAddress != "" || ce.MasterClient == nil || ce.option.FilerGroup == nil {
+		return
+	}
+	connectTimeout := ce.option.ConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+	var filers []pb.ServerAddress
+	var listErr error
+	for len(filers) == 0 && ctx.Err() == nil {
+		filers = filers[:0]
+		listErr = ce.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
+				ClientType: cluster.FilerType,
+				FilerGroup: *ce.option.FilerGroup,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, clusterNode := range resp.ClusterNodes {
+				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+			}
+			return nil
+		})
+		if len(filers) == 0 {
+			if listErr != nil && !util.IsTransientError(listErr) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}
+	if len(filers) > 0 {
+		ce.option.FilerAddress = filers[rand.IntN(len(filers))]
+	} else if listErr != nil {
+		fmt.Fprintf(os.Stderr, "cannot list filers from master %s: %v\n", *ce.option.Masters, listErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "no filer registered with master %s within %s\n", *ce.option.Masters, connectTimeout)
+	}
+	if ce.option.Debug {
+		if len(filers) > 0 {
+			fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *ce.option.Masters, filers)
+		} else {
+			fmt.Fprintf(os.Stderr, "master: %s\n", *ce.option.Masters)
+		}
+	}
 }
 
 func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {

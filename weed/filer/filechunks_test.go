@@ -22,7 +22,10 @@ func TestCompactFileChunks(t *testing.T) {
 		{Offset: 110, Size: 200, FileId: "jkl", ModifiedTsNs: 300},
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 3 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -55,7 +58,10 @@ func TestCompactFileChunks2(t *testing.T) {
 		})
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -427,7 +433,10 @@ func TestChunksReading(t *testing.T) {
 			// continue
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks, err := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		if err != nil {
+			t.Fatal(err)
+		}
 		x := -1
 		for c := chunks.Front(); c != nil; c = c.Next {
 			x++
@@ -474,7 +483,9 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 
 	for n := 0; n < b.N; n++ {
-		CompactFileChunks(context.Background(), nil, chunks)
+		if _, _, err := CompactFileChunks(context.Background(), nil, chunks); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -563,9 +574,45 @@ func TestCompactFileChunks3(t *testing.T) {
 		{Offset: 300, Size: 100, FileId: "def", ModifiedTsNs: 200},
 	}
 
-	compacted, _ := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, _, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
+	}
+}
+
+func TestSeparateGarbageChunksNilVisibles(t *testing.T) {
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 10, Size: 100, FileId: "abc", ModifiedTsNs: 50},
+	}
+	compacted, garbage := SeparateGarbageChunks(nil, chunks)
+	if len(compacted) != 1 || len(garbage) != 0 {
+		t.Fatalf("expected fallback to original chunks with nil garbage")
+	}
+}
+
+func TestViewFromVisibleIntervalsNilVisibles(t *testing.T) {
+	views := ViewFromVisibleIntervals(nil, 0, 100)
+	if views == nil || views.Front() != nil {
+		t.Fatalf("expected empty interval list")
+	}
+}
+
+func TestViewFromChunksPropagatesError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 50, IsChunkManifest: true},
+	}
+	views, err := ViewFromChunks(ctx, nil, chunks, 0, math.MaxInt64)
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
+	}
+	if views != nil {
+		t.Fatalf("expected nil views on error, got %v", views)
 	}
 }

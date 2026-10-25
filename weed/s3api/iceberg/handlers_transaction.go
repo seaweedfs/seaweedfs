@@ -109,8 +109,8 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")
 				return
 			}
-			glog.Errorf("Iceberg: CommitTransaction UpdateTable error: %v", err)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+			logManagerError("CommitTransaction UpdateTable", err)
+			writeManagerError(w, err)
 			return
 		}
 	}
@@ -139,6 +139,9 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		}
 		glog.V(1).Infof("Iceberg: CommitTransaction GetTable error: %v", err)
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", err.Error()}
+	}
+	if reqErr := s.authorizeCommit(ctx, bucketARN, namespace, tableName, identityName); reqErr != nil {
+		return nil, reqErr
 	}
 
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)

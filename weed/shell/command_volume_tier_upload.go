@@ -89,7 +89,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
-	collection := tierCommand.String("collection", "", "the collection name")
+	collection := tierCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	fullPercentage := tierCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	dest := tierCommand.String("dest", "", "the target tier name")
@@ -137,23 +137,33 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	return nil
 }
 
-func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool, concurrency int) (err error) {
+func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collectionPattern string, vid needle.VolumeId, dest string, keepLocalDatFile bool, concurrency int) (err error) {
 	// find volume location
 	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return fmt.Errorf("collect topology info: %v", err)
 	}
 
+	// The volume server verifies the request's collection against the volume's
+	// own, so the pattern must resolve to the actual collection here.
+	collection, found, err := findVolumeCollection(topoInfo, vid, collectionPattern)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if collectionPattern == "" {
+			return fmt.Errorf("volume %d not found", vid)
+		}
+		return fmt.Errorf("volume %d not found in collections matching %s", vid, collectionPattern)
+	}
+
 	existingLocations := collectVolumeTierUploadLocations(topoInfo, vid, collection, writer)
 
 	if len(existingLocations) == 0 {
-		if collection == "" {
-			return fmt.Errorf("volume %d not found", vid)
-		}
-		return fmt.Errorf("volume %d not found in collection %s", vid, collection)
+		return fmt.Errorf("volume %d has no replicas in collection %s", vid, collection)
 	}
 
-	err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
+	_, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, existingLocations[0].Url, err)
 	}
@@ -192,7 +202,7 @@ func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid need
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, vi := range disk.VolumeInfos {
-				if needle.VolumeId(vi.Id) == vid && (collection == "" || vi.Collection == collection) {
+				if needle.VolumeId(vi.Id) == vid && vi.Collection == collection {
 					fmt.Fprintf(writer, "find volume %d from Url:%s, GrpcPort:%d, DC:%s\n", vid, dn.Id, dn.GrpcPort, string(dc))
 					loc := wdclient.Location{
 						Url:        dn.Id,

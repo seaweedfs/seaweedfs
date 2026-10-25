@@ -7,7 +7,7 @@ echo ""
 # Check if SeaweedFS is running
 echo "📋 Checking SeaweedFS status..."
 MASTER_URL="${MASTER_HOST:-master:9333}"
-ADMIN_URL="${ADMIN_HOST:-admin:23646}"
+ADMIN_URL="${ADMIN_HOST:-admin:12535}"
 
 if ! curl -s http://$MASTER_URL/cluster/status > /dev/null; then
     echo "❌ SeaweedFS master not running at $MASTER_URL"
@@ -42,7 +42,7 @@ echo ""
 
 # Phase 3: Configure vacuum
 echo "⚙️  Phase 3: Vacuum configuration instructions..."
-echo "   1. Visit: http://localhost:23646/maintenance/config/vacuum"
+echo "   1. Visit: http://localhost:12535/maintenance/config/vacuum"
 echo "   2. Set these values for testing:"
 echo "      - Enable Vacuum Tasks: ✅ Checked"
 echo "      - Garbage Threshold: 0.30"
@@ -57,7 +57,7 @@ echo ""
 
 # Phase 4: Monitor tasks
 echo "🎯 Phase 4: Monitoring vacuum tasks..."
-echo "   Visit: http://localhost:23646/maintenance"
+echo "   Visit: http://localhost:12535/maintenance"
 echo "   You should see vacuum tasks appear within 30 seconds"
 echo ""
 
@@ -93,9 +93,9 @@ echo ""
 echo "🎉 Demo Complete!"
 echo ""
 echo "🔍 Things to check:"
-echo "   1. Maintenance Queue: http://localhost:23646/maintenance"
+echo "   1. Maintenance Queue: http://localhost:12535/maintenance"
 echo "   2. Volume Status: http://localhost:9333/vol/status"
-echo "   3. Admin Dashboard: http://localhost:23646"
+echo "   3. Admin Dashboard: http://localhost:12535"
 echo ""
 echo "💡 Next Steps:"
 echo "   - Try different garbage thresholds (0.10, 0.50, 0.80)"

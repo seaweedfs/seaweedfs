@@ -23,8 +23,8 @@ on:
       - 'test/s3/sse/**'
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-sse-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ defaults:
 jobs:
   s3-sse-integration-tests:
     name: S3 SSE Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -46,10 +46,14 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -64,7 +68,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting SSE Tests ==="
           
           # Run tests with automatic server management
@@ -107,7 +111,7 @@ jobs:
 
   s3-sse-compatibility:
     name: S3 SSE Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -118,6 +122,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -155,7 +160,7 @@ jobs:
 
   s3-sse-metadata-persistence:
     name: S3 SSE Metadata Persistence Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -166,6 +171,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -204,7 +210,7 @@ jobs:
 
   s3-sse-copy-operations:
     name: S3 SSE Copy Operations Test  
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -215,6 +221,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -253,7 +260,7 @@ jobs:
 
   s3-sse-multipart:
     name: S3 SSE Multipart Upload Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -264,6 +271,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -302,7 +310,7 @@ jobs:
 
   s3-sse-performance:
     name: S3 SSE Performance Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     # Only run performance tests on master branch pushes to avoid overloading PR testing
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
@@ -315,6 +323,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -352,7 +361,7 @@ jobs:
 
   s3-volume-encryption:
     name: S3 Volume Encryption Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -363,6 +372,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS

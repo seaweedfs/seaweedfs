@@ -211,6 +211,47 @@ func isRegexEntry(entry string) bool {
 	return false
 }
 
+// ExpandCollectionFilter resolves a collection_filter into concrete names
+// drawn from candidates — the same names CompileCollectionMatcher would
+// match — with one difference: a literal entry (no wildcard or regex syntax)
+// is returned even when absent from candidates, since a command may target a
+// collection the listing does not contain yet. CollectionDefault resolves to
+// the empty-named collection. Empty, "*", and the mode sentinels return all
+// candidates.
+func ExpandCollectionFilter(filter string, candidates []string) ([]string, error) {
+	trimmed := strings.TrimSpace(filter)
+	mode := CollectionFilterMode(trimmed)
+	if trimmed == "" || trimmed == "*" || mode == CollectionFilterAll || mode == CollectionFilterEach {
+		return candidates, nil
+	}
+	matcher, err := CompileCollectionMatcher(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(candidates))
+	var out []string
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	for _, entry := range splitCollectionEntries(trimmed) {
+		entry = strings.TrimSpace(entry)
+		if entry == CollectionDefault {
+			add("")
+		} else if !isRegexEntry(entry) && !strings.ContainsAny(entry, "*?") {
+			add(entry)
+		}
+	}
+	for _, name := range candidates {
+		if matcher.Matches(name) {
+			add(name)
+		}
+	}
+	return out, nil
+}
+
 // Matches reports whether a collection passes the filter. A nil matcher accepts everything.
 func (m *CollectionMatcher) Matches(collection string) bool {
 	if m == nil {

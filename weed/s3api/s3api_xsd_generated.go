@@ -623,13 +623,16 @@ type CopyObjectResult struct {
 	ETag         string    `xml:"ETag"`
 }
 
-func (t *CopyObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+// MarshalXML has a value receiver: handlers pass CopyObjectResult by value, and
+// encoding/xml does not call a pointer-receiver MarshalXML on a non-addressable
+// value, which silently fell back to time.Time's RFC 3339 encoding.
+func (t CopyObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T CopyObjectResult
 	var layout struct {
 		*T
 		LastModified *xsdDateTime `xml:"LastModified"`
 	}
-	layout.T = (*T)(t)
+	layout.T = (*T)(&t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
@@ -1512,8 +1515,15 @@ type xsdDateTime time.Time
 func (t *xsdDateTime) UnmarshalText(text []byte) error {
 	return _unmarshalTime(text, (*time.Time)(t), "2006-01-02T15:04:05.999999999")
 }
+
+// s3TimestampFormat is the timestamp layout AWS S3 uses in XML responses:
+// UTC with exactly three fractional digits. Trimming trailing zeros (".56Z",
+// or no fraction at all) breaks clients that parse with a fixed-width pattern,
+// e.g. minio-java's "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'".
+const s3TimestampFormat = "2006-01-02T15:04:05.000Z"
+
 func (t xsdDateTime) MarshalText() ([]byte, error) {
-	return _marshalTime((time.Time)(t), "2006-01-02T15:04:05.999999999")
+	return []byte((time.Time)(t).UTC().Format(s3TimestampFormat)), nil
 }
 func (t xsdDateTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if (time.Time)(t).IsZero() {

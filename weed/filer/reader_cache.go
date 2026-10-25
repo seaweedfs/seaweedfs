@@ -25,7 +25,7 @@ type ReaderCache struct {
 	lookupFileIdFn   wdclient.LookupFileIdFunctionType
 	cacheInvalidator CacheInvalidator
 	fetchChunkDataFn fetchChunkDataFnType
-	sync.Mutex
+	sync.RWMutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
 	budget      *ReaderCacheBudget
@@ -35,6 +35,8 @@ type SingleChunkCacher struct {
 	completedTimeNew int64
 	readers          int32
 	consumed         int32
+	pins             int32 // streams currently positioned inside this chunk
+	left             int32 // set once the last pinning stream moved on
 	sync.Mutex
 	parent         *ReaderCache
 	chunkFileId    string
@@ -76,6 +78,13 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		count = 1
 	}
 
+	var started []*SingleChunkCacher
+	defer func() {
+		for _, cacher := range started {
+			<-cacher.cacheStartedCh
+		}
+	}()
+
 	rc.Lock()
 	defer rc.Unlock()
 
@@ -83,8 +92,10 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		return
 	}
 
-	cached := 0
-	for x := chunkViews; x != nil && cached < count; x = x.Next {
+	// The window is the next count chunks, whether or not a download for them
+	// is already running: counting only newly started downloads would push the
+	// window count chunks further on every call.
+	for x, i := chunkViews, 0; x != nil && i < count; x, i = x.Next, i+1 {
 		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
@@ -98,65 +109,127 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 			// abort when slots are filled
 			return
 		}
+		if (chunkView.CanRangeFetch() || !rc.budget.canFit(int(chunkView.ChunkSize))) && !chunkView.IsFullChunk() {
+			// the view is clipped to part of the chunk and will be
+			// range-fetched, so prefetching it whole would download bytes
+			// nobody needs; a ciphered or compressed partial view needs
+			// the whole blob anyway and is worth prefetching, but not when
+			// it cannot fit the budget at all
+			continue
+		}
 
 		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
 		shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= rc.chunkCache.GetMaxFilePartSizeInCache()
 		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), shouldCache)
-		go cacher.startCaching()
-		<-cacher.cacheStartedCh
+		cacher.wg.Add(1) // the fetch, so destroy() waits even before the goroutine runs
 		rc.downloaders[chunkView.FileId] = cacher
-		cached++
+		go cacher.startCaching()
+		started = append(started, cacher)
 	}
 
 	return
 }
 
-func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
-retry:
-	rc.Lock()
-
-	for {
-		if cacher, found := rc.downloaders[fileId]; found {
-			if cacher.hasCompletedError() {
-				delete(rc.downloaders, fileId)
-				rc.Unlock()
-				cacher.destroy()
-				rc.Lock()
-				continue
-			}
-			// Count this read on the cacher before releasing the map lock, so a
-			// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
-			// start wg.Wait() on a zero counter while this read is about to register.
-			cacher.wg.Add(1)
-			atomic.AddInt32(&cacher.readers, 1)
-			rc.Unlock()
-			n, err := cacher.readChunkAt(ctx, buffer, offset)
-			if n > 0 || err != nil {
-				return n, err
-			}
-			// If n=0 and err=nil, the cacher couldn't provide data for this offset.
-			// Fall through to try chunkCache.
-			rc.Lock()
-		}
-		break
+// fetchChunkRange downloads only [offset, offset+len(buffer)) of a chunk,
+// for views clipped to part of their chunk and for random-mode reads. It
+// goes through fetchChunkDataFn so tests observe range fetches the same way
+// they observe whole-chunk downloads.
+func (rc *ReaderCache) fetchChunkRange(ctx context.Context, buffer []byte, chunkView *ChunkView, offset int64) (int, error) {
+	urlStrings, err := rc.lookupFileIdFn(ctx, chunkView.FileId)
+	if err != nil {
+		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		return 0, err
 	}
+	return rc.fetchChunkDataFn(ctx, buffer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, false, offset, chunkView.FileId,
+		refreshUrls(ctx, rc.cacheInvalidator, rc.lookupFileIdFn, chunkView.FileId))
+}
+
+// chunkStream is one sequential reader's position in a shared ReaderCache.
+// The chunk it is reading stays pinned until the stream reads it to the end or
+// moves elsewhere, so another stream finishing or leaving the same chunk does
+// not drop the buffer from under it.
+type chunkStream struct {
+	mu     sync.Mutex // guards cacher; concurrent ReadAt calls on one ChunkReadAt share the stream
+	cacher *SingleChunkCacher
+}
+
+func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
+	return rc.readChunkAt(ctx, nil, buffer, fileId, cipherKey, isGzipped, offset, chunkSize, shouldCache)
+}
+
+func (rc *ReaderCache) readChunkAt(ctx context.Context, stream *chunkStream, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
+retry:
+	rc.RLock()
+	if cacher, found := rc.downloaders[fileId]; found {
+		if cacher.hasCompletedError() {
+			rc.RUnlock()
+			rc.remove(cacher)
+			goto retry
+		}
+		// Count this read on the cacher before releasing the map lock, so a
+		// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
+		// start wg.Wait() on a zero counter while this read is about to register.
+		cacher.wg.Add(1)
+		atomic.AddInt32(&cacher.readers, 1)
+		previous := stream.pin(cacher)
+		rc.RUnlock()
+		n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
+		if n > 0 || err != nil {
+			return n, err
+		}
+		// If n=0 and err=nil, the cacher couldn't provide data for this offset.
+		// Fall through to try chunkCache.
+	} else {
+		rc.RUnlock()
+	}
+
 	if shouldCache || rc.lookupFileIdFn == nil {
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
 		if n > 0 {
-			rc.Unlock()
+			// Served from the chunk cache: the stream has left its pinned chunk.
+			rc.unpin(stream.detach(nil))
 			return n, err
 		}
 	}
 
-	// clean up old downloaders
+	rc.Lock()
+	// A downloader may have registered between the read lock and this one.
+	if cacher, found := rc.downloaders[fileId]; found {
+		if cacher.hasCompletedError() {
+			delete(rc.downloaders, fileId)
+			rc.Unlock()
+			cacher.destroy()
+			goto retry
+		}
+		cacher.wg.Add(1)
+		atomic.AddInt32(&cacher.readers, 1)
+		previous := stream.pin(cacher)
+		rc.Unlock()
+		n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
+		return n, err
+	}
+
+	// clean up old downloaders; prefer one no stream is positioned in, but
+	// fall back to a pinned one so abandoned pins cannot bypass the limit
 	if len(rc.downloaders) >= rc.limit {
 		oldestFid, oldestTime := "", time.Now().UnixNano()
+		pinnedFid, pinnedTime := "", int64(0)
 		for fid, downloader := range rc.downloaders {
 			completedTime := atomic.LoadInt64(&downloader.completedTimeNew)
-			if completedTime > 0 && completedTime < oldestTime {
-				oldestFid, oldestTime = fid, completedTime
+			if completedTime <= 0 {
+				continue
 			}
+			if atomic.LoadInt32(&downloader.pins) == 0 {
+				if completedTime < oldestTime {
+					oldestFid, oldestTime = fid, completedTime
+				}
+			} else if pinnedFid == "" || completedTime < pinnedTime {
+				pinnedFid, pinnedTime = fid, completedTime
+			}
+		}
+		if oldestFid == "" {
+			oldestFid = pinnedFid
 		}
 		if oldestFid != "" {
 			oldDownloader := rc.downloaders[oldestFid]
@@ -170,14 +243,87 @@ retry:
 	// glog.V(4).Infof("cache1 %s", fileId)
 
 	cacher := newSingleChunkCacher(rc, fileId, cipherKey, isGzipped, chunkSize, shouldCache)
+	cacher.wg.Add(2) // the fetch plus this read, so destroy() waits even before the goroutine runs
+	atomic.AddInt32(&cacher.readers, 1)
+	rc.downloaders[fileId] = cacher
+	previous := stream.pin(cacher)
+	rc.Unlock()
 	go cacher.startCaching()
 	<-cacher.cacheStartedCh
-	rc.downloaders[fileId] = cacher
-	cacher.wg.Add(1)
-	atomic.AddInt32(&cacher.readers, 1)
-	rc.Unlock()
+	n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
+	return n, err
+}
 
-	return cacher.readChunkAt(ctx, buffer, offset)
+// readFromCacher serves the read and releases the pin if the stream finished
+// the chunk. The caller must have registered the read (wg + readers) and
+// pinned the stream under the map lock; previous is the chunk the stream left
+// when it pinned.
+func (rc *ReaderCache) readFromCacher(ctx context.Context, stream *chunkStream, cacher *SingleChunkCacher, previous *SingleChunkCacher, buffer []byte, offset int64, chunkSize int) (n int, err error) {
+	rc.unpin(previous)
+	n, err = cacher.readChunkAt(ctx, buffer, offset)
+	rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
+	return
+}
+
+// pin makes cacher the stream's current chunk and returns the chunk it was
+// pinned to before, which the caller unpins.
+func (stream *chunkStream) pin(cacher *SingleChunkCacher) (previous *SingleChunkCacher) {
+	if stream == nil {
+		return nil
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.cacher == cacher {
+		return nil
+	}
+	atomic.AddInt32(&cacher.pins, 1)
+	previous = stream.cacher
+	stream.cacher = cacher
+	return previous
+}
+
+// detach unpins the stream from its chunk and returns that chunk for the
+// caller to unpin. A non-nil expected cacher makes the detach conditional on
+// the stream still being positioned in it.
+func (stream *chunkStream) detach(expected *SingleChunkCacher) (previous *SingleChunkCacher) {
+	if stream == nil {
+		return nil
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if expected != nil && stream.cacher != expected {
+		return nil
+	}
+	previous = stream.cacher
+	stream.cacher = nil
+	return previous
+}
+
+// releaseIfFinished unpins the stream's chunk once the stream has read it to
+// the end, since the stream will not come back to it.
+func (rc *ReaderCache) releaseIfFinished(stream *chunkStream, cacher *SingleChunkCacher, offset int64, n int, err error, chunkSize int) {
+	if stream == nil || err != nil || offset+int64(n) < int64(chunkSize) {
+		return
+	}
+	rc.unpin(stream.detach(cacher))
+}
+
+// releaseStream unpins whatever chunk the stream is positioned in.
+func (rc *ReaderCache) releaseStream(stream *chunkStream) {
+	rc.unpin(stream.detach(nil))
+}
+
+// unpin drops one stream's pin. Once no stream is positioned in the chunk it
+// is dropped like UnCache would, as soon as no read is in progress either:
+// here if none is, otherwise by the last read's removeConsumed.
+func (rc *ReaderCache) unpin(downloader *SingleChunkCacher) {
+	if downloader == nil {
+		return
+	}
+	if atomic.AddInt32(&downloader.pins, -1) == 0 {
+		atomic.StoreInt32(&downloader.left, 1)
+	}
+	rc.removeConsumed(downloader)
 }
 
 func (rc *ReaderCache) UnCache(fileId string) {
@@ -202,15 +348,13 @@ func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	}
 }
 
-// removeConsumed drops a cacher once its buffer was fully read and no
-// readers remain attached. The checks run under the ReaderCache lock so a
-// reader attaching at the same time either wins (the cacher stays and that
-// reader's detach retries the removal) or misses the map and refetches.
-func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
+// removeUnpinned drops a cacher only while no stream is positioned in it.
+// Budget eviction picks its victim under the budget lock, so the pin check
+// and the map removal must happen together under the ReaderCache lock.
+func (rc *ReaderCache) removeUnpinned(downloader *SingleChunkCacher) (removed bool) {
 	rc.Lock()
-	removed := rc.downloaders[downloader.chunkFileId] == downloader &&
-		atomic.LoadInt32(&downloader.readers) == 0 &&
-		atomic.LoadInt32(&downloader.consumed) != 0
+	removed = rc.downloaders[downloader.chunkFileId] == downloader &&
+		atomic.LoadInt32(&downloader.pins) == 0
 	if removed {
 		delete(rc.downloaders, downloader.chunkFileId)
 	}
@@ -218,6 +362,42 @@ func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
 	if removed {
 		downloader.destroy()
 	}
+	return
+}
+
+// consumable reports whether the cacher could be dropped: its buffer was
+// fully read or every stream positioned in it has left, and no reader is
+// attached or pinned. All fields are atomics, so callers can skip the
+// ReaderCache lock whenever removal is impossible.
+func (s *SingleChunkCacher) consumable() bool {
+	return atomic.LoadInt32(&s.readers) == 0 &&
+		atomic.LoadInt32(&s.pins) == 0 &&
+		(atomic.LoadInt32(&s.consumed) != 0 || atomic.LoadInt32(&s.left) != 0)
+}
+
+// removeConsumed drops a cacher once its buffer was fully read, or the
+// streams positioned in it have left, and no readers remain attached or
+// pinned. The checks run under the ReaderCache lock so a reader attaching
+// at the same time either wins (the cacher stays and that reader's detach
+// retries the removal) or misses the map and refetches.
+func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
+	if !downloader.consumable() {
+		return
+	}
+	rc.Lock()
+	removed := rc.removeConsumedLocked(downloader)
+	rc.Unlock()
+	if removed {
+		downloader.destroy()
+	}
+}
+
+func (rc *ReaderCache) removeConsumedLocked(downloader *SingleChunkCacher) (removed bool) {
+	if rc.downloaders[downloader.chunkFileId] == downloader && downloader.consumable() {
+		delete(rc.downloaders, downloader.chunkFileId)
+		return true
+	}
+	return false
 }
 
 func (rc *ReaderCache) destroy() {
@@ -244,8 +424,9 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 }
 
 // startCaching downloads a chunk shared by concurrent readers.
+// The caller must s.wg.Add(1) before publishing the cacher in the
+// downloaders map, so a removal can never observe the fetch as absent.
 func (s *SingleChunkCacher) startCaching() {
-	s.wg.Add(1)
 	defer func() {
 		close(s.done)
 		s.wg.Done()

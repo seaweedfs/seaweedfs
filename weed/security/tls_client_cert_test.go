@@ -134,7 +134,7 @@ func TestLoadClientTLSPrefersClientCert(t *testing.T) {
 	serverCert, serverKey := ca.issue(t, dir, "server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
 
-	v := &util.ViperProxy{Viper: viper.New()}
+	v := util.NewViperProxy(viper.New())
 	v.Set("grpc.ca", ca.file)
 	v.Set("grpc.master.cert", serverCert)
 	v.Set("grpc.master.key", serverKey)
@@ -153,7 +153,7 @@ func TestLoadClientTLSFallsBackToServingCert(t *testing.T) {
 	ca := newTestCA(t, dir)
 	dualCert, dualKey := ca.issue(t, dir, "dual", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth})
 
-	v := &util.ViperProxy{Viper: viper.New()}
+	v := util.NewViperProxy(viper.New())
 	v.Set("grpc.ca", ca.file)
 	v.Set("grpc.master.cert", dualCert)
 	v.Set("grpc.master.key", dualKey)
@@ -171,7 +171,7 @@ func TestLoadClientTLSServerOnlyEkuRejected(t *testing.T) {
 	ca := newTestCA(t, dir)
 	serverCert, serverKey := ca.issue(t, dir, "server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 
-	v := &util.ViperProxy{Viper: viper.New()}
+	v := util.NewViperProxy(viper.New())
 	v.Set("grpc.ca", ca.file)
 	v.Set("grpc.master.cert", serverCert)
 	v.Set("grpc.master.key", serverKey)

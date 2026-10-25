@@ -45,7 +45,7 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 
 	options.AdminServer = strings.TrimSpace(options.AdminServer)
 	if options.AdminServer == "" {
-		options.AdminServer = "localhost:23646"
+		options.AdminServer = fmt.Sprintf("localhost:%d", defaultAdminHTTPPort)
 	}
 
 	options.JobTypes = strings.TrimSpace(options.JobTypes)
@@ -82,7 +82,7 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 		return false
 	}
 
-	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption, options.MaxExecute, options.WorkingDir)
+	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption, options.MaxExecute, options.WorkingDir, options.Address)
 	if err != nil {
 		glog.Errorf("Failed to build plugin worker handlers: %v", err)
 		return false
@@ -141,7 +141,7 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 // buildPluginWorkerHandlers resolves the comma-separated jobTypes string
 // (which may contain category names like "all", "default", "heavy" and/or
 // explicit job type names/aliases) into a deduplicated slice of JobHandlers.
-func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int, workingDir string) ([]pluginworker.JobHandler, error) {
+func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int, workingDir string, workerAddress ...string) ([]pluginworker.JobHandler, error) {
 	jobTypes = strings.TrimSpace(jobTypes)
 	if jobTypes == "" {
 		jobTypes = defaultPluginWorkerJobTypes
@@ -152,10 +152,16 @@ func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxE
 		return nil, err
 	}
 
+	addr := ""
+	if len(workerAddress) > 0 {
+		addr = strings.TrimSpace(workerAddress[0])
+	}
+
 	opts := pluginworker.HandlerBuildOptions{
 		GrpcDialOption: dialOption,
 		MaxExecute:     maxExecute,
 		WorkingDir:     workingDir,
+		WorkerAddress:  addr,
 	}
 
 	handlers := make([]pluginworker.JobHandler, 0, len(factories))

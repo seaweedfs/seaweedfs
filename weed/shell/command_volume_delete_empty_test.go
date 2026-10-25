@@ -4,45 +4,38 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestIsEmptyVolumeDeleteCandidateCollectionPattern(t *testing.T) {
-	now := int64(1000)
-	quietSeconds := int64(100)
-	quietEmptyVolume := &master_pb.VolumeInformationMessage{
-		Size:             0,
-		ModifiedAtSecond: now - quietSeconds - 1,
-		Collection:       "important-logs",
-	}
+func TestIsEmptyVolumeDeleteCandidate(t *testing.T) {
+	matcher, err := wildcard.CompileCollectionMatcher("")
+	assert.NoError(t, err)
+
+	const quietSeconds = int64(60)
+	const now = int64(1_000_000)
+	old := now - quietSeconds - 1
 
 	tests := []struct {
-		name       string
-		pattern    string
-		collection string
-		want       bool
+		name string
+		v    *master_pb.VolumeInformationMessage
+		want bool
 	}{
-		{name: "empty pattern matches named collection", pattern: "", collection: "important-logs", want: true},
-		{name: "wildcard matches collection", pattern: "important*", collection: "important-logs", want: true},
-		{name: "wildcard rejects collection", pattern: "important*", collection: "other-logs", want: false},
-		{name: "default pattern matches empty collection", pattern: CollectionDefault, collection: "", want: true},
-		{name: "default pattern rejects named collection", pattern: CollectionDefault, collection: "important-logs", want: false},
-		{name: "list matches a listed collection", pattern: "other-logs,important-logs", collection: "important-logs", want: true},
-		{name: "list rejects an unlisted collection", pattern: "other-logs,important-logs", collection: "audit-logs", want: false},
+		{"small .dat is empty", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ModifiedAtSecond: old}, true},
+		{"all needles deleted is empty", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 100, ModifiedAtSecond: old}, true},
+		{"live needles keep the volume", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 99, ModifiedAtSecond: old}, false},
+		{"overwrites alone are not empty", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 200, DeleteCount: 100, ModifiedAtSecond: old}, false},
+		{"recent all-deleted volume is kept", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 100, ModifiedAtSecond: now}, false},
+		{"never written volume is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ModifiedAtSecond: 0}, false},
+		{"remote-backed replica is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, RemoteStorageName: "s3", RemoteStorageKey: "v", ModifiedAtSecond: old}, false},
+		{"remote-backed garbage is kept", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 100, RemoteStorageName: "s3", ModifiedAtSecond: old}, false},
+		{"protected read-only volume is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ModifiedAtSecond: old}, false},
+		{"deletable read-only volume can go", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ReadOnlyCanDelete: true, ModifiedAtSecond: old}, true},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v := *quietEmptyVolume
-			v.Collection = tt.collection
-			matcher, err := wildcard.CompileCollectionMatcher(tt.pattern)
-			if err != nil {
-				t.Fatalf("CompileCollectionMatcher(%q): %v", tt.pattern, err)
-			}
-			if got := isEmptyVolumeDeleteCandidate(&v, quietSeconds, now, matcher); got != tt.want {
-				t.Fatalf("isEmptyVolumeDeleteCandidate(collection=%q, pattern=%q) = %v, want %v",
-					tt.collection, tt.pattern, got, tt.want)
-			}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isEmptyVolumeDeleteCandidate(tc.v, quietSeconds, now, matcher))
 		})
 	}
 }

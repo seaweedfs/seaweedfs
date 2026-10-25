@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os"
@@ -109,7 +110,7 @@ func TestFetchEcIndexFromPeers_CopiesIndexOverGrpc(t *testing.T) {
 	if err := os.WriteFile(srcBase+".ecx", ecxBytes, 0o644); err != nil {
 		t.Fatalf("write source .ecx: %v", err)
 	}
-	if err := os.WriteFile(srcBase+".ecj", []byte("journal"), 0o644); err != nil {
+	if err := os.WriteFile(srcBase+".ecj", ecjStreamBytes(3, 5, 3), 0o644); err != nil {
 		t.Fatalf("write source .ecj: %v", err)
 	}
 	// A real .vif: the receiver MOUNTS the volume from the copied files, and a
@@ -160,8 +161,11 @@ func TestFetchEcIndexFromPeers_CopiesIndexOverGrpc(t *testing.T) {
 	if len(got) != len(ecxBytes) {
 		t.Errorf("copied .ecx size = %d, want %d", len(got), len(ecxBytes))
 	}
-	if _, err := os.Stat(dstBase + ".ecj"); err != nil {
+	// The journal is merged as a set: the duplicate record collapses.
+	if got, err := os.ReadFile(dstBase + ".ecj"); err != nil {
 		t.Errorf("copied .ecj missing: %v", err)
+	} else if want := ecjStreamBytes(3, 5); !bytes.Equal(got, want) {
+		t.Errorf("copied .ecj = %x, want %x", got, want)
 	}
 	if _, err := os.Stat(dstBase + ".vif"); err != nil {
 		t.Errorf("copied .vif missing: %v", err)

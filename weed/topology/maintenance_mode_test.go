@@ -231,7 +231,7 @@ func TestMaintenanceModeHoldsThroughVacuumAndMarkWritable(t *testing.T) {
 	vl.DrainAndRemoveFromWritable(1)
 	topo.SetDataNodeMaintenanceMode(dn1, true)
 	for _, dn := range []*DataNode{dn1, dn2} {
-		if vl.SetVolumeAvailable(dn, 1, false, false) {
+		if vl.SetVolumeAvailable(dn, 1, false, false, false) {
 			t.Errorf("vacuum commit on %s made the volume writable with a replica in maintenance", dn.Id())
 		}
 	}

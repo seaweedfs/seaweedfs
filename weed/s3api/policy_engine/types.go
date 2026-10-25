@@ -315,6 +315,9 @@ type PolicyEvaluationArgs struct {
 	// inherited from the CreateMultipartUpload request for UploadPart and
 	// UploadPartCopy actions. The empty string means no SSE was used.
 	InheritedSSEAlgorithm string
+
+	// Original complete grant values supplement only positive string conditions in explicit denies, never allows or negative conditions.
+	OriginalGrantConditions map[string][]string
 }
 
 // PolicyCache for caching compiled policies

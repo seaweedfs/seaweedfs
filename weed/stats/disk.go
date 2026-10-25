@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 type DiskIOProbeConfig struct {
@@ -91,7 +92,7 @@ type diskState struct {
 	statFailureCount int
 	statSuccessCount int
 	lastStatErr      error
-	lastGoodStatus   volume_server_pb.DiskStatus
+	lastGoodStatus   *volume_server_pb.DiskStatus
 	hasLastGood      bool
 
 	samples []ioSample
@@ -497,7 +498,7 @@ func (s *diskState) updateErrorLocked(disk *volume_server_pb.DiskStatus, config 
 }
 
 func (s *diskState) rememberGoodStatusLocked(disk *volume_server_pb.DiskStatus) {
-	s.lastGoodStatus = *disk
+	s.lastGoodStatus = proto.Clone(disk).(*volume_server_pb.DiskStatus)
 	s.hasLastGood = true
 }
 
@@ -508,7 +509,8 @@ func (s *diskState) applyLastGoodStatusLocked(disk *volume_server_pb.DiskStatus)
 
 	dir := disk.Dir
 	errorMessage := disk.Error
-	*disk = s.lastGoodStatus
+	proto.Reset(disk)
+	proto.Merge(disk, s.lastGoodStatus)
 	disk.Dir = dir
 	disk.Error = errorMessage
 }

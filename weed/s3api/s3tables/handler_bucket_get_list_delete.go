@@ -58,7 +58,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrAttributeNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket: %v", err))
@@ -70,9 +70,11 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -192,9 +194,11 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-					TableBucketName: entry.Entry.Name,
-					IdentityActions: identityActions,
-					DefaultAllow:    h.defaultAllowFor(r),
+					TrustedIssuers:   h.trustedIssuers(r),
+					IsLocalAccountID: h.localAccountIDs,
+					TableBucketName:  entry.Entry.Name,
+					IdentityActions:  identityActions,
+					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
 					continue
 				}
@@ -296,9 +300,11 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TableBucketName: bucketName,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}

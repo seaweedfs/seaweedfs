@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -31,6 +30,10 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -90,6 +93,15 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	action := s3_constants.S3_ACTION_GET_OBJECT_ACL
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectAclHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get object owner from metadata, fallback to request account
 	var objectOwner string
 	var objectOwnerDisplayName string
@@ -138,6 +150,10 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -197,6 +213,15 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	putAction := s3_constants.S3_ACTION_PUT_OBJECT_ACL
+	if versionId != "" {
+		putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, putAction, entry.Extended, "PutObjectAclHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get current object owner from metadata
 	var objectOwner string
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -207,15 +232,27 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// **PERMISSION CHECKS**
+
+	isAdmin := s3a.isUserAdmin(r)
+
+	// Without stored owner metadata there is no way to prove a non-admin
+	// caller owns this object, so they must not modify its ACL or claim it.
+	// Admins keep the fallback below to take over ownerless objects, which
+	// can be produced by non-S3 filer writes.
+	if objectOwner == "" && !isAdmin {
+		glog.V(3).Infof("PutObjectAclHandler: Access denied - object %s/%s has no owner metadata", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
 	// Fallback to current account if no owner stored
 	if objectOwner == "" {
 		objectOwner = amzAccountId
 	}
 
-	// **PERMISSION CHECKS**
-
 	// 1. Check if user is admin (admins can modify any ACL)
-	if !s3a.isUserAdmin(r) {
+	if !isAdmin {
 		// 2. Check object ownership - only object owner can modify ACL (unless admin)
 		if objectOwner != amzAccountId {
 			glog.V(3).Infof("PutObjectAclHandler: Access denied - user %s is not owner of object %s/%s (owner: %s)",
@@ -224,19 +261,13 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		// 3. Check object-level WRITE_ACP permission
-		// Create the specific action for this object
-		writeAcpAction := Action(fmt.Sprintf("WriteAcp:%s/%s", bucket, object))
-		identity, errCode := s3a.iam.authRequest(r, writeAcpAction)
+		// 3. Check object-level WRITE_ACP permission. The unified auth path
+		// scopes the base action to the request's bucket/object for both
+		// legacy Actions and IAM/bucket policies; embedding the resource path
+		// in the action here would scope it twice.
+		_, errCode := s3a.iam.authRequest(r, Action(s3_constants.ACTION_WRITE_ACP))
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("PutObjectAclHandler: Auth failed for WriteAcp action on %s/%s: %v", bucket, object, errCode)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
-
-		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
-		if identity == nil || !identity.CanDo(writeAcpAction, bucket, object) {
-			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}

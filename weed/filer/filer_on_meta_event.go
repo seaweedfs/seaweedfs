@@ -15,6 +15,7 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
 	f.onEmptyFolderCleanupEvents(event)
+	f.onRemoteDeletionEvents(event)
 }
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {

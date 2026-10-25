@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -80,13 +81,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify policy signature.
-	identity, errCode := s3a.iam.doesPolicySignatureMatch(formValues)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
 	}
 	if identity != nil {
-		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identity.Name))
+		r = r.WithContext(recordIdentityInContext(r, identity))
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
@@ -138,10 +139,18 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Forward validated POST form fields to the underlying PUT as headers.
 	applyPostPolicyFormHeaders(r, formValues)
 
-	// Authorize the object like the PUT path; the coarse Write check above does not consult the bucket policy.
+	// Authorize the object like the PUT path.
 	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
+	}
+	// An acl or x-amz-grant-* form field rides onto the upload as ACL headers,
+	// which the PUT path only applies under s3:PutObjectAcl.
+	if postRequestsAcl(r) {
+		if errCode := s3a.iam.AuthorizeObjectAclWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+			return
+		}
 	}
 
 	versioningState, err := s3a.getVersioningState(bucket)
@@ -160,7 +169,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
+	if err := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); err != nil {
 		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
@@ -274,6 +283,17 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 	}
 }
 
+// postRequestsAcl reports whether the request carries ACL headers, whether
+// promoted from the POST form fields or supplied on the request itself.
+func postRequestsAcl(r *http.Request) bool {
+	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(header) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Extract form fields and file data from a HTTP POST Policy
 func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, fileName, fileContentType string, fileSize int64, formValues http.Header, err error) {
 	// / HTML Form values
@@ -362,10 +382,15 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 }
 
 // Check to see if Policy is signed correctly, returning the signing identity.
-func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) (*Identity, s3err.ErrorCode) {
+// The verified form's access key is recorded in ctx's identity holder.
+// Write authorization happens later in the handler via AuthorizeObjectWrite,
+// which evaluates the identity's attached IAM policies, session policies, and
+// the bucket policy against the real object key; gating here on the legacy
+// Actions projection would deny identities those mechanisms allow.
+func (iam *IdentityAccessManagement) doesPolicySignatureMatch(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
-		return iam.doesPolicySignatureV2Match(formValues)
+		return iam.doesPolicySignatureV2Match(ctx, formValues)
 	}
-	return iam.doesPolicySignatureV4Match(formValues)
+	return iam.doesPolicySignatureV4Match(ctx, formValues)
 }

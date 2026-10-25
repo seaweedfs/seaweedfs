@@ -32,7 +32,7 @@ func TestDestroyKeepsVifWhenEcCoexists(t *testing.T) {
 	ecxPath := erasure_coding.EcShardFileName("", dir, 1) + ".ecx"
 	require.NoError(t, os.WriteFile(ecxPath, []byte("ec-index"), 0o644))
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	assertFileExist(t, false, base+".dat")
 	assertFileExist(t, false, base+".idx")
@@ -54,7 +54,7 @@ func TestDestroyRemovesVifWhenNoEc(t *testing.T) {
 	vifPath := base + ".vif"
 	require.NoError(t, os.WriteFile(vifPath, []byte("regular-volume-info"), 0o644))
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	assertFileExist(t, false, base+".dat")
 	assertFileExist(t, false, base+".idx")

@@ -27,6 +27,29 @@ func TestInitialLockRingUpdateReturnsLastBroadcastForFilers(t *testing.T) {
 	assert.Greater(t, resp.LockRingUpdate.Version, int64(0))
 }
 
+func TestLeaveLockRingDropsOnlyTheLeavingFiler(t *testing.T) {
+	ms := &MasterServer{
+		LockRingManager: cluster.NewLockRingManager(nil),
+	}
+	ms.LockRingManager.AddServer("group-a", "filer1:8888")
+	ms.LockRingManager.AddServer("group-a", "filer2:8888")
+	ms.LockRingManager.FlushPending("group-a")
+
+	registered := &master_pb.KeepConnectedRequest{ClientType: cluster.FilerType, FilerGroup: "group-a"}
+	ms.onKeepConnectedMessage(registered, "filer1:8888", &master_pb.KeepConnectedRequest{})
+	ms.LockRingManager.FlushPending("group-a")
+	assert.ElementsMatch(t, []string{"filer1:8888", "filer2:8888"}, ms.LockRingManager.GetServers("group-a"))
+
+	ms.onKeepConnectedMessage(registered, "filer1:8888", &master_pb.KeepConnectedRequest{LeaveLockRing: true})
+	ms.LockRingManager.FlushPending("group-a")
+	assert.ElementsMatch(t, []string{"filer2:8888"}, ms.LockRingManager.GetServers("group-a"))
+
+	s3 := &master_pb.KeepConnectedRequest{ClientType: cluster.S3Type, FilerGroup: "group-a"}
+	ms.onKeepConnectedMessage(s3, "filer2:8888", &master_pb.KeepConnectedRequest{LeaveLockRing: true})
+	ms.LockRingManager.FlushPending("group-a")
+	assert.ElementsMatch(t, []string{"filer2:8888"}, ms.LockRingManager.GetServers("group-a"))
+}
+
 func TestInitialLockRingUpdateSkipsNonFilers(t *testing.T) {
 	ms := &MasterServer{
 		LockRingManager: cluster.NewLockRingManager(nil),

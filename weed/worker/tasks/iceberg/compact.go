@@ -113,6 +113,7 @@ func (h *Handler) compactDataFiles(
 	var positionDeletes map[string][]int64
 	var eqDeleteGroups []equalityDeleteGroup
 	var allDeleteEntries []iceberg.ManifestEntry
+	var dvPaths map[string]bool
 	if config.ApplyDeletes && len(deleteManifests) > 0 {
 		for _, mf := range deleteManifests {
 			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
@@ -126,10 +127,19 @@ func (h *Handler) compactDataFiles(
 			allDeleteEntries = append(allDeleteEntries, entries...)
 		}
 
+		var err error
+		dvPaths, err = deletionVectorPaths(allDeleteEntries, bucketName, dataPath)
+		if err != nil {
+			return "", nil, err
+		}
+
 		// Separate position and equality deletes, filtering by partition
 		// predicate so out-of-scope deletes don't affect the merge.
 		var posDeleteEntries, eqDeleteEntries []iceberg.ManifestEntry
 		for _, entry := range allDeleteEntries {
+			if entry.DataFile().FileFormat() == iceberg.PuffinFile {
+				continue
+			}
 			if predicate != nil {
 				spec, ok := specsByID[int(entry.DataFile().SpecID())]
 				if !ok {
@@ -166,10 +176,13 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
-	candidateEntries := allEntries
+	candidateEntries, err := excludeDeletionVectorFiles(allEntries, dvPaths, bucketName, dataPath)
+	if err != nil {
+		return "", nil, err
+	}
 	if predicate != nil {
-		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
-		for _, entry := range allEntries {
+		filtered := make([]iceberg.ManifestEntry, 0, len(candidateEntries))
+		for _, entry := range candidateEntries {
 			spec, ok := specsByID[int(entry.DataFile().SpecID())]
 			if !ok {
 				continue
@@ -179,9 +192,10 @@ func (h *Handler) compactDataFiles(
 				return "", nil, err
 			}
 			if match {
-				candidateEntries = append(candidateEntries, entry)
+				filtered = append(filtered, entry)
 			}
 		}
+		candidateEntries = filtered
 	}
 
 	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
@@ -189,9 +203,11 @@ func (h *Handler) compactDataFiles(
 		return "", nil, err
 	}
 
-	// Build compaction bins: group small data files by partition.
+	// Build compaction bins: group small data files by partition, each bin's
+	// files in the order of their bounds so the merged file keeps the
+	// ordering its inputs had.
 	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
-	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles, meta)
 	initialBinCount := len(bins)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	if len(bins) == 0 {
@@ -203,6 +219,11 @@ func (h *Handler) compactDataFiles(
 
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
+	// v3 row lineage: the snapshot starts at the table's next-row-id, and the
+	// merged files carry every row's _row_id and _last_updated_sequence_number
+	// (row_lineage.go).
+	lineage := hasRowLineage(version)
+	firstRowID := rowLineageFirstRowID(meta)
 
 	// Compute the snapshot ID for the commit up front so all manifest entries
 	// reference the same snapshot that will actually be committed.
@@ -269,14 +290,23 @@ func (h *Handler) compactDataFiles(
 
 		var mergedData []byte
 		var recordCount int64
+		rowGroupRows := rowsPerRowGroup(bin, config)
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
-			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan)
+			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan, rowGroupRows, lineage)
 		} else {
-			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
+			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rowGroupRows, lineage)
 		}
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
 			goto binDone
+		}
+		// A default-CRS geometry column declares no CRS (geometry_crs.go). A
+		// footer that cannot be rewritten leaves the file as written: valid,
+		// only labelled differently.
+		if fixed, _, crsErr := withDefaultGeometryCRSUnset(mergedData, schema); crsErr != nil {
+			glog.Warningf("iceberg compact: geometry CRS left as written in bin %d: %v", binIdx, crsErr)
+		} else {
+			mergedData = fixed
 		}
 
 		// Write merged file to filer
@@ -313,6 +343,28 @@ func (h *Handler) compactDataFiles(
 				goto binDone
 			}
 			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
+
+			// Record the column statistics readers prune files by; without
+			// them every scan has to read every compacted file.
+			if stats, statsErr := collectColumnStats(mergedData, schema); statsErr != nil {
+				glog.Warningf("iceberg compact: no column statistics for %s: %v", mergedFileName, statsErr)
+			} else {
+				stats.applyTo(dfBuilder)
+			}
+
+			// A merged file keeps its rows' row IDs, so its entry names the first
+			// materialized one instead of inheriting a fresh range at commit.
+			if lineage {
+				firstID, err := mergedFileFirstRowID(mergedData)
+				if err != nil {
+					glog.Warningf("iceberg compact: failed to read merged file lineage for bin %d: %v", binIdx, err)
+					_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
+					goto binDone
+				}
+				if firstID != nil {
+					dfBuilder.FirstRowID(*firstID)
+				}
+			}
 
 			mergedDataFile := dfBuilder.Build()
 			summary.addFile(mergedDataFile)
@@ -460,7 +512,7 @@ func (h *Handler) compactDataFiles(
 	// Write new manifest list
 	var manifestListBuf bytes.Buffer
 	seqNum := currentSnap.SequenceNumber + 1
-	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests)
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, firstRowID, allManifests)
 	if err != nil {
 		return "", nil, fmt.Errorf("write compact manifest list: %w", err)
 	}
@@ -475,9 +527,9 @@ func (h *Handler) compactDataFiles(
 	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListFileName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 
 		newSnapshot := &table.Snapshot{
@@ -501,6 +553,7 @@ func (h *Handler) compactDataFiles(
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
 			newSnapshot.Summary.Properties["sort-fields"] = rewritePlan.summaryLabel()
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}
@@ -527,7 +580,13 @@ func (h *Handler) compactDataFiles(
 // buildCompactionBins groups small data files by partition for bin-packing.
 // A file is "small" if it's below targetSize. A bin must have at least
 // minFiles entries to be worth compacting.
-func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int) []compactionBin {
+//
+// With an order, every bin lists its files by their bounds on the ordering
+// column and an oversized partition is split into runs of consecutive files,
+// so each merged file covers one contiguous range of that column. Without one
+// the files keep manifest order and an oversized partition is packed
+// largest-first.
+func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int, meta table.Metadata) []compactionBin {
 	if minFiles < 2 {
 		minFiles = 2
 	}
@@ -560,14 +619,37 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 		bin.TotalSize += df.FileSizeBytes()
 	}
 
-	// Filter to bins with enough files, splitting oversized bins
+	// Filter to bins with enough files, splitting oversized bins. The merge
+	// order resolves per group over the files that survived the eligibility
+	// filter, so a file that can never participate (oversized, another
+	// format) cannot veto ordering for the ones that can.
 	var result []compactionBin
 	for _, bin := range groups {
 		if len(bin.Entries) < minFiles {
 			continue
 		}
+		order := resolveCompactionOrder(meta, bin.Entries)
+		order.sortEntries(bin.Entries)
 		if bin.TotalSize <= targetSize {
 			result = append(result, *bin)
+		} else if order != nil {
+			runs, leftover := splitOrderedBin(*bin, targetSize, minFiles)
+			result = append(result, runs...)
+			if order.bestEffort && len(leftover) > 0 {
+				runtBin := compactionBin{PartitionKey: bin.PartitionKey, Partition: bin.Partition, SpecID: bin.SpecID, Entries: leftover}
+				packed := splitOversizedBin(runtBin, targetSize, minFiles)
+				if len(packed) == 0 {
+					// Stragglers cannot merge even with each other; repacking
+					// the whole bin lets them pair across the ordered runs.
+					// Only replace the runs when the repack yields bins —
+					// otherwise the runs stay valid compaction work.
+					if full := splitOversizedBin(*bin, targetSize, minFiles); len(full) > 0 {
+						result = result[:len(result)-len(runs)]
+						packed = full
+					}
+				}
+				result = append(result, packed...)
+			}
 		} else {
 			result = append(result, splitOversizedBin(*bin, targetSize, minFiles)...)
 		}
@@ -682,6 +764,48 @@ func partitionKey(partition map[int]any) string {
 	return strings.Join(parts, "\x00")
 }
 
+// deletionVectorPaths names the data files a Puffin deletion-vector entry
+// covers, normalized to merge-time keys. Merging a covered file needs a
+// Puffin reader to apply the vector; without one the merge would resurrect
+// deleted rows, so the file must stay out of compaction bins.
+func deletionVectorPaths(entries []iceberg.ManifestEntry, bucketName, dataPath string) (map[string]bool, error) {
+	paths := make(map[string]bool)
+	for _, entry := range entries {
+		df := entry.DataFile()
+		if df.ContentType() != iceberg.EntryContentPosDeletes || df.FileFormat() != iceberg.PuffinFile {
+			continue
+		}
+		ref := df.ReferencedDataFile()
+		if ref == nil || *ref == "" {
+			return nil, fmt.Errorf("deletion vector %s has no referenced data file", df.FilePath())
+		}
+		normalized, err := normalizeIcebergPath(*ref, bucketName, dataPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve deletion vector source %s: %w", *ref, err)
+		}
+		paths[normalized] = true
+	}
+	return paths, nil
+}
+
+// excludeDeletionVectorFiles drops entries a deletion vector covers.
+func excludeDeletionVectorFiles(entries []iceberg.ManifestEntry, dvPaths map[string]bool, bucketName, dataPath string) ([]iceberg.ManifestEntry, error) {
+	if len(dvPaths) == 0 {
+		return entries, nil
+	}
+	kept := make([]iceberg.ManifestEntry, 0, len(entries))
+	for _, entry := range entries {
+		normalized, err := normalizeIcebergPath(entry.DataFile().FilePath(), bucketName, dataPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve data file %s: %w", entry.DataFile().FilePath(), err)
+		}
+		if !dvPaths[normalized] {
+			kept = append(kept, entry)
+		}
+	}
+	return kept, nil
+}
+
 // collectPositionDeletes reads position delete Parquet files and returns a map
 // from normalized data file path to sorted row positions that should be deleted.
 // Paths are normalized so that absolute S3 URLs and relative paths match.
@@ -693,8 +817,9 @@ func collectPositionDeletes(
 ) (map[string][]int64, error) {
 	result := make(map[string][]int64)
 	for _, entry := range deleteEntries {
-		if entry.DataFile().ContentType() != iceberg.EntryContentPosDeletes {
-			continue
+		df := entry.DataFile()
+		if df.ContentType() != iceberg.EntryContentPosDeletes || df.FileFormat() == iceberg.PuffinFile {
+			continue // Puffin is a deletion vector, not a row-level delete file
 		}
 		fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 		if err != nil {
@@ -845,7 +970,7 @@ func readEqualityDeleteFile(
 	reader := parquet.NewReader(bytes.NewReader(data))
 	defer reader.Close()
 
-	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema)
+	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolve columns in %s: %w", filePath, err)
 	}
@@ -876,24 +1001,37 @@ func readEqualityDeleteFile(
 // buildEqualityKey builds a composite string key from specific column values
 // in a row. Each value is serialized as "kind:length:value" to avoid ambiguity
 // between types (e.g., int 123 vs string "123") and to prevent collisions from
-// values containing separator characters.
+// values containing separator characters. A negative column index is a field
+// the file lacks: the value there is null.
 func buildEqualityKey(row parquet.Row, colIndices []int) string {
 	if len(colIndices) == 1 {
-		v := row[colIndices[0]]
+		v := equalityKeyValue(row, colIndices[0])
 		s := v.String()
 		return fmt.Sprintf("%d:%d:%s", v.Kind(), len(s), s)
 	}
 	var b strings.Builder
 	for _, idx := range colIndices {
-		v := row[idx]
+		v := equalityKeyValue(row, idx)
 		s := v.String()
 		fmt.Fprintf(&b, "%d:%d:%s", v.Kind(), len(s), s)
 	}
 	return b.String()
 }
 
+func equalityKeyValue(row parquet.Row, idx int) parquet.Value {
+	if idx < 0 {
+		return parquet.NullValue()
+	}
+	return row[idx]
+}
+
 // resolveEqualityColIndices maps Iceberg field IDs to Parquet column indices.
-func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema) ([]int, error) {
+// A file carrying field ids resolves by id, so a column renamed since the
+// file was written still matches; one without ids falls back to the Iceberg
+// name. allowMissing reads a column the file lacks as null (-1 marks it in
+// the key): for data files only — an equality-delete file always carries
+// its equality columns, so a missing one stays an error there.
+func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, icebergSchema *iceberg.Schema, allowMissing bool) ([]int, error) {
 	if len(fieldIDs) == 0 {
 		return nil, nil
 	}
@@ -902,6 +1040,14 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 	for i, col := range pqSchema.Columns() {
 		colNameToIdx[strings.Join(col, ".")] = i
 	}
+	idToIdx := make(map[int]int)
+	for _, f := range pqSchema.Fields() {
+		if f.Leaf() && f.ID() > 0 {
+			if idx, ok := colNameToIdx[f.Name()]; ok {
+				idToIdx[f.ID()] = idx
+			}
+		}
+	}
 
 	indices := make([]int, len(fieldIDs))
 	for i, fid := range fieldIDs {
@@ -909,13 +1055,62 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 		if !ok {
 			return nil, fmt.Errorf("field ID %d not found in iceberg schema", fid)
 		}
-		idx, ok := colNameToIdx[field.Name]
+		idx, ok := idToIdx[fid]
+		if !ok && len(idToIdx) == 0 {
+			idx, ok = colNameToIdx[field.Name]
+		}
 		if !ok {
+			// An optional column added to the table after this file was
+			// written reads as null there (-1 marks it in the key).
+			if allowMissing && !field.Required {
+				indices[i] = -1
+				continue
+			}
 			return nil, fmt.Errorf("column %q (field ID %d) not found in parquet schema", field.Name, fid)
 		}
 		indices[i] = idx
 	}
 	return indices, nil
+}
+
+const (
+	// Iceberg's write.parquet.row-group-size-bytes default and PyIceberg's
+	// write.parquet.row-group-limit default.
+	defaultRowGroupSizeBytes = 128 * 1024 * 1024
+	defaultRowGroupRowLimit  = 1048576
+	minRowGroupRows          = 1024
+)
+
+// rowsPerRowGroup is the most rows one row group of a compacted file holds:
+// the row limit, lowered so a row group stays near the byte size, estimated
+// from the bin's inputs' bytes per row. parquet-go's writers have no limit of
+// their own, so without one every compacted file is a single row group. The
+// floor only protects the estimate — a configured row limit always wins.
+func rowsPerRowGroup(bin compactionBin, config Config) int64 {
+	rows, sizeBytes := config.RowGroupRowLimit, config.RowGroupSizeBytes
+	explicit := rows > 0
+	if !explicit {
+		rows = defaultRowGroupRowLimit
+	}
+	if sizeBytes <= 0 {
+		sizeBytes = defaultRowGroupSizeBytes
+	}
+	var totalRows int64
+	for _, entry := range bin.Entries {
+		totalRows += entry.DataFile().Count()
+	}
+	if totalRows > 0 && bin.TotalSize > 0 {
+		bytesPerRow := max(bin.TotalSize/totalRows, 1)
+		estimated := sizeBytes / bytesPerRow
+		if !explicit {
+			estimated = max(estimated, minRowGroupRows)
+		}
+		rows = min(rows, estimated)
+	}
+	if !explicit {
+		rows = max(rows, minRowGroupRows)
+	}
+	return rows
 }
 
 // mergeParquetFiles reads multiple small Parquet files and merges them into
@@ -930,6 +1125,88 @@ func mergeParquetFiles(
 	positionDeletes map[string][]int64,
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
+	lineage bool,
+) ([]byte, int64, error) {
+	// On a v1/v2 table the writer's schema is chosen before any row is
+	// written: the union of the bin's file schemas by field id, so a bin of
+	// progressively wider files merges in one pass instead of restarting
+	// (and rewriting every earlier file) on each wider one. The v3 merge
+	// keeps the first file's columns plus the lineage columns.
+	var target *parquet.Schema
+	if !lineage {
+		var err error
+		if target, err = binWriterSchema(ctx, filerClient, bucketName, dataPath, entries); err != nil {
+			return nil, 0, err
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		out, rows, err := mergeParquetFilesInto(ctx, filerClient, bucketName, dataPath, entries, positionDeletes,
+			eqDeleteGroups, icebergSchema, rowGroupRows, lineage, target)
+		var wider *widerSchemaError
+		if errors.As(err, &wider) && attempt < len(entries) {
+			target = wider.schema
+			continue
+		}
+		return out, rows, err
+	}
+}
+
+// binWriterSchema is the writer schema for a v1/v2 bin-pack merge: the union
+// of the files' schemas by field id. Only each file's footer is read to learn
+// its schema; the merge then downloads each file once. Files whose schemas
+// cannot union (no field ids, nested or repeated columns, a field id or name
+// carrying different types) merge only under the old rule — every file's
+// schema equal to the first — and the bin is refused as before otherwise.
+func binWriterSchema(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+) (*parquet.Schema, error) {
+	var union schemaUnion
+	var first *parquet.Schema
+	unionable, allEqual := true, true
+	for _, entry := range entries {
+		source := entry.DataFile().FilePath()
+		schema, err := parquetSchemaByIcebergPath(ctx, filerClient, bucketName, dataPath, source)
+		if err != nil {
+			return nil, fmt.Errorf("schema of %s: %w", source, err)
+		}
+		if schema == nil {
+			return nil, fmt.Errorf("no parquet schema found in %s", source)
+		}
+		if first == nil {
+			first = schema
+		} else if !schemasEqual(first, schema) {
+			allEqual = false
+		}
+		if unionable {
+			unionable = union.fold(schema, source) == nil
+		}
+		if !unionable && !allEqual {
+			return nil, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", source)
+		}
+	}
+	if !unionable || first == nil {
+		return nil, nil // every file spells the first file's schema
+	}
+	return union.schema(first.Name(), first), nil
+}
+
+// mergeParquetFilesInto merges with target as the writer's schema on a v1/v2
+// table (nil: the first file's).
+func mergeParquetFilesInto(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	entries []iceberg.ManifestEntry,
+	positionDeletes map[string][]int64,
+	eqDeleteGroups []equalityDeleteGroup,
+	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
+	lineage bool,
+	target *parquet.Schema,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
@@ -953,11 +1230,58 @@ func mergeParquetFiles(
 		return nil, 0, fmt.Errorf("resolve equality columns: %w", err)
 	}
 
-	var outputBuf bytes.Buffer
-	writer := parquet.NewWriter(&outputBuf, parquetSchema)
+	// On a v3 table the output is the first file's columns plus the lineage
+	// columns (row_lineage.go).
+	outputSchema := parquetSchema
+	var layout *lineageLayout
+	if lineage {
+		if layout, err = newLineageLayout(parquetSchema); err != nil {
+			firstReader.Close()
+			return nil, 0, fmt.Errorf("schema of %s: %w", entries[0].DataFile().FilePath(), err)
+		}
+		outputSchema = layout.schema
+	} else if target != nil {
+		outputSchema = target
+	}
 
-	drainReader := func(reader *parquet.Reader, source string) (int64, error) {
-		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+	// joins is how one file enters the merge on a v1/v2 table: converted into
+	// the writer's schema when that covers it, with its equality-delete
+	// columns resolved on its own schema.
+	joins := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (parquet.Conversion, []resolvedEqDeleteGroup, error) {
+		if layout != nil {
+			return nil, resolvedEqGroups, nil // a v3 merge matches files with their lineage columns set aside
+		}
+		source := entry.DataFile().FilePath()
+		conv, err := evolvedFileConversion(outputSchema, reader.Schema(), source)
+		if err != nil {
+			return nil, nil, err
+		}
+		if schemasEqual(parquetSchema, reader.Schema()) {
+			return conv, resolvedEqGroups, nil
+		}
+		groups, err := resolveEqualityDeleteGroupsForSchema(reader.Schema(), eqDeleteGroups, icebergSchema)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve equality columns in %s: %w", source, err)
+		}
+		return conv, groups, nil
+	}
+
+	var outputBuf bytes.Buffer
+	writer := parquet.NewWriter(&outputBuf, outputSchema, parquet.MaxRowsPerRowGroup(rowGroupRows))
+
+	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
+		source := entry.DataFile().FilePath()
+		conv, groups, err := joins(reader, entry)
+		if err != nil {
+			reader.Close()
+			return 0, err
+		}
+		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, groups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
+			if conv != nil {
+				if _, err := conv.Convert(filtered); err != nil {
+					return fmt.Errorf("convert rows from %s: %w", source, err)
+				}
+			}
 			if _, err := writer.WriteRows(filtered); err != nil {
 				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
@@ -966,8 +1290,7 @@ func mergeParquetFiles(
 	}
 
 	// Drain the first file.
-	firstSource := entries[0].DataFile().FilePath()
-	totalRows, err := drainReader(firstReader, firstSource)
+	totalRows, err := drainReader(firstReader, entries[0])
 	if err != nil {
 		writer.Close()
 		return nil, 0, err
@@ -990,13 +1313,7 @@ func mergeParquetFiles(
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
-		if !schemasEqual(parquetSchema, reader.Schema()) {
-			reader.Close()
-			writer.Close()
-			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
-		}
-
-		rowsWritten, err := drainReader(reader, entry.DataFile().FilePath())
+		rowsWritten, err := drainReader(reader, entry)
 		if err != nil {
 			writer.Close()
 			return nil, 0, err
@@ -1028,7 +1345,7 @@ func resolveEqualityDeleteGroupsForSchema(
 
 	resolved := make([]resolvedEqDeleteGroup, 0, len(eqDeleteGroups))
 	for _, g := range eqDeleteGroups {
-		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
+		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema, true)
 		if err != nil {
 			return nil, err
 		}
@@ -1043,12 +1360,15 @@ func visitFilteredParquetRows(
 	source, bucketName, dataPath string,
 	positionDeletes map[string][]int64,
 	resolvedEqGroups []resolvedEqDeleteGroup,
-	onRows func([]parquet.Row) error,
+	onRows func(rows []parquet.Row, positions []int64) error,
 ) (int64, error) {
 	defer reader.Close()
 
 	rows := make([]parquet.Row, 256)
 	filteredRows := make([]parquet.Row, 0, len(rows))
+	// each kept row's position in the file before any delete: what a v3
+	// _row_id is inherited from
+	filteredPositions := make([]int64, 0, len(rows))
 	normalizedSource, err := normalizeIcebergPath(source, bucketName, dataPath)
 	if err != nil {
 		return 0, err
@@ -1068,6 +1388,7 @@ func visitFilteredParquetRows(
 		n, readErr := reader.ReadRows(rows)
 		if n > 0 {
 			filteredRows = filteredRows[:0]
+			filteredPositions = filteredPositions[:0]
 			for i := 0; i < n; i++ {
 				rowPos := absolutePos + int64(i)
 				for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
@@ -1091,10 +1412,11 @@ func visitFilteredParquetRows(
 				}
 
 				filteredRows = append(filteredRows, rows[i])
+				filteredPositions = append(filteredPositions, rowPos)
 			}
 			absolutePos += int64(n)
 			if len(filteredRows) > 0 {
-				if err := onRows(filteredRows); err != nil {
+				if err := onRows(filteredRows, filteredPositions); err != nil {
 					return totalRows, err
 				}
 				totalRows += int64(len(filteredRows))
@@ -1119,6 +1441,8 @@ func mergeParquetFilesSorted(
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
 	rewritePlan *compactionRewritePlan,
+	rowGroupRows int64,
+	lineage bool,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
@@ -1138,7 +1462,17 @@ func mergeParquetFilesSorted(
 		return nil, 0, fmt.Errorf("no parquet schema found in %s", entries[0].DataFile().FilePath())
 	}
 
-	sortingColumns, err := rewritePlan.parquetSortingColumns(parquetSchema)
+	outputSchema := parquetSchema
+	var layout *lineageLayout
+	if lineage {
+		if layout, err = newLineageLayout(parquetSchema); err != nil {
+			firstReader.Close()
+			return nil, 0, fmt.Errorf("schema of %s: %w", entries[0].DataFile().FilePath(), err)
+		}
+		outputSchema = layout.schema
+	}
+
+	sortingColumns, err := rewritePlan.parquetSortingColumns(outputSchema)
 	if err != nil {
 		firstReader.Close()
 		return nil, 0, fmt.Errorf("resolve parquet sorting columns: %w", err)
@@ -1167,7 +1501,8 @@ func mergeParquetFilesSorted(
 	}
 
 	var outputBuf bytes.Buffer
-	writer := parquet.NewSortingWriter[any](&outputBuf, sortBufferRows, parquetSchema,
+	writer := parquet.NewSortingWriter[any](&outputBuf, sortBufferRows, outputSchema,
+		parquet.MaxRowsPerRowGroup(rowGroupRows),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(sortingColumns...),
 			parquet.SortingBuffers(parquet.NewFileBufferPool(spillDir, "seaweedfs-iceberg-sort-*")),
@@ -1182,8 +1517,8 @@ func mergeParquetFilesSorted(
 		}
 	}()
 
-	writeRows := func(reader *parquet.Reader, source string) (int64, error) {
-		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+	writeRows := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
+		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, resolvedEqGroups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
 			// The writer's row buffer copies the values it is handed, so these
 			// rows need no cloning out of the reader's own buffer first.
 			_, writeErr := writer.WriteRows(filtered)
@@ -1191,7 +1526,7 @@ func mergeParquetFilesSorted(
 		})
 	}
 
-	totalRows, err := writeRows(firstReader, entries[0].DataFile().FilePath())
+	totalRows, err := writeRows(firstReader, entries[0])
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1209,12 +1544,12 @@ func mergeParquetFilesSorted(
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
-		if !schemasEqual(parquetSchema, reader.Schema()) {
+		if layout == nil && !schemasEqual(parquetSchema, reader.Schema()) {
 			reader.Close()
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		rowsWritten, err := writeRows(reader, entry.DataFile().FilePath())
+		rowsWritten, err := writeRows(reader, entry)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1239,7 +1574,8 @@ func compactRandomSuffix() string {
 	return hex.EncodeToString(b)
 }
 
-// schemasEqual compares two parquet schemas structurally.
+// schemasEqual compares two parquet schemas structurally, and their Iceberg
+// field ids wherever both carry them.
 func schemasEqual(a, b *parquet.Schema) bool {
 	if a == b {
 		return true
@@ -1247,7 +1583,32 @@ func schemasEqual(a, b *parquet.Schema) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return parquet.EqualNodes(a, b)
+	return parquet.EqualNodes(a, b) && fieldIDsAgree(a, b)
+}
+
+// fieldIDsAgree reports whether two structurally equal nodes carry the same
+// Iceberg field id at every position where both carry one. parquet-go's
+// EqualNodes ignores field ids, so a column dropped and re-added under the
+// same name and type (a new field id) looked like the old one, and a merge
+// filed the old values under the new field, or the live values under the
+// dropped one.
+func fieldIDsAgree(a, b parquet.Node) bool {
+	if a.ID() > 0 && b.ID() > 0 && a.ID() != b.ID() {
+		return false
+	}
+	if a.Leaf() || b.Leaf() {
+		return a.Leaf() == b.Leaf()
+	}
+	fa, fb := a.Fields(), b.Fields()
+	if len(fa) != len(fb) {
+		return false
+	}
+	for i := range fa {
+		if fa[i].Name() != fb[i].Name() || !fieldIDsAgree(fa[i], fb[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureFilerDir ensures a directory exists in the filer.

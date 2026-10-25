@@ -218,6 +218,9 @@ SELECT * FROM test_catalog.%s.%s LIMIT 0;
 	}
 
 	if runErr != nil {
+		if testutil.IsIllegalInstruction(runErr) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", runErr)
+		}
 		if strings.Contains(outStr, "does not exist because schema") &&
 			strings.Contains(outStr, namespace) {
 			t.Fatalf("reproduced issue #9103: DuckDB cannot see namespace %q after ATTACH 's3://%s/'; see output above",

@@ -368,6 +368,56 @@ pub async fn validate_replica_target(target: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve `host`, re-apply the replica deny list (private peers allowed) to
+/// every resolved address, and connect to the first one that passes -- the
+/// connect-time twin of [`validate_replica_target`], so a hostname whose DNS
+/// answer flips to a blocked address after the up-front check is still refused.
+/// Mirrors Go's `guardedDialerPolicy` with allowPrivate=true.
+pub async fn guarded_tcp_connect(
+    host: &str,
+    port: u16,
+    endpoint: &str,
+) -> std::io::Result<tokio::net::TcpStream> {
+    use std::io::{Error, ErrorKind};
+
+    let denied = |e: String| Error::new(ErrorKind::PermissionDenied, e);
+
+    if is_blocked_imds_host(&host.to_ascii_lowercase()) {
+        return Err(denied(format!(
+            "remote endpoint {:?} targets instance metadata service",
+            endpoint
+        )));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        check_blocked_ip_policy(endpoint, ip, true).map_err(denied)?;
+        return tokio::net::TcpStream::connect((ip, port)).await;
+    }
+
+    let lookup = tokio::net::lookup_host((host.to_string(), port));
+    let addrs = tokio::time::timeout(std::time::Duration::from_secs(2), lookup)
+        .await
+        .map_err(|_| {
+            Error::new(
+                ErrorKind::TimedOut,
+                format!("resolve remote endpoint host {:?}: timed out", host),
+            )
+        })??;
+
+    let mut first_block_err: Option<String> = None;
+    for addr in addrs {
+        if let Err(e) = check_blocked_ip_policy(endpoint, addr.ip(), true) {
+            if first_block_err.is_none() {
+                first_block_err = Some(e);
+            }
+            continue;
+        }
+        return tokio::net::TcpStream::connect(addr).await;
+    }
+    Err(denied(first_block_err.unwrap_or_else(|| {
+        format!("resolve remote endpoint host {:?}: no addresses", host)
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

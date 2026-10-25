@@ -233,6 +233,7 @@ func (c *MultiDiskCluster) startVolumeServers(ctx context.Context) error {
 			"-dir", strings.Join(diskDirs, ","),
 			"-max", strings.Join(maxVolumes, ","),
 			"-master", "127.0.0.1:9334",
+			"-volume.allowUntrustedRemoteEndpoints",
 			"-ip", "127.0.0.1",
 			"-dataCenter", "dc1",
 			"-rack", fmt.Sprintf("rack%d", i),
