@@ -31,7 +31,8 @@ type IamOptions struct {
 	filer                    *string
 	masters                  *string
 	ip                       *string
-	ipBindLocalhost          *bool
+	ipBind                   *string
+	listenOnLocalhost        *bool
 	port                     *int
 	selfServiceRequiresGrant *bool
 }
@@ -41,7 +42,7 @@ func init() {
 	iamStandaloneOptions.filer = cmdIam.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
 	iamStandaloneOptions.masters = cmdIam.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
-	iamStandaloneOptions.ipBindLocalhost = cmdIam.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip address")
+	iamStandaloneOptions.ipBind = cmdIam.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
 	iamStandaloneOptions.selfServiceRequiresGrant = cmdIam.Flag.Bool("selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 }
@@ -121,8 +122,20 @@ func (iamopt *IamOptions) startIamServer() bool {
 		iamApiServer.Shutdown()
 	})
 
+	// The loopback companion listener is only kept while -ip.bind is unset and
+	// the bind address falls back to -ip. An explicit -ip.bind pins the port to
+	// exactly that address.
+	bindIp := *iamopt.ip
+	listenOnLocalhost := iamopt.ipBind == nil || *iamopt.ipBind == ""
+	if iamopt.ipBind != nil && *iamopt.ipBind != "" {
+		bindIp = *iamopt.ipBind
+	}
+	if iamopt.listenOnLocalhost != nil {
+		listenOnLocalhost = *iamopt.listenOnLocalhost
+	}
+
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
-	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second, iamopt.ipBindLocalhost)
+	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(bindIp, *iamopt.port, time.Duration(10)*time.Second, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("IAM API Server listener on %s error: %v", listenAddress, err)
 	}

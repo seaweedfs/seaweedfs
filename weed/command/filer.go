@@ -64,7 +64,7 @@ type FilerOptions struct {
 	mastersString             *string
 	ip                        *string
 	bindIp                    *string
-	ipBindLocalhost           *bool
+	listenOnLocalhost         *bool
 	port                      *int
 	portGrpc                  *int
 	publicPort                *int
@@ -116,7 +116,6 @@ func init() {
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
-	f.ipBindLocalhost = cmdFiler.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
@@ -170,7 +169,6 @@ func init() {
 	filerS3Options.tlsCACertificate = cmdFiler.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	filerS3Options.tlsVerifyClientCert = cmdFiler.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	filerS3Options.bindIp = cmdFiler.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
-	filerS3Options.ipBindLocalhost = cmdFiler.Flag.Bool("s3.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	filerS3Options.idleTimeout = cmdFiler.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
 	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size for S3, 0 means unlimited")
 	filerS3Options.concurrentFileUploadLimit = cmdFiler.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
@@ -203,7 +201,6 @@ func init() {
 	// start iam on filer
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
 	filerIamOptions.ip = cmdFiler.Flag.String("iam.ip", *f.ip, "iam server http listen ip address")
-	filerIamOptions.ipBindLocalhost = cmdFiler.Flag.Bool("iam.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip address")
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
 	filerIamOptions.selfServiceRequiresGrant = filerS3Options.iamSelfServiceRequiresGrant
 
@@ -221,7 +218,6 @@ func init() {
 	filerSftpOptions.trustedUserCAKeysFile = cmdFiler.Flag.String("sftp.trustedUserCAKeysFile", "", "path to a file with trusted user CA public keys (OpenSSH authorized_keys format); required when 'certificate' is in -sftp.authMethods")
 	filerSftpOptions.dataCenter = cmdFiler.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	filerSftpOptions.bindIp = cmdFiler.Flag.String("sftp.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
-	filerSftpOptions.ipBindLocalhost = cmdFiler.Flag.Bool("sftp.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	filerSftpOptions.localSocket = cmdFiler.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 }
 
@@ -287,17 +283,17 @@ func runFiler(cmd *Command, args []string) bool {
 	}
 	go stats_collect.StartMetricsServer(*f.metricsHttpIp, *f.metricsHttpPort)
 
-	if !*f.ipBindLocalhost {
-		*filerS3Options.ipBindLocalhost = false
-		*filerIamOptions.ipBindLocalhost = false
-		*filerSftpOptions.ipBindLocalhost = false
-	}
+	// Embedded services keep their loopback companion listener only while
+	// -ip.bind is unset and the bind address falls back to -ip. This must be
+	// captured before startFiler fills *f.bindIp in place.
+	filerBindIpUnset := *f.bindIp == ""
 	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.ip = f.ip
 		if *filerS3Options.bindIp == "" {
+			filerS3Options.listenOnLocalhost = &filerBindIpUnset
 			filerS3Options.bindIp = f.bindIp
 		}
 		filerS3Options.localFilerSocket = f.localSocket
@@ -330,6 +326,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
 		filerIamOptions.masters = f.mastersString
+		filerIamOptions.listenOnLocalhost = &filerBindIpUnset
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerIamOptions.startIamServer()
@@ -340,6 +337,7 @@ func runFiler(cmd *Command, args []string) bool {
 	if *filerStartSftp {
 		filerSftpOptions.filer = &filerAddress
 		if *filerSftpOptions.bindIp == "" {
+			filerSftpOptions.listenOnLocalhost = &filerBindIpUnset
 			filerSftpOptions.bindIp = f.bindIp
 		}
 		go func(delay time.Duration) {
@@ -365,6 +363,13 @@ func (fo *FilerOptions) startFiler() {
 	}
 	if *fo.portGrpc == 0 {
 		*fo.portGrpc = 10000 + *fo.port
+	}
+	// The loopback companion listener is only kept while -ip.bind is unset
+	// and the bind address falls back to -ip. An explicit -ip.bind pins each
+	// port to exactly that address.
+	listenOnLocalhost := *fo.bindIp == ""
+	if fo.listenOnLocalhost != nil {
+		listenOnLocalhost = *fo.listenOnLocalhost
 	}
 	if *fo.bindIp == "" {
 		*fo.bindIp = *fo.ip
@@ -443,7 +448,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", version.Version(), "public at", publicListeningAddress)
-		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0, fo.ipBindLocalhost)
+		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0, listenOnLocalhost)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
@@ -469,7 +474,7 @@ func (fo *FilerOptions) startFiler() {
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", version.Version(), *fo.ip, *fo.port)
 	filerListener, filerLocalListener, e := util.NewIpAndLocalListeners(
 		*fo.bindIp, *fo.port,
-		time.Duration(10)*time.Second, fo.ipBindLocalhost,
+		time.Duration(10)*time.Second, listenOnLocalhost,
 	)
 	if e != nil {
 		glog.Fatalf("Filer listener error: %v", e)
@@ -477,7 +482,7 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0, fo.ipBindLocalhost)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}

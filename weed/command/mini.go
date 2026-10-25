@@ -400,7 +400,6 @@ Notes:
 var (
 	miniIp                          = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	miniBindIp                      = cmdMini.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to. If empty, default to same as -ip option.")
-	miniIpBindLocalhost             = cmdMini.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	miniTimeout                     = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	miniDataCenter                  = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
 	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")
@@ -1438,8 +1437,14 @@ func runMini(cmd *Command, args []string) bool {
 		miniAdminOptions.workerGrpcBindIp = "127.0.0.1"
 	}
 
+	// Services keep the loopback companion listener only while -ip.bind is
+	// unset and the bind address falls back to -ip. While it is on, each
+	// service port must be free on every interface, not just bindIp. This
+	// must be captured before *miniBindIp is filled in below.
+	listenOnLocalhost := *miniBindIp == "" && !util.IsLoopbackOrWildcardAddress(bindIp)
+
 	// Ensure all ports are available, find alternatives if needed
-	if err := ensureAllPortsAvailableOnIP(bindIp, *miniIpBindLocalhost); err != nil {
+	if err := ensureAllPortsAvailableOnIP(bindIp, listenOnLocalhost); err != nil {
 		glog.Errorf("Port allocation failed: %v", err)
 		os.Exit(1)
 	}
@@ -1464,18 +1469,18 @@ func runMini(cmd *Command, args []string) bool {
 	// ip address
 	miniMasterOptions.ip = miniIp
 	miniMasterOptions.ipBind = miniBindIp
-	miniMasterOptions.ipBindLocalhost = miniIpBindLocalhost
+	miniMasterOptions.listenOnLocalhost = &listenOnLocalhost
 	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	miniFilerOptions.ip = miniIp
 	miniFilerOptions.bindIp = miniBindIp
-	miniFilerOptions.ipBindLocalhost = miniIpBindLocalhost
+	miniFilerOptions.listenOnLocalhost = &listenOnLocalhost
 	miniS3Options.ip = miniIp
 	miniS3Options.bindIp = miniBindIp
-	miniS3Options.ipBindLocalhost = miniIpBindLocalhost
+	miniS3Options.listenOnLocalhost = &listenOnLocalhost
 	miniWebDavOptions.ipBind = miniBindIp
 	miniOptions.v.ip = miniIp
 	miniOptions.v.bindIp = miniBindIp
-	miniOptions.v.ipBindLocalhost = miniIpBindLocalhost
+	miniOptions.v.listenOnLocalhost = &listenOnLocalhost
 	miniOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	miniOptions.v.idleConnectionTimeout = miniTimeout
 	// Admin server binds to the same address as the other mini services.

@@ -50,7 +50,7 @@ type MasterOptions struct {
 	portGrpc                      *int
 	ip                            *string
 	ipBind                        *string
-	ipBindLocalhost               *bool
+	listenOnLocalhost             *bool
 	metaFolder                    *string
 	peers                         *string
 	mastersDeprecated             *string // deprecated, for backward compatibility in master.follower
@@ -90,7 +90,6 @@ func init() {
 	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 0, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
-	m.ipBindLocalhost = cmdMaster.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095; use 'none' for single-master mode")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
@@ -193,6 +192,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if *masterOption.portGrpc == 0 {
 		*masterOption.portGrpc = 10000 + *masterOption.port
 	}
+	// The loopback companion listener is only kept while -ip.bind is unset
+	// and the bind address falls back to -ip. An explicit -ip.bind pins each
+	// port to exactly that address.
+	listenOnLocalhost := *masterOption.ipBind == ""
+	if masterOption.listenOnLocalhost != nil {
+		listenOnLocalhost = *masterOption.listenOnLocalhost
+	}
 	if *masterOption.ipBind == "" {
 		*masterOption.ipBind = *masterOption.ip
 	}
@@ -209,7 +215,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
-	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0, masterOption.ipBindLocalhost)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0, listenOnLocalhost)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -266,7 +272,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0, masterOption.ipBindLocalhost)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
