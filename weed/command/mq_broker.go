@@ -39,7 +39,7 @@ func init() {
 	mqBrokerStandaloneOptions.mastersString = cmdMqBroker.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	mqBrokerStandaloneOptions.filerGroup = cmdMqBroker.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	mqBrokerStandaloneOptions.ip = cmdMqBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
-	mqBrokerStandaloneOptions.ipBind = cmdMqBroker.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	mqBrokerStandaloneOptions.ipBind = cmdMqBroker.Flag.String("ip.bind", "", "ip address to bind to (empty listens on all interfaces; defaults to -ip when -ip.bind.localhost=false)")
 	mqBrokerStandaloneOptions.ipBindLocalhost = cmdMqBroker.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	mqBrokerStandaloneOptions.port = cmdMqBroker.Flag.Int("port", 17777, "broker gRPC listen port")
 	mqBrokerStandaloneOptions.dataCenter = cmdMqBroker.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -71,7 +71,9 @@ func runMqBroker(cmd *Command, args []string) bool {
 
 	mqBrokerStandaloneOptions.masters = pb.ServerAddresses(*mqBrokerStandaloneOptions.mastersString).ToAddressMap()
 
-	if *mqBrokerStandaloneOptions.ipBind == "" {
+	// An unset -ip.bind keeps the historical all-interface listener; fall
+	// back to -ip only once the localhost opt-out needs a specific address.
+	if *mqBrokerStandaloneOptions.ipBind == "" && !*mqBrokerStandaloneOptions.ipBindLocalhost {
 		mqBrokerStandaloneOptions.ipBind = mqBrokerStandaloneOptions.ip
 	}
 
