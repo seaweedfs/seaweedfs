@@ -1528,8 +1528,13 @@ func runMini(cmd *Command, args []string) bool {
 	// the embedded address and refuses any other volume server, keeping the
 	// single-reporter assumption true. Multi-master minis can field
 	// late-reporting volume servers and keep the regular hold.
-	if isSingleMasterMode(*miniMasterOptions.peers) {
-		miniMasterOptions.releaseAllocOnFirstReport = true
+	// Both fields are re-derived on every run: the package-level options
+	// survive in-process reruns, so a multi-master mini after a
+	// single-master one must not inherit the release or the stale pin.
+	singleMaster := isSingleMasterMode(*miniMasterOptions.peers)
+	miniMasterOptions.releaseAllocOnFirstReport = singleMaster
+	miniMasterOptions.singleReporterAddr = ""
+	if singleMaster {
 		miniMasterOptions.singleReporterAddr = util.JoinHostPort(*miniIp, *miniOptions.v.port)
 	}
 	miniOptions.v.shutdownCtx = MiniClusterCtx
