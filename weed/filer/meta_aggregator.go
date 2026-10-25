@@ -475,6 +475,11 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {
+		// The commit records order events replayed from peers with their
+		// own store; until now they were never read and were not written.
+		if err := f.enablePathCommitRecords(ctx); err != nil {
+			glog.WarningfCtx(ctx, "enable per-path commit records: %v", err)
+		}
 		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
 		} else if errors.Is(err, ErrKvNotFound) {

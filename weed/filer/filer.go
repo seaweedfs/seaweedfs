@@ -121,6 +121,12 @@ type Filer struct {
 	// repair goroutine so failures neither strand a record nor pile on.
 	metaTsPending   sync.Map
 	metaTsRepairing sync.Map
+	// pathCommitRecordsOff skips the per-path commit records
+	// (meta_path_ts.go) until a peer filer with its own store is observed.
+	// pathCommitGen is the records' generation: bumped when they are turned
+	// on, so records from before an off period are not used.
+	pathCommitRecordsOff atomic.Bool
+	pathCommitGen        atomic.Uint64
 	// flushCtx is the context metadata-log flushes append under. It stays
 	// live for the process lifetime and is cancelled once during Shutdown,
 	// bounding every retry - in-flight and queued alike - to one deadline.
@@ -367,6 +373,10 @@ func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 	f.Store = NewFilerStoreWrapper(store)
 
 	isFresh = f.setOrLoadFilerStoreSignature(store)
+
+	// Before serving: mark the store while no peer with its own store is
+	// known, or adopt the records' generation once one is.
+	f.initPathCommitRecords()
 
 	// Recover deletions that were pending when a previous process died, and keep
 	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
