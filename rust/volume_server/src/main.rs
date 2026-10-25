@@ -224,6 +224,7 @@ fn run_supervised_mode(
         "-port.public",
         &backend.public_port.to_string(),
     );
+    backend_args = replace_flag_value(&backend_args, "-proxyProtocol", "true");
 
     let mut child = spawn_backend(&weed_binary, &backend_args)?;
 
@@ -403,6 +404,7 @@ impl Drop for InFlightGuard {
 
 fn proxy_connection(mut downstream: TcpStream, backend_addr: &str) -> io::Result<()> {
     let mut upstream = TcpStream::connect(backend_addr)?;
+    write_proxy_header(&downstream, &mut upstream, backend_addr)?;
 
     let _ = downstream.set_nodelay(true);
     let _ = upstream.set_nodelay(true);
@@ -420,6 +422,35 @@ fn proxy_connection(mut downstream: TcpStream, backend_addr: &str) -> io::Result
 
     let _ = upload.join();
     Ok(())
+}
+
+// The backend only sees the proxy's loopback connection, so the real client
+// address is carried in a PROXY v1 line the backend unwraps when started
+// with -proxyProtocol.
+fn write_proxy_header(
+    downstream: &TcpStream,
+    upstream: &mut TcpStream,
+    backend_addr: &str,
+) -> io::Result<()> {
+    let peer = downstream.peer_addr()?;
+    let dst: std::net::SocketAddr = match backend_addr.parse() {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let family = match (peer.is_ipv4(), dst.is_ipv4()) {
+        (true, true) => "TCP4",
+        (false, false) => "TCP6",
+        _ => return Ok(()),
+    };
+    let line = format!(
+        "PROXY {} {} {} {} {}\r\n",
+        family,
+        peer.ip(),
+        dst.ip(),
+        peer.port(),
+        dst.port()
+    );
+    upstream.write_all(line.as_bytes())
 }
 
 fn build_listener_specs(frontend: &FrontendPorts, backend: &BackendPorts) -> Vec<ProxySpec> {

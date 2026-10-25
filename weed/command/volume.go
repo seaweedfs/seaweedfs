@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -69,6 +70,7 @@ type VolumeServerOptions struct {
 	preStopSeconds            *int
 	metricsHttpPort           *int
 	metricsHttpIp             *string
+	proxyProtocol             *bool
 	// pulseSeconds          *int
 	inflightUploadDataTimeout     *time.Duration
 	inflightDownloadDataTimeout   *time.Duration
@@ -219,6 +221,7 @@ func init() {
 	v.id = cmdVolume.Flag.String("id", "", "volume server id. If empty, default to ip:port")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	v.proxyProtocol = cmdVolume.Flag.Bool("proxyProtocol", false, "accept PROXY protocol v1 headers on volume listeners; enable only behind a trusted proxy")
 	v.mastersString = cmdVolume.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	v.mserverString = cmdVolume.Flag.String("mserver", "", "comma-separated master servers (deprecated, use -master instead)")
 	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
@@ -638,6 +641,10 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
+	var grpcListener net.Listener = grpcL
+	if *v.proxyProtocol {
+		grpcListener = util.WrapProxyProtocolListener(grpcListener)
+	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, vs)
 	reflection.Register(grpcS)
@@ -645,7 +652,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 		go grpcS.Serve(grpcLocalL)
 	}
 	go func() {
-		if err := grpcS.Serve(grpcL); err != nil {
+		if err := grpcS.Serve(grpcListener); err != nil {
 			glog.Fatalf("start gRPC service failed, %s", err)
 		}
 	}()
@@ -660,9 +667,13 @@ func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdo
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
+	var publicHttpListener net.Listener = publicListener
+	if *v.proxyProtocol {
+		publicHttpListener = util.WrapProxyProtocolListener(publicHttpListener)
+	}
 
 	pubHttp := httpdown.HTTP{StopTimeout: 5 * time.Minute, KillTimeout: 5 * time.Minute}
-	publicHttpDown := multiHttpdownServer{pubHttp.Serve(&http.Server{Handler: handler}, publicListener)}
+	publicHttpDown := multiHttpdownServer{pubHttp.Serve(&http.Server{Handler: handler}, publicHttpListener)}
 	if publicLocalListener != nil {
 		publicHttpDown = append(publicHttpDown, pubHttp.Serve(&http.Server{Handler: handler}, publicLocalListener))
 	}
@@ -724,7 +735,11 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 		httpS.TLSConfig.GetCertificate = getCert
 	}
 
-	clusterHttpServers := multiHttpdownServer{httpDown.Serve(httpS, listener)}
+	var clusterHttpListener net.Listener = listener
+	if *v.proxyProtocol {
+		clusterHttpListener = util.WrapProxyProtocolListener(clusterHttpListener)
+	}
+	clusterHttpServers := multiHttpdownServer{httpDown.Serve(httpS, clusterHttpListener)}
 	if localListener != nil {
 		localHttpS := &http.Server{Handler: handler, TLSConfig: httpS.TLSConfig}
 		clusterHttpServers = append(clusterHttpServers, httpDown.Serve(localHttpS, localListener))
