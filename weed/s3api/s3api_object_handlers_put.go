@@ -3022,7 +3022,11 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 	if versionId != "" && normalizeConditionalTargetEntry(entry) == nil {
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
-	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
+	result := s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
+	if entry != nil && normalizeConditionalTargetEntry(entry) == nil {
+		result.DeleteMarker = entry
+	}
+	return result
 }
 
 // lookupVolumeJwt mints a fresh volume-server JWT for an existing file id, so a

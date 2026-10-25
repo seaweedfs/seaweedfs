@@ -790,14 +790,61 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 			w.Header().Set("ETag", result.ETag)
 		}
 
-		if result.ErrorCode == s3err.ErrNoSuchKey || result.ErrorCode == s3err.ErrNoSuchBucket {
-			s3a.writeAnonymousAwareNotFound(w, r, bucket, result.ErrorCode)
-		} else {
-			s3err.WriteErrorResponse(w, r, result.ErrorCode)
-		}
+		s3a.writeConditionalCheckError(w, r, bucket, object, handlerName, result)
 		return result, true // request handled
 	}
 	return result, false // request not handled
+}
+
+// writeConditionalCheckError answers a failed conditional-header check. A
+// missing-key answer still carries the delete marker's headers when the
+// condition failed against one, so a resuming client can tell a deleted key
+// from one that never existed.
+func (s3a *S3ApiServer) writeConditionalCheckError(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, result ConditionalHeaderResult) {
+	if result.ErrorCode == s3err.ErrNoSuchKey && result.DeleteMarker != nil {
+		s3a.writeDeleteMarkerResponse(w, r, bucket, object, handlerName, result.DeleteMarker, "", "")
+		return
+	}
+	if result.ErrorCode == s3err.ErrNoSuchKey || result.ErrorCode == s3err.ErrNoSuchBucket {
+		s3a.writeAnonymousAwareNotFound(w, r, bucket, result.ErrorCode)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, result.ErrorCode)
+}
+
+// writeDeleteMarkerResponse answers a GET or HEAD that resolved to a delete
+// marker as S3 does: x-amz-delete-marker and the marker's version id, with
+// 404 NoSuchKey for the current version and 405 MethodNotAllowed when the
+// marker itself was requested by versionId. Anonymous reads never get a
+// delete marker (authorizeAnonymousObjectRead), so they keep the plain miss.
+func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, entry *filer_pb.Entry, markerVersionId, requestedVersionId string) {
+	if isAnonymousObjectRead(r) {
+		s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+		return
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), entry.Extended, handlerName); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	// The entry's own version id wins: markers written outside the normal PUT
+	// path may lack the attribute yet still carry it in the v_<id> file name.
+	if versionId := versionIdFromEntry(entry); versionId != "" {
+		markerVersionId = versionId
+	}
+	if markerVersionId == "" {
+		markerVersionId = "null"
+	}
+	w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+	w.Header().Set("x-amz-version-id", markerVersionId)
+	if requestedVersionId == "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
+	w.Header().Set("Allow", "DELETE")
+	if entry.Attributes != nil {
+		w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrMethodNotAllowed)
 }
 
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -882,6 +929,18 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			glog.V(3).Infof("GetObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
+				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
+					marker, markerErr := s3a.nullDeleteMarkerEntry(bucket, object)
+					if markerErr != nil {
+						glog.Errorf("GetObject: failed to look up null delete marker for %s/%s: %v", bucket, object, markerErr)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
+					if marker != nil {
+						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "GetObjectHandler", marker, "null", versionId)
+						return
+					}
+				}
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
 				if errors.Is(err, filer_pb.ErrNotFound) {
 					s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchVersion)
@@ -954,7 +1013,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, object, "GetObjectHandler", entry, targetVersionId, versionId)
 				return
 			}
 		}
@@ -2565,6 +2624,18 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			glog.V(2).Infof("HeadObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
+				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
+					marker, markerErr := s3a.nullDeleteMarkerEntry(bucket, object)
+					if markerErr != nil {
+						glog.Errorf("HeadObject: failed to look up null delete marker for %s/%s: %v", bucket, object, markerErr)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
+					if marker != nil {
+						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "HeadObjectHandler", marker, "null", versionId)
+						return
+					}
+				}
 				glog.Errorf("Failed to get specific version %s for %s/%s: %v", versionId, bucket, object, err)
 				if errors.Is(err, filer_pb.ErrNotFound) {
 					s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchVersion)
@@ -2637,7 +2708,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, object, "HeadObjectHandler", entry, targetVersionId, versionId)
 				return
 			}
 		}
