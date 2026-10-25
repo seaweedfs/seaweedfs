@@ -55,7 +55,7 @@ impl CleanupVersionsHandler {
     }
 
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone())
+        NamespaceClient::new(self.namespace_url.clone()).with_fallback(&self.fallback)
     }
 }
 

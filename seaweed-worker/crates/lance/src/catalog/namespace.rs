@@ -34,6 +34,7 @@ struct ListTablesResponse {
 pub struct NamespaceClient {
     base_url: String,
     http: reqwest::Client,
+    api_key: Option<String>,
 }
 
 /// A namespace call that has not answered by now is not going to. Without this
@@ -58,6 +59,26 @@ impl NamespaceClient {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
+            api_key: None,
+        }
+    }
+
+    /// The catalog accepts an S3 credential as `x-api-key`; where the worker
+    /// already holds one for storage it authenticates the namespace calls too.
+    pub fn with_fallback(mut self, fallback: &crate::dataset::FallbackOptions) -> Self {
+        if let (Some(access), Some(secret)) = (
+            fallback.get("aws_access_key_id"),
+            fallback.get("aws_secret_access_key"),
+        ) {
+            self.api_key = Some(format!("{access}:{secret}"));
+        }
+        self
+    }
+
+    fn authed(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => request.header("x-api-key", key),
+            None => request,
         }
     }
 
@@ -65,8 +86,7 @@ impl NamespaceClient {
     pub async fn list_all_tables(&self) -> Result<Vec<String>> {
         let url = format!("{}/v1/table", self.base_url);
         let response: ListTablesResponse = self
-            .http
-            .get(&url)
+            .authed(self.http.get(&url))
             .send()
             .await
             .context("list tables")?
@@ -80,8 +100,7 @@ impl NamespaceClient {
     pub async fn list_namespaces(&self, id: &[String]) -> Result<Vec<String>> {
         let url = format!("{}/v1/namespace/{}/list", self.base_url, encode_id(id));
         let response: ListNamespacesResponse = self
-            .http
-            .get(&url)
+            .authed(self.http.get(&url))
             .send()
             .await
             .context("list namespaces")?
@@ -98,8 +117,7 @@ impl NamespaceClient {
         let url = format!("{}/v1/table/{}/describe", self.base_url, encode_id(id));
         let body = serde_json::json!({ "id": id, "vend_credentials": true });
         let description: TableDescription = self
-            .http
-            .post(&url)
+            .authed(self.http.post(&url))
             .json(&body)
             .send()
             .await
