@@ -625,6 +625,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	}
 	if wait := t.allocationDelay(); wait > 0 {
 		glog.V(0).Infof("deferring volume id allocation for %v", wait)
+	}
+	for wait := t.allocationDelay(); wait > 0; wait = t.allocationDelay() {
+		if wait > 500*time.Millisecond {
+			wait = 500 * time.Millisecond
+		}
 		time.Sleep(wait)
 		if t.IsGrowthFrozen() {
 			return 0, fmt.Errorf("volume growth is frozen after master state loss; verify the cluster inventory, then run: volume.growth.resume")
