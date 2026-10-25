@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
@@ -240,6 +241,17 @@ func init() {
 
 }
 
+// isServerFlagPassed checks if a specific flag was passed on the command line
+func isServerFlagPassed(name string) bool {
+	found := false
+	cmdServer.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
 func runServer(cmd *Command, args []string) bool {
 
 	if *serverOptions.debug {
@@ -345,7 +357,17 @@ func runServer(cmd *Command, args []string) bool {
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 	mqAgentServerOptions.ip = serverIp
 	mqAgentServerOptions.listenOnLocalhost = &ipBindUnspecified
-	mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
+	if isServerFlagPassed("mq.agent.brokers") {
+		mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
+	} else {
+		// Default to the embedded broker's bind address: with an explicit
+		// -ip.bind the broker does not listen on localhost.
+		brokerHost := *serverBindIp
+		if brokerHost == "0.0.0.0" || brokerHost == "::" || brokerHost == "[::]" {
+			brokerHost = "localhost"
+		}
+		mqAgentServerOptions.brokers = []pb.ServerAddress{pb.NewServerAddress(brokerHost, *mqBrokerOptions.port, 0)}
+	}
 
 	// serverOptions.v.pulseSeconds = pulseSeconds
 	// masterOptions.pulseSeconds = pulseSeconds

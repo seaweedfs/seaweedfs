@@ -184,7 +184,7 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration, listen
 	if (len(listenOnLocalhost) == 0 || listenOnLocalhost[0]) && !IsLoopbackOrWildcardAddress(host) {
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
-			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
+			glog.V(0).Infof("skip starting localhost listener on :%d: %v", port, err)
 			return ipListener, nil, nil
 		}
 
