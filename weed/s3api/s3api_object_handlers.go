@@ -805,9 +805,13 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 // 404 NoSuchKey for the current version and 405 MethodNotAllowed when the
 // marker itself was requested by versionId. Anonymous reads never get a
 // delete marker (authorizeAnonymousObjectRead), so they keep the plain miss.
-func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http.Request, bucket string, entry *filer_pb.Entry, markerVersionId, requestedVersionId string) {
+func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, entry *filer_pb.Entry, markerVersionId, requestedVersionId string) {
 	if isAnonymousObjectRead(r) {
 		s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
+		return
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), entry.Extended, handlerName); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 	w.Header().Set(s3_constants.AmzDeleteMarker, "true")
@@ -978,7 +982,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeDeleteMarkerResponse(w, r, bucket, entry, targetVersionId, versionId)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, object, "GetObjectHandler", entry, targetVersionId, versionId)
 				return
 			}
 		}
@@ -2655,7 +2659,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// Check if this is a delete marker
 		if entry.Extended != nil {
 			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-				s3a.writeDeleteMarkerResponse(w, r, bucket, entry, targetVersionId, versionId)
+				s3a.writeDeleteMarkerResponse(w, r, bucket, object, "HeadObjectHandler", entry, targetVersionId, versionId)
 				return
 			}
 		}

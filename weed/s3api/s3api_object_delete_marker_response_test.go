@@ -28,7 +28,7 @@ func TestWriteDeleteMarkerResponse(t *testing.T) {
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			w := httptest.NewRecorder()
-			s3a.writeDeleteMarkerResponse(w, httptest.NewRequest(method, "/bucket/object", nil), "bucket", entry, "marker", tc.requestedVersionId)
+			s3a.writeDeleteMarkerResponse(w, httptest.NewRequest(method, "/bucket/object", nil), "bucket", "object", "TestHandler", entry, "marker", tc.requestedVersionId)
 			if w.Code != tc.status {
 				t.Errorf("%s %s: status %d, want %d", tc.name, method, w.Code, tc.status)
 			}
@@ -55,7 +55,7 @@ func TestWriteDeleteMarkerResponseAnonymous(t *testing.T) {
 		r, deferred := s3a.deferAnonymousObjectRead(r, s3_constants.ACTION_READ, "b", "o")
 		require.True(t, deferred)
 		w := httptest.NewRecorder()
-		s3a.writeDeleteMarkerResponse(w, r, "b", entry, "m", r.URL.Query().Get("versionId"))
+		s3a.writeDeleteMarkerResponse(w, r, "b", "o", "TestHandler", entry, "m", r.URL.Query().Get("versionId"))
 		require.Equal(t, http.StatusNotFound, w.Code, query)
 		require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker), query)
 		require.Empty(t, w.Header().Get("x-amz-version-id"), query)
