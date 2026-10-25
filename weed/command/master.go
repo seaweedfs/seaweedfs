@@ -82,10 +82,11 @@ type MasterOptions struct {
 	// standalone weed master.
 	shutdownCtx context.Context
 	// releaseAllocOnFirstReport lifts the post-mint allocation hold as soon as
-	// one full volume-server inventory has been applied. weed mini sets it:
-	// the embedded volume server is the only possible reporter, so the warmup
-	// window after a fresh topology id is dead time. Standalone weed master /
-	// weed server can face late-arriving veterans and must keep the window.
+	// one full volume-server inventory has been applied. weed mini sets it in
+	// single-master mode: the embedded volume server is then the only possible
+	// reporter, so the warmup window after a fresh topology id is dead time.
+	// Standalone weed master / weed server can face late-arriving veterans and
+	// must keep the window.
 	releaseAllocOnFirstReport bool
 }
 
