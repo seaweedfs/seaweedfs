@@ -63,7 +63,10 @@ type Filer struct {
 	// filers that keep their own store; filers that all share one store never
 	// replay each other's events, so there the records are never read and only
 	// accumulate. Set via viper: filer.options.pathCommitRecords = false.
+	// While off, pathCommitOff keeps a marker in the store so records older
+	// than the off period are ignored once the option is back on.
 	pathCommitRecordsOff bool
+	pathCommitOff        pathCommitOffState
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.

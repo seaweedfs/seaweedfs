@@ -30,7 +30,23 @@ const (
 	// filer.options.pathCommitRecords = false turns them off for filers that all
 	// share one store, which never replay each other's events.
 	metaPathDelPrefix = "MpDl"
+	// metaPathOffKey holds a time no earlier than any change a filer left
+	// unrecorded while the records were off. Filers with the records on ignore
+	// records not newer than it: such a path may have changed since, and its
+	// older record would let an older replayed peer event win.
+	metaPathOffKey = "MpOff"
+	// pathCommitOffInterval paces raising the off marker (records off) and
+	// re-reading it (records on).
+	pathCommitOffInterval = time.Minute
 )
+
+// pathCommitOffState caches the off marker: when this filer last raised it,
+// and the value it last read and when.
+type pathCommitOffState struct {
+	markedAtNs  atomic.Int64
+	checkedAtNs atomic.Int64
+	untilNs     atomic.Int64
+}
 
 // metaPathKey hashes the path into a fixed-size key. SQL-backed KV stores
 // split the key at byte 8 and store the remainder base64-encoded in a
@@ -47,7 +63,8 @@ func metaPathKey(prefix string, path util.FullPath) []byte {
 }
 
 // kvReadTsNs returns the timestamp recorded for key, or found=false when the
-// key is absent or malformed. Any other store read failure is an error: a
+// key is absent or malformed, or the record may be outdated by a change made
+// while the records were off. Any other store read failure is an error: a
 // caller deciding whether a replayed change is stale must not guess.
 func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found bool, err error) {
 	if f.pathCommitRecordsOff {
@@ -55,6 +72,23 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 		// path then; ordering falls back as for entries older than records.
 		return 0, false, nil
 	}
+	tsNs, found, err = f.kvGetTsNs(ctx, key)
+	if err != nil || !found {
+		return 0, false, err
+	}
+	offUntilNs, err := f.pathCommitOffUntil(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if tsNs <= offUntilNs {
+		return 0, false, nil
+	}
+	return tsNs, true, nil
+}
+
+// kvGetTsNs reads an 8-byte timestamp value; found=false when the key is
+// absent or malformed.
+func (f *Filer) kvGetTsNs(ctx context.Context, key []byte) (tsNs int64, found bool, err error) {
 	value, err := f.Store.KvGet(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrKvNotFound) {
@@ -66,6 +100,54 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 		return 0, false, nil
 	}
 	return int64(util.BytesToUint64(value)), true, nil
+}
+
+// pathCommitOffUntil returns the store's off marker, 0 when no filer has run
+// with the records off, re-reading it at most once per interval. A filer turns
+// the records back on by restarting, so its first read sees the marker.
+func (f *Filer) pathCommitOffUntil(ctx context.Context) (int64, error) {
+	now := time.Now().UnixNano()
+	if checked := f.pathCommitOff.checkedAtNs.Load(); checked != 0 && now-checked < int64(pathCommitOffInterval) {
+		return f.pathCommitOff.untilNs.Load(), nil
+	}
+	untilNs, _, err := f.kvGetTsNs(ctx, []byte(metaPathOffKey))
+	if err != nil {
+		return 0, err
+	}
+	f.pathCommitOff.untilNs.Store(untilNs)
+	f.pathCommitOff.checkedAtNs.Store(now)
+	return untilNs, nil
+}
+
+// markPathCommitRecordsOff keeps the off marker ahead of the changes this
+// filer leaves unrecorded: two intervals past now, raised at most once per
+// interval, so it covers every change until the next raise plus clock skew
+// between filers. It never lowers a marker another filer set.
+func (f *Filer) markPathCommitRecordsOff() {
+	now := time.Now().UnixNano()
+	last := f.pathCommitOff.markedAtNs.Load()
+	if last != 0 && now-last < int64(pathCommitOffInterval) {
+		return
+	}
+	if !f.pathCommitOff.markedAtNs.CompareAndSwap(last, now) {
+		return
+	}
+	ctx := context.Background()
+	untilNs := now + 2*int64(pathCommitOffInterval)
+	current, _, err := f.kvGetTsNs(ctx, []byte(metaPathOffKey))
+	if err == nil && current >= untilNs {
+		return
+	}
+	if err == nil {
+		value := make([]byte, 8)
+		util.Uint64toBytes(value, uint64(untilNs))
+		err = f.Store.KvPut(ctx, []byte(metaPathOffKey), value)
+	}
+	if err != nil {
+		glog.WarningfCtx(ctx, "raise the per-path commit records off marker: %v", err)
+		// the next unrecorded change tries again
+		f.pathCommitOff.markedAtNs.CompareAndSwap(now, last)
+	}
 }
 
 // notePathChange persists tsNs as path's newest committed change. Local event
@@ -84,7 +166,11 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 // unreachable. Ordering reads consult the pending record until the retry
 // lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
-	if f.Store == nil || f.pathCommitRecordsOff {
+	if f.Store == nil {
+		return
+	}
+	if f.pathCommitRecordsOff {
+		f.markPathCommitRecordsOff()
 		return
 	}
 	ctx := context.Background()
