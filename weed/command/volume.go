@@ -635,6 +635,13 @@ func (m multiHttpdownServer) Stop() error {
 	return firstErr
 }
 
+// acceptProxyProtocol reports whether volume listeners should unwrap PROXY
+// v1 headers; the flag pointer is nil for embedded starts (server/mini)
+// that do not register it.
+func (v VolumeServerOptions) acceptProxyProtocol() bool {
+	return v.proxyProtocol != nil && *v.proxyProtocol
+}
+
 func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
 	grpcPort := *v.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*v.bindIp, grpcPort, 0)
@@ -642,7 +649,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	var grpcListener net.Listener = grpcL
-	if *v.proxyProtocol {
+	if v.acceptProxyProtocol() {
 		grpcListener = util.WrapProxyProtocolListener(grpcListener)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
@@ -668,7 +675,7 @@ func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdo
 		glog.Fatalf("Volume server listener error:%v", e)
 	}
 	var publicHttpListener net.Listener = publicListener
-	if *v.proxyProtocol {
+	if v.acceptProxyProtocol() {
 		publicHttpListener = util.WrapProxyProtocolListener(publicHttpListener)
 	}
 
@@ -736,7 +743,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) (http
 	}
 
 	var clusterHttpListener net.Listener = listener
-	if *v.proxyProtocol {
+	if v.acceptProxyProtocol() {
 		clusterHttpListener = util.WrapProxyProtocolListener(clusterHttpListener)
 	}
 	clusterHttpServers := multiHttpdownServer{httpDown.Serve(httpS, clusterHttpListener)}
