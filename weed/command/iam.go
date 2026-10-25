@@ -120,7 +120,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	})
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
-	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second)
+	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second, nil)
 	if err != nil {
 		glog.Fatalf("IAM API Server listener on %s error: %v", listenAddress, err)
 	}

@@ -95,7 +95,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	// start grpc listener
-	grpcL, localL, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0)
+	grpcL, localL, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0, nil)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
 	}

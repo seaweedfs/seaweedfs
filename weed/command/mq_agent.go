@@ -61,7 +61,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	}, grpcDialOption)
 
 	// start grpc listener
-	grpcL, localL, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0)
+	grpcL, localL, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0, nil)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}

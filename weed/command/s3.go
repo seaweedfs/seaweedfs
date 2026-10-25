@@ -445,7 +445,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
 	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.port, time.Duration(*s3opt.idleTimeout)*time.Second)
+		*s3opt.bindIp, *s3opt.port, time.Duration(*s3opt.idleTimeout)*time.Second, nil)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
@@ -459,7 +459,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	// starting grpc server
 	grpcPort := *s3opt.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*s3opt.bindIp, grpcPort, 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*s3opt.bindIp, grpcPort, 0, nil)
 	if err != nil {
 		glog.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -532,7 +532,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
 			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
-				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
+				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second, nil)
 			if err != nil {
 				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
 			}
@@ -614,7 +614,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) *http
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
 	icebergListener, icebergLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second)
+		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second, nil)
 	if err != nil {
 		// The catalog is auxiliary to the S3 gateway; a port conflict must not
 		// take the whole server down.
@@ -660,7 +660,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) *http.S
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.portLance, time.Duration(*s3opt.idleTimeout)*time.Second)
+		*s3opt.bindIp, *s3opt.portLance, time.Duration(*s3opt.idleTimeout)*time.Second, nil)
 	if err != nil {
 		glog.Errorf("Lance Namespace listener on %s error: %v", listenAddress, err)
 		return nil

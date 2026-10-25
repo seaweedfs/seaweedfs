@@ -194,7 +194,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Start the SFTP service on TCP
 	listenAddress := fmt.Sprintf("%s:%d", *sftpOpt.bindIp, *sftpOpt.port)
-	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second)
+	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second, nil)
 	if err != nil {
 		glog.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
 	}
