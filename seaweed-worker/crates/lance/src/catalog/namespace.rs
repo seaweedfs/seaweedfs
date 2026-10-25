@@ -42,6 +42,7 @@ pub struct NamespaceClient {
 /// slot open forever, and the sweep never finishes.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_REDIRECT_HOPS: usize = 10;
 
 impl NamespaceClient {
     pub fn new(base_url: impl Into<String>) -> Self {
@@ -52,11 +53,7 @@ impl NamespaceClient {
             // hop is allowed: anywhere else would carry x-api-key to a listener
             // the credential was never meant for.
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                let same_origin = attempt
-                    .previous()
-                    .last()
-                    .is_some_and(|prev| same_origin(prev, attempt.url()));
-                if same_origin {
+                if may_follow(attempt.previous(), attempt.url()) {
                     attempt.follow()
                 } else {
                     attempt.stop()
@@ -149,6 +146,16 @@ impl NamespaceClient {
     }
 }
 
+/// Without a hop bound a catalog that redirects to itself keeps the request
+/// alive until the call timeout, so the custom policy keeps the limit the
+/// default one had.
+fn may_follow(previous: &[reqwest::Url], next: &reqwest::Url) -> bool {
+    previous.len() < MAX_REDIRECT_HOPS
+        && previous
+            .last()
+            .is_some_and(|prev| same_origin(prev, next))
+}
+
 /// A redirect stays within an origin when scheme, host, and port all match, so
 /// a catalog cannot bounce the api key onto a downgraded or foreign listener.
 fn same_origin(from: &reqwest::Url, to: &reqwest::Url) -> bool {
@@ -195,7 +202,21 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{protected_transport, same_origin};
+    use super::{may_follow, protected_transport, same_origin, MAX_REDIRECT_HOPS};
+
+    #[test]
+    fn may_follow_bounds_hops_within_the_origin() {
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        let first = [url("https://c.local/ns")];
+        let next = url("https://c.local/other");
+        assert!(may_follow(&first, &next));
+        assert!(!may_follow(&[], &next));
+        assert!(!may_follow(&first, &url("http://c.local/other")));
+        let full: Vec<_> = (0..MAX_REDIRECT_HOPS)
+            .map(|i| url(&format!("https://c.local/{i}")))
+            .collect();
+        assert!(!may_follow(&full, &next));
+    }
 
     #[test]
     fn same_origin_rejects_scheme_and_port_hops() {
