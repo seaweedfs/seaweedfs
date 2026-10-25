@@ -3,9 +3,12 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 func TestValidateAndCleanFilePath_AllowsControlChars(t *testing.T) {
@@ -102,6 +105,24 @@ func TestCleanReadPath_AllowsReadOnlyOutsideEtc(t *testing.T) {
 
 		if _, ok := h.cleanReadPath(w, req); !ok {
 			t.Errorf("path %q: expected allowed for read-only session, got %d", p, w.Code)
+		}
+	}
+}
+
+func TestExportExcludedPrefixes_ReadOnlyDropsEtc(t *testing.T) {
+	etcPrefix := strings.TrimSuffix(filer.DirectoryEtcRoot, "/")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/metadata/export?path=/", nil)
+	req = req.WithContext(dash.WithAuthContext(req.Context(), "ro", dash.RoleReadOnly, "csrf"))
+	if got := exportExcludedPrefixes(req); !slices.Contains(got, etcPrefix) {
+		t.Errorf("read-only export should exclude %q, got %v", etcPrefix, got)
+	}
+
+	for _, role := range []string{"admin", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/metadata/export?path=/", nil)
+		req = req.WithContext(dash.WithAuthContext(req.Context(), "u", role, "csrf"))
+		if got := exportExcludedPrefixes(req); slices.Contains(got, etcPrefix) {
+			t.Errorf("role %q: export should keep %q, got %v", role, etcPrefix, got)
 		}
 	}
 }

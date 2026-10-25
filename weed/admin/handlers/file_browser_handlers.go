@@ -392,6 +392,16 @@ func (h *FileBrowserHandlers) cleanReadPath(w http.ResponseWriter, r *http.Reque
 	return cleanPath, true
 }
 
+// exportExcludedPrefixes lists the subtrees a metadata export skips; read-only
+// sessions also lose /etc so stored credentials stay out of the dump.
+func exportExcludedPrefixes(r *http.Request) []string {
+	prefixes := []string{filer.SystemLogDir}
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
+		prefixes = append(prefixes, strings.TrimSuffix(filer.DirectoryEtcRoot, "/"))
+	}
+	return prefixes
+}
+
 // fetchFileContent fetches file content via the filer gRPC service. It is
 // used for the "view as text" path, so the maxBytes cap matches the 1 MB
 // limit the caller already applies before invoking us.
@@ -659,10 +669,7 @@ func (h *FileBrowserHandlers) ExportMetadata(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	excludedPrefixes := []string{filer.SystemLogDir}
-	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
-		excludedPrefixes = append(excludedPrefixes, strings.TrimSuffix(filer.DirectoryEtcRoot, "/"))
-	}
+	excludedPrefixes := exportExcludedPrefixes(r)
 
 	tracker := &responseWriteTracker{ResponseWriter: w}
 
