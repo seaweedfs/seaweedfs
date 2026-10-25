@@ -61,8 +61,12 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		// Record the delete before the insert too: if the insert fails and
 		// the event is retried later, the path sits deleted in between —
 		// without the tombstone a stale peer create could resurrect it in
-		// the gap.
-		f.notePathChange(oldPath, resp.TsNs, true)
+		// the gap. A directory update skips it: its children stay in place,
+		// and a tombstone reads as a subtree delete that would suppress
+		// their own records — the re-inserted entry's stamp orders the path.
+		if !message.OldEntry.IsDirectory {
+			f.notePathChange(oldPath, resp.TsNs, true)
+		}
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}

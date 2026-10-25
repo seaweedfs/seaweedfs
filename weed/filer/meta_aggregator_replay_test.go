@@ -1563,3 +1563,49 @@ func TestReplaySweepKeepsRemoteOnlyOwnerOfPath(t *testing.T) {
 		t.Fatalf("the owned remote object must be kept, got %v", stub.deleteCalls)
 	}
 }
+
+// A directory metadata update is not a subtree delete: replaying one must
+// leave no tombstone, or a child event older than the update is suppressed
+// even though nobody deleted the children.
+func TestReplayDirUpdateDoesNotSuppressChildren(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+
+	store.entries["/dir"] = &Entry{
+		FullPath: "/dir",
+		Attr:     Attr{Mtime: now.Add(-time.Hour), Mode: os.ModeDir | 0755},
+	}
+	update := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "dir", IsDirectory: true},
+			NewEntry: &filer_pb.Entry{Name: "dir", IsDirectory: true},
+		},
+		TsNs: now.UnixNano(),
+	}
+	if err := f.Replay(update); err != nil {
+		t.Fatalf("Replay dir update: %v", err)
+	}
+	if storeHasKey(store, string(metaPathKey(metaPathDelPrefix, "/dir"))) {
+		t.Fatal("directory update left a delete tombstone")
+	}
+	if _, err := store.FindEntry(context.Background(), "/dir"); err != nil {
+		t.Fatalf("the updated directory must be back in place: %v", err)
+	}
+
+	create := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "child", Content: []byte("data")},
+		},
+		TsNs: now.Add(-time.Minute).UnixNano(),
+	}
+	if err := f.Replay(create); err != nil {
+		t.Fatalf("Replay child create: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), "/dir/child"); err != nil {
+		t.Fatalf("a child create older than the dir update must apply: %v", err)
+	}
+}
+
