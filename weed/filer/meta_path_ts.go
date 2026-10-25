@@ -32,11 +32,15 @@ const (
 	// share one store, which never replay each other's events.
 	metaPathDelPrefix = "MpDl"
 	// metaPathGenKey holds the records' generation, folded into every record
-	// key past 0, so bumping it drops all records written before. metaPathOffKey
-	// marks the store while a filer runs with the records off: a path may then
-	// change unrecorded, and its older record would let an older replayed peer
-	// event win. A filer starting with the records on bumps the generation past
-	// such a period before it serves.
+	// key past 0, so bumping it drops all records written before. Its value
+	// is the off marker the generation was bumped for followed by the
+	// generation, so a marker the store still shows is fresh unless it is
+	// that one — a new marker can read older than the generation when the
+	// off filer's clock lags. metaPathOffKey marks the store while a filer
+	// runs with the records off: a path may then change unrecorded, and its
+	// older record would let an older replayed peer event win. A filer
+	// starting with the records on bumps the generation past such a period
+	// before it serves.
 	metaPathGenKey = "MpGen"
 	metaPathOffKey = "MpOff"
 	// pathCommitCheckInterval paces re-marking the store (records off) and
@@ -129,25 +133,40 @@ func (f *Filer) markPathCommitRecordsOff(ctx context.Context) error {
 	return nil
 }
 
+// pathCommitGenValue reads the stored generation and the off marker it was
+// bumped for. The generation trails so a whole-slice read still yields it on
+// a value written before the pair was stored.
+func pathCommitGenValue(value []byte) (gen, consumed uint64) {
+	if len(value) >= 8 {
+		gen = util.BytesToUint64(value[len(value)-8:])
+	}
+	if len(value) >= 16 {
+		consumed = util.BytesToUint64(value[:8])
+	}
+	return gen, consumed
+}
+
 // syncPathCommitGen loads the records' generation, first consuming the off
 // marker when one is present. A consumed marker lends the new generation its
 // own timestamp — the name of the off period it ends — so filers racing on
 // the same marker store the same value instead of counting past each other
-// into divergent generations; a marker older than the stored generation is
-// leftover from the bump that consumed it and is just dropped. The marker is
-// removed only once the bump is stored, so a failure leaves it for the next
-// try, and the generation itself is read again around the store: any bump
-// whose marker this sync missed, or that landed in between, is adopted.
+// into divergent generations; the marker is stored beside the generation, so
+// a still-present marker is only leftover when it is that one — any other,
+// however old its timestamp reads, names an off period not yet dropped and
+// is consumed. The marker is removed only once the bump is stored, so a
+// failure leaves it for the next try, and the generation itself is read
+// again around the store: any bump whose marker this sync missed, or that
+// landed in between, is adopted.
 func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 	marker, offErr := f.Store.KvGet(ctx, []byte(metaPathOffKey))
 	if offErr != nil && !errors.Is(offErr, ErrKvNotFound) {
 		return fmt.Errorf("read the off marker: %w", offErr)
 	}
-	var gen uint64
+	var gen, consumed uint64
 	value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey))
-	if err == nil && len(value) >= 8 {
-		gen = util.BytesToUint64(value)
-	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
+	if err == nil {
+		gen, consumed = pathCommitGenValue(value)
+	} else if !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("read the generation: %w", err)
 	}
 	if offErr == nil {
@@ -155,34 +174,36 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 		if len(marker) >= 8 {
 			offTs = util.BytesToUint64(marker)
 		}
-		var bump uint64
-		switch {
-		case offTs > gen:
-			bump = offTs
-		case offTs == 0:
-			bump = gen + 1
-		}
-		if bump > 0 {
-			if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(v) >= 8 {
-				if stored := util.BytesToUint64(v); stored >= bump {
-					f.pathCommitGen.Store(stored)
-					return nil
+		if offTs != consumed {
+			bump := offTs
+			if bump <= gen {
+				bump = gen + 1
+			}
+			consumedElsewhere := false
+			if v, rerr := f.Store.KvGet(ctx, []byte(metaPathGenKey)); rerr == nil {
+				if sGen, sConsumed := pathCommitGenValue(v); sConsumed == offTs {
+					gen, consumedElsewhere = sGen, true
+				} else if sGen >= bump {
+					bump = sGen + 1
 				}
 			}
-			gen = bump
-			value = make([]byte, 8)
-			util.Uint64toBytes(value, gen)
-			if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
-				return fmt.Errorf("bump the generation: %w", err)
+			if !consumedElsewhere {
+				value = make([]byte, 16)
+				util.Uint64toBytes(value, offTs)
+				util.Uint64toBytes(value[8:], bump)
+				if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
+					return fmt.Errorf("bump the generation: %w", err)
+				}
+				gen = bump
+				glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", gen)
 			}
-			glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", gen)
 		}
 		if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil {
 			return fmt.Errorf("clear the off marker: %w", err)
 		}
-		if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(v) >= 8 {
-			if stored := util.BytesToUint64(v); stored > gen {
-				gen = stored
+		if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil {
+			if sGen, _ := pathCommitGenValue(v); sGen > gen {
+				gen = sGen
 			}
 		}
 	}
