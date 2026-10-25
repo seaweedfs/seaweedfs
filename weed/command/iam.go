@@ -31,6 +31,7 @@ type IamOptions struct {
 	filer                    *string
 	masters                  *string
 	ip                       *string
+	ipBindLocalhost          *bool
 	port                     *int
 	selfServiceRequiresGrant *bool
 }
@@ -40,6 +41,7 @@ func init() {
 	iamStandaloneOptions.filer = cmdIam.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
 	iamStandaloneOptions.masters = cmdIam.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
+	iamStandaloneOptions.ipBindLocalhost = cmdIam.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip address")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
 	iamStandaloneOptions.selfServiceRequiresGrant = cmdIam.Flag.Bool("selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 }
@@ -120,7 +122,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	})
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
-	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second, nil)
+	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second, iamopt.ipBindLocalhost)
 	if err != nil {
 		glog.Fatalf("IAM API Server listener on %s error: %v", listenAddress, err)
 	}

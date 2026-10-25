@@ -58,6 +58,7 @@ var cmdServer = &Command{
 var (
 	serverIp                  = cmdServer.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	serverBindIp              = cmdServer.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	serverIpBindLocalhost     = cmdServer.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	serverTimeout             = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
@@ -191,6 +192,7 @@ func init() {
 	s3Options.autoCreateBucket = cmdServer.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	s3Options.localSocket = cmdServer.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3Options.bindIp = cmdServer.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
+	s3Options.ipBindLocalhost = cmdServer.Flag.Bool("s3.ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	s3Options.idleTimeout = cmdServer.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
 	s3Options.concurrentUploadLimitMB = cmdServer.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size for S3, 0 means unlimited")
 	s3Options.concurrentFileUploadLimit = cmdServer.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
@@ -307,30 +309,40 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
+	masterOptions.ipBindLocalhost = serverIpBindLocalhost
 	// Use actualPeersForComponents for volume/filer, not masterOptions.peers which might be "none"
 	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
+	filerOptions.ipBindLocalhost = serverIpBindLocalhost
 	s3Options.ip = serverIp
 	if *s3Options.bindIp == "" {
 		s3Options.bindIp = serverBindIp
 	}
+	if !*serverIpBindLocalhost {
+		*s3Options.ipBindLocalhost = false
+	}
 	if sftpOptions.bindIp == nil || *sftpOptions.bindIp == "" {
 		sftpOptions.bindIp = serverBindIp
 	}
+	sftpOptions.ipBindLocalhost = serverIpBindLocalhost
 	iamOptions.ip = serverBindIp
+	iamOptions.ipBindLocalhost = serverIpBindLocalhost
 	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
+	serverOptions.v.ipBindLocalhost = serverIpBindLocalhost
 	serverOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	mqBrokerOptions.ip = serverIp
+	mqBrokerOptions.ipBindLocalhost = serverIpBindLocalhost
 	mqBrokerOptions.masters = filerOptions.masters.GetInstancesAsMap()
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 	mqAgentServerOptions.ip = serverIp
+	mqAgentServerOptions.ipBindLocalhost = serverIpBindLocalhost
 	mqAgentServerOptions.brokers = pb.ServerAddresses(*mqAgentServerOptions.brokersString).ToAddresses()
 
 	// serverOptions.v.pulseSeconds = pulseSeconds

@@ -27,6 +27,7 @@ func init() {
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
 	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 0, "grpc listen port")
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
+	mf.ipBindLocalhost = cmdMasterFollower.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	mf.peers = cmdMasterFollower.Flag.String("master", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	mf.mastersDeprecated = cmdMasterFollower.Flag.String("masters", "", "all master nodes in comma separated ip:port list (deprecated, use -master instead)")
 	// A follower serves /submit like the leader does, so it buffers uploads under
@@ -137,14 +138,14 @@ func startMasterFollower(masterOptions MasterOptions) {
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
-	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0, nil)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0, masterOptions.ipBindLocalhost)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *masterOptions.portGrpc
-	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0, nil)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0, masterOptions.ipBindLocalhost)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}

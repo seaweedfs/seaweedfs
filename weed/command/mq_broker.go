@@ -22,6 +22,7 @@ type MessageQueueBrokerOptions struct {
 	mastersString    *string
 	filerGroup       *string
 	ip               *string
+	ipBindLocalhost  *bool
 	port             *int
 	dataCenter       *string
 	rack             *string
@@ -37,6 +38,7 @@ func init() {
 	mqBrokerStandaloneOptions.mastersString = cmdMqBroker.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	mqBrokerStandaloneOptions.filerGroup = cmdMqBroker.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	mqBrokerStandaloneOptions.ip = cmdMqBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
+	mqBrokerStandaloneOptions.ipBindLocalhost = cmdMqBroker.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip address")
 	mqBrokerStandaloneOptions.port = cmdMqBroker.Flag.Int("port", 17777, "broker gRPC listen port")
 	mqBrokerStandaloneOptions.dataCenter = cmdMqBroker.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	mqBrokerStandaloneOptions.rack = cmdMqBroker.Flag.String("rack", "", "prefer to write to volumes in this rack")
@@ -95,7 +97,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	// start grpc listener
-	grpcL, localL, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0, nil)
+	grpcL, localL, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0, mqBrokerOpt.ipBindLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
 	}

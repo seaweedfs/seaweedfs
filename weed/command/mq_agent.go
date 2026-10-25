@@ -17,17 +17,19 @@ var (
 )
 
 type MessageQueueAgentOptions struct {
-	brokers       []pb.ServerAddress
-	brokersString *string
-	filerGroup    *string
-	ip            *string
-	port          *int
+	brokers         []pb.ServerAddress
+	brokersString   *string
+	filerGroup      *string
+	ip              *string
+	ipBindLocalhost *bool
+	port            *int
 }
 
 func init() {
 	cmdMqAgent.Run = runMqAgent // break init cycle
 	mqAgentOptions.brokersString = cmdMqAgent.Flag.String("broker", "localhost:17777", "comma-separated message queue brokers")
 	mqAgentOptions.ip = cmdMqAgent.Flag.String("ip", "", "message queue agent host address")
+	mqAgentOptions.ipBindLocalhost = cmdMqAgent.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip address")
 	mqAgentOptions.port = cmdMqAgent.Flag.Int("port", 16777, "message queue agent gRPC server port")
 }
 
@@ -61,7 +63,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	}, grpcDialOption)
 
 	// start grpc listener
-	grpcL, localL, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0, nil)
+	grpcL, localL, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0, mqAgentOpt.ipBindLocalhost)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}

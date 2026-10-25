@@ -400,6 +400,7 @@ Notes:
 var (
 	miniIp                          = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	miniBindIp                      = cmdMini.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to. If empty, default to same as -ip option.")
+	miniIpBindLocalhost             = cmdMini.Flag.Bool("ip.bind.localhost", true, "also listen on localhost in addition to the bound -ip.bind address")
 	miniTimeout                     = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	miniDataCenter                  = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
 	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")
@@ -1430,14 +1431,18 @@ func runMini(cmd *Command, args []string) bool {
 	// ip address
 	miniMasterOptions.ip = miniIp
 	miniMasterOptions.ipBind = miniBindIp
+	miniMasterOptions.ipBindLocalhost = miniIpBindLocalhost
 	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	miniFilerOptions.ip = miniIp
 	miniFilerOptions.bindIp = miniBindIp
+	miniFilerOptions.ipBindLocalhost = miniIpBindLocalhost
 	miniS3Options.ip = miniIp
 	miniS3Options.bindIp = miniBindIp
+	miniS3Options.ipBindLocalhost = miniIpBindLocalhost
 	miniWebDavOptions.ipBind = miniBindIp
 	miniOptions.v.ip = miniIp
 	miniOptions.v.bindIp = miniBindIp
+	miniOptions.v.ipBindLocalhost = miniIpBindLocalhost
 	miniOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	miniOptions.v.idleConnectionTimeout = miniTimeout
 	// Admin server binds to the same address as the other mini services.
