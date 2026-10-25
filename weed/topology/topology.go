@@ -1576,9 +1576,12 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 
 // SetTopologyInitPending gates allocation while a topology id is being
 // minted, so growth cannot slip in before the warmup window is installed.
+// Stashed reports are applied while the gate is still closed: clearing it
+// first would let an allocation through before a queued mismatch freezes
+// growth.
 func (t *Topology) SetTopologyInitPending(pending bool) {
-	t.topologyInitPending.Store(pending)
 	if pending {
+		t.topologyInitPending.Store(true)
 		return
 	}
 	t.reportedTopologyIdsLock.Lock()
@@ -1588,6 +1591,7 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 	for id := range reported {
 		t.CheckReportedTopologyId(id)
 	}
+	t.topologyInitPending.Store(false)
 }
 
 // ReleaseAllocationOnFirstReport opts the topology into lifting the post-mint
