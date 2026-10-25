@@ -930,7 +930,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
-					if marker := s3a.nullDeleteMarkerEntry(bucket, object); marker != nil {
+					marker, markerErr := s3a.nullDeleteMarkerEntry(bucket, object)
+					if markerErr != nil {
+						glog.Errorf("GetObject: failed to look up null delete marker for %s/%s: %v", bucket, object, markerErr)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
+					if marker != nil {
 						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "GetObjectHandler", marker, "null", versionId)
 						return
 					}
@@ -2613,7 +2619,13 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				if versionId == "null" && errors.Is(err, filer_pb.ErrNotFound) {
-					if marker := s3a.nullDeleteMarkerEntry(bucket, object); marker != nil {
+					marker, markerErr := s3a.nullDeleteMarkerEntry(bucket, object)
+					if markerErr != nil {
+						glog.Errorf("HeadObject: failed to look up null delete marker for %s/%s: %v", bucket, object, markerErr)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
+					if marker != nil {
 						s3a.writeDeleteMarkerResponse(w, r, bucket, object, "HeadObjectHandler", marker, "null", versionId)
 						return
 					}

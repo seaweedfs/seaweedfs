@@ -196,6 +196,15 @@ func TestGetHeadNullDeleteMarker(t *testing.T) {
 	}
 }
 
+func TestGetHeadNullVersionAbsent(t *testing.T) {
+	s3a := newDeleteMarkerTestServer(t)
+	r := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/b/o?versionId=null", nil), map[string]string{"bucket": "b", "object": "o"})
+	w := httptest.NewRecorder()
+	s3a.GetObjectHandler(w, r)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker))
+}
+
 func TestGetHeadDeleteMarkerConditionalMiss(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		t.Run(method, func(t *testing.T) {
