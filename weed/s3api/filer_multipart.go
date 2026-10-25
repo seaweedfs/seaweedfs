@@ -1286,6 +1286,7 @@ type ListMultipartUploadsResult struct {
 	Prefix             *string               `type:"string"`
 	UploadIdMarker     *string               `type:"string"`
 	Upload             []*s3.MultipartUpload `locationName:"Upload" type:"list" flattened:"true"`
+	CommonPrefixes     []PrefixEntry         `xml:"CommonPrefixes,omitempty"`
 }
 
 func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code s3err.ErrorCode) {
@@ -1332,19 +1333,29 @@ func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*file
 // id the filer sorts by, so every entry has to be seen; keeping only the
 // maxUploads smallest candidates bounds the heap by the page, not the folder.
 type multipartUploadPage struct {
-	input *s3.ListMultipartUploadsInput
-	limit int
-	top   candidateHeap
-	more  bool
+	input    *s3.ListMultipartUploadsInput
+	limit    int
+	top      candidateHeap
+	more     bool
+	prefixes map[string]bool // common prefixes already offered to the page
 }
 
+// multipartCandidate is an upload, or with a nil entry a common prefix that
+// groups the uploads whose keys continue past the delimiter.
 type multipartCandidate struct {
 	key   string
 	entry *filer_pb.Entry
 }
 
+func (c multipartCandidate) uploadId() string {
+	if c.entry == nil {
+		return ""
+	}
+	return c.entry.Name
+}
+
 func compareMultipartCandidate(a, b multipartCandidate) int {
-	return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.entry.Name, b.entry.Name))
+	return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.uploadId(), b.uploadId()))
 }
 
 // candidateHeap is a max-heap on (key, upload id): the root sorts last of the
@@ -1369,7 +1380,7 @@ func newMultipartUploadPage(input *s3.ListMultipartUploadsInput) *multipartUploa
 	if *input.MaxUploads < int64(limit) {
 		limit = int(*input.MaxUploads)
 	}
-	return &multipartUploadPage{input: input, limit: limit}
+	return &multipartUploadPage{input: input, limit: limit, prefixes: map[string]bool{}}
 }
 
 func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
@@ -1385,6 +1396,18 @@ func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
 		return
 	}
 	c := multipartCandidate{key: key, entry: entry}
+	// with a delimiter, keys that go on past it after the prefix are listed
+	// once as their common prefix, which counts toward max-uploads
+	if delimiter := aws.StringValue(input.Delimiter); delimiter != "" {
+		if i := strings.Index(key[len(*input.Prefix):], delimiter); i >= 0 {
+			commonPrefix := key[:len(*input.Prefix)+i+len(delimiter)]
+			if p.prefixes[commonPrefix] || *input.KeyMarker != "" && commonPrefix <= *input.KeyMarker {
+				return
+			}
+			p.prefixes[commonPrefix] = true
+			c = multipartCandidate{key: commonPrefix}
+		}
+	}
 	if p.top.Len() >= p.limit {
 		p.more = true
 		if compareMultipartCandidate(c, p.top[0]) >= 0 {
@@ -1410,6 +1433,10 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	copy(candidates, p.top)
 	slices.SortFunc(candidates, compareMultipartCandidate)
 	for _, c := range candidates {
+		if c.entry == nil {
+			output.CommonPrefixes = append(output.CommonPrefixes, PrefixEntry{Prefix: c.key})
+			continue
+		}
 		upload := &s3.MultipartUpload{
 			Key:      aws.String(c.key),
 			UploadId: aws.String(c.entry.Name),
@@ -1422,7 +1449,7 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	if p.more {
 		last := candidates[len(candidates)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.entry.Name)
+		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.uploadId())
 	}
 	if aws.StringValue(input.EncodingType) == s3.EncodingTypeUrl {
 		// AWS url-encodes these key-named elements when encoding-type=url is
@@ -1435,6 +1462,9 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 		output.NextKeyMarker = encodeMultipartUploadURLField(output.NextKeyMarker)
 		for _, upload := range output.Upload {
 			upload.Key = encodeMultipartUploadURLField(upload.Key)
+		}
+		for i := range output.CommonPrefixes {
+			output.CommonPrefixes[i].Prefix = urlQueryEscape(output.CommonPrefixes[i].Prefix)
 		}
 	} else {
 		output.KeyMarker = encodeListContinuationTokenField(output.KeyMarker)
