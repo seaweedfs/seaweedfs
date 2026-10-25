@@ -35,6 +35,7 @@ extern "C" fn handle_termination_signal(_sig: i32) {
 #[derive(Clone)]
 struct FrontendPorts {
     bind_ip: String,
+    advertised_ip: Option<String>,
     http_port: u16,
     grpc_port: u16,
     public_port: u16,
@@ -46,6 +47,7 @@ struct BackendPorts {
     http_port: u16,
     grpc_port: u16,
     public_port: u16,
+    advertised_ip: Option<String>,
 }
 
 #[derive(Clone)]
@@ -209,11 +211,14 @@ fn run_supervised_mode(
     let weed_binary = resolve_weed_binary()?;
     let frontend = parse_frontend_ports(forwarded)?;
 
-    let backend_bind_ip = "127.0.0.1";
-    let backend =
-        allocate_backend_ports(backend_bind_ip, frontend.public_port == frontend.http_port)?;
+    let backend = pick_backend_layout(&frontend);
+    let advertised_ip = backend
+        .advertised_ip
+        .clone()
+        .unwrap_or_else(|| backend.bind_ip.clone());
 
-    let mut backend_args = replace_flag_value(forwarded, "-ip", &backend.bind_ip);
+    let mut backend_args = replace_flag_value(forwarded, "-ip", &advertised_ip);
+    backend_args = replace_flag_value(&backend_args, "-ip.bind", &backend.bind_ip);
     backend_args = replace_flag_value(&backend_args, "-port", &backend.http_port.to_string());
     backend_args = replace_flag_value(&backend_args, "-port.grpc", &backend.grpc_port.to_string());
     backend_args = replace_flag_value(
@@ -1092,7 +1097,11 @@ fn native_ui_index_html() -> &'static str {
 }
 
 fn parse_frontend_ports(args: &[String]) -> Result<FrontendPorts, String> {
-    let bind_ip = extract_flag(args, "-ip").unwrap_or_else(|| "127.0.0.1".to_string());
+    let advertised_ip = extract_flag(args, "-ip");
+    let bind_ip = advertised_ip
+        .clone()
+        .map(|ip| extract_flag(args, "-ip.bind").unwrap_or(ip))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let http_port = parse_port(
         &extract_flag(args, "-port").ok_or_else(|| "missing -port value".to_string())?,
         "-port",
@@ -1108,26 +1117,76 @@ fn parse_frontend_ports(args: &[String]) -> Result<FrontendPorts, String> {
 
     Ok(FrontendPorts {
         bind_ip,
+        advertised_ip,
         http_port,
         grpc_port,
         public_port,
     })
 }
 
-fn allocate_backend_ports(bind_ip: &str, share_public_http: bool) -> Result<BackendPorts, String> {
-    let http_port = allocate_free_port(bind_ip)?;
-    let grpc_port = allocate_free_port(bind_ip)?;
+fn pick_backend_layout(frontend: &FrontendPorts) -> BackendPorts {
+    let advertised_ip = frontend
+        .advertised_ip
+        .clone()
+        .unwrap_or_else(|| frontend.bind_ip.clone());
+    for bind_ip in candidate_backend_bind_ips(&frontend.bind_ip) {
+        if can_bind_all(&bind_ip, &backend_listen_ports(frontend)) {
+            return BackendPorts {
+                bind_ip,
+                http_port: frontend.http_port,
+                grpc_port: frontend.grpc_port,
+                public_port: frontend.public_port,
+                advertised_ip: Some(advertised_ip.clone()),
+            };
+        }
+    }
+
+    let bind_ip = "127.0.0.1".to_string();
+    let share_public_http = frontend.public_port == frontend.http_port;
+    let http_port = allocate_free_port(&bind_ip).unwrap_or(0);
+    let grpc_port = allocate_free_port(&bind_ip).unwrap_or(0);
     let public_port = if share_public_http {
         http_port
     } else {
-        allocate_free_port(bind_ip)?
+        allocate_free_port(&bind_ip).unwrap_or(0)
     };
-    Ok(BackendPorts {
-        bind_ip: bind_ip.to_string(),
+    BackendPorts {
+        bind_ip,
         http_port,
         grpc_port,
         public_port,
-    })
+        advertised_ip: None,
+    }
+}
+
+fn backend_listen_ports(frontend: &FrontendPorts) -> Vec<u16> {
+    let mut ports = vec![frontend.http_port, frontend.grpc_port];
+    if frontend.public_port != frontend.http_port {
+        ports.push(frontend.public_port);
+    }
+    ports
+}
+
+fn candidate_backend_bind_ips(frontend_bind_ip: &str) -> Vec<String> {
+    match frontend_bind_ip.parse::<std::net::IpAddr>() {
+        Ok(addr) if addr.is_loopback() => (2..=8)
+            .map(|n| format!("127.0.0.{}", n))
+            .collect(),
+        Ok(addr) if addr.is_unspecified() => Vec::new(),
+        Ok(_) => vec!["127.0.0.1".to_string()],
+        Err(_) => vec!["127.0.0.1".to_string()],
+    }
+}
+
+fn can_bind_all(ip: &str, ports: &[u16]) -> bool {
+    let mut listeners = Vec::with_capacity(ports.len());
+    for port in ports {
+        match TcpListener::bind((ip, *port)) {
+            Ok(l) => listeners.push(l),
+            Err(_) => return false,
+        }
+    }
+    true
 }
 
 fn allocate_free_port(bind_ip: &str) -> Result<u16, String> {
