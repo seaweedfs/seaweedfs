@@ -101,6 +101,14 @@ type Topology struct {
 	allocationDeferral      atomic.Int64
 	topologyInitPending     atomic.Bool
 
+	// releaseAllocOnReport lifts a post-mint allocation hold as soon as a full
+	// volume-server inventory has been applied, for single-reporter setups
+	// (weed mini) whose embedded volume server is the only possible source of
+	// prior cluster state. inventoryApplied records that at least one full
+	// volume list has been synced into this topology.
+	releaseAllocOnReport atomic.Bool
+	inventoryApplied     atomic.Bool
+
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
 
@@ -1582,13 +1590,43 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 	}
 }
 
+// ReleaseAllocationOnFirstReport opts the topology into lifting the post-mint
+// allocation hold once one full volume-server inventory has been applied. Only
+// valid where a single volume server can carry prior cluster state (weed
+// mini's embedded server): its first heartbeat already raises the id bound or
+// trips the growth freeze, so the quiet-pulse tail is dead time.
+func (t *Topology) ReleaseAllocationOnFirstReport() {
+	t.releaseAllocOnReport.Store(true)
+}
+
+// NoteInventoryApplied marks a heartbeat's full volume list as applied to this
+// topology. Under ReleaseAllocationOnFirstReport it also lifts the post-mint
+// allocation hold: the bound raise and topology-id freeze checks run while the
+// heartbeat is processed, so nothing protected remains pending afterwards.
+func (t *Topology) NoteInventoryApplied() {
+	t.inventoryApplied.Store(true)
+	if t.releaseAllocOnReport.Load() {
+		t.allocationNotBefore.Store(0)
+	}
+}
+
 // DeferAllocation holds off new id allocation for d. Called when the leader
 // mints a fresh topology id: on a rebuilt master that window gives veteran
 // servers a pulse to raise the bound or trip the freeze.
 func (t *Topology) DeferAllocation(d time.Duration) {
+	// Under release-on-report a hold is pointless once inventory has landed:
+	// the veteran heartbeat that mattered has already been applied.
+	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
+		return
+	}
 	now := time.Now()
 	t.allocationNotBefore.Store(now.Add(d).UnixNano())
 	t.allocationEvidenceSince.Store(now.UnixNano())
+	// Close the race with a report applied between the check above and the
+	// store, which would otherwise leave the full window armed.
+	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
+		t.allocationNotBefore.Store(0)
+	}
 }
 
 // NoteAllocationEvidence records a heartbeat signal that could still carry

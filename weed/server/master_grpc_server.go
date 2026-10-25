@@ -356,6 +356,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 		}
 
+		// A full volume list is the heartbeat section that settles what a
+		// reporter holds; once applied, a post-mint allocation hold kept for
+		// prior cluster state has nothing left to wait for.
+		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
+			ms.Topo.NoteInventoryApplied()
+		}
+
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("newEcShards").Inc()
 			// update master internal volume layouts
