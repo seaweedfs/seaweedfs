@@ -1117,9 +1117,7 @@ fn resolve_weed_binary() -> Result<PathBuf, String> {
         return Ok(local_weed);
     }
 
-    let bin_dir = env::temp_dir().join("seaweedfs_volume_server_it_bin");
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("create binary directory {}: {}", bin_dir.display(), e))?;
+    let bin_dir = private_bin_dir()?;
     let bin_path = bin_dir.join("weed");
     if is_executable_file(&bin_path) {
         return Ok(bin_path);
@@ -1133,6 +1131,40 @@ fn resolve_weed_binary() -> Result<PathBuf, String> {
         ));
     }
     Ok(bin_path)
+}
+
+// A cached binary under the shared temp dir is only trusted when the
+// directory is verifiably private to this user; on unix chmod 0700 fails
+// for directories owned by someone else. Otherwise build in a per-process
+// directory instead of executing a file another user may have planted.
+fn private_bin_dir() -> Result<PathBuf, String> {
+    let shared = env::temp_dir().join("seaweedfs_volume_server_it_bin");
+    if make_private_dir(&shared) {
+        return Ok(shared);
+    }
+    let unique = env::temp_dir().join(format!(
+        "seaweedfs_volume_server_it_bin_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default()
+    ));
+    if make_private_dir(&unique) {
+        return Ok(unique);
+    }
+    Err("unable to create a private binary cache directory".to_string())
+}
+
+#[cfg(unix)]
+fn make_private_dir(dir: &PathBuf) -> bool {
+    std::fs::create_dir_all(dir).is_ok()
+        && std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).is_ok()
+}
+
+#[cfg(not(unix))]
+fn make_private_dir(dir: &PathBuf) -> bool {
+    std::fs::create_dir_all(dir).is_ok()
 }
 
 fn resolve_repo_root() -> Result<PathBuf, String> {
