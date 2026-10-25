@@ -80,7 +80,10 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<String> = env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print_help();
