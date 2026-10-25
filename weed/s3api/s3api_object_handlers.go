@@ -822,6 +822,7 @@ func (s3a *S3ApiServer) writeDeleteMarkerResponse(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return
 	}
+	w.Header().Set("Allow", "DELETE")
 	if entry.Attributes != nil {
 		w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
 	}

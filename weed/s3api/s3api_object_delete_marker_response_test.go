@@ -22,9 +22,10 @@ func TestWriteDeleteMarkerResponse(t *testing.T) {
 		name, requestedVersionId string
 		status                   int
 		lastModified             string
+		allow                    string
 	}{
-		{"current version", "", http.StatusNotFound, ""},
-		{"marker by versionId", "marker", http.StatusMethodNotAllowed, "Sun, 06 Nov 1994 08:49:37 GMT"},
+		{"current version", "", http.StatusNotFound, "", ""},
+		{"marker by versionId", "marker", http.StatusMethodNotAllowed, "Sun, 06 Nov 1994 08:49:37 GMT", "DELETE"},
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			w := httptest.NewRecorder()
@@ -40,6 +41,9 @@ func TestWriteDeleteMarkerResponse(t *testing.T) {
 			}
 			if got := w.Header().Get("Last-Modified"); got != tc.lastModified {
 				t.Errorf("%s %s: Last-Modified = %q, want %q", tc.name, method, got, tc.lastModified)
+			}
+			if got := w.Header().Get("Allow"); got != tc.allow {
+				t.Errorf("%s %s: Allow = %q, want %q", tc.name, method, got, tc.allow)
 			}
 		}
 	}
