@@ -235,6 +235,8 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 			} else if sGen >= bump {
 				bump = sGen + 1
 			}
+		} else if !errors.Is(rerr, ErrKvNotFound) {
+			return fmt.Errorf("read the generation: %w", rerr)
 		}
 		value := make([]byte, 16)
 		util.Uint64toBytes(value, offTs)
@@ -302,6 +304,8 @@ func (f *Filer) bumpPathCommitGen(ctx context.Context, offTs uint64) error {
 			} else if sGen >= bump {
 				bump = sGen + 1
 			}
+		} else if !errors.Is(rerr, ErrKvNotFound) {
+			return fmt.Errorf("read the generation: %w", rerr)
 		}
 		if !consumedElsewhere {
 			value = make([]byte, 16)
