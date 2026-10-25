@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // WrapProxyProtocolListener returns a listener whose accepted connections
@@ -14,6 +15,10 @@ import (
 // that do not start with a PROXY header keep their real remote address,
 // so direct clients continue to work (and fail any address-based checks
 // against their actual address).
+//
+// The header is parsed lazily on the first Read or RemoteAddr call, inside
+// the connection's own read path; a silent or malformed peer occupies only
+// its own connection, never the accept loop.
 //
 // Only enable this on listeners reachable solely through a trusted proxy:
 // any direct client could otherwise spoof its reported address.
@@ -30,57 +35,68 @@ func (l *proxyProtocolListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	proxyConn, err := readProxyProtocolHeader(conn)
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return proxyConn, nil
+	return &proxyProtocolConn{Conn: conn}, nil
 }
 
 type proxyProtocolConn struct {
 	net.Conn
-	reader *bufio.Reader
-	remote net.Addr
+	parseOnce sync.Once
+	reader    *bufio.Reader
+	remote    net.Addr
+	headerErr error
 }
 
 func (c *proxyProtocolConn) Read(b []byte) (int, error) {
+	c.parse()
+	if c.headerErr != nil {
+		return 0, c.headerErr
+	}
 	return c.reader.Read(b)
 }
 
 func (c *proxyProtocolConn) RemoteAddr() net.Addr {
+	c.parse()
 	if c.remote != nil {
 		return c.remote
 	}
 	return c.Conn.RemoteAddr()
 }
 
-func readProxyProtocolHeader(conn net.Conn) (net.Conn, error) {
-	reader := bufio.NewReader(conn)
-	proxyConn := &proxyProtocolConn{Conn: conn, reader: reader}
-
-	head, err := reader.Peek(len("PROXY "))
-	if err != nil {
-		if err == io.EOF {
-			return proxyConn, nil
+func (c *proxyProtocolConn) parse() {
+	c.parseOnce.Do(func() {
+		c.reader = bufio.NewReader(c.Conn)
+		head, err := c.reader.Peek(len("PROXY "))
+		if err != nil {
+			if err != io.EOF {
+				c.headerErr = err
+			}
+			return
 		}
-		return nil, err
-	}
-	if string(head) != "PROXY " {
-		return proxyConn, nil
-	}
-
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	fields := strings.Fields(strings.TrimRight(line, "\r\n"))
-	if len(fields) == 6 && fields[0] == "PROXY" && (fields[1] == "TCP4" || fields[1] == "TCP6") {
-		if srcIP := net.ParseIP(fields[2]); srcIP != nil {
-			if srcPort, err := strconv.Atoi(fields[4]); err == nil {
-				proxyConn.remote = &net.TCPAddr{IP: srcIP, Port: srcPort}
+		if string(head) != "PROXY " {
+			return
+		}
+		line, err := c.reader.ReadSlice('\n')
+		if err != nil {
+			// A truncated or overlong header means the peer never sent a
+			// parseable line; keep the real address and let the buffered
+			// bytes fail the downstream protocol on their own.
+			c.discardHeaderLine()
+			return
+		}
+		fields := strings.Fields(strings.TrimRight(string(line), "\r\n"))
+		if len(fields) == 6 && fields[0] == "PROXY" && (fields[1] == "TCP4" || fields[1] == "TCP6") {
+			if srcIP := net.ParseIP(fields[2]); srcIP != nil {
+				if srcPort, err := strconv.Atoi(fields[4]); err == nil {
+					c.remote = &net.TCPAddr{IP: srcIP, Port: srcPort}
+				}
 			}
 		}
-	}
-	return proxyConn, nil
+	})
+}
+
+// discardHeaderLine drops the remainder of a malformed PROXY line so the
+// following bytes still reach the wrapped connection.
+func (c *proxyProtocolConn) discardHeaderLine() {
+	discard := make([]byte, c.reader.Buffered())
+	_, _ = io.ReadFull(c.reader, discard)
 }
