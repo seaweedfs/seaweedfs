@@ -197,29 +197,38 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 }
 
 // bumpPathCommitGen stores the next generation and clears the off marker.
-// A concurrent bumper may have landed a higher generation between the read
-// and the store; adopting it converges filers sharing the store on one
-// generation instead of writing records under different keys.
+// Bumpers on filers sharing the store race without a CAS: each loop writes
+// only a higher generation and adopts a higher one it finds, so the stored
+// value converges to one generation instead of regressing under a stale read.
 func (f *Filer) bumpPathCommitGen(ctx context.Context) error {
 	var gen uint64
-	if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(value) >= 8 {
-		gen = util.BytesToUint64(value)
-	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
-		return fmt.Errorf("read the generation: %w", err)
-	}
-	gen++
-	value := make([]byte, 8)
-	util.Uint64toBytes(value, gen)
-	if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
-		return fmt.Errorf("bump the generation: %w", err)
+	for i := 0; i < 8; i++ {
+		if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(value) >= 8 {
+			if stored := util.BytesToUint64(value); stored > gen {
+				gen = stored
+			}
+		} else if err != nil && !errors.Is(err, ErrKvNotFound) {
+			return fmt.Errorf("read the generation: %w", err)
+		}
+		gen++
+		value := make([]byte, 8)
+		util.Uint64toBytes(value, gen)
+		if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
+			return fmt.Errorf("bump the generation: %w", err)
+		}
+		v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey))
+		if err != nil {
+			if errors.Is(err, ErrKvNotFound) {
+				continue
+			}
+			return fmt.Errorf("read the generation: %w", err)
+		}
+		if len(v) < 8 || util.BytesToUint64(v) <= gen {
+			break
+		}
 	}
 	if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil && !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("clear the off marker: %w", err)
-	}
-	if v, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(v) >= 8 {
-		if stored := util.BytesToUint64(v); stored > gen {
-			gen = stored
-		}
 	}
 	f.pathCommitGen.Store(gen)
 	return nil
@@ -241,7 +250,11 @@ func (f *Filer) bumpPathCommitGen(ctx context.Context) error {
 // unreachable. Ordering reads consult the pending record until the retry
 // lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
-	if f.Store == nil || f.pathCommitRecordsOff.Load() {
+	if f.Store == nil {
+		return
+	}
+	off := f.pathCommitRecordsOff.Load()
+	if off && !deleted {
 		return
 	}
 	ctx := context.Background()
@@ -251,17 +264,23 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
-	if err := f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); err != nil {
-		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
-		if tsNs > rec.changeTsNs.Load() {
-			rec.changeTsNs.Store(tsNs)
+	if !off {
+		if err := f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); err != nil {
+			glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
+			if tsNs > rec.changeTsNs.Load() {
+				rec.changeTsNs.Store(tsNs)
+			}
+		} else if rec.changeTsNs.Load() <= tsNs {
+			// This write covers every change record owed so far.
+			rec.changeTsNs.Store(0)
 		}
-	} else if rec.changeTsNs.Load() <= tsNs {
-		// This write covers every change record owed so far.
-		rec.changeTsNs.Store(0)
 	}
 	if deleted {
-		if err := f.Store.KvPut(ctx, f.recordKey(metaPathDelPrefix, path), value); err != nil {
+		// Tombstones are written even while the records are off, under the
+		// generation-0 key: a deleted path has no entry whose mtime could
+		// order it, so a tombstone the generation bump dropped could let an
+		// older replayed event resurrect the path.
+		if err := f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); err != nil {
 			glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, err)
 			if tsNs > rec.deleteTsNs.Load() {
 				rec.deleteTsNs.Store(tsNs)
@@ -346,7 +365,7 @@ func (f *Filer) repairMetaPathTs(path util.FullPath) {
 		if tsNs := rec.deleteTsNs.Load(); tsNs > 0 {
 			value := make([]byte, 8)
 			util.Uint64toBytes(value, uint64(tsNs))
-			if delErr = f.Store.KvPut(ctx, f.recordKey(metaPathDelPrefix, path), value); delErr == nil {
+			if delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); delErr == nil {
 				rec.deleteTsNs.Store(0)
 			}
 		}
@@ -434,7 +453,7 @@ func (f *Filer) noteCommittedEvent(event *filer_pb.SubscribeMetadataResponse) {
 func (f *Filer) deletedAfterTsNs(ctx context.Context, path util.FullPath) (int64, error) {
 	var tsNs int64
 	for p := string(path); p != "" && p != "/"; {
-		ts, found, err := f.kvReadTsNs(ctx, f.recordKey(metaPathDelPrefix, util.FullPath(p)))
+		ts, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathDelPrefix, util.FullPath(p)))
 		if err != nil {
 			return 0, err
 		}

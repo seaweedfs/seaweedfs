@@ -41,8 +41,9 @@ func TestPathCommitRecordsWrittenByDefault(t *testing.T) {
 	}
 }
 
-// Until a peer with its own store is observed, nothing is recorded, the
-// store is marked off, and records written before are not read.
+// Until a peer with its own store is observed, only deletes are recorded
+// (a deleted path has no mtime to fall back to), the store is marked off,
+// and records written before are not read.
 func TestPathCommitRecordsOffUntilPeerSeen(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
@@ -59,8 +60,11 @@ func TestPathCommitRecordsOffUntilPeerSeen(t *testing.T) {
 	}
 	f.noteCommittedEvent(overwriteEvent("/dir", "other", now.UnixNano(), "x"))
 	f.noteCommittedEvent(deleteEvent("/dir", "gone", now.UnixNano()))
-	if n := pathCommitRecordCount(store); n != 2 {
-		t.Fatalf("records = %d, want only the 2 written before records went off", n)
+	if n := pathCommitRecordCount(store); n != 3 {
+		t.Fatalf("records = %d, want the 2 written before plus the delete tombstone", n)
+	}
+	if _, err := store.KvGet(context.Background(), metaPathKey(metaPathDelPrefix, util.FullPath("/dir/gone"))); err != nil {
+		t.Fatalf("delete while off left no tombstone: %v", err)
 	}
 
 	mtime := now.Add(-time.Hour)
@@ -71,6 +75,41 @@ func TestPathCommitRecordsOffUntilPeerSeen(t *testing.T) {
 	}
 	if tsNs != mtime.UnixNano() {
 		t.Fatalf("localCommitTsNs = %d, want the entry's mtime %d", tsNs, mtime.UnixNano())
+	}
+}
+
+// A path deleted while the records were off stays fenced by its tombstone
+// once they come on: an older replayed create must not resurrect it.
+func TestPathCommitRecordsOffDeleteStillFences(t *testing.T) {
+	store := newStubFilerStore()
+	ctx := context.Background()
+	now := time.Now()
+	gone := util.NewFullPath("/dir", "gone")
+
+	off := newReplayTestFiler(store)
+	off.pathCommitRecordsOff.Store(true)
+	if err := off.markPathCommitRecordsOff(ctx); err != nil {
+		t.Fatalf("markPathCommitRecordsOff: %v", err)
+	}
+	off.noteCommittedEvent(deleteEvent("/dir", "gone", now.UnixNano()))
+
+	on := newReplayTestFiler(store)
+	on.pathCommitRecordsOff.Store(true)
+	if err := on.enablePathCommitRecords(ctx); err != nil {
+		t.Fatalf("enablePathCommitRecords: %v", err)
+	}
+	createEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "gone", Content: []byte("stale resurrect")},
+		},
+		TsNs: now.Add(-time.Minute).UnixNano(),
+	}
+	if err := on.Replay(createEvent); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, gone); err == nil {
+		t.Fatal("a replayed create resurrected a path deleted while the records were off")
 	}
 }
 
