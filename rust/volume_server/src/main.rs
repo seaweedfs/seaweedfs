@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitCode, ExitStatus};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -305,11 +305,15 @@ fn terminate_child(child: &mut Child) {
     let _ = child.kill();
 }
 
+const MAX_CONNECTIONS_PER_LISTENER: usize = 256;
+const NATIVE_HEADER_READ_TIMEOUT: Duration = Duration::from_millis(400);
+
 fn start_proxy_listener(
     spec: ProxySpec,
     native_http_role: Option<ListenerRole>,
     native_http_config: Option<Arc<NativeHttpConfig>>,
 ) -> thread::JoinHandle<()> {
+    let in_flight = Arc::new(AtomicUsize::new(0));
     thread::spawn(move || {
         let listener = match TcpListener::bind(&spec.frontend_addr) {
             Ok(v) => v,
@@ -334,10 +338,17 @@ fn start_proxy_listener(
         while !TERMINATE.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    if in_flight.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS_PER_LISTENER {
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
+                        drop(stream);
+                        continue;
+                    }
+                    let in_flight = in_flight.clone();
                     let backend_addr = spec.backend_addr.clone();
                     let native_http_role = native_http_role;
                     let native_http_config = native_http_config.clone();
                     thread::spawn(move || {
+                        let _in_flight_guard = InFlightGuard(in_flight);
                         let mut stream = stream;
                         if let Some(role) = native_http_role {
                             match try_handle_native_http(
@@ -378,6 +389,14 @@ fn start_proxy_listener(
             }
         }
     })
+}
+
+struct InFlightGuard(Arc<AtomicUsize>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn proxy_connection(mut downstream: TcpStream, backend_addr: &str) -> io::Result<()> {
@@ -630,22 +649,34 @@ fn peek_http_request_headers(stream: &TcpStream) -> io::Result<Option<ParsedHttp
     const MAX_HEADER_BYTES: usize = 8192;
     const MAX_PEEK_ATTEMPTS: usize = 25;
 
+    let _ = stream.set_read_timeout(Some(NATIVE_HEADER_READ_TIMEOUT));
     let mut buf = [0u8; MAX_HEADER_BYTES];
-    for _ in 0..MAX_PEEK_ATTEMPTS {
-        let n = stream.peek(&mut buf)?;
-        if n == 0 {
-            return Ok(None);
+    let result = (|| {
+        for _ in 0..MAX_PEEK_ATTEMPTS {
+            match stream.peek(&mut buf) {
+                Ok(0) => return Ok(None),
+                Ok(n) => {
+                    let data = &buf[..n];
+                    if let Some(end) = find_header_terminator(data) {
+                        return Ok(parse_http_request_headers(data, end + 4));
+                    }
+                    if n == MAX_HEADER_BYTES {
+                        return Ok(None);
+                    }
+                    thread::sleep(Duration::from_millis(4));
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) => {}
+                Err(err) => return Err(err),
+            }
         }
-        let data = &buf[..n];
-        if let Some(end) = find_header_terminator(data) {
-            return Ok(parse_http_request_headers(data, end + 4));
-        }
-        if n == MAX_HEADER_BYTES {
-            return Ok(None);
-        }
-        thread::sleep(Duration::from_millis(4));
-    }
-    Ok(None)
+        Ok(None)
+    })();
+    let _ = stream.set_read_timeout(None);
+    result
 }
 
 fn find_header_terminator(data: &[u8]) -> Option<usize> {
