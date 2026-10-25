@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
@@ -87,5 +88,104 @@ func TestEventWithoutPreStampStillEmits(t *testing.T) {
 	}
 	if got := f.metaLogInflight.minTsNs(); got != 0 {
 		t.Fatalf("stamp leaked: %d", got)
+	}
+}
+
+// putRecord seeds the per-path key an older build would have left.
+func putRecord(t *testing.T, store *stubFilerStore, prefix string, path util.FullPath, tsNs int64) {
+	t.Helper()
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(tsNs))
+	if err := store.KvPut(context.Background(), metaPathKey(prefix, path), value); err != nil {
+		t.Fatalf("seed record %s%s: %v", prefix, path, err)
+	}
+}
+
+// A retained change record still orders a path whose entry is gone: a
+// replayed create older than the record must not resurrect it.
+func TestRetainedChangeRecordFencesMissingEntry(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+	putRecord(t, store, metaPathTsPrefix, "/dir/file", 300)
+
+	if newer, err := f.replayBlockedByLocal(ctx, "/dir/file", 200); err != nil || !newer {
+		t.Fatalf("event at 200 should lose to retained record at 300: newer=%v err=%v", newer, err)
+	}
+	if newer, err := f.replayBlockedByLocal(ctx, "/dir/file", 400); err != nil || newer {
+		t.Fatalf("event at 400 should win over retained record at 300: newer=%v err=%v", newer, err)
+	}
+}
+
+// A directory's retained delete record covers children removed without
+// per-child records — the replay check walks the ancestors.
+func TestRetainedAncestorDeleteRecordFencesChild(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+	putRecord(t, store, metaPathDelPrefix, "/dir", 300)
+
+	if newer, err := f.replayBlockedByLocal(ctx, "/dir/sub/file", 200); err != nil || !newer {
+		t.Fatalf("child event at 200 should lose to ancestor delete at 300: newer=%v err=%v", newer, err)
+	}
+	if newer, err := f.replayBlockedByLocal(ctx, "/dir/sub/file", 400); err != nil || newer {
+		t.Fatalf("child event at 400 should win over ancestor delete at 300: newer=%v err=%v", newer, err)
+	}
+}
+
+// The retained record orders the entry, not its client-settable mtime: a
+// mounted client can push mtime into the future, and the record must not
+// let that silence newer replayed events.
+func TestRetainedRecordOrdersUnstampedEntry(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+	path := util.FullPath("/dir/file")
+	putRecord(t, store, metaPathTsPrefix, path, 300)
+	store.entries[string(path)] = &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: time.Unix(0, 999)},
+	}
+
+	if tsNs, err := f.localCommitTsNs(ctx, path); err != nil || tsNs != 300 {
+		t.Fatalf("localCommitTsNs = %d,%v; want the record's 300, not the entry's mtime", tsNs, err)
+	}
+}
+
+// An entry stamped under the current build outranks any record an older
+// build left: the stamp is the newest commit.
+func TestEntryStampBeatsRetainedRecord(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+	path := util.FullPath("/dir/file")
+	putRecord(t, store, metaPathTsPrefix, path, 300)
+	store.entries[string(path)] = &Entry{FullPath: path, CommitTsNs: 400}
+
+	if tsNs, err := f.localCommitTsNs(ctx, path); err != nil || tsNs != 400 {
+		t.Fatalf("localCommitTsNs = %d,%v; want the entry stamp's 400", tsNs, err)
+	}
+}
+
+// End to end: a replayed create older than a retained delete record leaves
+// the path absent.
+func TestReplayCreateBlockedByRetainedDelete(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+	putRecord(t, store, metaPathDelPrefix, "/dir/file", 300)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "file", Content: []byte("resurrected")},
+		},
+		TsNs: 200,
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/dir/file"); err == nil {
+		t.Fatal("replayed create at 200 must not resurrect a path deleted at 300")
 	}
 }
