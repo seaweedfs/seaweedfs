@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -85,4 +86,80 @@ func TestWriteConditionalCheckErrorDeleteMarker(t *testing.T) {
 	s3a.writeConditionalCheckError(w, httptest.NewRequest(http.MethodGet, "/bucket/object", nil), "bucket", "object", "TestHandler", ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey})
 	require.Equal(t, http.StatusNotFound, w.Code)
 	require.Empty(t, w.Header().Get(s3_constants.AmzDeleteMarker))
+}
+
+func newDeleteMarkerTestServer(t *testing.T) *S3ApiServer {
+	t.Helper()
+	f := &anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b/o.versions": {
+			Name:        "o.versions",
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 784111700},
+			Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:       []byte("marker"),
+				s3_constants.ExtLatestVersionFileNameKey: []byte("v_marker"),
+			},
+		},
+		"/buckets/b/o.versions/v_marker": {
+			Name:       "v_marker",
+			Attributes: &filer_pb.FuseAttributes{Mtime: 784111777},
+			Extended: map[string][]byte{
+				s3_constants.ExtDeleteMarkerKey: []byte("true"),
+				s3_constants.ExtVersionIdKey:    []byte("marker"),
+			},
+		},
+	}}
+	s3a := newPutTestServer(t, startFakeFiler(t, f))
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningEnabled})
+	return s3a
+}
+
+func TestGetHeadDeleteMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name, query         string
+		status              int
+		lastModified, allow string
+	}{
+		{"current marker", "", http.StatusNotFound, "", ""},
+		{"marker by versionId", "?versionId=marker", http.StatusMethodNotAllowed, "Sun, 06 Nov 1994 08:49:37 GMT", "DELETE"},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(tc.name+"/"+method, func(t *testing.T) {
+				s3a := newDeleteMarkerTestServer(t)
+				r := mux.SetURLVars(httptest.NewRequest(method, "/b/o"+tc.query, nil), map[string]string{"bucket": "b", "object": "o"})
+				w := httptest.NewRecorder()
+				handler := s3a.GetObjectHandler
+				if method == http.MethodHead {
+					handler = s3a.HeadObjectHandler
+				}
+				handler(w, r)
+				require.Equal(t, tc.status, w.Code)
+				require.Equal(t, "true", w.Header().Get(s3_constants.AmzDeleteMarker))
+				require.Equal(t, "marker", w.Header().Get("x-amz-version-id"))
+				require.Equal(t, tc.lastModified, w.Header().Get("Last-Modified"))
+				require.Equal(t, tc.allow, w.Header().Get("Allow"))
+			})
+		}
+	}
+}
+
+func TestGetHeadDeleteMarkerConditionalMiss(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			s3a := newDeleteMarkerTestServer(t)
+			r := httptest.NewRequest(method, "/b/o", nil)
+			r.Header.Set("If-Match", `"no-match"`)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "o"})
+			w := httptest.NewRecorder()
+			handler := s3a.GetObjectHandler
+			if method == http.MethodHead {
+				handler = s3a.HeadObjectHandler
+			}
+			handler(w, r)
+			require.Equal(t, http.StatusNotFound, w.Code)
+			require.Equal(t, "true", w.Header().Get(s3_constants.AmzDeleteMarker))
+			require.Equal(t, "marker", w.Header().Get("x-amz-version-id"))
+		})
+	}
 }
