@@ -104,16 +104,52 @@ func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote, isR
 }
 
 // reportsPriorClusterState tells whether a heartbeat could come from a server
-// still carrying cluster state from before this leader's term: it holds
-// volumes or shards, has seen a nonzero volume id bound, or last synced with
-// a different topology id.
-func reportsPriorClusterState(heartbeat *master_pb.Heartbeat, topologyId string) bool {
-	return heartbeat.MaxVolumeIdSeen > 0 ||
-		len(heartbeat.Volumes) > 0 || len(heartbeat.NewVolumes) > 0 ||
-		len(heartbeat.ChangedVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 ||
-		len(heartbeat.EcShards) > 0 || len(heartbeat.NewEcShards) > 0 ||
-		len(heartbeat.DeletedEcShards) > 0 ||
-		(heartbeat.LastSeenTopologyId != "" && heartbeat.LastSeenTopologyId != topologyId)
+// still carrying cluster state from before this leader's term: it holds a
+// volume or shard id above the bound this master has issued, has seen a
+// higher volume id bound, or last synced with a different topology id.
+// Echoes of this term's own allocations stay under the bound and do not count.
+func reportsPriorClusterState(heartbeat *master_pb.Heartbeat, topologyId string, bound needle.VolumeId) bool {
+	if needle.VolumeId(heartbeat.MaxVolumeIdSeen) > bound ||
+		(heartbeat.LastSeenTopologyId != "" && heartbeat.LastSeenTopologyId != topologyId) {
+		return true
+	}
+	unissued := func(id uint32) bool { return needle.VolumeId(id) > bound }
+	for _, v := range heartbeat.Volumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.NewVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.ChangedVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, v := range heartbeat.DeletedVolumes {
+		if unissued(v.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.EcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.NewEcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	for _, s := range heartbeat.DeletedEcShards {
+		if unissued(s.Id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -195,7 +231,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
-		if dn == nil || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId()) {
+		if dn == nil || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
 			ms.Topo.NoteAllocationEvidence()
 		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
