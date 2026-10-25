@@ -48,6 +48,20 @@ impl NamespaceClient {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
+            // reqwest forwards custom headers on a follow, so only a same-host
+            // hop is allowed: anywhere else would carry x-api-key to a server
+            // the credential was never meant for.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                let same_host = attempt
+                    .previous()
+                    .last()
+                    .is_some_and(|prev| prev.host_str() == attempt.url().host_str());
+                if same_host {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
             .build()
             // The builder only fails on a bad TLS backend, which would break
             // every call anyway; a client with no timeouts is worse than a panic
