@@ -338,6 +338,7 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	mqBrokerOptions.ip = serverIp
+	mqBrokerOptions.ipBind = serverBindIp
 	mqBrokerOptions.ipBindLocalhost = serverIpBindLocalhost
 	mqBrokerOptions.masters = filerOptions.masters.GetInstancesAsMap()
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
