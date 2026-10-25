@@ -148,8 +148,8 @@ func TestPathCommitRecordsOnAfterPeerSeen(t *testing.T) {
 	if err := backOn.enablePathCommitRecords(ctx); err != nil {
 		t.Fatalf("enablePathCommitRecords: %v", err)
 	}
-	if backOn.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
-		t.Fatalf("generation = %d, off marker kept = %v; want %d and the marker cleared",
+	if backOn.pathCommitGen.Load() <= offTs || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want a fence past %d and the marker cleared",
 			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
 	}
 	if !storeHasKey(store, metaPathReplKey) {
@@ -285,16 +285,17 @@ func TestPathCommitRecordsMarkerFailures(t *testing.T) {
 	if err := backOn.enablePathCommitRecords(ctx); err != nil {
 		t.Fatalf("enablePathCommitRecords: %v", err)
 	}
-	if backOn.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
-		t.Fatalf("generation = %d, off marker kept = %v; want %d and the marker cleared",
+	if backOn.pathCommitGen.Load() <= offTs || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want a fence past %d and the marker cleared",
 			backOn.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
 	}
 }
 
 // Filers racing on the same off marker land on one generation — the marker's
-// own timestamp — a marker older than the stored generation is cleaned rather
-// than consumed again, and a bump landing mid-check is adopted rather than
-// counted past.
+// own timestamp. The marker the generation was bumped for reappearing is
+// dropped, but a different marker is consumed however old it reads: a new off
+// period can run behind the stored generation when a clock lags. A bump for
+// the same marker landing mid-check is adopted rather than counted past.
 func TestPathCommitGenConsumedTogether(t *testing.T) {
 	store := newStubFilerStore()
 	ctx := context.Background()
@@ -321,10 +322,11 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 		}
 	}
 
-	// a marker older than the stored generation is dropped without a bump
-	stale := make([]byte, 8)
-	util.Uint64toBytes(stale, offTs-1)
-	if err := store.KvPut(ctx, []byte(metaPathOffKey), stale); err != nil {
+	// the marker the stored generation was bumped for reappearing — left by
+	// a delete that failed on an earlier pass — is dropped without a bump
+	leftover := make([]byte, 8)
+	util.Uint64toBytes(leftover, offTs)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), leftover); err != nil {
 		t.Fatalf("KvPut: %v", err)
 	}
 	third := newReplayTestFiler(store)
@@ -332,8 +334,25 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 		t.Fatalf("syncPathCommitGen: %v", err)
 	}
 	if third.pathCommitGen.Load() != offTs || storeHasKey(store, metaPathOffKey) {
-		t.Fatalf("generation = %d, off marker kept = %v; want %d and the stale marker dropped",
+		t.Fatalf("generation = %d, off marker kept = %v; want %d and the leftover marker dropped",
 			third.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs)
+	}
+
+	// a new marker reading older than the stored generation — an off period
+	// written on a host whose clock lags — is still unrecorded time: it is
+	// consumed past the stored generation, not dropped
+	stale := make([]byte, 8)
+	util.Uint64toBytes(stale, offTs-1)
+	if err := store.KvPut(ctx, []byte(metaPathOffKey), stale); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	fourth := newReplayTestFiler(store)
+	if err := fourth.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	if fourth.pathCommitGen.Load() != offTs+1 || storeHasKey(store, metaPathOffKey) {
+		t.Fatalf("generation = %d, off marker kept = %v; want %d and the stale marker consumed",
+			fourth.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs+1)
 	}
 
 	// a fresh marker consumed while this sync is mid-check: the stored value
@@ -350,29 +369,30 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 		if string(key) == metaPathGenKey {
 			reads++
 			if reads == 2 {
-				won := make([]byte, 8)
-				util.Uint64toBytes(won, newTs+1)
+				won := make([]byte, 16)
+				util.Uint64toBytes(won, newTs)
+				util.Uint64toBytes(won[8:], newTs+1)
 				store.kv[metaPathGenKey] = won
 			}
 		}
 	}
-	fourth := newReplayTestFiler(store)
-	if err := fourth.syncPathCommitGen(ctx); err != nil {
+	fifth := newReplayTestFiler(store)
+	if err := fifth.syncPathCommitGen(ctx); err != nil {
 		t.Fatalf("syncPathCommitGen: %v", err)
 	}
 	store.kvGetHook = nil
-	if got := fourth.pathCommitGen.Load(); got != newTs+1 {
+	if got := fifth.pathCommitGen.Load(); got != newTs+1 {
 		t.Fatalf("generation = %d, want the concurrently stored %d", got, newTs+1)
 	}
 
 	// an off-state filer enabling after the marker was consumed still fences
-	// its own off window: the current time stands in for the missing marker
-	fifth := newReplayTestFiler(store)
-	fifth.pathCommitRecordsOff.Store(true)
-	if err := fifth.enablePathCommitRecords(ctx); err != nil {
+	// its own off window: the current time names the fence
+	sixth := newReplayTestFiler(store)
+	sixth.pathCommitRecordsOff.Store(true)
+	if err := sixth.enablePathCommitRecords(ctx); err != nil {
 		t.Fatalf("enablePathCommitRecords: %v", err)
 	}
-	if got := fifth.pathCommitGen.Load(); got <= newTs+1 {
+	if got := sixth.pathCommitGen.Load(); got <= newTs+1 {
 		t.Fatalf("generation = %d, want a fence past the stored %d", got, newTs+1)
 	}
 }
