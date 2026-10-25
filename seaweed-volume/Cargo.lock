@@ -4601,6 +4601,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body 1.0.1",
+ "httpdate",
  "hyper",
  "hyper-util",
  "image",

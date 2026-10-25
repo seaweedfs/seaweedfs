@@ -1583,16 +1583,12 @@ fn if_range_matches(headers: &HeaderMap, etag: &str, last_modified_str: &Option<
     if if_range.starts_with('"') || if_range.starts_with("W/") {
         return if_range == etag;
     }
-    let Ok(date) =
-        chrono::NaiveDateTime::parse_from_str(if_range, "%a, %d %b %Y %H:%M:%S GMT")
-    else {
+    let Ok(date) = httpdate::parse_http_date(if_range) else {
         return false;
     };
     last_modified_str
         .as_deref()
-        .and_then(|lm| {
-            chrono::NaiveDateTime::parse_from_str(lm, "%a, %d %b %Y %H:%M:%S GMT").ok()
-        })
+        .and_then(|lm| httpdate::parse_http_date(lm).ok())
         .is_some_and(|lm| date == lm)
 }
 
@@ -5802,6 +5798,8 @@ mod tests {
             (None, true),
             (Some("\"v2\""), true),
             (Some("Sat, 24 Oct 2026 22:01:04 GMT"), true),
+            (Some("Saturday, 24-Oct-26 22:01:04 GMT"), true),
+            (Some("Sat Oct 24 22:01:04 2026"), true),
             (Some("\"v1\""), false),
             (Some("W/\"v2\""), false),
             (Some("Sat, 24 Oct 2026 22:01:03 GMT"), false),
