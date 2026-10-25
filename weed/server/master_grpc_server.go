@@ -103,6 +103,19 @@ func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote, isR
 	}
 }
 
+// reportsPriorClusterState tells whether a heartbeat could come from a server
+// still carrying cluster state from before this leader's term: it holds
+// volumes or shards, has seen a nonzero volume id bound, or last synced with
+// a different topology id.
+func reportsPriorClusterState(heartbeat *master_pb.Heartbeat, topologyId string) bool {
+	return heartbeat.MaxVolumeIdSeen > 0 ||
+		len(heartbeat.Volumes) > 0 || len(heartbeat.NewVolumes) > 0 ||
+		len(heartbeat.ChangedVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 ||
+		len(heartbeat.EcShards) > 0 || len(heartbeat.NewEcShards) > 0 ||
+		len(heartbeat.DeletedEcShards) > 0 ||
+		(heartbeat.LastSeenTopologyId != "" && heartbeat.LastSeenTopologyId != topologyId)
+}
+
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 
@@ -182,6 +195,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
+		if dn == nil || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId()) {
+			ms.Topo.NoteAllocationEvidence()
+		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
 		if len(heartbeat.Volumes) > 0 {
