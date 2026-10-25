@@ -559,3 +559,48 @@ func TestAFailureDuringARetryIsNotDropped(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, store.successes(), 2, "the retry ended on its first success, dropping the refresh that failed while it ran")
 }
+
+// A refresh caused by an unrelated record must not rebuild a provider whose
+// own record is unchanged: rebuilding drops its JWKS cache, so a briefly
+// unreachable issuer would fail exchanges its cached keys still allow.
+func TestAnUnrelatedRefreshKeepsAProvidersRuntimeState(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	arn := arnOf(t, persistTestAPIIssuer)
+	createAPIProvider(t, mgr, persistTestAPIIssuer)
+
+	mgr.oidcRefreshMu.Lock()
+	before := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, before)
+
+	createAPIProvider(t, mgr, persistTestStaticIssuer) // refreshes over an unrelated record
+
+	mgr.oidcRefreshMu.Lock()
+	after := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, after)
+	assert.Same(t, before.provider, after.provider, "an unchanged record's provider was rebuilt")
+}
+
+// A record whose validation settings change must get a new provider: the
+// cached runtime cannot keep serving settings the store no longer holds.
+func TestAChangedRecordRebuildsItsProvider(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	arn := arnOf(t, persistTestAPIIssuer)
+	createAPIProvider(t, mgr, persistTestAPIIssuer)
+
+	mgr.oidcRefreshMu.Lock()
+	before := mgr.oidcManagedProviders[arn].provider
+	mgr.oidcRefreshMu.Unlock()
+
+	require.NoError(t, mgr.UpdateOIDCProviderThumbprints(context.Background(), arn,
+		[]string{"0123456789abcdef0123456789abcdef01234567"}))
+
+	mgr.oidcRefreshMu.Lock()
+	after := mgr.oidcManagedProviders[arn]
+	mgr.oidcRefreshMu.Unlock()
+	require.NotNil(t, after)
+	assert.NotSame(t, before, after.provider, "a changed record kept its provider")
+}
