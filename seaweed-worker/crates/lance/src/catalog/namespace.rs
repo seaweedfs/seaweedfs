@@ -151,9 +151,7 @@ impl NamespaceClient {
 /// default one had.
 fn may_follow(previous: &[reqwest::Url], next: &reqwest::Url) -> bool {
     previous.len() < MAX_REDIRECT_HOPS
-        && previous
-            .last()
-            .is_some_and(|prev| same_origin(prev, next))
+        && previous.last().is_some_and(|prev| same_origin(prev, next))
 }
 
 /// A redirect stays within an origin when scheme, host, and port all match, so
@@ -202,7 +200,7 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{may_follow, protected_transport, same_origin, MAX_REDIRECT_HOPS};
+    use super::{MAX_REDIRECT_HOPS, may_follow, protected_transport, same_origin};
 
     #[test]
     fn may_follow_bounds_hops_within_the_origin() {
