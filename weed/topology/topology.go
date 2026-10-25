@@ -1485,17 +1485,25 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 	if reported == "" || !t.freezeOnMismatch.Load() {
 		return
 	}
+	t.reportedTopologyIdsLock.Lock()
+	defer t.reportedTopologyIdsLock.Unlock()
+	t.checkReportedTopologyIdLocked(reported)
+}
+
+// checkReportedTopologyIdLocked runs the mismatch check inside
+// reportedTopologyIdsLock, the same critical section the init gate drains
+// under: a report received before the gate opens is either stashed or frozen
+// before the gate can release.
+func (t *Topology) checkReportedTopologyIdLocked(reported string) {
 	own := t.GetTopologyId()
 	if own == "" {
 		// The local topology id is still being minted. Keep the report so a
 		// later heartbeat echo cannot erase the mismatch on the server side
 		// before the freeze check ever ran.
-		t.reportedTopologyIdsLock.Lock()
 		if t.pendingReportedTopologyIds == nil {
 			t.pendingReportedTopologyIds = make(map[string]struct{})
 		}
 		t.pendingReportedTopologyIds[reported] = struct{}{}
-		t.reportedTopologyIdsLock.Unlock()
 		return
 	}
 	if reported == own {
@@ -1584,12 +1592,15 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 		t.topologyInitPending.Store(true)
 		return
 	}
+	// The stash is drained and the gate released inside one critical section:
+	// a mismatching report checked here, or still in flight under the same
+	// lock, lands its freeze before any allocation can observe the open gate.
 	t.reportedTopologyIdsLock.Lock()
+	defer t.reportedTopologyIdsLock.Unlock()
 	reported := t.pendingReportedTopologyIds
 	t.pendingReportedTopologyIds = nil
-	t.reportedTopologyIdsLock.Unlock()
 	for id := range reported {
-		t.CheckReportedTopologyId(id)
+		t.checkReportedTopologyIdLocked(id)
 	}
 	t.topologyInitPending.Store(false)
 }

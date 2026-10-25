@@ -217,3 +217,22 @@ func TestAllocationDeferralReleasedByInventory(t *testing.T) {
 		t.Fatal("without opt-in an applied inventory must not lift the deferral")
 	}
 }
+
+func TestQueuedTopologyReportFreezesBeforeGateOpens(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+	topo.SetTopologyInitPending(true)
+
+	// A report arriving while the id is still being minted is stashed.
+	topo.CheckReportedTopologyId("cluster-a")
+	topo.SetTopologyId("cluster-b")
+
+	topo.SetTopologyInitPending(false)
+	if topo.topologyInitPending.Load() {
+		t.Fatal("init gate should be open after pending=false")
+	}
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("a stashed mismatch must freeze growth before the gate opens")
+	}
+}
+
