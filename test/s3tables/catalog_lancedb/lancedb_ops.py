@@ -203,7 +203,10 @@ def main():
     #    declare-and-write - rather than a hang, a 404, or a half-made table.
     pushdown = lancedb.connect_namespace(
         "rest",
-        {"uri": args.namespace_url},
+        {
+            "uri": args.namespace_url,
+            "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+        },
         storage_options=storage,
         namespace_client_pushdown_operations=["CreateTable"],
     )
