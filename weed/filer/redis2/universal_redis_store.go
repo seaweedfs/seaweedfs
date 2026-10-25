@@ -15,6 +15,10 @@ import (
 
 const (
 	DIR_LIST_MARKER = "\x00"
+
+	// a listing whose callback stops early reads at most one batch more than
+	// it uses, and no single pipeline grows with the listing limit
+	listFetchBatchSize = 128
 )
 
 type UniversalRedis2Store struct {
@@ -96,7 +100,12 @@ func (store *UniversalRedis2Store) UpdateEntry(ctx context.Context, entry *filer
 
 func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
-	data, err := store.Client.Get(ctx, store.getKey(string(fullpath))).Result()
+	return decodeEntry(fullpath, store.Client.Get(ctx, store.getKey(string(fullpath))))
+}
+
+func decodeEntry(fullpath util.FullPath, get *redis.StringCmd) (entry *filer.Entry, err error) {
+
+	data, err := get.Result()
 	if err == redis.Nil {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -202,9 +211,13 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 
 	// fetch entry meta
 	var entry *filer.Entry
-	for _, fileName := range members {
+	var gets []*redis.StringCmd
+	for i, fileName := range members {
+		if i%listFetchBatchSize == 0 {
+			gets = store.getEntries(ctx, dirPath, members[i:])
+		}
 		path := util.NewFullPath(string(dirPath), fileName)
-		entry, err = store.FindEntry(ctx, path)
+		entry, err = decodeEntry(path, gets[i%listFetchBatchSize])
 		lastFileName = fileName
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
@@ -233,6 +246,23 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 	}
 
 	return lastFileName, err
+}
+
+// getEntries pipelines the GETs for up to listFetchBatchSize of members. Each
+// command keeps its own error, so a missing value still reads as redis.Nil and
+// fails only that member.
+func (store *UniversalRedis2Store) getEntries(ctx context.Context, dirPath util.FullPath, members []string) []*redis.StringCmd {
+	if len(members) > listFetchBatchSize {
+		members = members[:listFetchBatchSize]
+	}
+	gets := make([]*redis.StringCmd, len(members))
+	store.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, fileName := range members {
+			gets[i] = pipe.Get(ctx, store.getKey(string(util.NewFullPath(string(dirPath), fileName))))
+		}
+		return nil
+	})
+	return gets
 }
 
 func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {

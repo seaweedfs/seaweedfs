@@ -370,7 +370,7 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 
 	directoryPrefix := genDirectoryKeyPrefix(shortPath, prefix)
 	lastFileStart := directoryPrefix
-	if startFileName != "" {
+	if startFileName > prefix {
 		lastFileStart = genDirectoryKeyPrefix(shortPath, startFileName)
 	}
 

@@ -170,9 +170,6 @@ spec:
               {{- if .Values.filer.metricsIp }}
               -metricsIp={{ .Values.filer.metricsIp }} \
               {{- end }}
-              {{- if .Values.filer.redirectOnRead }}
-              -redirectOnRead \
-              {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \
               {{- end }}

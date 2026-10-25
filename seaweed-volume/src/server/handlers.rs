@@ -3039,50 +3039,62 @@ pub async fn post_handler(
     let needle_etag = n.etag();
     let needle_has_name = n.has_name();
 
-    let write_result = write_upload_needle(&state, vid, n, fsync).await;
-
     // Replicate to remote volume servers if this volume has replicas.
     // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
+    let needs_replication = !is_replicate && {
+        let store = state.store.read().unwrap();
+        store
+            .find_volume(vid)
+            .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
+    };
+
+    // The fan-out runs concurrently with the local needle write, like Go's
+    // ReplicatedWrite: it reads the already-buffered request body, so the two
+    // sides share no mutable state. The ack still waits for both.
+    let replication = if needs_replication {
+        let state_clone = state.clone();
+        let path_clone = path.clone();
+        let query_clone = query.clone();
+        let headers_clone = headers.clone();
+        let body_clone = body.clone();
+        Some(tokio::spawn(async move {
+            do_replicated_request(
+                &state_clone,
+                vid.0,
+                Method::POST,
+                &path_clone,
+                &query_clone,
+                &headers_clone,
+                Some(body_clone),
+            )
+            .await
+        }))
+    } else {
+        None
+    };
+
+    let write_result = write_upload_needle(&state, vid, n, fsync).await;
+
     // No leader-known gate: when the lookup cannot run, the write must fail
-    // rather than be acknowledged on fewer copies than required.
-    if !is_replicate && write_result.is_ok() {
-        let needs_replication = {
-            let store = state.store.read().unwrap();
-            store
-                .find_volume(vid)
-                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
-        };
-        if needs_replication {
-            let state_clone = state.clone();
-            let path_clone = path.clone();
-            let query_clone = query.clone();
-            let headers_clone = headers.clone();
-            let body_clone = body.clone();
-            let replication = tokio::spawn(async move {
-                do_replicated_request(
-                    &state_clone,
-                    vid.0,
-                    Method::POST,
-                    &path_clone,
-                    &query_clone,
-                    &headers_clone,
-                    Some(body_clone),
-                )
-                .await
-            });
-            let replication_result = replication
-                .await
+    // rather than be acknowledged on fewer copies than required. The local
+    // write result takes precedence, matching Go's error ordering.
+    let replication_result = match replication {
+        Some(task) => Some(
+            task.await
                 .map_err(|e| format!("replication task failed: {}", e))
-                .flatten();
-            if let Err(e) = replication_result {
-                tracing::error!("replicated write failed: {}", e);
-                return json_error_with_query(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("replication failed: {}", e),
-                    Some(&query),
-                );
-            }
-        }
+                .flatten(),
+        ),
+        None => None,
+    };
+    if write_result.is_ok()
+        && let Some(Err(e)) = replication_result
+    {
+        tracing::error!("replicated write failed: {}", e);
+        return json_error_with_query(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("replication failed: {}", e),
+            Some(&query),
+        );
     }
 
     let resp = match write_result {

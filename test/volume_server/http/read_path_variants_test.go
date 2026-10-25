@@ -170,11 +170,11 @@ func TestConditionalHeaderPrecedenceAndInvalidIfModifiedSince(t *testing.T) {
 	precedenceReq.Header.Set("If-None-Match", "\"definitely-different-etag\"")
 	precedenceResp := framework.DoRequest(t, client, precedenceReq)
 	precedenceBody := framework.ReadAllAndClose(t, precedenceResp)
-	if precedenceResp.StatusCode != http.StatusNotModified {
-		t.Fatalf("conditional precedence expected 304, got %d", precedenceResp.StatusCode)
+	if precedenceResp.StatusCode != http.StatusOK {
+		t.Fatalf("mismatched If-None-Match overrides If-Modified-Since: expected 200, got %d", precedenceResp.StatusCode)
 	}
-	if len(precedenceBody) != 0 {
-		t.Fatalf("conditional precedence expected empty body, got %d bytes", len(precedenceBody))
+	if string(precedenceBody) != string(payload) {
+		t.Fatalf("mismatched If-None-Match body mismatch: got %q want %q", string(precedenceBody), string(payload))
 	}
 
 	invalidIMSReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
