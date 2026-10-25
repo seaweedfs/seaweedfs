@@ -199,9 +199,9 @@ func (f *Filer) syncPathCommitGen(ctx context.Context) error {
 		return fmt.Errorf("read the off marker: %w", offErr)
 	}
 	var gen uint64
-	if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil && len(value) >= 8 {
-		gen = util.BytesToUint64(value)
-	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
+	if value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey)); err == nil {
+		gen, _ = pathCommitGenValue(value)
+	} else if !errors.Is(err, ErrKvNotFound) {
 		return fmt.Errorf("read the generation: %w", err)
 	}
 	if gen > f.pathCommitGen.Load() {

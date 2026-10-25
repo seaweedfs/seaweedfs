@@ -356,6 +356,16 @@ func TestPathCommitGenConsumedTogether(t *testing.T) {
 			fourth.pathCommitGen.Load(), storeHasKey(store, metaPathOffKey), offTs+1)
 	}
 
+	// a filer syncing with the marker gone adopts the stored generation —
+	// the value's trailing field — not the consumed marker it also names
+	restarted := newReplayTestFiler(store)
+	if err := restarted.syncPathCommitGen(ctx); err != nil {
+		t.Fatalf("syncPathCommitGen: %v", err)
+	}
+	if restarted.pathCommitGen.Load() != offTs+1 {
+		t.Fatalf("generation = %d, want the stored %d", restarted.pathCommitGen.Load(), offTs+1)
+	}
+
 	// a fresh marker consumed while this sync is mid-check: the stored value
 	// is adopted, not counted past — the hook lands the concurrent bump on
 	// the second generation read
