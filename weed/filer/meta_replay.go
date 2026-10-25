@@ -350,10 +350,11 @@ func (f *Filer) replayBlockedByLocal(ctx context.Context, path util.FullPath, ts
 // delete record an older build left, or the ancestor entry itself: a local
 // recursive delete or directory rename holds only the ancestor's lock, and
 // without contending on it a replay could reinsert a stale child into a
-// subtree being deleted after its check. Ancestors are locked shared — they only need to exclude an
-// exclusive holder, not each other, or every replay under a busy parent
-// would serialize — while a path the event actually changes stays exclusive
-// even when it is also the other path's ancestor. The root is never locked:
+// subtree being deleted after its check. Ancestors are locked shared —
+// they only need to exclude an exclusive holder, not each other, or every
+// replay under a busy parent would serialize — while a path the event
+// actually changes stays exclusive even when it is also the other path's
+// ancestor. The root is never locked:
 // it cannot be deleted, and a shared root lock would still be excluded by
 // every top-level delete.
 func (f *Filer) lockReplayPaths(oldPath, newPath util.FullPath) func() {
