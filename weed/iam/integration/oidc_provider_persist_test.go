@@ -649,3 +649,62 @@ func TestSameIssuerRecordsShareOneProvider(t *testing.T) {
 		"a changed record kept the shared provider")
 	assert.True(t, stsKnowsIssuerForAccount(t, mgr, persistTestAPIIssuer, "222222222222"))
 }
+
+// The replay flag is part of what a provider is built from: two records that
+// differ only in it must not share a provider, and flipping it on a record
+// must rebuild.
+func TestOIDCProviderFingerprintsSeparateReplayFlag(t *testing.T) {
+	disabled := false
+	base := &OIDCProviderRecord{
+		ARN: "arn:aws:iam::111111111111:oidc-provider/issuer.example", URL: "https://issuer.example",
+		ClientIDs: []string{"aud"},
+	}
+	off := *base
+	off.JTIReplayProtectionEnabled = &disabled
+
+	assert.NotEqual(t, oidcProviderConfigFingerprint(base), oidcProviderConfigFingerprint(&off),
+		"records differing only in the replay flag share a config fingerprint")
+	assert.NotEqual(t, oidcProviderFingerprint(base), oidcProviderFingerprint(&off),
+		"a flipped replay flag does not rebuild the provider")
+}
+
+// A config-file provider's jtiReplayProtectionEnabled rides the record into
+// the runtime build path, so a mirrored static provider keeps the flag the
+// provider factory would have applied.
+func TestStaticOIDCProviderRecordsCarryJTIReplayFlag(t *testing.T) {
+	records := staticOIDCProviderRecords(&sts.STSConfig{
+		AccountId: "111111111111",
+		Providers: []*sts.ProviderConfig{
+			{
+				Name: "k8s", Type: sts.ProviderTypeOIDC, Enabled: true,
+				Config: map[string]interface{}{
+					"issuer":                     "https://k8s.example",
+					"clientId":                   "sts.amazonaws.com",
+					"jtiReplayProtectionEnabled": false,
+				},
+			},
+			{
+				Name: "plain", Type: sts.ProviderTypeOIDC, Enabled: true,
+				Config: map[string]interface{}{
+					"issuer":   "https://issuer.example",
+					"clientId": "sts.amazonaws.com",
+				},
+			},
+		},
+	})
+	require.Len(t, records, 2)
+
+	var flagged, plain *OIDCProviderRecord
+	for _, rec := range records {
+		if rec.URL == "https://k8s.example" {
+			flagged = rec
+		} else {
+			plain = rec
+		}
+	}
+	require.NotNil(t, flagged)
+	require.NotNil(t, flagged.JTIReplayProtectionEnabled)
+	assert.False(t, *flagged.JTIReplayProtectionEnabled)
+	require.NotNil(t, plain)
+	assert.Nil(t, plain.JTIReplayProtectionEnabled)
+}

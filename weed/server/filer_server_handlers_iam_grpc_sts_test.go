@@ -497,3 +497,40 @@ func TestIamGrpc_DeleteOIDCProviderDoesNotDeleteAProviderReplacedMeanwhile(t *te
 	require.NoError(t, err, "the replacement record was deleted")
 	assert.Equal(t, []string{"new"}, rec.ClientIDs)
 }
+
+// The flag rides PutOIDCProvider into the record, is reported back by Get, and
+// a Put that does not carry it keeps the stored value.
+func TestIamGrpc_PutOIDCProviderJTIReplayProtectionFlag(t *testing.T) {
+	s, ctx, providers, _ := newSTSTestServer(t)
+	disabled, enabled := false, true
+
+	put, err := s.PutOIDCProvider(ctx, &iam_pb.PutOIDCProviderRequest{
+		IssuerUrl: "https://oidc.example", ClientIds: []string{"aud"},
+		JtiReplayProtectionEnabled: &disabled,
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetOIDCProvider(ctx, &iam_pb.GetOIDCProviderRequest{IssuerUrl: "https://oidc.example"})
+	require.NoError(t, err)
+	require.NotNil(t, got.Provider.JtiReplayProtectionEnabled)
+	assert.False(t, *got.Provider.JtiReplayProtectionEnabled)
+
+	_, err = s.PutOIDCProvider(ctx, &iam_pb.PutOIDCProviderRequest{
+		IssuerUrl: "https://oidc.example", ClientIds: []string{"aud2"},
+	})
+	require.NoError(t, err)
+	rec, err := providers.GetProviderByARN(context.Background(), "", put.Arn)
+	require.NoError(t, err)
+	require.NotNil(t, rec.JTIReplayProtectionEnabled)
+	assert.False(t, *rec.JTIReplayProtectionEnabled)
+
+	_, err = s.PutOIDCProvider(ctx, &iam_pb.PutOIDCProviderRequest{
+		IssuerUrl: "https://oidc.example", ClientIds: []string{"aud"},
+		JtiReplayProtectionEnabled: &enabled,
+	})
+	require.NoError(t, err)
+	rec, err = providers.GetProviderByARN(context.Background(), "", put.Arn)
+	require.NoError(t, err)
+	require.NotNil(t, rec.JTIReplayProtectionEnabled)
+	assert.True(t, *rec.JTIReplayProtectionEnabled)
+}
