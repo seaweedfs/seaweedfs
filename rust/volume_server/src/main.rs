@@ -526,20 +526,6 @@ fn try_handle_native_http(
             }
         }
 
-        if parsed.content_md5.is_some() {
-            consume_bytes(stream, parsed.header_len + parsed.content_length)?;
-            write_native_http_response(
-                stream,
-                "400 Bad Request",
-                "text/plain; charset=utf-8",
-                b"Content-MD5 mismatch\n",
-                false,
-                parsed.request_id.as_deref(),
-            )?;
-            let _ = stream.shutdown(Shutdown::Both);
-            return Ok(true);
-        }
-
         if let Some(limit_bytes) = config.and_then(|c| c.file_size_limit_bytes) {
             if parsed.content_length > limit_bytes {
                 consume_bytes(stream, parsed.header_len + parsed.content_length)?;
@@ -566,7 +552,6 @@ struct ParsedHttpRequest {
     request_id: Option<String>,
     origin: Option<String>,
     content_type: Option<String>,
-    content_md5: Option<String>,
     content_length: usize,
     header_len: usize,
 }
@@ -629,7 +614,6 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
     let mut request_id = None;
     let mut origin = None;
     let mut content_type = None;
-    let mut content_md5 = None;
     let mut content_length = 0usize;
     for line in lines {
         if line.is_empty() {
@@ -642,8 +626,6 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
                 origin = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("content-type") {
                 content_type = Some(value.trim().to_string());
-            } else if name.eq_ignore_ascii_case("content-md5") {
-                content_md5 = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("content-length") {
                 if let Ok(v) = value.trim().parse::<usize>() {
                     content_length = v;
@@ -658,7 +640,6 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
         request_id,
         origin,
         content_type,
-        content_md5,
         content_length,
         header_len,
     })
