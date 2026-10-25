@@ -975,13 +975,22 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 		}
 	}
 
+	// The Admin HTTP listener may fall back to loopback when it has no
+	// credential configured; validate its port on the address it will bind.
+	applyMiniAdminCredentialFallback(&miniAdminOptions)
+	adminBindIP := miniAdminEffectiveBindIP(bindIp)
+
 	// Check all HTTP ports sequentially to avoid race conditions
 	// Each port check and allocation must complete before the next one starts
 	// to prevent multiple goroutines from claiming the same available port
 	// Also avoid allocating ports that are reserved for gRPC calculation
 	for _, config := range portConfigs {
+		checkIP := bindIp
+		if config.name == "Admin" {
+			checkIP = adminBindIP
+		}
 		original := *config.port
-		if err := ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts, config.flagName, config.localhost); err != nil {
+		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, reservedPorts, config.flagName, config.localhost); err != nil {
 			return err
 		}
 		// If port was changed, update the reserved gRPC ports mapping
@@ -1807,6 +1816,17 @@ func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, all
 	return "127.0.0.1"
 }
 
+// miniAdminEffectiveBindIP resolves the address startMiniAdminWithWorker will
+// bind the Admin HTTP listener to, including the unauthenticated loopback
+// fallback.
+func miniAdminEffectiveBindIP(requestedIP string) string {
+	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
+		util.GetViper().GetString("https.admin.ca") != ""
+	allowInsecure := miniAdminOptions.allowInsecureBind != nil &&
+		*miniAdminOptions.allowInsecureBind
+	return miniAdminBindIP(requestedIP, *miniAdminOptions.adminPassword != "", hasMTLS, allowInsecure)
+}
+
 // miniAdminWorkerAddress encodes the finalized HTTP and gRPC ports in the
 // server-address format understood by pb.ServerToGrpcAddress.
 func miniAdminWorkerAddress(bindIP string, httpPort, grpcPort int) string {
@@ -1864,16 +1884,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
 
 	requestedBindIP := getBindIp()
+	bindIP := miniAdminEffectiveBindIP(requestedBindIP)
 	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
 		util.GetViper().GetString("https.admin.ca") != ""
 	allowInsecure := miniAdminOptions.allowInsecureBind != nil &&
 		*miniAdminOptions.allowInsecureBind
-	bindIP := miniAdminBindIP(
-		requestedBindIP,
-		*miniAdminOptions.adminPassword != "",
-		hasMTLS,
-		allowInsecure,
-	)
 	miniAdminOptions.ip = &bindIP
 	if bindIP != requestedBindIP {
 		glog.Warningf(
