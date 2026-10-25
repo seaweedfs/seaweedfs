@@ -101,6 +101,15 @@ type Topology struct {
 	allocationDeferral      atomic.Int64
 	topologyInitPending     atomic.Bool
 
+	// releaseAllocOnReport lifts a post-mint allocation hold as soon as a full
+	// volume-server inventory has been applied, for single-reporter setups
+	// (weed mini) whose embedded volume server is the only possible source of
+	// prior cluster state. inventoryApplied records that at least one full
+	// volume list has been synced into this topology.
+	releaseAllocOnReport atomic.Bool
+	inventoryApplied     atomic.Bool
+	singleReporter       atomic.Value // string
+
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
 
@@ -1477,17 +1486,25 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 	if reported == "" || !t.freezeOnMismatch.Load() {
 		return
 	}
+	t.reportedTopologyIdsLock.Lock()
+	defer t.reportedTopologyIdsLock.Unlock()
+	t.checkReportedTopologyIdLocked(reported)
+}
+
+// checkReportedTopologyIdLocked runs the mismatch check inside
+// reportedTopologyIdsLock, the same critical section the init gate drains
+// under: a report received before the gate opens is either stashed or frozen
+// before the gate can release.
+func (t *Topology) checkReportedTopologyIdLocked(reported string) {
 	own := t.GetTopologyId()
 	if own == "" {
 		// The local topology id is still being minted. Keep the report so a
 		// later heartbeat echo cannot erase the mismatch on the server side
 		// before the freeze check ever ran.
-		t.reportedTopologyIdsLock.Lock()
 		if t.pendingReportedTopologyIds == nil {
 			t.pendingReportedTopologyIds = make(map[string]struct{})
 		}
 		t.pendingReportedTopologyIds[reported] = struct{}{}
-		t.reportedTopologyIdsLock.Unlock()
 		return
 	}
 	if reported == own {
@@ -1568,17 +1585,58 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 
 // SetTopologyInitPending gates allocation while a topology id is being
 // minted, so growth cannot slip in before the warmup window is installed.
+// Stashed reports are applied while the gate is still closed: clearing it
+// first would let an allocation through before a queued mismatch freezes
+// growth.
 func (t *Topology) SetTopologyInitPending(pending bool) {
-	t.topologyInitPending.Store(pending)
 	if pending {
+		t.topologyInitPending.Store(true)
 		return
 	}
+	// The stash is drained and the gate released inside one critical section:
+	// a mismatching report checked here, or still in flight under the same
+	// lock, lands its freeze before any allocation can observe the open gate.
 	t.reportedTopologyIdsLock.Lock()
+	defer t.reportedTopologyIdsLock.Unlock()
 	reported := t.pendingReportedTopologyIds
 	t.pendingReportedTopologyIds = nil
-	t.reportedTopologyIdsLock.Unlock()
 	for id := range reported {
-		t.CheckReportedTopologyId(id)
+		t.checkReportedTopologyIdLocked(id)
+	}
+	t.topologyInitPending.Store(false)
+}
+
+// ReleaseAllocationOnFirstReport opts the topology into lifting the post-mint
+// allocation hold once one full volume-server inventory has been applied, and
+// pins the admitted volume-server reporter: the early release is only sound
+// when a single embedded server (weed mini) can carry prior cluster state, so
+// every other reporter must be refused rather than silently trusted.
+func (t *Topology) ReleaseAllocationOnFirstReport(onlyReporter ...string) {
+	if len(onlyReporter) > 0 {
+		t.singleReporter.Store(onlyReporter[0])
+	}
+	t.releaseAllocOnReport.Store(true)
+}
+
+// AdmitVolumeReporter enforces the single-reporter restriction the early
+// release relies on: a late-arriving foreign server would carry cluster state
+// the dropped hold was meant to wait for.
+func (t *Topology) AdmitVolumeReporter(addr string) bool {
+	if !t.releaseAllocOnReport.Load() {
+		return true
+	}
+	expected, _ := t.singleReporter.Load().(string)
+	return expected == "" || expected == addr
+}
+
+// NoteInventoryApplied marks a heartbeat's full volume list as applied to this
+// topology. Under ReleaseAllocationOnFirstReport it also lifts the post-mint
+// allocation hold: the bound raise and topology-id freeze checks run while the
+// heartbeat is processed, so nothing protected remains pending afterwards.
+func (t *Topology) NoteInventoryApplied() {
+	t.inventoryApplied.Store(true)
+	if t.releaseAllocOnReport.Load() {
+		t.allocationNotBefore.Store(0)
 	}
 }
 
@@ -1586,9 +1644,19 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 // mints a fresh topology id: on a rebuilt master that window gives veteran
 // servers a pulse to raise the bound or trip the freeze.
 func (t *Topology) DeferAllocation(d time.Duration) {
+	// Under release-on-report a hold is pointless once inventory has landed:
+	// the veteran heartbeat that mattered has already been applied.
+	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
+		return
+	}
 	now := time.Now()
 	t.allocationNotBefore.Store(now.Add(d).UnixNano())
 	t.allocationEvidenceSince.Store(now.UnixNano())
+	// Close the race with a report applied between the check above and the
+	// store, which would otherwise leave the full window armed.
+	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
+		t.allocationNotBefore.Store(0)
+	}
 }
 
 // NoteAllocationEvidence records a heartbeat signal that could still carry

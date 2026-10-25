@@ -1564,6 +1564,22 @@ func runMini(cmd *Command, args []string) bool {
 	// tear those services down too. On Ctrl+C they rely on their own
 	// OnInterrupt hooks (see grace's LIFO ordering).
 	miniMasterOptions.shutdownCtx = MiniClusterCtx
+	// In single-master mode mini's embedded volume server is the only reporter
+	// of prior cluster state; its first heartbeat already carries the full
+	// inventory, so the post-mint allocation hold ends there instead of
+	// running the whole warmup window on every fresh start. The master pins
+	// the embedded address and refuses any other volume server, keeping the
+	// single-reporter assumption true. Multi-master minis can field
+	// late-reporting volume servers and keep the regular hold.
+	// Both fields are re-derived on every run: the package-level options
+	// survive in-process reruns, so a multi-master mini after a
+	// single-master one must not inherit the release or the stale pin.
+	singleMaster := isSingleMasterMode(*miniMasterOptions.peers)
+	miniMasterOptions.releaseAllocOnFirstReport = singleMaster
+	miniMasterOptions.singleReporterAddr = ""
+	if singleMaster {
+		miniMasterOptions.singleReporterAddr = util.JoinHostPort(*miniIp, *miniOptions.v.port)
+	}
 	miniOptions.v.shutdownCtx = MiniClusterCtx
 	miniFilerOptions.shutdownCtx = MiniClusterCtx
 	// Mini is a small/dev setup with short-lived RPCs; cap the filer's

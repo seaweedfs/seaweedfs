@@ -231,12 +231,30 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
-		if (dn == nil && heartbeat.Ip != "") || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
+		if dn == nil {
+			// An unregistered heartbeat carries no address to admit; under
+			// the pinned single reporter it can never be the embedded one,
+			// so it must not move allocation or topology state either.
+			addr := ""
+			if heartbeat.Ip != "" {
+				addr = util.JoinHostPort(heartbeat.Ip, int(heartbeat.Port))
+			}
+			if !ms.Topo.AdmitVolumeReporter(addr) {
+				err := fmt.Errorf("volume server %s rejected: this master admits a single volume-server reporter", addr)
+				glog.Warningf("SendHeartbeat: %v", err)
+				return err
+			}
+		}
+		priorState := reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId())
+		if (dn == nil && heartbeat.Ip != "") || priorState {
 			ms.Topo.NoteAllocationEvidence()
 		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		ms.Topo.UpAdjustMaxVolumeId(needle.VolumeId(heartbeat.MaxVolumeIdSeen))
-		if len(heartbeat.Volumes) > 0 {
+		// A HasNoVolumes report still carries the reporter's LastSeenTopologyId;
+		// skipping it would let an EC-only veteran's stale id miss the mismatch
+		// freeze before the hold release below.
+		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 			ms.Topo.CheckReportedTopologyId(heartbeat.LastSeenTopologyId)
 		}
 		if dn == nil {
@@ -354,6 +372,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				}
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
+		}
+
+		// A full volume list is the heartbeat section that settles what a
+		// reporter holds; once applied, a post-mint allocation hold kept for
+		// prior cluster state has nothing left to wait for. A report carrying
+		// such state is itself the evidence the hold exists for, so it keeps
+		// the window for other veterans still due.
+		if (len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes) && !priorState {
+			ms.Topo.NoteInventoryApplied()
 		}
 
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {

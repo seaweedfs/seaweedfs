@@ -191,3 +191,61 @@ func TestAllocationDeferralDuration(t *testing.T) {
 		t.Fatalf("negative deferral should restore the default, got %v", d)
 	}
 }
+
+func TestAllocationDeferralReleasedByInventory(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.ReleaseAllocationOnFirstReport()
+
+	topo.DeferAllocation(time.Minute)
+	topo.NoteInventoryApplied()
+	if wait := topo.allocationDelay(); wait > 0 {
+		t.Fatalf("applied inventory should lift the deferral, still waiting %v", wait)
+	}
+
+	fresh := NewTopology("topo", nil, 128, 3, false)
+	fresh.ReleaseAllocationOnFirstReport()
+	fresh.NoteInventoryApplied()
+	fresh.DeferAllocation(time.Minute)
+	if wait := fresh.allocationDelay(); wait > 0 {
+		t.Fatalf("a report applied before the mint should keep the hold unarmed, got %v", wait)
+	}
+
+	walled := NewTopology("topo", nil, 128, 3, false)
+	walled.DeferAllocation(time.Minute)
+	walled.NoteInventoryApplied()
+	if wait := walled.allocationDelay(); wait <= 0 {
+		t.Fatal("without opt-in an applied inventory must not lift the deferral")
+	}
+}
+
+func TestQueuedTopologyReportFreezesBeforeGateOpens(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+	topo.SetTopologyInitPending(true)
+
+	// A report arriving while the id is still being minted is stashed.
+	topo.CheckReportedTopologyId("cluster-a")
+	topo.SetTopologyId("cluster-b")
+
+	topo.SetTopologyInitPending(false)
+	if topo.topologyInitPending.Load() {
+		t.Fatal("init gate should be open after pending=false")
+	}
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("a stashed mismatch must freeze growth before the gate opens")
+	}
+}
+
+func TestSingleReporterAdmission(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	if !topo.AdmitVolumeReporter("10.0.0.1:8080") {
+		t.Fatal("without opt-in any reporter is admitted")
+	}
+	topo.ReleaseAllocationOnFirstReport("10.0.0.1:8080")
+	if !topo.AdmitVolumeReporter("10.0.0.1:8080") {
+		t.Fatal("the pinned reporter should be admitted")
+	}
+	if topo.AdmitVolumeReporter("10.0.0.2:8080") {
+		t.Fatal("a foreign reporter should be refused")
+	}
+}
