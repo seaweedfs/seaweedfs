@@ -51,13 +51,17 @@ func RegisterErasureCodingTask() {
 			if len(params.Sources) == 0 {
 				return nil, fmt.Errorf("at least one source is required for erasure coding task")
 			}
-			return NewErasureCodingTask(
+			task := NewErasureCodingTask(
 				fmt.Sprintf("erasure_coding-%d", params.VolumeId),
 				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
 				dialOpt,
-			), nil
+			)
+			if cfg, ok := globalTaskDef.Config.(*Config); ok {
+				task.maxShardTransfers = cloneMaxShardTransfers(cfg.MaxShardTransfers)
+			}
+			return task, nil
 		},
 		DetectionFunc: func(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
 			results, _, err := Detection(context.Background(), metrics, clusterInfo, config, 0)

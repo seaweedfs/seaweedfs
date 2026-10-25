@@ -64,6 +64,10 @@ type ErasureCodingTask struct {
 	// with, read back off the EC context. Every holder must report serving the
 	// same one before the source volume may be deleted.
 	encodedBlockSize int64
+
+	// maxShardTransfers is the optional global cap for shard fan-out.
+	// nil = no cap (one in-flight per dest disk/node); 0 = sequential; N>0 = cap.
+	maxShardTransfers *int
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -797,7 +801,9 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 // distributeEcShards distributes locally generated EC shards to destination servers
 // using pre-assigned shard IDs from planning phase
 func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) error {
-	assignment, err := erasure_coding.DistributeEcShards(t.volumeID, t.collection, t.targets, shardFiles, t.grpcDialOption, t.GetLogger())
+	assignment, err := erasure_coding.DistributeEcShards(t.volumeID, t.collection, t.targets, shardFiles, t.grpcDialOption, t.GetLogger(), &erasure_coding.ShardDistributionOptions{
+		MaxShardTransfers: t.maxShardTransfers,
+	})
 	if err != nil {
 		return err
 	}

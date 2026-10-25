@@ -382,6 +382,7 @@ message ErasureCodingTaskConfig {
   string replica_placement = 6;     // EC shard replica placement (e.g. "020"); empty falls back to master default replication
   bool strict_placement = 7;        // fail planning instead of relaxing placement constraints
   int32 free_slots_deadband = 8;    // Place free-volume-slot deadband; |ΔfreeSlots| ≤ M×dataShards ranks by liveShards; 0 = strict
+  optional int32 max_shard_transfers = 9; // unset = no global cap (one in-flight per dest disk); 0 = sequential; N>0 = global cap
 }
 
 // BalanceTaskConfig contains balance-specific configuration

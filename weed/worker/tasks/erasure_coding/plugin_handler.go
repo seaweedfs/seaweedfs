@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -171,6 +172,20 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Description: "Fail EC planning when the placement constraints cannot be met instead of relaxing them.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
+					},
+				},
+				{
+					SectionId:   "shard_distribution",
+					Title:       "Shard distribution",
+					Description: "How many EC shard copies are in flight. The checkbox is presentation only; the saved value is max_shard_transfers.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "max_shard_transfers",
+							Label:       "Parallel shard distribution",
+							Description: "Unchecked sends shards sequentially. Checked with an empty max uses one in-flight copy per destination disk. A number is a global cap, still one copy per disk.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 						},
 					},
 				},
@@ -545,6 +560,7 @@ func (h *ErasureCodingHandler) Execute(
 		h.grpcDialOption,
 	)
 	task.workerAddress = h.workerAddress
+	task.maxShardTransfers = deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues()).TaskConfig.MaxShardTransfers
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
@@ -669,10 +685,31 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 		deadband = 100000
 	}
 	taskConfig.FreeSlotsDeadband = deadband
+	taskConfig.MaxShardTransfers = maxShardTransfersFromValues(values)
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig: taskConfig,
 	}
+}
+
+// maxShardTransfersFromValues returns nil when the key is absent so shard
+// distribution keeps the uncapped default. 0 is sequential; N>0 is a global cap.
+func maxShardTransfersFromValues(values map[string]*plugin_pb.ConfigValue) *int {
+	if values == nil {
+		return nil
+	}
+	value, ok := values["max_shard_transfers"]
+	if !ok || value == nil {
+		return nil
+	}
+	n := pluginworker.ReadInt64Config(values, "max_shard_transfers", 0)
+	v := 0
+	if n > math.MaxInt32 {
+		v = math.MaxInt32
+	} else if n > 0 {
+		v = int(n)
+	}
+	return &v
 }
 
 func buildErasureCodingProposal(

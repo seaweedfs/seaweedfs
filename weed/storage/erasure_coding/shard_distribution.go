@@ -14,8 +14,65 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
+
+// ShardDistributionOptions controls DistributeEcShards concurrency.
+// MaxShardTransfers:
+//   - nil / unset: no global cap; one in-flight per (destNode, disk_id), or
+//     per destNode (host:port, not rack) when any target leaves disk choice
+//     to the receiver (disk_id 0)
+//   - N<=0: historical sequential nested loops
+//   - N>0: global cap of N, still at most one in-flight per key
+type ShardDistributionOptions struct {
+	MaxShardTransfers *int
+	send              shardSender
+}
+
+type shardSender func(ctx context.Context, volumeID uint32, collection string, dialOption grpc.DialOption, destServer string, diskID uint32, filePath, shardType string) error
+
+type shardJob struct {
+	destNode  string
+	shardType string
+	filePath  string
+	diskID    uint32
+	hasDisk   bool
+}
+
+func shardSenderOrDefault(opts *ShardDistributionOptions) shardSender {
+	if opts != nil && opts.send != nil {
+		return opts.send
+	}
+	return sendShardFileToDestination
+}
+
+func shardTransferCap(opts *ShardDistributionOptions) (sequential bool, capN int) {
+	if opts == nil || opts.MaxShardTransfers == nil {
+		return false, 0
+	}
+	n := *opts.MaxShardTransfers
+	if n <= 0 {
+		return true, 0
+	}
+	return false, n
+}
+
+func lookupShardDisk(shardDisks map[string]map[string]uint32, destNode, shardType string) (uint32, bool) {
+	if byShard, ok := shardDisks[destNode]; ok {
+		if id, exists := byShard[shardType]; exists {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+func shardTransferKey(j shardJob) string {
+	if j.hasDisk {
+		return fmt.Sprintf("%s#%d", j.destNode, j.diskID)
+	}
+	return j.destNode
+}
 
 func ensureLogger(logger logger) logger {
 	if logger == nil {
@@ -98,7 +155,8 @@ func (g *glogFallbackLogger) Error(msg string, args ...interface{}) {
 
 // DistributeEcShards distributes locally generated EC shards to destination servers.
 // Returns the shard assignment map used for mounting.
-func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb.TaskTarget, shardFiles map[string]string, dialOption grpc.DialOption, logger logger) (map[string][]string, error) {
+// opts nil is the default: one in-flight per dest disk/node, no global cap.
+func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb.TaskTarget, shardFiles map[string]string, dialOption grpc.DialOption, logger logger, opts *ShardDistributionOptions) (map[string][]string, error) {
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("no targets specified for EC shard distribution")
 	}
@@ -173,6 +231,22 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 		return nil, fmt.Errorf("no shard assignments found from planning phase")
 	}
 
+	send := shardSenderOrDefault(opts)
+	sequential, capN := shardTransferCap(opts)
+	if sequential {
+		if err := distributeEcShardsSequential(volumeID, collection, shardAssignment, shardFiles, shardDisks, dialOption, log, send); err != nil {
+			return nil, err
+		}
+	} else if err := distributeEcShardsParallel(volumeID, collection, shardAssignment, shardFiles, shardDisks, dialOption, log, send, capN); err != nil {
+		return nil, err
+	}
+
+	glog.V(1).Infof("Successfully distributed EC shards to %d destinations", len(shardAssignment))
+	return shardAssignment, nil
+}
+
+func distributeEcShardsSequential(volumeID uint32, collection string, shardAssignment map[string][]string, shardFiles map[string]string, shardDisks map[string]map[string]uint32, dialOption grpc.DialOption, log logger, send shardSender) error {
+	ctx := context.Background()
 	for destNode, assignedShards := range shardAssignment {
 		withFields(log, map[string]interface{}{
 			"destination":     destNode,
@@ -184,7 +258,7 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 		for _, shardType := range assignedShards {
 			filePath, exists := shardFiles[shardType]
 			if !exists {
-				return nil, fmt.Errorf("shard file %s not found for destination %s", shardType, destNode)
+				return fmt.Errorf("shard file %s not found for destination %s", shardType, destNode)
 			}
 
 			if info, err := os.Stat(filePath); err == nil {
@@ -198,12 +272,9 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 				}).Info("Starting shard file transfer")
 			}
 
-			diskID := uint32(0)
-			if byShard, ok := shardDisks[destNode]; ok {
-				diskID = byShard[shardType]
-			}
-			if err := sendShardFileToDestination(volumeID, collection, dialOption, destNode, diskID, filePath, shardType); err != nil {
-				return nil, fmt.Errorf("failed to send %s to %s: %w", shardType, destNode, err)
+			diskID, _ := lookupShardDisk(shardDisks, destNode, shardType)
+			if err := send(ctx, volumeID, collection, dialOption, destNode, diskID, filePath, shardType); err != nil {
+				return fmt.Errorf("failed to send %s to %s: %w", shardType, destNode, err)
 			}
 
 			withFields(log, map[string]interface{}{
@@ -219,9 +290,139 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 			"total_mb":           float64(transferredBytes) / (1024 * 1024),
 		}).Info("All shards distributed to destination server")
 	}
+	return nil
+}
 
-	glog.V(1).Infof("Successfully distributed EC shards to %d destinations", len(shardAssignment))
-	return shardAssignment, nil
+func collectShardJobs(shardAssignment map[string][]string, shardFiles map[string]string, shardDisks map[string]map[string]uint32, log logger) (map[string][]shardJob, error) {
+	// disk_id 0 leaves placement to the receiver's auto-select, which can land
+	// on a disk another queued stream is pinned to — serialize every transfer
+	// to that server under one key.
+	autoPlacement := make(map[string]bool)
+	for destNode, assignedShards := range shardAssignment {
+		for _, shardType := range assignedShards {
+			if diskID, ok := lookupShardDisk(shardDisks, destNode, shardType); ok && diskID == 0 {
+				autoPlacement[destNode] = true
+				break
+			}
+		}
+	}
+
+	byKey := make(map[string][]shardJob)
+	for destNode, assignedShards := range shardAssignment {
+		withFields(log, map[string]interface{}{
+			"destination":     destNode,
+			"assigned_shards": len(assignedShards),
+			"shard_types":     assignedShards,
+		}).Info("Starting shard distribution to destination server")
+
+		for _, shardType := range assignedShards {
+			filePath, exists := shardFiles[shardType]
+			if !exists {
+				return nil, fmt.Errorf("shard file %s not found for destination %s", shardType, destNode)
+			}
+			diskID, hasDisk := lookupShardDisk(shardDisks, destNode, shardType)
+			job := shardJob{
+				destNode:  destNode,
+				shardType: shardType,
+				filePath:  filePath,
+				diskID:    diskID,
+				hasDisk:   hasDisk,
+			}
+			key := shardTransferKey(job)
+			if autoPlacement[destNode] {
+				key = destNode
+			}
+			byKey[key] = append(byKey[key], job)
+		}
+	}
+	return byKey, nil
+}
+
+func distributeEcShardsParallel(volumeID uint32, collection string, shardAssignment map[string][]string, shardFiles map[string]string, shardDisks map[string]map[string]uint32, dialOption grpc.DialOption, log logger, send shardSender, capN int) error {
+	byKey, err := collectShardJobs(shardAssignment, shardFiles, shardDisks, log)
+	if err != nil {
+		return err
+	}
+
+	g, ctx := errgroup.WithContext(context.Background())
+	var sem chan struct{}
+	if capN > 0 {
+		sem = make(chan struct{}, capN)
+	}
+
+	for _, jobs := range byKey {
+		jobs := jobs
+		g.Go(func() error {
+			for _, job := range jobs {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if sem != nil {
+					select {
+					case sem <- struct{}{}:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					if err := ctx.Err(); err != nil {
+						<-sem
+						return err
+					}
+				}
+				err := transferOneShard(ctx, volumeID, collection, dialOption, log, send, job)
+				if err != nil {
+					// Hold the slot so another key cannot start a send in the
+					// window before errgroup cancels ctx.
+					return err
+				}
+				if sem != nil {
+					<-sem
+				}
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	for destNode, assignedShards := range shardAssignment {
+		var transferredBytes int64
+		for _, shardType := range assignedShards {
+			if filePath, ok := shardFiles[shardType]; ok {
+				if info, statErr := os.Stat(filePath); statErr == nil {
+					transferredBytes += info.Size()
+				}
+			}
+		}
+		withFields(log, map[string]interface{}{
+			"destination":        destNode,
+			"shards_transferred": len(assignedShards),
+			"total_bytes":        transferredBytes,
+			"total_mb":           float64(transferredBytes) / (1024 * 1024),
+		}).Info("All shards distributed to destination server")
+	}
+	return nil
+}
+
+func transferOneShard(ctx context.Context, volumeID uint32, collection string, dialOption grpc.DialOption, log logger, send shardSender, job shardJob) error {
+	if info, err := os.Stat(job.filePath); err == nil {
+		withFields(log, map[string]interface{}{
+			"destination": job.destNode,
+			"shard_type":  job.shardType,
+			"file_path":   job.filePath,
+			"size_bytes":  info.Size(),
+			"size_kb":     float64(info.Size()) / 1024,
+		}).Info("Starting shard file transfer")
+	}
+	if err := send(ctx, volumeID, collection, dialOption, job.destNode, job.diskID, job.filePath, job.shardType); err != nil {
+		return fmt.Errorf("failed to send %s to %s: %w", job.shardType, job.destNode, err)
+	}
+	withFields(log, map[string]interface{}{
+		"destination": job.destNode,
+		"shard_type":  job.shardType,
+	}).Info("Shard file transfer completed")
+	return nil
 }
 
 // MountEcShards mounts EC shards on destination servers using an assignment map.
@@ -300,7 +501,10 @@ func MountEcShards(volumeID uint32, collection string, shardAssignment map[strin
 }
 
 // diskID=0 leaves disk placement to the server's auto-select.
-func sendShardFileToDestination(volumeID uint32, collection string, dialOption grpc.DialOption, destServer string, diskID uint32, filePath, shardType string) error {
+func sendShardFileToDestination(ctx context.Context, volumeID uint32, collection string, dialOption grpc.DialOption, destServer string, diskID uint32, filePath, shardType string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(destServer), dialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			file, err := os.Open(filePath)
@@ -335,7 +539,7 @@ func sendShardFileToDestination(volumeID uint32, collection string, dialOption g
 				return fmt.Errorf("unknown shard type: %s", shardType)
 			}
 
-			stream, err := client.ReceiveFile(context.Background())
+			stream, err := client.ReceiveFile(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to create receive stream: %v", err)
 			}

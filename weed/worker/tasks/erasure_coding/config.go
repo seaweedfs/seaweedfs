@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -20,6 +21,9 @@ type Config struct {
 	ReplicaPlacement  string   `json:"replica_placement"`   // e.g. "020"; empty falls back to the master default replication
 	StrictPlacement   bool     `json:"strict_placement"`    // fail planning instead of relaxing placement constraints
 	FreeSlotsDeadband int      `json:"free_slots_deadband"` // Place volume-slot M; |ΔfreeSlots| ≤ M×dataShards is a tie, then liveShards; 0 = strict
+	// MaxShardTransfers is the global in-flight cap for EC shard copies.
+	// nil = no cap (one in-flight per dest disk); 0 = sequential; N>0 = cap.
+	MaxShardTransfers *int `json:"max_shard_transfers,omitempty"`
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -224,9 +228,49 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				ReplicaPlacement:  c.ReplicaPlacement,
 				StrictPlacement:   c.StrictPlacement,
 				FreeSlotsDeadband: int32(c.FreeSlotsDeadband),
+				MaxShardTransfers: optionalInt32(c.MaxShardTransfers),
 			},
 		},
 	}
+}
+
+// optionalInt32 keeps unset (nil) distinct from sequential (0) on the proto field.
+func optionalInt32(n *int) *int32 {
+	n = normalizedMaxShardTransfers(n)
+	if n == nil {
+		return nil
+	}
+	v := int32(*n)
+	return &v
+}
+
+// normalizedMaxShardTransfers clamps a set cap into the proto int32 range.
+// nil stays nil so an absent knob is not stored as sequential.
+func normalizedMaxShardTransfers(n *int) *int {
+	if n == nil {
+		return nil
+	}
+	v := *n
+	if v < 0 {
+		v = 0
+	}
+	if v > math.MaxInt32 {
+		v = math.MaxInt32
+	}
+	return &v
+}
+
+func optionalIntFromProto(n *int32) *int {
+	if n == nil {
+		return nil
+	}
+	v := int(*n)
+	return &v
+}
+
+// cloneMaxShardTransfers copies the cap so a task does not alias the live config.
+func cloneMaxShardTransfers(n *int) *int {
+	return normalizedMaxShardTransfers(n)
 }
 
 // FromTaskPolicy loads configuration from a TaskPolicy protobuf message
@@ -250,6 +294,8 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.ReplicaPlacement = ecConfig.ReplicaPlacement
 		c.StrictPlacement = ecConfig.StrictPlacement
 		c.FreeSlotsDeadband = int(ecConfig.FreeSlotsDeadband)
+		// Read the pointer, not GetMaxShardTransfers: the getter maps unset to 0.
+		c.MaxShardTransfers = normalizedMaxShardTransfers(optionalIntFromProto(ecConfig.MaxShardTransfers))
 	}
 
 	return nil
