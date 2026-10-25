@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,23 +31,18 @@ const (
 	// filer.options.pathCommitRecords = false turns them off for filers that all
 	// share one store, which never replay each other's events.
 	metaPathDelPrefix = "MpDl"
-	// metaPathOffKey holds a time no earlier than any change a filer left
-	// unrecorded while the records were off. Filers with the records on ignore
-	// records not newer than it: such a path may have changed since, and its
-	// older record would let an older replayed peer event win.
+	// metaPathGenKey holds the records' generation, folded into every record
+	// key past 0, so bumping it drops all records written before. metaPathOffKey
+	// marks the store while a filer runs with the records off: a path may then
+	// change unrecorded, and its older record would let an older replayed peer
+	// event win. A filer starting with the records on bumps the generation past
+	// such a period before it serves.
+	metaPathGenKey = "MpGen"
 	metaPathOffKey = "MpOff"
-	// pathCommitOffInterval paces raising the off marker (records off) and
-	// re-reading it (records on).
-	pathCommitOffInterval = time.Minute
+	// pathCommitCheckInterval paces re-marking the store (records off) and
+	// looking for filers that run with the records off (records on).
+	pathCommitCheckInterval = 30 * time.Second
 )
-
-// pathCommitOffState caches the off marker: when this filer last raised it,
-// and the value it last read and when.
-type pathCommitOffState struct {
-	markedAtNs  atomic.Int64
-	checkedAtNs atomic.Int64
-	untilNs     atomic.Int64
-}
 
 // metaPathKey hashes the path into a fixed-size key. SQL-backed KV stores
 // split the key at byte 8 and store the remainder base64-encoded in a
@@ -62,9 +58,19 @@ func metaPathKey(prefix string, path util.FullPath) []byte {
 	return key
 }
 
+// recordKey is metaPathKey within the current generation. Generation 0 keeps
+// the original keys; later ones hash the generation in, so the same fixed-size
+// keys of earlier generations are no longer found.
+func (f *Filer) recordKey(prefix string, path util.FullPath) []byte {
+	gen := f.pathCommitGen.Load()
+	if gen == 0 {
+		return metaPathKey(prefix, path)
+	}
+	return metaPathKey(prefix, util.FullPath(fmt.Sprintf("%d\x00%s", gen, path)))
+}
+
 // kvReadTsNs returns the timestamp recorded for key, or found=false when the
-// key is absent or malformed, or the record may be outdated by a change made
-// while the records were off. Any other store read failure is an error: a
+// key is absent or malformed. Any other store read failure is an error: a
 // caller deciding whether a replayed change is stale must not guess.
 func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found bool, err error) {
 	if f.pathCommitRecordsOff {
@@ -72,23 +78,6 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 		// path then; ordering falls back as for entries older than records.
 		return 0, false, nil
 	}
-	tsNs, found, err = f.kvGetTsNs(ctx, key)
-	if err != nil || !found {
-		return 0, false, err
-	}
-	offUntilNs, err := f.pathCommitOffUntil(ctx)
-	if err != nil {
-		return 0, false, err
-	}
-	if tsNs <= offUntilNs {
-		return 0, false, nil
-	}
-	return tsNs, true, nil
-}
-
-// kvGetTsNs reads an 8-byte timestamp value; found=false when the key is
-// absent or malformed.
-func (f *Filer) kvGetTsNs(ctx context.Context, key []byte) (tsNs int64, found bool, err error) {
 	value, err := f.Store.KvGet(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrKvNotFound) {
@@ -102,52 +91,71 @@ func (f *Filer) kvGetTsNs(ctx context.Context, key []byte) (tsNs int64, found bo
 	return int64(util.BytesToUint64(value)), true, nil
 }
 
-// pathCommitOffUntil returns the store's off marker, 0 when no filer has run
-// with the records off, re-reading it at most once per interval. A filer turns
-// the records back on by restarting, so its first read sees the marker.
-func (f *Filer) pathCommitOffUntil(ctx context.Context) (int64, error) {
-	now := time.Now().UnixNano()
-	if checked := f.pathCommitOff.checkedAtNs.Load(); checked != 0 && now-checked < int64(pathCommitOffInterval) {
-		return f.pathCommitOff.untilNs.Load(), nil
+// initPathCommitRecords runs when the store is set, before the filer serves:
+// with the records off it marks the store before any change goes unrecorded,
+// with them on it drops the records of an earlier off period. Either way it
+// then keeps checking, for filers that share the store with another setting.
+func (f *Filer) initPathCommitRecords() {
+	check := f.syncPathCommitGen
+	if f.pathCommitRecordsOff {
+		check = f.markPathCommitRecordsOff
 	}
-	untilNs, _, err := f.kvGetTsNs(ctx, []byte(metaPathOffKey))
-	if err != nil {
-		return 0, err
+	if err := check(context.Background()); err != nil {
+		glog.Fatalf("per-path commit records: %v", err)
 	}
-	f.pathCommitOff.untilNs.Store(untilNs)
-	f.pathCommitOff.checkedAtNs.Store(now)
-	return untilNs, nil
+	go func() {
+		ticker := time.NewTicker(pathCommitCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-f.deletionQuit:
+				return
+			case <-ticker.C:
+			}
+			if err := check(context.Background()); err != nil {
+				glog.Warningf("per-path commit records: %v", err)
+			}
+		}
+	}()
 }
 
-// markPathCommitRecordsOff keeps the off marker ahead of the changes this
-// filer leaves unrecorded: two intervals past now, raised at most once per
-// interval, so it covers every change until the next raise plus clock skew
-// between filers. It never lowers a marker another filer set.
-func (f *Filer) markPathCommitRecordsOff() {
-	now := time.Now().UnixNano()
-	last := f.pathCommitOff.markedAtNs.Load()
-	if last != 0 && now-last < int64(pathCommitOffInterval) {
-		return
+// markPathCommitRecordsOff puts the off marker in the store.
+func (f *Filer) markPathCommitRecordsOff(ctx context.Context) error {
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(time.Now().UnixNano()))
+	if err := f.Store.KvPut(ctx, []byte(metaPathOffKey), value); err != nil {
+		return fmt.Errorf("mark the store off: %w", err)
 	}
-	if !f.pathCommitOff.markedAtNs.CompareAndSwap(last, now) {
-		return
+	return nil
+}
+
+// syncPathCommitGen loads the records' generation, first bumping it when the
+// off marker is present. The marker is removed only once the bump is stored,
+// so a failure leaves it for the next try.
+func (f *Filer) syncPathCommitGen(ctx context.Context) error {
+	var gen uint64
+	value, err := f.Store.KvGet(ctx, []byte(metaPathGenKey))
+	if err == nil && len(value) >= 8 {
+		gen = util.BytesToUint64(value)
+	} else if err != nil && !errors.Is(err, ErrKvNotFound) {
+		return fmt.Errorf("read the generation: %w", err)
 	}
-	ctx := context.Background()
-	untilNs := now + 2*int64(pathCommitOffInterval)
-	current, _, err := f.kvGetTsNs(ctx, []byte(metaPathOffKey))
-	if err == nil && current >= untilNs {
-		return
+	if _, err := f.Store.KvGet(ctx, []byte(metaPathOffKey)); err == nil {
+		gen++
+		value = make([]byte, 8)
+		util.Uint64toBytes(value, gen)
+		if err := f.Store.KvPut(ctx, []byte(metaPathGenKey), value); err != nil {
+			return fmt.Errorf("bump the generation: %w", err)
+		}
+		if err := f.Store.KvDelete(ctx, []byte(metaPathOffKey)); err != nil {
+			return fmt.Errorf("clear the off marker: %w", err)
+		}
+		glog.V(0).Infof("per-path commit records were off on this store: generation %d drops the records written before", gen)
+	} else if !errors.Is(err, ErrKvNotFound) {
+		return fmt.Errorf("read the off marker: %w", err)
 	}
-	if err == nil {
-		value := make([]byte, 8)
-		util.Uint64toBytes(value, uint64(untilNs))
-		err = f.Store.KvPut(ctx, []byte(metaPathOffKey), value)
-	}
-	if err != nil {
-		glog.WarningfCtx(ctx, "raise the per-path commit records off marker: %v", err)
-		// the next unrecorded change tries again
-		f.pathCommitOff.markedAtNs.CompareAndSwap(now, last)
-	}
+	f.pathCommitGen.Store(gen)
+	return nil
 }
 
 // notePathChange persists tsNs as path's newest committed change. Local event
@@ -166,11 +174,7 @@ func (f *Filer) markPathCommitRecordsOff() {
 // unreachable. Ordering reads consult the pending record until the retry
 // lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
-	if f.Store == nil {
-		return
-	}
-	if f.pathCommitRecordsOff {
-		f.markPathCommitRecordsOff()
+	if f.Store == nil || f.pathCommitRecordsOff {
 		return
 	}
 	ctx := context.Background()
@@ -180,7 +184,7 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
-	if err := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); err != nil {
+	if err := f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); err != nil {
 		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
 		if tsNs > rec.changeTsNs.Load() {
 			rec.changeTsNs.Store(tsNs)
@@ -190,7 +194,7 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 		rec.changeTsNs.Store(0)
 	}
 	if deleted {
-		if err := f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); err != nil {
+		if err := f.Store.KvPut(ctx, f.recordKey(metaPathDelPrefix, path), value); err != nil {
 			glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, err)
 			if tsNs > rec.deleteTsNs.Load() {
 				rec.deleteTsNs.Store(tsNs)
@@ -268,14 +272,14 @@ func (f *Filer) repairMetaPathTs(path util.FullPath) {
 		if tsNs := rec.changeTsNs.Load(); tsNs > 0 {
 			value := make([]byte, 8)
 			util.Uint64toBytes(value, uint64(tsNs))
-			if tsErr = f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); tsErr == nil {
+			if tsErr = f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); tsErr == nil {
 				rec.changeTsNs.Store(0)
 			}
 		}
 		if tsNs := rec.deleteTsNs.Load(); tsNs > 0 {
 			value := make([]byte, 8)
 			util.Uint64toBytes(value, uint64(tsNs))
-			if delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); delErr == nil {
+			if delErr = f.Store.KvPut(ctx, f.recordKey(metaPathDelPrefix, path), value); delErr == nil {
 				rec.deleteTsNs.Store(0)
 			}
 		}
@@ -317,7 +321,7 @@ func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs
 		return fallbackTsNs, nil
 	}
 	tsNs := fallbackTsNs
-	recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path))
+	recTs, found, err := f.kvReadTsNs(ctx, f.recordKey(metaPathTsPrefix, path))
 	if err != nil {
 		return 0, err
 	}
@@ -363,7 +367,7 @@ func (f *Filer) noteCommittedEvent(event *filer_pb.SubscribeMetadataResponse) {
 func (f *Filer) deletedAfterTsNs(ctx context.Context, path util.FullPath) (int64, error) {
 	var tsNs int64
 	for p := string(path); p != "" && p != "/"; {
-		ts, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathDelPrefix, util.FullPath(p)))
+		ts, found, err := f.kvReadTsNs(ctx, f.recordKey(metaPathDelPrefix, util.FullPath(p)))
 		if err != nil {
 			return 0, err
 		}
@@ -392,7 +396,7 @@ func (f *Filer) localCommitTsNs(ctx context.Context, path util.FullPath) (int64,
 		return 0, nil
 	}
 	var tsNs int64
-	recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path))
+	recTs, found, err := f.kvReadTsNs(ctx, f.recordKey(metaPathTsPrefix, path))
 	if err != nil {
 		return 0, err
 	}

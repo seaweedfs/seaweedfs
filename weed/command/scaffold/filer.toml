@@ -28,8 +28,9 @@ recursive_delete = false
 # this filer replays from peer filers that keep their own store.
 # Filers that all share one store (one Redis, MySQL, TiKV, ...) never replay
 # each other's events and never read these records: set false there, on every
-# filer of the store. Turning it back on later is safe: records not newer than
-# the off period are ignored, and ordering falls back to the entries' mtimes.
+# filer of the store. Turning it back on later is safe: the first filer started
+# with it on drops the records written before, so paths changed while it was
+# off order by their entries' mtimes until they are recorded again.
 #pathCommitRecords = true
 
 ####################################################

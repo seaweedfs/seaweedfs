@@ -63,10 +63,10 @@ type Filer struct {
 	// filers that keep their own store; filers that all share one store never
 	// replay each other's events, so there the records are never read and only
 	// accumulate. Set via viper: filer.options.pathCommitRecords = false.
-	// While off, pathCommitOff keeps a marker in the store so records older
-	// than the off period are ignored once the option is back on.
+	// pathCommitGen is the records' generation (meta_path_ts.go): bumped
+	// when they are turned back on, so records from before are not used.
 	pathCommitRecordsOff bool
-	pathCommitOff        pathCommitOffState
+	pathCommitGen        atomic.Uint64
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
@@ -385,6 +385,10 @@ func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 	f.Store = NewFilerStoreWrapper(store)
 
 	isFresh = f.setOrLoadFilerStoreSignature(store)
+
+	// Before serving: mark the store when per-path commit records are off, or
+	// drop the records of an earlier off period when they are on.
+	f.initPathCommitRecords()
 
 	// Recover deletions that were pending when a previous process died, and keep
 	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
