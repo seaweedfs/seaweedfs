@@ -178,6 +178,18 @@ func TestOIDCProviderJWTValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "expired")
 	})
 
+	t.Run("missing exp", func(t *testing.T) {
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		assert.Error(t, err)
+	})
+
 	t.Run("invalid signature", func(t *testing.T) {
 		// Create token with wrong key
 		wrongKey, _ := generateTestKeys(t)

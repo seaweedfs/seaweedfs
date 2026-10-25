@@ -681,7 +681,8 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("failed to get public key: %v", err)
 	}
 
-	// Parse and validate token with proper signature verification
+	// Parse and validate token with proper signature verification. exp is
+	// required: without it a leaked token could mint STS sessions forever.
 	claims := jwt.MapClaims{}
 	validatedToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
 		// Verify signing method
@@ -691,7 +692,7 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		default:
 			return nil, fmt.Errorf("unsupported signing method: %v", token.Header["alg"])
 		}
-	})
+	}, jwt.WithExpirationRequired())
 
 	if err != nil {
 		// Use JWT library's typed errors for robust error checking
