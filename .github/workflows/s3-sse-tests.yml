@@ -36,7 +36,7 @@ defaults:
 jobs:
   s3-sse-integration-tests:
     name: S3 SSE Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -111,7 +111,7 @@ jobs:
 
   s3-sse-compatibility:
     name: S3 SSE Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -160,7 +160,7 @@ jobs:
 
   s3-sse-metadata-persistence:
     name: S3 SSE Metadata Persistence Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -210,7 +210,7 @@ jobs:
 
   s3-sse-copy-operations:
     name: S3 SSE Copy Operations Test  
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -260,7 +260,7 @@ jobs:
 
   s3-sse-multipart:
     name: S3 SSE Multipart Upload Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -310,7 +310,7 @@ jobs:
 
   s3-sse-performance:
     name: S3 SSE Performance Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     # Only run performance tests on master branch pushes to avoid overloading PR testing
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
@@ -361,7 +361,7 @@ jobs:
 
   s3-volume-encryption:
     name: S3 Volume Encryption Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:

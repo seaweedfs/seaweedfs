@@ -23,7 +23,7 @@ permissions:
 jobs:
   s3-tables-tests:
     name: S3 Tables Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -88,7 +88,7 @@ jobs:
 
   iceberg-catalog-tests:
     name: Iceberg Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -153,7 +153,7 @@ jobs:
 
   trino-iceberg-catalog-tests:
     name: Trino Iceberg Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -227,7 +227,7 @@ jobs:
 
   dremio-iceberg-catalog-tests:
     name: Dremio Iceberg Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -304,7 +304,7 @@ jobs:
 
   doris-iceberg-catalog-tests:
     name: Doris Iceberg Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
 
     steps:
@@ -381,7 +381,7 @@ jobs:
 
   clickhouse-iceberg-catalog-tests:
     name: ClickHouse Iceberg Catalog Integration Tests (${{ matrix.tag }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -470,7 +470,7 @@ jobs:
 
   olake-iceberg-catalog-tests:
     name: OLake Iceberg Catalog Integration Tests (${{ matrix.tag }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -585,7 +585,7 @@ jobs:
 
   polaris-integration-tests:
     name: Polaris Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -657,7 +657,7 @@ jobs:
 
   spark-iceberg-catalog-tests:
     name: Spark Iceberg Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -731,7 +731,7 @@ jobs:
 
   risingwave-catalog-tests:
     name: RisingWave Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -806,7 +806,7 @@ jobs:
 
   sts-integration-tests:
     name: STS Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -905,7 +905,7 @@ jobs:
 
   lakekeeper-integration-tests:
     name: Lakekeeper Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:
@@ -969,7 +969,7 @@ jobs:
 
   unity-catalog-integration-tests:
     name: Unity Catalog Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -1046,7 +1046,7 @@ jobs:
 
   lancedb-namespace-tests:
     name: LanceDB Namespace Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -1120,7 +1120,7 @@ jobs:
 
   table-lifecycle-tests:
     name: Table Lifecycle Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
 
     steps:
@@ -1189,7 +1189,7 @@ jobs:
 
   duckdb-lance-tests:
     name: DuckDB Lance Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -1268,7 +1268,7 @@ jobs:
 
   spark-lance-namespace-tests:
     name: Spark Lance Namespace Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
 
     steps:
@@ -1346,7 +1346,7 @@ jobs:
 
   s3-tables-build-verification:
     name: S3 Tables Build Verification
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     
     steps:
@@ -1412,7 +1412,7 @@ jobs:
 
   s3-tables-fmt-check:
     name: S3 Tables Format Check
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     
     steps:
@@ -1464,7 +1464,7 @@ jobs:
 
   s3-tables-vet:
     name: S3 Tables Go Vet Check
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     
     steps:

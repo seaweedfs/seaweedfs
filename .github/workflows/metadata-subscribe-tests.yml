@@ -37,7 +37,7 @@ env:
 jobs:
   metadata-subscribe-integration:
     name: Metadata Subscribe Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:

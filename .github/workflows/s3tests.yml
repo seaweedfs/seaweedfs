@@ -34,7 +34,7 @@ permissions:
 jobs:
   basic-s3-tests:
     name: Basic S3 tests (KV store)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -387,7 +387,7 @@ jobs:
 
   versioning-tests:
     name: S3 Versioning & Object Lock tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
@@ -558,7 +558,7 @@ jobs:
 
   cors-tests:
     name: S3 CORS tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
@@ -684,7 +684,7 @@ jobs:
 
   copy-tests:
     name: SeaweedFS Custom S3 Copy tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
@@ -787,7 +787,7 @@ jobs:
 
   sql-store-tests:
     name: Basic S3 tests (SQL store)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory

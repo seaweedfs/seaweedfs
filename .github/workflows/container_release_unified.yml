@@ -47,7 +47,7 @@ jobs:
   # amd64 and arm64 without QEMU, turning a 5-hour emulated cargo build into
   # ~15 minutes of native compilation.
   build-rust-binaries:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:

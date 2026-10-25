@@ -30,7 +30,7 @@ permissions:
 jobs:
   proxy-signature-tests:
     name: S3 Proxy Signature Verification Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory

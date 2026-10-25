@@ -46,7 +46,7 @@ permissions:
 jobs:
   snowflake-s3compat-tests:
     name: Snowflake S3Compat API tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       WORK_DIR: /tmp/seaweedfs-snowflake-tests

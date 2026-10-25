@@ -35,7 +35,7 @@ env:
 jobs:
   build-weed:
     name: Build SeaweedFS Binary
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -68,7 +68,7 @@ jobs:
 
   volume-server-integration-tests:
     name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [build-weed]
     strategy:

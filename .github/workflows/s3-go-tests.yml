@@ -26,7 +26,7 @@ defaults:
 jobs:
   s3-versioning-tests:
     name: S3 Versioning Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -97,7 +97,7 @@ jobs:
 
   s3-versioning-compatibility:
     name: S3 Versioning Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -146,7 +146,7 @@ jobs:
 
   s3-cors-compatibility:
     name: S3 CORS Compatibility Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -195,7 +195,7 @@ jobs:
 
   s3-retention-tests:
     name: S3 Retention Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -266,7 +266,7 @@ jobs:
 
   s3-lifecycle-tests:
     name: S3 Lifecycle Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -339,7 +339,7 @@ jobs:
 
   s3-checksum-tests:
     name: S3 Checksum Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -398,7 +398,7 @@ jobs:
 
   s3-cors-tests:
     name: S3 CORS Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -469,7 +469,7 @@ jobs:
 
   s3-retention-worm:
     name: S3 Retention WORM Integration Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -519,7 +519,7 @@ jobs:
 
   s3-versioning-stress:
     name: S3 Versioning Stress Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     
     steps:
@@ -588,7 +588,7 @@ jobs:
   s3-tagging-tests:
     # CI job for S3 object tagging tests
     name: S3 Tagging Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -644,7 +644,7 @@ jobs:
 
   s3-remote-cache-tests:
     name: S3 Remote Cache Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:

@@ -28,7 +28,7 @@ permissions:
 jobs:
   vacuum-integration-tests:
     name: Vacuum Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
     - name: Set up Go 1.x

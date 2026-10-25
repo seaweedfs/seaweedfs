@@ -34,7 +34,7 @@ jobs:
   # Unit tests for IAM components
   iam-unit-tests:
     name: IAM Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     
     steps:
@@ -81,7 +81,7 @@ jobs:
   # S3 IAM integration tests with SeaweedFS services
   s3-iam-integration-tests:
     name: S3 IAM Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       matrix:
@@ -202,7 +202,7 @@ jobs:
   # Distributed IAM tests
   s3-iam-distributed-tests:
     name: S3 IAM Distributed Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -263,7 +263,7 @@ jobs:
   # Performance and stress tests
   s3-iam-performance-tests:
     name: S3 IAM Performance Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     
     steps:

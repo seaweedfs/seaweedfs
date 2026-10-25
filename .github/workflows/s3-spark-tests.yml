@@ -20,7 +20,7 @@ permissions:
 jobs:
   s3-spark-issue-repro-tests:
     name: S3 Spark Issue Reproduction Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:

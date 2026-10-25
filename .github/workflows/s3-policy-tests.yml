@@ -38,7 +38,7 @@ jobs:
   # Unit tests for policy components
   policy-unit-tests:
     name: S3 Policy Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     
     steps:
@@ -82,7 +82,7 @@ jobs:
   # S3 Policy Variables Integration Tests
   s3-policy-variables-tests:
     name: S3 Policy Variables Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     
     steps:
@@ -192,7 +192,7 @@ jobs:
   # S3 Policy Enforcement Integration Tests
   s3-policy-enforcement-tests:
     name: S3 Policy Enforcement Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -317,7 +317,7 @@ jobs:
   # Trusted Proxy Detection Tests
   trusted-proxy-tests:
     name: Trusted Proxy Detection Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     
     steps:
@@ -405,7 +405,7 @@ jobs:
   # S3 Policy Shell Integration Tests
   s3-policy-shell-tests:
     name: S3 Policy Shell Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:

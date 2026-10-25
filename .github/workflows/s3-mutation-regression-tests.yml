@@ -21,7 +21,7 @@ permissions:
 jobs:
   s3-versioning-regressions:
     name: S3 Versioning Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:
@@ -75,7 +75,7 @@ jobs:
 
   s3-delete-regressions:
     name: S3 Delete Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -114,7 +114,7 @@ jobs:
 
   s3-distributed-lock-regressions:
     name: S3 Distributed Lock Regression Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:

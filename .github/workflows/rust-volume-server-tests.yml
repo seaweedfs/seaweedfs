@@ -54,7 +54,7 @@ jobs:
 
   build-test-binaries:
     name: Build Test Binaries
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -113,7 +113,7 @@ jobs:
 
   rust-unit-tests:
     name: Rust Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -213,7 +213,7 @@ jobs:
 
   rust-integration-tests:
     name: Rust Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [build-test-binaries]
 
@@ -270,7 +270,7 @@ jobs:
 
   rust-volume-go-tests:
     name: Go Tests with Rust Volume (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [build-test-binaries]
     env:

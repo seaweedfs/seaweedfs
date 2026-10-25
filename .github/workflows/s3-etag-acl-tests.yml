@@ -30,7 +30,7 @@ permissions:
 jobs:
   s3-etag-acl-tests:
     name: S3 ETag + ACL Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out code

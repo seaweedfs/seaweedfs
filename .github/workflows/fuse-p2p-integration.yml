@@ -34,7 +34,7 @@ permissions:
 jobs:
   fuse-p2p-integration:
     name: FUSE P2P Peer Chunk Sharing
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
