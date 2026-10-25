@@ -166,6 +166,10 @@ message Entry {
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
     map<string, bytes> extended = 5;
+    // filer-local commit timestamp of the version stored here: the meta log
+    // event's ts_ns for the mutation that produced this entry, or 0 for
+    // entries written before the field existed
+    int64 commit_ts_ns = 6;
     bytes hard_link_id = 7;
     int32 hard_link_counter = 8; // only exists in hard link meta data
     bytes content = 9; // if not empty, the file content
@@ -281,6 +285,7 @@ message WriteCondition {
         IF_EXTENDED_NOT_EQUAL = 7; // fail if present and extended[ext_key] == ext_value
         IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
         IF_CHUNKS_EQUAL       = 9; // fail unless the stored chunk fid multiset equals fids (absent entry = no chunks)
+        IF_ENTRY_EQUAL        = 10; // fail unless the stored entry equals expected_entry
     }
     // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
     // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
@@ -309,6 +314,7 @@ message WriteCondition {
         string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
         string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
         repeated string fids = 9;  // chunk fid strings for IF_CHUNKS_EQUAL
+        Entry expected_entry = 10; // whole-entry comparison for IF_ENTRY_EQUAL
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }
@@ -323,6 +329,7 @@ enum FilerError {
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
     PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
+    READ_ONLY             = 7; // path matches a read-only storage rule (e.g. bucket over quota)
 }
 
 // ObjectMutation is one entry-level change applied by ObjectTransaction. All
@@ -351,6 +358,7 @@ message ObjectMutation {
     bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
     bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
     bool remove_empty_parent = 13;         // DELETE: also remove the parent directory when the delete leaves it empty (best-effort)
+    bool keep_remote_object = 14;          // DELETE: leave the object on the mounted remote storage
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
@@ -388,6 +396,8 @@ message ObjectTransactionRequest {
     string condition_key = 6;          // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
     string route_key = 7;              // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
     bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
+    string request_id = 9;             // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
+    string condition_alt_key = 10;     // if the condition's entry is absent, evaluate it against this entry instead (e.g. null slot, else latest version)
 }
 
 message ObjectTransactionResponse {
@@ -477,6 +487,7 @@ message UpdateEntryRequest {
     // the write, under the filer's per-path lock. The caller must route the
     // key's writes to this entry's owner filer for the check to be authoritative.
     WriteCondition condition = 6;
+    bool is_moved = 7;             // set on a forwarded request so the owner applies it locally
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
@@ -514,6 +525,7 @@ message DeleteEntryRequest {
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
+    bool keep_remote_object = 10;
 }
 
 message DeleteEntryResponse {
@@ -573,6 +585,9 @@ message AssignVolumeResponse {
     // fsync is the storage rule's fsync decision for the assigned path, so the
     // client can carry it onto the volume server upload request.
     bool fsync = 11;
+    // error_code classifies error for callers that must branch on it; error
+    // keeps the human-readable text for clients that predate the field.
+    FilerError error_code = 12;
 }
 
 message LookupVolumeRequest {
@@ -709,6 +724,10 @@ message TraverseBfsMetadataRequest {
 message TraverseBfsMetadataResponse {
     string directory = 1;
     Entry entry = 2;
+    // The sender's per-path commit timestamp (see meta_path_ts.go): the newest
+    // event time this filer committed for the path, 0 when unrecorded so
+    // subscribers fall back to the entry's mtime.
+    int64 entry_ts_ns = 3;
 }
 
 message LogEntry {

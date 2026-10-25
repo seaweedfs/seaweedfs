@@ -672,24 +672,24 @@ func (x *RemoteEntry) GetRemoteContentEncoding() string {
 }
 
 type Entry struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Name               string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	IsDirectory        bool                   `protobuf:"varint,2,opt,name=is_directory,json=isDirectory,proto3" json:"is_directory,omitempty"`
-	Chunks             []*FileChunk           `protobuf:"bytes,3,rep,name=chunks,proto3" json:"chunks,omitempty"`
-	Attributes         *FuseAttributes        `protobuf:"bytes,4,opt,name=attributes,proto3" json:"attributes,omitempty"`
-	Extended           map[string][]byte      `protobuf:"bytes,5,rep,name=extended,proto3" json:"extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	HardLinkId         []byte                 `protobuf:"bytes,7,opt,name=hard_link_id,json=hardLinkId,proto3" json:"hard_link_id,omitempty"`
-	HardLinkCounter    int32                  `protobuf:"varint,8,opt,name=hard_link_counter,json=hardLinkCounter,proto3" json:"hard_link_counter,omitempty"` // only exists in hard link meta data
-	Content            []byte                 `protobuf:"bytes,9,opt,name=content,proto3" json:"content,omitempty"`                                           // if not empty, the file content
-	RemoteEntry        *RemoteEntry           `protobuf:"bytes,10,opt,name=remote_entry,json=remoteEntry,proto3" json:"remote_entry,omitempty"`
-	Quota              int64                  `protobuf:"varint,11,opt,name=quota,proto3" json:"quota,omitempty"` // for bucket only. Positive/Negative means enabled/disabled.
-	WormEnforcedAtTsNs int64                  `protobuf:"varint,12,opt,name=worm_enforced_at_ts_ns,json=wormEnforcedAtTsNs,proto3" json:"worm_enforced_at_ts_ns,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	IsDirectory bool                   `protobuf:"varint,2,opt,name=is_directory,json=isDirectory,proto3" json:"is_directory,omitempty"`
+	Chunks      []*FileChunk           `protobuf:"bytes,3,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	Attributes  *FuseAttributes        `protobuf:"bytes,4,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	Extended    map[string][]byte      `protobuf:"bytes,5,rep,name=extended,proto3" json:"extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// filer-local commit timestamp of the version stored here: the meta log
 	// event's ts_ns for the mutation that produced this entry, or 0 for
 	// entries written before the field existed
-	CommitTsNs    int64 `protobuf:"varint,6,opt,name=commit_ts_ns,json=commitTsNs,proto3" json:"commit_ts_ns,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	CommitTsNs         int64        `protobuf:"varint,6,opt,name=commit_ts_ns,json=commitTsNs,proto3" json:"commit_ts_ns,omitempty"`
+	HardLinkId         []byte       `protobuf:"bytes,7,opt,name=hard_link_id,json=hardLinkId,proto3" json:"hard_link_id,omitempty"`
+	HardLinkCounter    int32        `protobuf:"varint,8,opt,name=hard_link_counter,json=hardLinkCounter,proto3" json:"hard_link_counter,omitempty"` // only exists in hard link meta data
+	Content            []byte       `protobuf:"bytes,9,opt,name=content,proto3" json:"content,omitempty"`                                           // if not empty, the file content
+	RemoteEntry        *RemoteEntry `protobuf:"bytes,10,opt,name=remote_entry,json=remoteEntry,proto3" json:"remote_entry,omitempty"`
+	Quota              int64        `protobuf:"varint,11,opt,name=quota,proto3" json:"quota,omitempty"` // for bucket only. Positive/Negative means enabled/disabled.
+	WormEnforcedAtTsNs int64        `protobuf:"varint,12,opt,name=worm_enforced_at_ts_ns,json=wormEnforcedAtTsNs,proto3" json:"worm_enforced_at_ts_ns,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Entry) Reset() {
@@ -757,6 +757,13 @@ func (x *Entry) GetExtended() map[string][]byte {
 	return nil
 }
 
+func (x *Entry) GetCommitTsNs() int64 {
+	if x != nil {
+		return x.CommitTsNs
+	}
+	return 0
+}
+
 func (x *Entry) GetHardLinkId() []byte {
 	if x != nil {
 		return x.HardLinkId
@@ -795,13 +802,6 @@ func (x *Entry) GetQuota() int64 {
 func (x *Entry) GetWormEnforcedAtTsNs() int64 {
 	if x != nil {
 		return x.WormEnforcedAtTsNs
-	}
-	return 0
-}
-
-func (x *Entry) GetCommitTsNs() int64 {
-	if x != nil {
-		return x.CommitTsNs
 	}
 	return 0
 }
@@ -7320,6 +7320,8 @@ const file_filer_proto_rawDesc = "" +
 	"attributes\x18\x04 \x01(\v2\x18.filer_pb.FuseAttributesR\n" +
 	"attributes\x129\n" +
 	"\bextended\x18\x05 \x03(\v2\x1d.filer_pb.Entry.ExtendedEntryR\bextended\x12 \n" +
+	"\fcommit_ts_ns\x18\x06 \x01(\x03R\n" +
+	"commitTsNs\x12 \n" +
 	"\fhard_link_id\x18\a \x01(\fR\n" +
 	"hardLinkId\x12*\n" +
 	"\x11hard_link_counter\x18\b \x01(\x05R\x0fhardLinkCounter\x12\x18\n" +
@@ -7327,9 +7329,7 @@ const file_filer_proto_rawDesc = "" +
 	"\fremote_entry\x18\n" +
 	" \x01(\v2\x15.filer_pb.RemoteEntryR\vremoteEntry\x12\x14\n" +
 	"\x05quota\x18\v \x01(\x03R\x05quota\x122\n" +
-	"\x16worm_enforced_at_ts_ns\x18\f \x01(\x03R\x12wormEnforcedAtTsNs\x12 \n" +
-	"\fcommit_ts_ns\x18\x06 \x01(\x03R\n" +
-	"commitTsNs\x1a;\n" +
+	"\x16worm_enforced_at_ts_ns\x18\f \x01(\x03R\x12wormEnforcedAtTsNs\x1a;\n" +
 	"\rExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"D\n" +
