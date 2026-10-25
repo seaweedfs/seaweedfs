@@ -2401,25 +2401,29 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	// Set custom headers from entry.Extended (user metadata)
 	// Use direct map assignment to preserve original header casing (matches proxy behavior)
 	if entry.Extended != nil {
+		extAmzPrefixLower := strings.ToLower(s3_constants.ExtAmzPrefix)
+		taggingPrefixLower := strings.ToLower(s3_constants.AmzObjectTaggingPrefix)
 		for k, v := range entry.Extended {
 			// Skip internal SeaweedFS headers, and the stored tag/ACL/lock
 			// metadata that belongs behind its own API (GetObjectTagging,
 			// GetObjectAcl, GetObjectRetention) instead of every reader.
-			if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, s3_constants.ExtAmzPrefix) && !strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) && !s3_constants.IsSeaweedFSInternalHeader(k) {
-				// Support backward compatibility: migrate old non-canonical format to canonical format
-				// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo" (preserving suffix case)
-				headerKey := k
-				if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
-					// Normalize to AWS S3 format: "X-Amz-Meta-" prefix with lowercase suffix
-					// AWS S3 returns user metadata with the suffix in lowercase
-					suffix := k[len("x-amz-meta-"):]
-					headerKey = s3_constants.AmzUserMetaPrefix + strings.ToLower(suffix)
-					if glog.V(4) && k != headerKey {
-						glog.Infof("Normalizing user metadata header %q to %q in response", k, headerKey)
-					}
-				}
-				w.Header()[headerKey] = []string{string(v)}
+			lowerKey := strings.ToLower(k)
+			if strings.HasPrefix(lowerKey, "xattr-") || strings.HasPrefix(lowerKey, extAmzPrefixLower) || strings.HasPrefix(lowerKey, taggingPrefixLower) || s3_constants.IsSeaweedFSInternalHeader(lowerKey) {
+				continue
 			}
+			// Support backward compatibility: migrate old non-canonical format to canonical format
+			// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo" (preserving suffix case)
+			headerKey := k
+			if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
+				// Normalize to AWS S3 format: "X-Amz-Meta-" prefix with lowercase suffix
+				// AWS S3 returns user metadata with the suffix in lowercase
+				suffix := k[len("x-amz-meta-"):]
+				headerKey = s3_constants.AmzUserMetaPrefix + strings.ToLower(suffix)
+				if glog.V(4) && k != headerKey {
+					glog.Infof("Normalizing user metadata header %q to %q in response", k, headerKey)
+				}
+			}
+			w.Header()[headerKey] = []string{string(v)}
 		}
 	}
 

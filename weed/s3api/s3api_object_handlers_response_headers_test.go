@@ -3,6 +3,7 @@ package s3api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -22,6 +23,8 @@ func TestSetResponseHeadersFiltersInternalExtendedKeys(t *testing.T) {
 		Extended: map[string][]byte{
 			s3_constants.AmzObjectTaggingPrefix + "project": []byte("alpha"),
 			s3_constants.AmzObjectTaggingPrefix + "owner":   []byte("y"),
+			"x-amz-tagging-sneaky":                        []byte("z"),
+			"seaweed-x-amz-acl":                           []byte("z"),
 			s3_constants.ExtAmzAclKey:                       []byte(`[{"Permission":"FULL_CONTROL"}]`),
 			s3_constants.ExtAmzOwnerKey:                     []byte("admin"),
 			s3_constants.ExtVersionIdKey:                    []byte("version-1"),
@@ -39,13 +42,14 @@ func TestSetResponseHeadersFiltersInternalExtendedKeys(t *testing.T) {
 		s3a.setResponseHeaders(w, httptest.NewRequest(method, "/bucket/object", nil), entry, 8)
 
 		for key := range w.Header() {
-			if http.CanonicalHeaderKey(s3_constants.AmzTagCount) == key {
+			lowerKey := strings.ToLower(key)
+			if lowerKey == s3_constants.AmzTagCount {
 				continue
 			}
-			if len(key) >= len(s3_constants.ExtAmzPrefix) && key[:len(s3_constants.ExtAmzPrefix)] == s3_constants.ExtAmzPrefix {
+			if strings.HasPrefix(lowerKey, strings.ToLower(s3_constants.ExtAmzPrefix)) {
 				t.Errorf("%s: internal header %q leaked into response", method, key)
 			}
-			if len(key) >= len(s3_constants.AmzObjectTaggingPrefix) && key[:len(s3_constants.AmzObjectTaggingPrefix)] == s3_constants.AmzObjectTaggingPrefix {
+			if strings.HasPrefix(lowerKey, strings.ToLower(s3_constants.AmzObjectTaggingPrefix)) {
 				t.Errorf("%s: object tag value %q leaked into response", method, key)
 			}
 		}
