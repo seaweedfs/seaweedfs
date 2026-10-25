@@ -165,7 +165,7 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipLis
 		Timeout:  timeout,
 	}
 
-	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
+	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" && !isLoopbackHost(host) {
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
 			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
