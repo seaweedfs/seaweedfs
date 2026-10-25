@@ -51,11 +51,8 @@ func shardTransferCap(opts *ShardDistributionOptions) (sequential bool, capN int
 		return false, 0
 	}
 	n := *opts.MaxShardTransfers
-	if n == 0 {
+	if n <= 0 {
 		return true, 0
-	}
-	if n < 0 {
-		return false, 0
 	}
 	return false, n
 }
