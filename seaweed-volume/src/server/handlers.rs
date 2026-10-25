@@ -1570,14 +1570,16 @@ fn not_modified_response(
 /// If-Range (RFC 9110 13.1.5): an entity-tag by strong comparison, or a date
 /// equal to Last-Modified. The response etag here is always a strong tag.
 fn if_range_matches(headers: &HeaderMap, etag: &str, last_modified_str: &Option<String>) -> bool {
-    let Some(if_range) = headers
-        .get(header::IF_RANGE)
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    else {
+    let Some(raw) = headers.get(header::IF_RANGE) else {
         return true;
     };
+    let Ok(if_range) = raw.to_str() else {
+        return false;
+    };
+    let if_range = if_range.trim();
+    if if_range.is_empty() {
+        return true;
+    }
     if if_range.starts_with('"') || if_range.starts_with("W/") {
         return if_range == etag;
     }
@@ -5816,6 +5818,14 @@ mod tests {
                 "{if_range:?}"
             );
         }
+
+        // A present value that is not valid UTF-8 fails the condition.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_RANGE,
+            header::HeaderValue::from_bytes(b"\"\xff\xfev2\"").unwrap(),
+        );
+        assert!(!if_range_matches(&headers, &etag, &last_modified_str));
 
         // No Last-Modified on the representation: a date validator fails,
         // an entity-tag still applies.
