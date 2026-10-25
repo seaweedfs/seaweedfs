@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -66,6 +67,7 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 	tags := cmd.String("tags", "", "comma separated tags key=value")
 	policyFile := cmd.String("file", "", "policy file (json)")
 	account := cmd.String("account", "", "owner account id")
+	format := cmd.String("format", "", "table format the bucket holds: ICEBERG (default) or LANCE")
 
 	if err := cmd.Parse(args); err != nil {
 		return err
@@ -94,6 +96,13 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 			return err
 		}
 		req := &s3tables.CreateTableBucketRequest{Name: *name}
+		if *format != "" {
+			normalized, ok := s3tables.NormalizeFormat(*format)
+			if !ok {
+				return fmt.Errorf("unsupported format %q", *format)
+			}
+			req.Format = normalized
+		}
 		if *tags != "" {
 			parsed, err := parseS3TablesTags(*tags)
 			if err != nil {
@@ -176,7 +185,7 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 		if *policyFile == "" {
 			return fmt.Errorf("-file is required")
 		}
-		content, err := os.ReadFile(*policyFile)
+		content, err := os.ReadFile(util.ResolvePath(*policyFile))
 		if err != nil {
 			return err
 		}

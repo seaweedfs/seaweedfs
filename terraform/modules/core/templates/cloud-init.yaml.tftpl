@@ -1,0 +1,44 @@
+#cloud-config
+# Rendered by the SeaweedFS Terraform core module for node ${name} (role ${role}).
+# When render_secret_files=false, secret-bearing files are NOT here; they are
+# fetched at boot by fetch-secrets.sh from the cloud secret store.
+users:
+  - name: ${run_as_user}
+    system: true
+    shell: /usr/sbin/nologin
+write_files:
+%{ for path, content in config_files ~}
+  - path: ${path}
+    owner: "${run_as_user}:${run_as_user}"
+    permissions: '${lookup(file_modes, path, "0644")}'
+    content: |
+      ${indent(6, content)}
+%{ endfor ~}
+%{ if mount_script != "" ~}
+  - path: /opt/seaweedfs/mount-disks.sh
+    permissions: '0755'
+    content: |
+      ${indent(6, mount_script)}
+%{ endif ~}
+%{ if fetch_script != "" ~}
+  - path: /opt/seaweedfs/fetch-secrets.sh
+    permissions: '0755'
+    content: |
+      ${indent(6, fetch_script)}
+%{ endif ~}
+  - path: /etc/systemd/system/weed-${role}.service
+    permissions: '0644'
+    content: |
+      ${indent(6, systemd_unit)}
+runcmd:
+%{ if mount_script != "" ~}
+  - /opt/seaweedfs/mount-disks.sh
+%{ endif ~}
+%{ if fetch_script != "" ~}
+  - /opt/seaweedfs/fetch-secrets.sh
+%{ endif ~}
+%{ for cmd in pre_runcmd ~}
+  - ${cmd}
+%{ endfor ~}
+  - systemctl daemon-reload
+  - systemctl enable --now weed-${role}.service

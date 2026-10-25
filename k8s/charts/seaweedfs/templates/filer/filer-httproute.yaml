@@ -1,0 +1,57 @@
+{{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
+{{- if and $filerEnabled .Values.filer.httpRoute.enabled }}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "seaweedfs.componentName" (list . "filer") }}
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.filer.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer
+    {{- with .Values.filer.httpRoute.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.filer.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.filer.httpRoute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.filer.httpRoute.rules | default (list dict) }}
+    - backendRefs:
+        {{- with .backendRefs }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - group: ""
+          kind: Service
+          name: {{ $serviceName }}
+          namespace: {{ $.Release.Namespace }}
+          port: {{ $.Values.filer.port }}
+          weight: 1
+        {{- end }}
+      {{- with .matches }}
+      matches:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .filters }}
+      filters:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .timeouts }}
+      timeouts:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}

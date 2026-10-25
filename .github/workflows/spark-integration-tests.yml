@@ -15,6 +15,10 @@ on:
       - '.github/workflows/spark-integration-tests.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
 permissions:
   contents: read
   checks: write
@@ -31,19 +35,20 @@ jobs:
     # SETUP & BUILD
     # ========================================
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up JDK 11
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@v6
       with:
         java-version: '11'
         distribution: 'temurin'
-        cache: maven
+        cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
 
     - name: Set up Go
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: '1.24'
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
 
     - name: Build SeaweedFS binary
       run: |
@@ -125,7 +130,7 @@ jobs:
 
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: spark-test-results
         path: test/java/spark/target/surefire-reports/
@@ -133,7 +138,7 @@ jobs:
 
     - name: Publish test report
       if: always()
-      uses: dorny/test-reporter@v2
+      uses: dorny/test-reporter@v3
       with:
         name: Spark Test Results
         path: test/java/spark/target/surefire-reports/*.xml
@@ -150,7 +155,7 @@ jobs:
     - name: Cache Apache Spark
       if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       id: cache-spark
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: spark-3.5.0-bin-hadoop3
         key: spark-3.5.0-hadoop3

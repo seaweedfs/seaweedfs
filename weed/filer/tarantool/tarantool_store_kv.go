@@ -1,5 +1,4 @@
 //go:build tarantool
-// +build tarantool
 
 package tarantool
 
@@ -9,8 +8,9 @@ import (
 	"reflect"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/tarantool/go-tarantool/v2/crud"
-	"github.com/tarantool/go-tarantool/v2/pool"
+	"github.com/tarantool/go-option"
+	"github.com/tarantool/go-tarantool/v3/crud"
+	"github.com/tarantool/go-tarantool/v3/pool"
 )
 
 const (
@@ -21,18 +21,19 @@ func (store *TarantoolStore) KvPut(ctx context.Context, key []byte, value []byte
 
 	var operations = []crud.Operation{
 		{
-			Operator: crud.Insert,
+			Operator: crud.Assign,
 			Field:    "value",
 			Value:    string(value),
 		},
 	}
 
-	req := crud.MakeUpsertRequest(tarantoolKVSpaceName).
+	req := crud.NewUpsertRequest(tarantoolKVSpaceName).
 		Tuple([]interface{}{string(key), nil, string(value)}).
-		Operations(operations)
+		Operations(operations).
+		Context(ctx)
 
 	ret := crud.Result{}
-	if err := store.pool.Do(req, pool.RW).GetTyped(&ret); err != nil {
+	if err := store.pool.Do(req, pool.ModeRW).GetTyped(&ret); err != nil {
 		return fmt.Errorf("kv put: %w", err)
 	}
 
@@ -42,19 +43,20 @@ func (store *TarantoolStore) KvPut(ctx context.Context, key []byte, value []byte
 func (store *TarantoolStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
 	getOpts := crud.GetOpts{
-		Fields:        crud.MakeOptTuple([]interface{}{"value"}),
-		Mode:          crud.MakeOptString("read"),
-		PreferReplica: crud.MakeOptBool(true),
-		Balance:       crud.MakeOptBool(true),
+		Fields:        option.SomeAny([]interface{}{"value"}),
+		Mode:          option.SomeString("read"),
+		PreferReplica: option.SomeBool(true),
+		Balance:       option.SomeBool(true),
 	}
 
-	req := crud.MakeGetRequest(tarantoolKVSpaceName).
-		Key(crud.Tuple([]interface{}{string(key)})).
-		Opts(getOpts)
+	req := crud.NewGetRequest(tarantoolKVSpaceName).
+		Key([]interface{}{string(key)}).
+		Opts(getOpts).
+		Context(ctx)
 
 	resp := crud.Result{}
 
-	err = store.pool.Do(req, pool.PreferRO).GetTyped(&resp)
+	err = store.pool.Do(req, pool.ModePreferRO).GetTyped(&resp)
 	if err != nil {
 		return nil, err
 	}
@@ -80,14 +82,15 @@ func (store *TarantoolStore) KvGet(ctx context.Context, key []byte) (value []byt
 func (store *TarantoolStore) KvDelete(ctx context.Context, key []byte) (err error) {
 
 	delOpts := crud.DeleteOpts{
-		Noreturn: crud.MakeOptBool(true),
+		Noreturn: option.SomeBool(true),
 	}
 
-	req := crud.MakeDeleteRequest(tarantoolKVSpaceName).
-		Key(crud.Tuple([]interface{}{string(key)})).
-		Opts(delOpts)
+	req := crud.NewDeleteRequest(tarantoolKVSpaceName).
+		Key([]interface{}{string(key)}).
+		Opts(delOpts).
+		Context(ctx)
 
-	if _, err := store.pool.Do(req, pool.RW).Get(); err != nil {
+	if _, err := store.pool.Do(req, pool.ModeRW).Get(); err != nil {
 		return fmt.Errorf("kv delete: %w", err)
 	}
 

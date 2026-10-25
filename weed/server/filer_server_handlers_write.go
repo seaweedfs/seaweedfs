@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -26,7 +27,9 @@ var (
 	OS_UID = uint32(os.Getuid())
 	OS_GID = uint32(os.Getgid())
 
-	ErrReadOnly = errors.New("read only")
+	// ErrReadOnly is filer_pb.ErrReadOnly so errors.Is matches on either side
+	// of the gRPC boundary.
+	ErrReadOnly = filer_pb.ErrReadOnly
 )
 
 type FilerPostResult struct {
@@ -35,7 +38,7 @@ type FilerPostResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
+func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.StorageOption, expectedDataSize uint64) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
 	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
@@ -44,6 +47,10 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 	}()
 
 	ar, altRequest := so.ToAssignRequests(1)
+	ar.ExpectedDataSize = expectedDataSize
+	if altRequest != nil {
+		altRequest.ExpectedDataSize = expectedDataSize
+	}
 
 	// Use a context that ignores cancellation from the request context
 	assignCtx := context.WithoutCancel(ctx)
@@ -76,9 +83,22 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
 	ctx := r.Context()
 
-	destination := r.RequestURI
-	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
-		destination = finalDestination
+	// Match storage rules on the decoded path the entry is written to. The raw
+	// request-target is percent-encoded on the wire, so a rule on "/只读/" would
+	// never see "/%E5%8F%AA%E8%AF%BB/".
+	destination := r.URL.Path
+	headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader)
+	if headerDestination != "" {
+		destination = headerDestination
+	}
+
+	// The destination header picks storage rules for a logical destination, but
+	// the entry is written at r.URL.Path. Enforce the read-only/quota rule on the
+	// actual write path too, so the header cannot route a write into a read-only
+	// location.
+	if headerDestination != "" && fs.filer.FilerConf.MatchStorageRule(r.URL.Path).ReadOnly {
+		writeJsonError(w, r, http.StatusInsufficientStorage, ErrReadOnly)
+		return
 	}
 
 	query := r.URL.Query()
@@ -94,13 +114,17 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("saveInside"),
 	)
 	if err != nil {
-		if err == ErrReadOnly {
-			w.WriteHeader(http.StatusInsufficientStorage)
+		if errors.Is(err, ErrReadOnly) {
+			writeJsonError(w, r, http.StatusInsufficientStorage, err)
 		} else {
 			glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
+	}
+
+	if so.Fsync {
+		ctx = filer.WithSyncWrite(ctx)
 	}
 
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
@@ -122,6 +146,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		fs.move(ctx, w, r, so)
 	} else if query.Has("cp.from") {
 		fs.copy(ctx, w, r, so)
+	} else if isExtractZip(r) {
+		fs.extractZipArchive(ctx, w, r)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}
@@ -236,7 +262,15 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
+	// The delete and the commit record it emits must serialize with peer
+	// replay of this path, same as the gRPC DeleteEntry handler.
+	fullPath := util.FullPath(objectPath)
+	if fs.entryLockTable != nil {
+		pathLock := fs.entryLockTable.AcquireLock("DeleteHandler", fullPath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+	}
+
+	err = fs.filer.DeleteEntryMetaAndData(context.Background(), fullPath, isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -251,7 +285,13 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
 	if rule.ReadOnly {
-		return nil, ErrReadOnly
+		// Name the read-only prefix so the caller knows which path is locked and why.
+		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
+		prefix := rule.LocationPrefix
+		if prefix == "" {
+			prefix = requestURI
+		}
+		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}
 
 	// Use local variable instead of mutating shared rule
@@ -274,17 +314,37 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
+	collection := util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection)
+
+	// A placement overlay steers a bound collection's new volumes onto a tier.
+	// It sits between the explicit request and the filer.conf rule: it overrides
+	// the rule but yields to a value the caller asked for outright. Only a
+	// steered collection contributes values; an unsteered one clears them so it
+	// falls straight through to the rule.
+	overlayDisk, overlayReplication, overlayDataCenter, overlaySteered := fs.filer.ResolvePlacement(collection)
+	if !overlaySteered {
+		overlayDisk, overlayReplication, overlayDataCenter = "", "", ""
+	} else {
+		glog.V(4).InfofCtx(ctx, "placement overlay steers collection %s: disk=%q replication=%q dataCenter=%q",
+			collection, overlayDisk, overlayReplication, overlayDataCenter)
+	}
+
 	return &operation.StorageOption{
-		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
-		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
-		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
+		Replication:       util.Nvl(qReplication, overlayReplication, rule.Replication, fs.option.DefaultReplication),
+		Collection:        collection,
+		DataCenter:        util.Nvl(dataCenter, overlayDataCenter, rule.DataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
-		DiskType:          util.Nvl(diskType, rule.DiskType),
-		Fsync:             rule.Fsync,
+		DiskType:          util.Nvl(diskType, overlayDisk, rule.DiskType),
+		Fsync:             rule.GetFsync(),
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 		MaxFileNameLength: maxFileNameLength,
+		// A location that survives from a request parameter, a placement
+		// overlay, or the path rule is a contract; only a bare filer default
+		// is a preference that may still be widened.
+		EnforceLocation: dataCenter != "" || overlayDataCenter != "" || rule.DataCenter != "" ||
+			rack != "" || rule.Rack != "" || dataNode != "" || rule.DataNode != "",
 	}, nil
 }
 

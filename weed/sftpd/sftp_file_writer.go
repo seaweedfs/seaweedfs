@@ -32,28 +32,6 @@ type bufferReader struct {
 	i int64
 }
 
-func NewBufferReader(b []byte) *bufferReader { return &bufferReader{b: b} }
-
-func (r *bufferReader) Read(p []byte) (int, error) {
-	if r.i >= int64(len(r.b)) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b[r.i:])
-	r.i += int64(n)
-	return n, nil
-}
-
-func (r *bufferReader) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(r.b)) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b[off:])
-	if n < len(p) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
 // listerat implements sftp.ListerAt.
 type listerat []os.FileInfo
 

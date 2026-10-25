@@ -12,9 +12,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
-	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/filer/postgres"
@@ -36,6 +34,15 @@ func (store *PostgresStore2) GetName() string {
 }
 
 func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
+	// Default on so minimal configs are not exposed to duplicate-key tx
+	// poisoning on Postgres; an explicit false still disables it.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
 		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
@@ -61,23 +68,25 @@ func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix
 func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = true
+	store.SkipDDL = createTable == "false"
+	createTable = postgres.ResolveCreateTableQuery(createTable)
+	if createTable == "" && !store.SkipDDL {
+		createTable = postgres.DefaultCreateTableQuery
+	}
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = postgres.DefaultUpsertQuery
 	}
-	store.SqlGenerator = &postgres.SqlGenPostgres{
+	gen := &postgres.SqlGenPostgres{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   `drop table "%s"`,
+		DropTableSqlTemplate:   `drop table if exists "%s"`,
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	// pgx-optimized connection string with better timeouts and connection handling
 	sqlUrl := "connect_timeout=30"
-
-	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
-	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
-	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
-	}
 
 	if hostname != "" {
 		sqlUrl += " host=" + hostname
@@ -118,27 +127,23 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		sqlUrl += " search_path=" + schema
 		adaptedSqlUrl += " search_path=" + schema
 	}
-	var dbErr error
-	store.DB, dbErr = sql.Open("pgx", sqlUrl)
-	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
+	db, openErr := postgres.OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	if openErr != nil {
+		return openErr
+	}
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return postgres.OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
+
+	if !store.SkipDDL {
+		if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
+			return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 		}
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
 	}
 
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
-
-	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
-	}
-
-	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
-		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
-	}
+	postgres.ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }

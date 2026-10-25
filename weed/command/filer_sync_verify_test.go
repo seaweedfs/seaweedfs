@@ -1,0 +1,969 @@
+package command
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+)
+
+// --- stream / inner-client / outer-client mocks ---
+
+type verifyTestStream struct {
+	entries []*filer_pb.Entry
+	idx     int
+	recvErr error // returned after all entries instead of io.EOF, if set
+}
+
+func (s *verifyTestStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if s.idx >= len(s.entries) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
+		return nil, io.EOF
+	}
+	resp := &filer_pb.ListEntriesResponse{Entry: s.entries[s.idx]}
+	s.idx++
+	return resp, nil
+}
+
+func (s *verifyTestStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
+func (s *verifyTestStream) Trailer() metadata.MD         { return metadata.MD{} }
+func (s *verifyTestStream) CloseSend() error             { return nil }
+func (s *verifyTestStream) Context() context.Context     { return context.Background() }
+func (s *verifyTestStream) SendMsg(_ any) error          { return nil }
+func (s *verifyTestStream) RecvMsg(_ any) error          { return nil }
+
+// verifyTestInnerClient is the SeaweedFilerClient passed to fn inside WithFilerClient.
+type verifyTestInnerClient struct {
+	filer_pb.SeaweedFilerClient // embed for unimplemented RPCs
+	entriesByDir                map[string][]*filer_pb.Entry
+	recvErr                     error // injected listing error, if set
+}
+
+func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	return &verifyTestStream{entries: c.entriesByDir[in.Directory], recvErr: c.recvErr}, nil
+}
+
+// verifyTestFilerClient implements filer_pb.FilerClient and tracks concurrent
+// WithFilerClient invocations to let tests verify the global concurrency bound.
+// inFlight/peakFlight use atomic.Int64 (not bare int64 + sync/atomic funcs) so
+// the fields are 8-byte aligned even on 32-bit platforms — bare int64 fields
+// after a pointer-sized field panic with "unaligned 64-bit atomic operation"
+// on 386/arm/mips.
+type verifyTestFilerClient struct {
+	entriesByDir map[string][]*filer_pb.Entry
+	inFlight     atomic.Int64
+	peakFlight   atomic.Int64
+	delay        time.Duration
+	onList       func() // called at the start of each listing, if set
+	recvErr      error  // injected listing error, surfaced after entries
+}
+
+func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	// track peak concurrent in-flight listings
+	n := c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
+	for {
+		peak := c.peakFlight.Load()
+		if n <= peak || c.peakFlight.CompareAndSwap(peak, n) {
+			break
+		}
+	}
+	if c.onList != nil {
+		c.onList()
+	}
+	if c.delay > 0 {
+		time.Sleep(c.delay)
+	}
+	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir, recvErr: c.recvErr})
+}
+
+func (c *verifyTestFilerClient) AdjustedUrl(_ *filer_pb.Location) string { return "" }
+func (c *verifyTestFilerClient) GetDataCenter() string                   { return "" }
+
+// --- entry helpers ---
+
+func verifyFileEntry(name string, size uint64) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{FileSize: size},
+	}
+}
+
+func verifyDirEntry(name string) *filer_pb.Entry {
+	return &filer_pb.Entry{Name: name, IsDirectory: true}
+}
+
+// verifyChunk builds a FileChunk whose ETag is the base64 MD5 of seed, so
+// filer.ETagChunks (which base64-decodes each chunk ETag) can hash it. Distinct
+// seeds yield distinct per-chunk MD5s.
+func verifyChunk(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{
+		Offset: offset,
+		Size:   size,
+		ETag:   util.Base64Encode(util.Md5([]byte(seed))),
+	}
+}
+
+// verifyChunkedEntry builds a chunk-backed entry with no stored attr.Md5, so
+// its file ETag is derived from ETagChunks (the order-sensitive path). FileSize
+// is the max chunk end, matching filer.FileSize, so size comparison passes.
+func verifyChunkedEntry(name string, chunks []*filer_pb.FileChunk) *filer_pb.Entry {
+	var total uint64
+	for _, c := range chunks {
+		if end := uint64(c.Offset) + c.Size; end > total {
+			total = end
+		}
+	}
+	return &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{FileSize: total}, // Md5 nil → ETagChunks path
+		Chunks:     chunks,
+	}
+}
+
+// --- tests ---
+
+// TestVerifySyncMissingFile confirms that a file present in A but absent in B
+// is counted as missing.
+func TestVerifySyncMissingFile(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyFileEntry("file.txt", 100)},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.missingCount.Load(); got != 1 {
+		t.Errorf("missingCount = %d, want 1", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncOnlyInB confirms that a file present only in B is counted
+// (non-active-passive mode) or ignored (active-passive mode).
+func TestVerifySyncOnlyInB(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": {}},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyFileEntry("extra.txt", 50)},
+		},
+	}
+
+	t.Run("bidirectional", func(t *testing.T) {
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", false, time.Time{}, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.onlyInB.Load(); got != 1 {
+			t.Errorf("onlyInB = %d, want 1", got)
+		}
+	})
+
+	t.Run("active-passive ignores onlyInB", func(t *testing.T) {
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", true, time.Time{}, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.onlyInB.Load(); got != 0 {
+			t.Errorf("onlyInB = %d, want 0 in active-passive mode", got)
+		}
+	})
+}
+
+// TestVerifySyncSizeMismatch confirms that a file with differing sizes is
+// counted as a size mismatch and not as missing.
+func TestVerifySyncSizeMismatch(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyFileEntry("data.bin", 1024)},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyFileEntry("data.bin", 512)},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.sizeMismatch.Load(); got != 1 {
+		t.Errorf("sizeMismatch = %d, want 1", got)
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncConcurrencyBound verifies that the shared semaphore keeps peak
+// concurrent filer listings at or below verifySyncConcurrency at all times.
+// A 5ms delay per WithFilerClient call makes the concurrency overlap observable.
+func TestVerifySyncConcurrencyBound(t *testing.T) {
+	// Wide, shallow tree: root with 20 identical subdirectories.
+	const fanout = 20
+	entriesA := make(map[string][]*filer_pb.Entry)
+	entriesB := make(map[string][]*filer_pb.Entry)
+
+	rootDirs := make([]*filer_pb.Entry, fanout)
+	for i := range fanout {
+		name := fmt.Sprintf("sub%02d", i)
+		rootDirs[i] = verifyDirEntry(name)
+		entriesA["/root/"+name] = []*filer_pb.Entry{verifyFileEntry("f.txt", 10)}
+		entriesB["/root/"+name] = []*filer_pb.Entry{verifyFileEntry("f.txt", 10)}
+	}
+	entriesA["/root"] = rootDirs
+	entriesB["/root"] = rootDirs
+
+	clientA := &verifyTestFilerClient{entriesByDir: entriesA, delay: 5 * time.Millisecond}
+	clientB := &verifyTestFilerClient{entriesByDir: entriesB, delay: 5 * time.Millisecond}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.missingCount.Load() != 0 || result.sizeMismatch.Load() != 0 {
+		t.Errorf("unexpected diffs in identical tree")
+	}
+
+	if peak := clientA.peakFlight.Load(); peak > verifySyncConcurrency {
+		t.Errorf("clientA peak concurrent listings = %d, want ≤ %d (verifySyncConcurrency)",
+			peak, verifySyncConcurrency)
+	}
+	if peak := clientB.peakFlight.Load(); peak > verifySyncConcurrency {
+		t.Errorf("clientB peak concurrent listings = %d, want ≤ %d (verifySyncConcurrency)",
+			peak, verifySyncConcurrency)
+	}
+}
+
+// TestVerifySyncETagMismatch confirms that two files with the same size but
+// different Md5 checksums are counted as an ETag mismatch, not a size mismatch.
+func TestVerifySyncETagMismatch(t *testing.T) {
+	newEntry := func(name string, md5 []byte) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name: name,
+			Attributes: &filer_pb.FuseAttributes{
+				FileSize: 100,
+				Md5:      md5,
+			},
+		}
+	}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {newEntry("data.bin", []byte{0x11, 0x22, 0x33})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {newEntry("data.bin", []byte{0x44, 0x55, 0x66})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (same size should not trigger size mismatch)", got)
+	}
+}
+
+// TestVerifySyncChunkReorder confirms that two entries holding the SAME
+// chunks (same offsets, same per-chunk MD5s) in a DIFFERENT slice order are
+// classified as CHUNK_REORDER (content-equal), not ETAG_MISMATCH, and are
+// therefore not counted as errors. This is the S3-multipart vs filer.backup
+// reordering false positive.
+func TestVerifySyncChunkReorder(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	c2 := verifyChunk(200, 100, "chunk-2")
+
+	// A stores [c0,c1,c2]; B stores a permutation [c2,c0,c1] of the same chunks.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c2, c0, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Errorf("chunkReorder = %d, want 1", got)
+	}
+	if got := result.etagMismatch.Load(); got != 0 {
+		t.Errorf("etagMismatch = %d, want 0 (reordered chunks are content-equal)", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncGenuineChunkDivergence confirms that when one chunk's content
+// actually differs (same offsets and count, different per-chunk MD5), the file
+// stays classified as ETAG_MISMATCH and is NOT downgraded to CHUNK_REORDER.
+func TestVerifySyncGenuineChunkDivergence(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2-DIFFERENT"), // real content divergence
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (genuine chunk content divergence)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0 (content actually differs)", got)
+	}
+}
+
+// TestVerifySyncChunkCountDiffStaysEtagMismatch confirms that a differing chunk
+// count with an equal file size (e.g. differently split content) is NOT treated
+// as a reordering — it stays ETAG_MISMATCH.
+func TestVerifySyncChunkCountDiffStaysEtagMismatch(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "a"),
+				verifyChunk(100, 100, "b"),
+				verifyChunk(200, 100, "c"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 150, "x"),
+				verifyChunk(150, 150, "y"),
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (both total 300 bytes)", got)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncDuplicateOffsetStaysEtagMismatch confirms that overlapping
+// chunks at the same offset — where the visible bytes are resolved by chunk
+// timestamp, not by the raw chunk list — are NOT fast-pathed to CHUNK_REORDER.
+// Both sides hold the same two ETags at offset 0 in a different order, so the
+// file ETags differ; the visible content is ambiguous from the list alone, so
+// this must stay ETAG_MISMATCH.
+func TestVerifySyncDuplicateOffsetStaysEtagMismatch(t *testing.T) {
+	c1 := verifyChunk(0, 100, "v1")
+	c2 := verifyChunk(0, 100, "v2") // same offset → overlap
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (overlapping offsets are not a safe reorder)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncManifestChunkStaysEtagMismatch confirms that entries containing
+// a manifest chunk are not fast-pathed to CHUNK_REORDER: manifest chunks
+// represent compacted, possibly overlapping history that this check does not
+// resolve.
+func TestVerifySyncManifestChunkStaysEtagMismatch(t *testing.T) {
+	manifest := func(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+		c := verifyChunk(offset, size, seed)
+		c.IsChunkManifest = true
+		return c
+	}
+	a0, a1 := manifest(0, 100, "m0"), verifyChunk(100, 100, "m1")
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a0, a1})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a1, a0})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (manifest chunks are not fast-pathed)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncEmptyChunkETagStaysEtagMismatch confirms that a chunk with an
+// empty per-chunk ETag is never fast-pathed to CHUNK_REORDER: an empty ETag is
+// not a content fingerprint, so (offset, size, ETag) equality cannot prove the
+// bytes match. The two sides reorder their non-empty chunks so the file ETags
+// differ and the reorder check is reached, but the empty-ETag chunk in the
+// middle must keep it ETAG_MISMATCH rather than assert a false content-equality.
+func TestVerifySyncEmptyChunkETagStaysEtagMismatch(t *testing.T) {
+	c0 := verifyChunk(0, 100, "e0")
+	empty := &filer_pb.FileChunk{Offset: 100, Size: 100} // no ETag → not a fingerprint
+	c2 := verifyChunk(200, 100, "e2")
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c0, empty, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c0, empty})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (empty per-chunk ETag is not a content fingerprint)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what it
+// wrote. Tests that assert on emitted diff records use it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(data)
+}
+
+// TestVerifySyncChunkReorderJSONEmittedByDefault confirms that in JSON output
+// mode a CHUNK_REORDER record is emitted at default verbosity: the -v=1 gate
+// suppresses only the human text report, so the NDJSON per-record stream stays
+// consistent with the summary count a machine consumer reads.
+func TestVerifySyncChunkReorderJSONEmittedByDefault(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	entryA := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1})
+	entryB := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c1, c0})
+
+	result := &VerifyResult{jsonOutput: true}
+	out := captureStdout(t, func() {
+		reportDiff(diffChunkReorder, "/root", entryA, entryB, result)
+	})
+
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Fatalf("chunkReorder = %d, want 1", got)
+	}
+	if !strings.Contains(out, `"type":"CHUNK_REORDER"`) {
+		t.Errorf("JSON output missing CHUNK_REORDER record at default verbosity; got %q", out)
+	}
+}
+
+// TestVerifySyncCutoffTime verifies that entries newer than cutoffTime are
+// skipped in both the A-only (MISSING) and B-only (ONLY_IN_B) branches.
+func TestVerifySyncCutoffTime(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	recentEntry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 2000}, // > cutoff
+		}
+	}
+	oldEntry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 500}, // < cutoff
+		}
+	}
+
+	t.Run("A-only recent file is skipped, not reported missing", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {recentEntry("new.txt")}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.skippedRecent.Load(); got != 1 {
+			t.Errorf("skippedRecent = %d, want 1", got)
+		}
+		if got := result.missingCount.Load(); got != 0 {
+			t.Errorf("missingCount = %d, want 0 (recent file should be skipped)", got)
+		}
+	})
+
+	t.Run("A-only old file is reported missing", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {oldEntry("old.txt")}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.missingCount.Load(); got != 1 {
+			t.Errorf("missingCount = %d, want 1", got)
+		}
+	})
+
+	t.Run("B-only recent file is skipped, not reported as ONLY_IN_B", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {recentEntry("new.txt")}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.skippedRecent.Load(); got != 1 {
+			t.Errorf("skippedRecent = %d, want 1", got)
+		}
+		if got := result.onlyInB.Load(); got != 0 {
+			t.Errorf("onlyInB = %d, want 0 (recent B-only file should be skipped)", got)
+		}
+	})
+
+	t.Run("B-only old file is reported as ONLY_IN_B", func(t *testing.T) {
+		clientA := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {}},
+		}
+		clientB := &verifyTestFilerClient{
+			entriesByDir: map[string][]*filer_pb.Entry{"/": {oldEntry("old.txt")}},
+		}
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		if err := compareDirectory(context.Background(), clientA, clientB,
+			"/", "/", false, cutoff, sem, result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.onlyInB.Load(); got != 1 {
+			t.Errorf("onlyInB = %d, want 1", got)
+		}
+	})
+}
+
+// TestVerifySyncCutoffMatchedFileBSideRecent verifies that when matched-name
+// files differ but only the B side is recently modified, the comparison is
+// skipped (sync-lag tolerance) rather than reporting a spurious mismatch.
+func TestVerifySyncCutoffMatchedFileBSideRecent(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	entry := func(size uint64, mtime int64) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:       "data.bin",
+			Attributes: &filer_pb.FuseAttributes{FileSize: size, Mtime: mtime},
+		}
+	}
+
+	// A is old (size 100), B is recently rewritten with a different size.
+	// Without the B-side cutoff check this would surface as SIZE_MISMATCH.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/": {entry(100, 500)}},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/": {entry(200, 2000)}},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, cutoff, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.skippedRecent.Load(); got != 1 {
+		t.Errorf("skippedRecent = %d, want 1 (B-side recent should skip)", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (recent B should not surface as mismatch)", got)
+	}
+}
+
+// TestVerifySyncMissingDirRecursesEvenWithRecentMtime verifies that a
+// directory missing in B with a recent mtime still has its subtree walked,
+// so older missing files inside are reported. A recent child write can bump
+// the parent mtime even though older missing files exist underneath.
+func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
+	cutoff := time.Unix(1000, 0)
+
+	recentDir := &filer_pb.Entry{
+		Name:        "subdir",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 2000}, // > cutoff
+	}
+	oldChild := &filer_pb.Entry{
+		Name:       "old.txt",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 10, Mtime: 500}, // < cutoff
+	}
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":       {recentDir},
+			"/subdir": {oldChild},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/": {},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, cutoff, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect: directory MISSING + recursed-old-file MISSING = 2 missing.
+	if got := result.missingCount.Load(); got != 2 {
+		t.Errorf("missingCount = %d, want 2 (recent dir + old child inside)", got)
+	}
+	if got := result.skippedRecent.Load(); got != 0 {
+		t.Errorf("skippedRecent = %d, want 0 (dir mtime should not gate recursion)", got)
+	}
+}
+
+// TestVerifySyncRootPath is a regression test for the path.Join fix.
+// fmt.Sprintf("%s/%s", "/", name) produced "//name"; path.Join produces "/name".
+// This test walks from "/" and verifies the child directory is found and
+// compared correctly (not silently skipped due to a malformed path).
+func TestVerifySyncRootPath(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/", "/", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.missingCount.Load() != 0 || result.sizeMismatch.Load() != 0 {
+		t.Errorf("identical trees from root should have no diffs: missing=%d size=%d",
+			result.missingCount.Load(), result.sizeMismatch.Load())
+	}
+	// 2 directories traversed: "/" and "/data"
+	if got := result.dirCount.Load(); got != 2 {
+		t.Errorf("dirCount = %d, want 2 (root + /data)", got)
+	}
+	// 1 file compared: /data/file.txt
+	if got := result.fileCount.Load(); got != 1 {
+		t.Errorf("fileCount = %d, want 1", got)
+	}
+}
+
+// TestVerifySyncNoDeadlockDeepTree ensures that a tree deeper than
+// verifySyncConcurrency completes without deadlocking. With a per-call
+// semaphore the walk would still complete (just with unbounded goroutines);
+// this test mainly guards that the shared-semaphore release-before-recurse
+// invariant holds — i.e. the walk finishes within the timeout.
+func TestVerifySyncNoDeadlockDeepTree(t *testing.T) {
+	// Build a binary tree of depth 10 (well past verifySyncConcurrency=5).
+	const depth = 10
+	entriesA := make(map[string][]*filer_pb.Entry)
+	entriesB := make(map[string][]*filer_pb.Entry)
+
+	var buildTree func(path string, d int)
+	buildTree = func(path string, d int) {
+		if d == 0 {
+			entriesA[path] = []*filer_pb.Entry{verifyFileEntry("leaf.txt", 1)}
+			entriesB[path] = []*filer_pb.Entry{verifyFileEntry("leaf.txt", 1)}
+			return
+		}
+		children := []*filer_pb.Entry{verifyDirEntry("left"), verifyDirEntry("right")}
+		entriesA[path] = children
+		entriesB[path] = children
+		buildTree(path+"/left", d-1)
+		buildTree(path+"/right", d-1)
+	}
+	buildTree("/root", depth)
+
+	clientA := &verifyTestFilerClient{entriesByDir: entriesA}
+	clientB := &verifyTestFilerClient{entriesByDir: entriesB}
+
+	done := make(chan error, 1)
+	go func() {
+		result := &VerifyResult{}
+		sem := make(chan struct{}, verifySyncConcurrency)
+		done <- compareDirectory(context.Background(), clientA, clientB,
+			"/root", "/root", false, time.Time{}, sem, result)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("compareDirectory did not complete within 10s — possible deadlock")
+	}
+}
+
+// TestVerifySyncByteOrderSkew covers a collation skew between two filer
+// versions: both return the SAME name set in DIFFERENT order. Filer A (older,
+// pre-4.32) lists in locale collation (case-insensitive: lowercase mixes in
+// among uppercase); filer B (4.32+, with PR #9824) lists in byte order
+// (uppercase before lowercase). The mock returns each side's slice verbatim.
+//
+// Because compareDirectory sorts both sides client-side before merging, the two
+// orders converge and no spurious diffs are reported. Were the sort removed, the
+// streaming merge would desync and count 3 false MISSING + 3 false ONLY_IN_B.
+func TestVerifySyncByteOrderSkew(t *testing.T) {
+	// locale order (case-insensitive): lowercase mixes in among uppercase.
+	localeOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+	}
+	// byte order: uppercase (R,X,Z) sort before lowercase (m,n).
+	byteOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+	}
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": localeOrder},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": byteOrder},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncSourcesListConcurrently guards against re-serializing the two
+// directory listings: both sides buffer + sort, and their loads must run
+// concurrently — not A fully then B. A shared gate releases only once both
+// listings are in-flight at the same time; if they were sequential the first
+// would block on the gate and time out.
+func TestVerifySyncSourcesListConcurrently(t *testing.T) {
+	var started atomic.Int32
+	var timedOut atomic.Bool
+	release := make(chan struct{})
+	gate := func() {
+		if started.Add(1) == 2 {
+			close(release) // both listings reached the gate → proceed
+		}
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+			timedOut.Store(true) // only one listing ever in-flight → serialized
+		}
+	}
+
+	entries := []*filer_pb.Entry{verifyFileEntry("a", 1), verifyFileEntry("b", 1)}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if timedOut.Load() {
+		t.Fatal("sources listed sequentially: both listings were not in-flight at once")
+	}
+}
+
+// TestVerifySyncListErrorNoBogusDiffs verifies that a listing failure aborts
+// with the error and reports no differences. A side whose listing errors keeps
+// only a partial, unsorted buffer; the error must be surfaced before the merge
+// so those partial entries never produce spurious MISSING / ONLY_IN_B.
+func TestVerifySyncListErrorNoBogusDiffs(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		verifyFileEntry("a", 1),
+		verifyFileEntry("b", 1),
+		verifyFileEntry("c", 1),
+	}
+	// A errors mid-listing (partial buffer); B lists cleanly.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		recvErr:      fmt.Errorf("injected list failure"),
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+	if err == nil {
+		t.Fatal("expected a listing error, got nil")
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.fileCount.Load(); got != 0 {
+		t.Errorf("fileCount = %d, want 0 (merge must not run on failed listing)", got)
+	}
+}

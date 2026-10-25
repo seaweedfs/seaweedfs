@@ -1,5 +1,4 @@
 //go:build !s3tests
-// +build !s3tests
 
 package util
 

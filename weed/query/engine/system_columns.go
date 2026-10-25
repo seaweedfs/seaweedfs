@@ -50,14 +50,6 @@ func (e *SQLEngine) getSystemColumnDisplayName(columnName string) string {
 	}
 }
 
-// isSystemColumnDisplayName checks if a column name is a system column display name
-func (e *SQLEngine) isSystemColumnDisplayName(columnName string) bool {
-	lowerName := strings.ToLower(columnName)
-	return lowerName == SW_DISPLAY_NAME_TIMESTAMP ||
-		lowerName == SW_COLUMN_NAME_KEY ||
-		lowerName == SW_COLUMN_NAME_SOURCE
-}
-
 // getSystemColumnInternalName returns the internal name for a system column display name
 func (e *SQLEngine) getSystemColumnInternalName(displayName string) string {
 	lowerName := strings.ToLower(displayName)

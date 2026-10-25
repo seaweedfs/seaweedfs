@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -60,7 +61,10 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	if c, ok := r.children[NodeId(nodeId)]; ok {
 		dn := c.(*DataNode)
 		// Log if IP or Port changed (e.g., pod rescheduled in K8s)
-		if dn.Ip != ip || dn.Port != port {
+		addrChanged := dn.Ip != ip || dn.Port != port
+		var oldAddr pb.ServerAddress
+		if addrChanged {
+			oldAddr = dn.ServerAddress()
 			glog.V(0).Infof("DataNode %s address changed from %s:%d to %s:%d", nodeId, dn.Ip, dn.Port, ip, port)
 		}
 		// Update the IP/Port in case they changed
@@ -69,6 +73,12 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 		dn.GrpcPort = grpcPort
 		dn.PublicUrl = publicUrl
 		dn.LastSeen = time.Now().Unix()
+		if addrChanged {
+			if topo := r.GetTopology(); topo != nil {
+				topo.unregisterDataNodeAddress(oldAddr, dn)
+				topo.registerDataNodeAddress(dn)
+			}
+		}
 		return dn
 	}
 
@@ -92,7 +102,8 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 				delete(r.children, oldId)
 				dn.id = NodeId(nodeId)
 				r.children[NodeId(nodeId)] = dn
-				// Update connection info in case they changed
+				// Update connection info in case they changed; address itself is
+				// unchanged on legacy transition, so the index entry stays valid.
 				dn.GrpcPort = grpcPort
 				dn.PublicUrl = publicUrl
 				dn.LastSeen = time.Now().Unix()
@@ -137,14 +148,14 @@ func (r *Rack) ToInfo() (info RackInfo) {
 	return
 }
 
-func (r *Rack) ToRackInfo() *master_pb.RackInfo {
+func (r *Rack) ToRackInfo(filter VolumeFilter) *master_pb.RackInfo {
 	m := &master_pb.RackInfo{
 		Id:        string(r.Id()),
 		DiskInfos: r.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
-		m.DataNodeInfos = append(m.DataNodeInfos, dn.ToDataNodeInfo())
+		m.DataNodeInfos = append(m.DataNodeInfos, dn.ToDataNodeInfo(filter))
 	}
 	return m
 }

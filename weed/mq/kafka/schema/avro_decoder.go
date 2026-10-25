@@ -431,12 +431,6 @@ func convertAvroSimpleType(avroType string) (*schema_pb.Type, error) {
 	}
 }
 
-// convertAvroComplexType converts complex Avro types to SeaweedMQ types
-func convertAvroComplexType(avroType map[string]interface{}) (*schema_pb.Type, error) {
-	fieldType, _, err := convertAvroComplexTypeWithRepeated(avroType)
-	return fieldType, err
-}
-
 // convertAvroComplexTypeWithRepeated converts complex Avro types to SeaweedMQ types and returns if it's repeated
 func convertAvroComplexTypeWithRepeated(avroType map[string]interface{}) (*schema_pb.Type, bool, error) {
 	typeStr, ok := avroType["type"].(string)

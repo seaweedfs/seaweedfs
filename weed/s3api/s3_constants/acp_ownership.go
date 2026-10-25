@@ -16,3 +16,12 @@ func ValidateOwnership(ownership string) bool {
 		return true
 	}
 }
+
+// EffectiveOwnership resolves a stored ownership setting to the one that governs
+// the bucket: absent or invalid behaves as BucketOwnerEnforced.
+func EffectiveOwnership(ownership string) string {
+	if !ValidateOwnership(ownership) {
+		return DefaultOwnershipForExists
+	}
+	return ownership
+}

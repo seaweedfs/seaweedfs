@@ -1,25 +1,33 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,179 +38,71 @@ type EmbeddedIamApiForTest struct {
 }
 
 func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
+	store := &memory.MemoryStore{}
+	store.Initialize(nil, "")
+	cm := &credential.CredentialManager{Store: store}
 	e := &EmbeddedIamApiForTest{
 		EmbeddedIamApi: &EmbeddedIamApi{
-			iam: &IdentityAccessManagement{},
+			iam:               &IdentityAccessManagement{credentialManager: cm},
+			credentialManager: cm,
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
+	var syncOnce sync.Once
 	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
-		if e.mockConfig != nil {
-			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-			proto.Merge(s3cfg, cloned)
+		// If mockConfig was set directly in test, sync it to store first (only once)
+		var syncErr error
+		syncOnce.Do(func() {
+			if e.mockConfig != nil {
+				syncErr = cm.SaveConfiguration(context.Background(), e.mockConfig)
+			}
+		})
+		if syncErr != nil {
+			return syncErr
 		}
-		return nil
+		config, err := cm.LoadConfiguration(context.Background())
+		if err == nil {
+			e.mockConfig = config
+			proto.Reset(s3cfg)
+			// Manually copy identities and other fields to avoid Merge issues with slices
+			s3cfg.Identities = make([]*iam_pb.Identity, len(config.Identities))
+			for i, ident := range config.Identities {
+				s3cfg.Identities[i] = proto.Clone(ident).(*iam_pb.Identity)
+			}
+			s3cfg.Policies = make([]*iam_pb.Policy, len(config.Policies))
+			for i, p := range config.Policies {
+				s3cfg.Policies[i] = proto.Clone(p).(*iam_pb.Policy)
+			}
+			s3cfg.Groups = make([]*iam_pb.Group, len(config.Groups))
+			for i, g := range config.Groups {
+				s3cfg.Groups[i] = proto.Clone(g).(*iam_pb.Group)
+			}
+		}
+		return err
 	}
 	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
 		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-		return nil
+		return cm.SaveConfiguration(context.Background(), s3cfg)
 	}
 	e.reloadConfigurationFunc = func() error {
+		config, err := cm.LoadConfiguration(context.Background())
+		if err != nil {
+			return err
+		}
+		e.mockConfig = config
+		// Also refresh the IAM state so lookup functions see the updated configuration
+		if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			return err
+		}
 		return nil
 	}
 	return e
 }
 
-// Override GetS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	if e.mockConfig != nil {
-		cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-		proto.Merge(s3cfg, cloned)
-	}
-	return nil
-}
-
-// Override PutS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-	return nil
-}
-
 // DoActions handles IAM API actions for testing
 func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-	values := r.PostForm
-	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := e.GetS3ApiConfiguration(s3cfg); err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
-
-	var response interface{}
-	var iamErr *iamError
-	changed := true
-
-	action := r.Form.Get("Action")
-
-	if e.readOnly {
-		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
-			// Allowed read-only actions
-		default:
-			e.writeIamErrorResponse(w, r, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")})
-			return
-		}
-	}
-
-	switch action {
-	case "ListUsers":
-		response = e.ListUsers(s3cfg, values)
-		changed = false
-	case "ListAccessKeys":
-		e.handleImplicitUsername(r, values)
-		response = e.ListAccessKeys(s3cfg, values)
-		changed = false
-	case "CreateUser":
-		response, iamErr = e.CreateUser(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "GetUser":
-		userName := values.Get("UserName")
-		response, iamErr = e.GetUser(s3cfg, userName)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-		changed = false
-	case "UpdateUser":
-		response, iamErr = e.UpdateUser(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	case "DeleteUser":
-		userName := values.Get("UserName")
-		response, iamErr = e.DeleteUser(s3cfg, userName)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "CreateAccessKey":
-		e.handleImplicitUsername(r, values)
-		response, iamErr = e.CreateAccessKey(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-	case "DeleteAccessKey":
-		e.handleImplicitUsername(r, values)
-		response = e.DeleteAccessKey(s3cfg, values)
-	case "CreatePolicy":
-		response, iamErr = e.CreatePolicy(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	case "PutUserPolicy":
-		response, iamErr = e.PutUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "GetUserPolicy":
-		response, iamErr = e.GetUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-		changed = false
-	case "DeleteUserPolicy":
-		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "SetUserStatus":
-		response, iamErr = e.SetUserStatus(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "UpdateAccessKey":
-		e.handleImplicitUsername(r, values)
-		response, iamErr = e.UpdateAccessKey(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	default:
-		http.Error(w, "Not implemented", http.StatusNotImplemented)
-		return
-	}
-
-	if changed {
-		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	xmlBytes, err := xml.Marshal(response)
-	if err != nil {
-		// This should not happen in tests, but log it for debugging
-		http.Error(w, "Internal error: failed to marshal response", http.StatusInternalServerError)
-		return
-	}
-	_, _ = w.Write(xmlBytes)
+	// Call the real DoActions
+	e.EmbeddedIamApi.DoActions(w, r)
 }
 
 // executeEmbeddedIamRequest executes an IAM request against the given API instance.
@@ -229,11 +129,47 @@ type embeddedIamErrorResponseForTest struct {
 }
 
 func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {
-	var er embeddedIamErrorResponseForTest
-	if err := xml.Unmarshal(response.Body.Bytes(), &er); err != nil {
-		return "", ""
+	body := response.Body.Bytes()
+	// Try parsing with ErrorResponse root
+	type localError struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
 	}
-	return er.Error.Code, er.Error.Message
+	type localResponse struct {
+		XMLName xml.Name   `xml:"ErrorResponse"`
+		Error   localError `xml:"Error"`
+	}
+	var lr localResponse
+	if err := xml.Unmarshal(body, &lr); err == nil && lr.Error.Code != "" {
+		return lr.Error.Code, lr.Error.Message
+	}
+
+	// Try parsing with Error root
+	type simpleError struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+		Message string   `xml:"Message"`
+	}
+	var se simpleError
+	if err := xml.Unmarshal(body, &se); err == nil && se.Code != "" {
+		return se.Code, se.Message
+	}
+
+	var er embeddedIamErrorResponseForTest
+	if err := xml.Unmarshal(body, &er); err == nil {
+		return er.Error.Code, er.Error.Message
+	}
+
+	return "", ""
+}
+
+func extractEmbeddedIamRequestID(response *httptest.ResponseRecorder) string {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(response.Body.String())
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
 }
 
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
@@ -254,9 +190,98 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	assert.NotNil(t, out.CreateUserResult.User.UserName)
 	assert.Equal(t, "TestUser", *out.CreateUserResult.User.UserName)
 
+	// Issue #9786: terraform aws provider >= 6.41 blocks on a valid ARN.
+	assert.True(t, arn.IsARN(aws.StringValue(out.CreateUserResult.User.Arn)),
+		"CreateUser must return a valid ARN, got %q", aws.StringValue(out.CreateUserResult.User.Arn))
+
 	// Verify user was persisted in config
 	assert.Len(t, api.mockConfig.Identities, 1)
 	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
+}
+
+// TestEmbeddedIamCreateUserDoesNotSaveAllUsers is a regression test for the bug
+// where creating a new user triggered a full SaveConfiguration over all existing
+// identities (causing N file writes + reload cycles in the filer_etc store).
+// The fix uses credentialManager.CreateUser for a targeted single-file write.
+func TestEmbeddedIamCreateUserDoesNotSaveAllUsers(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+
+	// Seed both mockConfig and the credential store directly so the test does
+	// not rely on the getS3ApiConfigurationFunc fixture's syncOnce side effect
+	// to populate the store. Pre-call assertions below fail loudly if seeding
+	// breaks for any reason.
+	existing := []string{"existing-user-1", "existing-user-2", "existing-user-3"}
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+	for _, name := range existing {
+		api.mockConfig.Identities = append(api.mockConfig.Identities, &iam_pb.Identity{Name: name})
+	}
+	require.NoError(t, api.credentialManager.SaveConfiguration(ctx, api.mockConfig))
+	for _, name := range existing {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "seed precondition: %s must exist", name)
+		require.Equal(t, name, u.Name)
+	}
+
+	// Track calls to PutS3ApiConfiguration (the full-config write path).
+	putConfigCalls := 0
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		putConfigCalls++
+		api.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return api.credentialManager.SaveConfiguration(ctx, s3cfg)
+	}
+
+	params := &iam.CreateUserInput{UserName: aws.String("new-user")}
+	req, _ := iam.New(session.New()).CreateUserRequest(params)
+	_ = req.Build()
+	out := iamCreateUserResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	// The new user must be visible.
+	newUser, userErr := api.credentialManager.GetUser(ctx, "new-user")
+	require.NoError(t, userErr)
+	require.Equal(t, "new-user", newUser.Name)
+
+	// The critical assertion: full SaveConfiguration must NOT have been called.
+	// Previously this was called once for every CreateUser, re-writing all N user
+	// files and triggering N reload loops.
+	assert.Equal(t, 0, putConfigCalls, "CreateUser must not call PutS3ApiConfiguration (full-config save)")
+
+	// Pre-existing users must be untouched.
+	for _, name := range existing {
+		u, err := api.credentialManager.GetUser(ctx, name)
+		require.NoError(t, err, "pre-existing user %s should still exist", name)
+		assert.Equal(t, name, u.Name)
+	}
+}
+
+// TestEmbeddedIamCreateUserSkipPersist asserts that ExecuteAction("CreateUser",
+// skipPersist=true) performs no persistent write to the credential store. The
+// targeted-create optimization must respect the skipPersist contract documented
+// on ExecuteAction; otherwise no-persist callers would silently leak writes.
+func TestEmbeddedIamCreateUserSkipPersist(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+
+	api.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		t.Fatalf("PutS3ApiConfiguration must not be called when skipPersist=true")
+		return nil
+	}
+
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "no-persist-user")
+
+	resp, iamErr := api.ExecuteAction(ctx, vals, true /*skipPersist*/, "")
+	require.Nil(t, iamErr)
+	require.NotNil(t, resp)
+
+	// The credential store must not have the user — skipPersist contract.
+	_, err := api.credentialManager.GetUser(ctx, "no-persist-user")
+	require.ErrorIs(t, err, credential.ErrUserNotFound,
+		"skipPersist=true must not write the new user to the credential store")
 }
 
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
@@ -279,6 +304,8 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 
 	// Verify response contains the users
 	assert.Len(t, out.ListUsersResult.Users, 2)
+	assert.NotEmpty(t, response.Header().Get(request_id.AmzRequestIDHeader))
+	assert.Equal(t, response.Header().Get(request_id.AmzRequestIDHeader), out.ResponseMetadata.RequestId)
 }
 
 // TestEmbeddedIamListAccessKeys tests listing access keys via the embedded IAM API
@@ -314,6 +341,51 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 
 	// Verify response contains correct username
 	assert.NotNil(t, out.GetUserResult.User.UserName)
+	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
+
+	// Issue #9786: the terraform aws provider reads the user back after creating
+	// it and waits until GetUser returns a value that passes arn.IsARN.
+	assert.True(t, arn.IsARN(aws.StringValue(out.GetUserResult.User.Arn)),
+		"GetUser must return a valid ARN, got %q", aws.StringValue(out.GetUserResult.User.Arn))
+}
+
+// TestEmbeddedIamGetUserImplicitUsername verifies GetUser without a UserName defaults
+// to the user that signed the request rather than returning NoSuchEntity for an empty
+// username, matching documented AWS IAM behavior.
+func TestEmbeddedIamGetUserImplicitUsername(t *testing.T) {
+	const accessKey = UserAccessKeyPrefix + "TESTFAKEKEY000001"
+
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "TestUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: accessKey, SecretKey: "testsecretfake"},
+				},
+			},
+		},
+	}
+	// handleImplicitUsername resolves the username via iam.LookupByAccessKey,
+	// so the iam state must know about the credential.
+	if err := api.iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(api.mockConfig)); err != nil {
+		t.Fatalf("failed to load iam config: %v", err)
+	}
+
+	// GetUser request with NO UserName, carrying the identity authentication
+	// verified for accessKey, the way the middleware records it.
+	form := url.Values{}
+	form.Set("Action", "GetUser")
+	req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(SetIdentityNameInContext(req.Context(), "TestUser"))
+
+	out := iamGetUserResponse{}
+	rr, err := executeEmbeddedIamRequest(api, req, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+
+	require.NotNil(t, out.GetUserResult.User.UserName)
 	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
 }
 
@@ -352,6 +424,98 @@ func TestEmbeddedIamCreatePolicy(t *testing.T) {
 	assert.Equal(t, "S3-read-only-example-bucket", *out.CreatePolicyResult.Policy.PolicyName)
 	assert.NotNil(t, out.CreatePolicyResult.Policy.Arn)
 	assert.NotNil(t, out.CreatePolicyResult.Policy.PolicyId)
+}
+
+// TestEmbeddedIamCreatePolicyVersion covers the embedded IAM path for issue
+// #9785: updating a managed policy in place via CreatePolicyVersion (used by the
+// AWS Terraform provider) instead of returning 501 NotImplemented.
+func TestEmbeddedIamCreatePolicyVersion(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	svc := iam.New(session.New())
+	policyArn := aws.String("arn:aws:iam:::policy/tf-managed")
+
+	// Create the managed policy.
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String("tf-managed"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*","s3:List*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeEmbeddedIamRequest(api, createReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// Update it in place. This used to return 501 NotImplemented.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = cpvReq.Build()
+	out := iamCreatePolicyVersionResponse{}
+	resp, err = executeEmbeddedIamRequest(api, cpvReq.HTTPRequest, &out)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	assert.Equal(t, "v1", *out.CreatePolicyVersionResult.PolicyVersion.VersionId)
+	require.NotNil(t, out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+	assert.True(t, *out.CreatePolicyVersionResult.PolicyVersion.IsDefaultVersion)
+
+	// The stored document must reflect the update.
+	gpvReq, _ := svc.GetPolicyVersionRequest(&iam.GetPolicyVersionInput{PolicyArn: policyArn, VersionId: aws.String("v1")})
+	_ = gpvReq.Build()
+	gpvOut := iamGetPolicyVersionResponse{}
+	resp, err = executeEmbeddedIamRequest(api, gpvReq.HTTPRequest, &gpvOut)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NotNil(t, gpvOut.GetPolicyVersionResult.PolicyVersion.Document)
+	assert.Contains(t, *gpvOut.GetPolicyVersionResult.PolicyVersion.Document, "s3:Get*")
+	assert.NotContains(t, *gpvOut.GetPolicyVersionResult.PolicyVersion.Document, "s3:List*")
+}
+
+// TestEmbeddedIamCreatePolicyVersionMissingPolicy verifies NoSuchEntity when the
+// target policy does not exist.
+func TestEmbeddedIamCreatePolicyVersionMissingPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	req, _ := iam.New(session.New()).CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String("arn:aws:iam:::policy/does-not-exist"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+		SetAsDefault:   aws.Bool(true),
+	})
+	_ = req.Build()
+	resp, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault verifies the embedded
+// path also rejects a non-default version request given the single-version model.
+func TestEmbeddedIamCreatePolicyVersionRequiresSetAsDefault(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	svc := iam.New(session.New())
+	policyArn := aws.String("arn:aws:iam:::policy/tf-managed")
+
+	createReq, _ := svc.CreatePolicyRequest(&iam.CreatePolicyInput{
+		PolicyName:     aws.String("tf-managed"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Get*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = createReq.Build()
+	resp, err := executeEmbeddedIamRequest(api, createReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// SetAsDefault omitted must be rejected.
+	cpvReq, _ := svc.CreatePolicyVersionRequest(&iam.CreatePolicyVersionInput{
+		PolicyArn:      policyArn,
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:Put*"],"Resource":["arn:aws:s3:::EXAMPLE-BUCKET"]}]}`),
+	})
+	_ = cpvReq.Build()
+	resp, err = executeEmbeddedIamRequest(api, cpvReq.HTTPRequest, nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(resp)
+	assert.Equal(t, "InvalidInput", code)
 }
 
 // TestEmbeddedIamPutUserPolicy tests attaching a policy to a user
@@ -528,6 +692,397 @@ func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+// TestEmbeddedIamListUserPolicies tests listing inline policies for a user.
+func TestEmbeddedIamListUserPolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "UserWithPolicy",
+				Actions: []string{"Read", "Write"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret"},
+				},
+			},
+			{
+				Name: "UserWithoutPolicy",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: UserAccessKeyPrefix + "TEST67890", SecretKey: "secret"},
+				},
+			},
+		},
+	}
+
+	// List policies for user with actions
+	form := url.Values{}
+	form.Set("Action", "ListUserPolicies")
+	form.Set("UserName", "UserWithPolicy")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "ListUserPoliciesResponse")
+	assert.Contains(t, rr.Body.String(), "PolicyNames")
+	assert.Contains(t, rr.Body.String(), "UserWithPolicy_policy")
+
+	// List policies for user without actions
+	form2 := url.Values{}
+	form2.Set("Action", "ListUserPolicies")
+	form2.Set("UserName", "UserWithoutPolicy")
+
+	req2, _ := http.NewRequest("POST", "/", nil)
+	req2.PostForm = form2
+	req2.Form = form2
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr2 := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr2, req2)
+
+	assert.Equal(t, http.StatusOK, rr2.Code)
+	assert.Contains(t, rr2.Body.String(), "ListUserPoliciesResponse")
+
+	// List policies for nonexistent user
+	form3 := url.Values{}
+	form3.Set("Action", "ListUserPolicies")
+	form3.Set("UserName", "NonExistentUser")
+
+	req3, _ := http.NewRequest("POST", "/", nil)
+	req3.PostForm = form3
+	req3.Form = form3
+	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr3 := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr3, req3)
+
+	assert.Equal(t, http.StatusNotFound, rr3.Code)
+}
+
+// TestEmbeddedIamGroupInlinePolicies_CRUD exercises the Put/Get/List/Delete
+// round-trip for group inline policies and verifies that an unknown policy
+// surfaces as NoSuchEntity (not the legacy NotImplemented).
+func TestEmbeddedIamGroupInlinePolicies_CRUD(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Groups: []*iam_pb.Group{
+			{Name: "developers", Members: []string{"alice"}},
+		},
+	}
+	api.mockConfig = s3cfg
+
+	policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`
+
+	_, iamErr := api.PutGroupPolicy(s3cfg, url.Values{
+		"GroupName":      {"developers"},
+		"PolicyName":     {"DevPolicy"},
+		"PolicyDocument": {policyDoc},
+	})
+	require.Nil(t, iamErr, "PutGroupPolicy must succeed; got: %+v", iamErr)
+
+	listResp, iamErr := api.ListGroupPolicies(s3cfg, url.Values{"GroupName": {"developers"}})
+	require.Nil(t, iamErr)
+	assert.Equal(t, []string{"DevPolicy"}, listResp.ListGroupPoliciesResult.PolicyNames)
+
+	getResp, iamErr := api.GetGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
+	require.Nil(t, iamErr)
+	assert.Equal(t, "developers", getResp.GetGroupPolicyResult.GroupName)
+	assert.Equal(t, "DevPolicy", getResp.GetGroupPolicyResult.PolicyName)
+	assert.Contains(t, getResp.GetGroupPolicyResult.PolicyDocument, "s3:GetObject")
+
+	_, iamErr = api.DeleteGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
+	require.Nil(t, iamErr)
+
+	_, iamErr = api.GetGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
+	require.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+
+	_, iamErr = api.GetGroupPolicy(s3cfg, url.Values{"GroupName": {"ghosts"}, "PolicyName": {"DevPolicy"}})
+	require.NotNil(t, iamErr, "GetGroupPolicy on a missing group must error")
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+// TestEmbeddedIamAttachUserPolicy tests attaching a managed policy to a user.
+func TestEmbeddedIamAttachUserPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamAttachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"TestManagedPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+func TestEmbeddedIamAttachUserPolicyRefreshesIAM(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+	cm := api.credentialManager
+	user := &iam_pb.Identity{
+		Name: "policyRefreshUser",
+		Credentials: []*iam_pb.Credential{
+			{AccessKey: "REFRESHACCESS", SecretKey: "REFRESHSECRET"},
+		},
+	}
+	require.NoError(t, cm.CreateUser(ctx, user))
+	policy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::bucket/*"),
+			},
+		},
+	}
+	require.NoError(t, cm.PutPolicy(ctx, "RefreshPolicy", policy))
+	require.NoError(t, api.iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := api.iam.lookupByIdentityName("policyRefreshUser")
+	require.NotNil(t, identity)
+	assert.Empty(t, identity.PolicyNames)
+
+	values := url.Values{}
+	values.Set("UserName", "policyRefreshUser")
+	values.Set("PolicyArn", "arn:aws:iam:::policy/RefreshPolicy")
+
+	_, iamErr := api.AttachUserPolicy(ctx, values)
+	require.Nil(t, iamErr)
+
+	identity = api.iam.lookupByIdentityName("policyRefreshUser")
+	require.NotNil(t, identity)
+	assert.Equal(t, []string{"RefreshPolicy"}, identity.PolicyNames)
+}
+
+// TestEmbeddedIamAttachUserPolicyNoSuchPolicy tests attach failure when managed policy does not exist.
+func TestEmbeddedIamAttachUserPolicyNoSuchPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/DoesNotExist"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamDetachUserPolicy tests detaching a managed policy from a user.
+func TestEmbeddedIamDetachUserPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestManagedPolicy", "KeepPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+			{Name: "KeepPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DetachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).DetachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamDetachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"KeepPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+// TestEmbeddedIamDeletePolicyInUse ensures deleting a policy that is still attached returns conflict.
+func TestEmbeddedIamDeletePolicyInUse(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DeletePolicyInput{
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestPolicy"),
+	}
+	req, _ := iam.New(session.New()).DeletePolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, iam.ErrCodeDeleteConflictException, code)
+
+	assert.Len(t, api.mockConfig.Policies, 1)
+	assert.Equal(t, "TestPolicy", api.mockConfig.Policies[0].Name)
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
+	assert.Contains(t, api.mockConfig.Identities[0].PolicyNames, "TestPolicy")
+}
+
+// TestEmbeddedIamAttachAlreadyAttachedPolicy ensures attaching a policy already
+// present on the user is idempotent.
+func TestEmbeddedIamAttachAlreadyAttachedPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestManagedPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamAttachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"TestManagedPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+// TestEmbeddedIamDetachNotAttachedPolicy verifies detaching a policy that's not
+// attached returns NoSuchEntity.
+func TestEmbeddedIamDetachNotAttachedPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "MissingPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DetachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/MissingPolicy"),
+	}
+	req, _ := iam.New(session.New()).DetachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamAttachPolicyLimitExceeded ensures we honor the managed policy limit.
+func TestEmbeddedIamAttachPolicyLimitExceeded(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	existingPolicies := make([]string, 0, MaxManagedPoliciesPerUser)
+	configPolicies := make([]*iam_pb.Policy, 0, MaxManagedPoliciesPerUser+1)
+	for i := 0; i < MaxManagedPoliciesPerUser; i++ {
+		name := fmt.Sprintf("ManagedPolicy%d", i)
+		existingPolicies = append(existingPolicies, name)
+		configPolicies = append(configPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: `{"Version":"2012-10-17","Statement":[]}`,
+		})
+	}
+	configPolicies = append(configPolicies, &iam_pb.Policy{
+		Name:    "NewPolicy",
+		Content: `{"Version":"2012-10-17","Statement":[]}`,
+	})
+
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: existingPolicies},
+		},
+		Policies: configPolicies,
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/NewPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, iam.ErrCodeLimitExceededException, code)
+	assert.Len(t, api.mockConfig.Identities[0].PolicyNames, MaxManagedPoliciesPerUser)
+}
+
+// TestEmbeddedIamListAttachedUserPolicies tests listing managed policies attached to a user.
+func TestEmbeddedIamListAttachedUserPolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"PolicyA", "PolicyB"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "PolicyA", Content: `{"Version":"2012-10-17","Statement":[]}`},
+			{Name: "PolicyB", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String("TestUser"),
+	}
+	req, _ := iam.New(session.New()).ListAttachedUserPoliciesRequest(params)
+	_ = req.Build()
+
+	out := iamListAttachedUserPoliciesResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.False(t, out.ListAttachedUserPoliciesResult.IsTruncated)
+	assert.Len(t, out.ListAttachedUserPoliciesResult.AttachedPolicies, 2)
+
+	got := map[string]string{}
+	for _, attached := range out.ListAttachedUserPoliciesResult.AttachedPolicies {
+		got[aws.StringValue(attached.PolicyName)] = aws.StringValue(attached.PolicyArn)
+	}
+	assert.Equal(t, "arn:aws:iam:::policy/PolicyA", got["PolicyA"])
+	assert.Equal(t, "arn:aws:iam:::policy/PolicyB", got["PolicyB"])
+}
+
 // TestEmbeddedIamUpdateUser tests updating a user
 func TestEmbeddedIamUpdateUser(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -546,6 +1101,46 @@ func TestEmbeddedIamUpdateUser(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+}
+
+// TestEmbeddedIamUpdateUserPreservesInlinePolicies makes sure renaming a
+// user keeps that user's stored inline policies under the new name.
+// Without the explicit policy migration in UpdateUser, SaveConfiguration
+// prunes the old name and CASCADE drops the policies.
+func TestEmbeddedIamUpdateUserPreservesInlinePolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	const (
+		oldName    = "RenameMe"
+		newName    = "Renamed"
+		policyName = "ReadBucket"
+	)
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: oldName}},
+	}
+	doc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{{
+			Effect:   policy_engine.PolicyEffectAllow,
+			Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+			Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::bucket/*"),
+		}},
+	}
+	require.NoError(t, api.credentialManager.PutUserInlinePolicy(context.Background(), oldName, policyName, doc))
+
+	params := &iam.UpdateUserInput{NewUserName: aws.String(newName), UserName: aws.String(oldName)}
+	req, _ := iam.New(session.New()).UpdateUserRequest(params)
+	_ = req.Build()
+	out := iamUpdateUserResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	got, err := api.credentialManager.GetUserInlinePolicy(context.Background(), newName, policyName)
+	require.NoError(t, err)
+	require.NotNil(t, got, "inline policy should have been migrated to the new username")
+	assert.Equal(t, doc.Version, got.Version)
+	require.Len(t, got.Statement, 1)
+	assert.Equal(t, policy_engine.PolicyEffectAllow, got.Statement[0].Effect)
 }
 
 // TestEmbeddedIamDeleteUser tests deleting a user
@@ -597,6 +1192,356 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 }
 
+// TestEmbeddedIamCreateAccessKeyRejectsMissingUser verifies CreateAccessKey
+// returns NoSuchEntity for an unknown user without mutating the config.
+func TestEmbeddedIamCreateAccessKeyRejectsMissingUser(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "ExistingUser"}},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "GhostUser")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	// No new identity and no credential appended to the existing one.
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
+}
+
+// TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys tests creating an access key with caller-supplied credentials
+func TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "myapp")
+	form.Set("SecretAccessKey", "mysecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Verify caller-supplied keys were used, not random ones
+	var out iamCreateAccessKeyResponse
+	err := xml.Unmarshal(rr.Body.Bytes(), &out)
+	require.NoError(t, err, "failed to unmarshal CreateAccessKey response")
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	require.NotNil(t, out.CreateAccessKeyResult.AccessKey.UserName)
+	assert.Equal(t, "myapp", *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, "mysecret123", *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Equal(t, "TestUser", *out.CreateAccessKeyResult.AccessKey.UserName)
+
+	// Verify credentials were persisted with caller-supplied keys
+	require.Len(t, api.mockConfig.Identities, 1)
+	require.Len(t, api.mockConfig.Identities[0].Credentials, 1)
+	assert.Equal(t, "myapp", api.mockConfig.Identities[0].Credentials[0].AccessKey)
+	assert.Equal(t, "mysecret123", api.mockConfig.Identities[0].Credentials[0].SecretKey)
+}
+
+// TestEmbeddedIamCreateAccessKeyRejectsWeakKeys tests that weak caller-supplied keys are rejected
+func TestEmbeddedIamCreateAccessKeyRejectsWeakKeys(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	// AccessKeyId too short
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "ab")
+	form.Set("SecretAccessKey", "validsecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId must be 4 to 128 alphanumeric characters")
+
+	// SecretAccessKey too short
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "short")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+	// AccessKeyId with SigV4 delimiters
+	form.Set("AccessKeyId", "foo/bar=baz")
+	form.Set("SecretAccessKey", "validsecret123")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId must be 4 to 128 alphanumeric characters")
+}
+
+// TestEmbeddedIamCreateAccessKeyRejectsCollision tests that duplicate access keys are rejected
+func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	// Use a distinctive owner name ("ownerAlpha") so the leak assertion
+	// cannot accidentally match a word embedded in the error body.
+	const ownerName = "ownerAlpha"
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: ownerName,
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "takenkey", SecretKey: "existingsecret"},
+				},
+			},
+			{Name: "NewUser"},
+		},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "NewUser")
+	form.Set("AccessKeyId", "takenkey")
+	form.Set("SecretAccessKey", "newsecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "already in use")
+	assert.NotContains(t, rr.Body.String(), ownerName, "should not leak owner name")
+
+	// Verify no credentials were added to NewUser. Look up by name because the
+	// memory store backs LoadConfiguration with a map, so Identities order is
+	// not stable across a save/load round trip.
+	var newUser *iam_pb.Identity
+	for _, ident := range api.mockConfig.Identities {
+		if ident.Name == "NewUser" {
+			newUser = ident
+			break
+		}
+	}
+	require.NotNil(t, newUser, "NewUser identity should still exist")
+	assert.Len(t, newUser.Credentials, 0)
+}
+
+// TestEmbeddedIamCreateAccessKeyRejectsPartialSupply tests that supplying only
+// one of AccessKeyId / SecretAccessKey is rejected.
+func TestEmbeddedIamCreateAccessKeyRejectsPartialSupply(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+
+	// AccessKeyId supplied, SecretAccessKey omitted
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "myappkey")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId and SecretAccessKey must be supplied together")
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
+
+	// SecretAccessKey supplied, AccessKeyId omitted
+	form = url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("SecretAccessKey", "validsecret1")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId and SecretAccessKey must be supplied together")
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
+}
+
+// TestEmbeddedIamCreateAccessKeyBoundary tests key length boundaries
+func TestEmbeddedIamCreateAccessKeyBoundary(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+
+	// Exactly 4 chars — should pass
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "abcd")
+	form.Set("SecretAccessKey", "validsecret1")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Exactly 3 chars — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "abc")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "alphanumeric")
+
+	// Exactly 128 chars — should pass
+	api.mockConfig.Identities[0].Credentials = nil
+	ak128 := strings.Repeat("a", 128)
+	sk128 := strings.Repeat("s", 128)
+	form.Set("AccessKeyId", ak128)
+	form.Set("SecretAccessKey", sk128)
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// 129 chars AccessKeyId — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", strings.Repeat("a", 129))
+	form.Set("SecretAccessKey", sk128)
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "alphanumeric")
+
+	// 7-char SecretAccessKey — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "1234567")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+
+	// Exactly 8-char SecretAccessKey — should pass (lower boundary)
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "12345678")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// 129-char SecretAccessKey — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", strings.Repeat("s", 129))
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+}
+
 // TestEmbeddedIamDeleteAccessKey tests deleting an access key via direct form post
 func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -633,29 +1578,15 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
 }
 
-// TestEmbeddedIamHandleImplicitUsername tests implicit username extraction from authorization header
+// TestEmbeddedIamHandleImplicitUsername checks that the implicit user name is
+// taken from the authenticated identity in the request context, never from
+// re-parsing the Authorization header.
 func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
-	// Create IAM with test credentials - the handleImplicitUsername function now looks
-	// up the username from the credential store based on AccessKeyId
-	// Note: Using obviously fake access keys to avoid secret scanner false positives
-	iam := &IdentityAccessManagement{}
-	testConfig := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{
-				Name: "testuser1",
-				Credentials: []*iam_pb.Credential{
-					{AccessKey: UserAccessKeyPrefix + "TESTFAKEKEY000001", SecretKey: "testsecretfake"},
-				},
-			},
-		},
-	}
-	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
-	if err != nil {
-		t.Fatalf("Failed to load test config: %v", err)
-	}
+	embeddedApi := &EmbeddedIamApi{}
 
-	embeddedApi := &EmbeddedIamApi{
-		iam: iam,
+	withIdentity := func(name string) *http.Request {
+		r := &http.Request{Header: http.Header{}}
+		return r.WithContext(SetIdentityNameInContext(r.Context(), name))
 	}
 
 	var tests = []struct {
@@ -663,14 +1594,14 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 		values   url.Values
 		userName string
 	}{
-		// No authorization header - should not set username
+		// No authenticated identity - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
-		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
-		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// Authenticated identity in context - sets its name
+		{withIdentity("testuser1"), url.Values{}, "testuser1"},
+		// A client-controlled Authorization header naming another user is ignored
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// An explicit UserName is left alone
+		{withIdentity("testuser1"), url.Values{"UserName": {"other"}}, "other"},
 	}
 
 	for i, test := range tests {
@@ -747,7 +1678,34 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
 
-	// 5. Delete user
+	var accessKeyId string
+	for _, ident := range api.mockConfig.Identities {
+		if ident.Name == "WorkflowUser" && len(ident.Credentials) > 0 {
+			accessKeyId = ident.Credentials[0].AccessKey
+		}
+	}
+	assert.NotEmpty(t, accessKeyId)
+
+	// 5. Deleting a user that still has an access key is refused
+	t.Run("DeleteUserConflict", func(t *testing.T) {
+		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
+		req, _ := iam.New(session.New()).DeleteUserRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusConflict, response.Code)
+	})
+
+	// 6. Delete the access key, then the user
+	t.Run("DeleteAccessKey", func(t *testing.T) {
+		params := &iam.DeleteAccessKeyInput{UserName: aws.String("WorkflowUser"), AccessKeyId: aws.String(accessKeyId)}
+		req, _ := iam.New(session.New()).DeleteAccessKeyRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, response.Code)
+	})
+
 	t.Run("DeleteUser", func(t *testing.T) {
 		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
 		req, _ := iam.New(session.New()).DeleteUserRequest(params)
@@ -913,7 +1871,7 @@ func TestEmbeddedIamUpdateUserNotFound(t *testing.T) {
 	req, _ := iam.New(session.New()).UpdateUserRequest(params)
 	_ = req.Build()
 	response, _ := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
-	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Equal(t, http.StatusNotFound, response.Code)
 }
 
 // TestEmbeddedIamCreateAccessKeyForExistingUser tests CreateAccessKey creates credentials for existing user
@@ -943,6 +1901,132 @@ func TestEmbeddedIamCreateAccessKeyForExistingUser(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	// Verify credentials were created
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
+}
+
+// TestEmbeddedIamPutGetUserPolicyRoundTrip is a regression test for
+// https://github.com/seaweedfs/seaweedfs/issues/9008: put-user-policy followed
+// by get-user-policy must return the same policy document, with Action and Resource
+// lists intact (no wildcard expansion, no duplication, no collapsing).
+func TestEmbeddedIamPutGetUserPolicyRoundTrip(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	api.mockConfig = s3cfg
+
+	policyJSON := `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"]
+    }]
+  }`
+
+	// PutUserPolicy
+	_, iamErr := api.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"steward_policy"},
+		"PolicyDocument": []string{policyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	// GetUserPolicy should return the exact document
+	resp, iamErr := api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	assert.Equal(t, "2012-10-17", got.Version)
+	require.Equal(t, 1, len(got.Statement))
+	stmt := got.Statement[0]
+	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
+	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+}
+
+// TestEmbeddedIamGetUserPolicyFallback tests the lossy fallback reconstruction
+// when no stored inline policy is available (pre-existing ident.Actions only).
+func TestEmbeddedIamGetUserPolicyFallback(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:    "steward",
+			Actions: []string{"Read:b-le*", "Write:b-le*", "List:b-le*", "Read:b-le*/*", "Write:b-le*/*", "List:b-le*/*"},
+		}},
+	}
+	api.mockConfig = s3cfg
+
+	// No stored inline policy — GetUserPolicy must reconstruct from ident.Actions
+	resp, iamErr := api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	// Fallback is lossy but must not duplicate actions
+	require.Equal(t, 1, len(got.Statement), "fallback should merge equal-action statements")
+	stmt := got.Statement[0]
+	assert.ElementsMatch(t, []string{"s3:Get*", "s3:Put*", "s3:List*"}, stmt.Action.Strings())
+	// Bucket-level and object-level resources stay distinct
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+}
+
+// TestEmbeddedIamGetUserPolicyMissingName checks that a policy name the user does not have
+// is NoSuchEntity, not a policy rebuilt from the user's other inline policies.
+func TestEmbeddedIamGetUserPolicyMissingName(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	api.mockConfig = s3cfg
+
+	_, iamErr := api.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"read"},
+		"PolicyDocument": []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}`},
+	})
+	require.Nil(t, iamErr)
+
+	_, iamErr = api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"write"},
+	})
+	require.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+// TestEmbeddedIamGetUserPolicyStoreError checks that a store failure surfaces as
+// ServiceFailure instead of rebuilding a policy from the identity's actions.
+func TestEmbeddedIamGetUserPolicyStoreError(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	api.mockConfig = s3cfg
+
+	_, iamErr := api.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"read"},
+		"PolicyDocument": []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}`},
+	})
+	require.Nil(t, iamErr)
+
+	api.credentialManager = &credential.CredentialManager{Store: &memory.MemoryStore{}}
+
+	_, iamErr = api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"read"},
+	})
+	require.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeServiceFailureException, iamErr.Code)
 }
 
 // TestEmbeddedIamGetUserPolicyUserNotFound tests GetUserPolicy with non-existent user
@@ -1018,7 +2102,11 @@ func TestEmbeddedIamNotImplementedAction(t *testing.T) {
 	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusNotImplemented, rr.Code)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Contains(t, rr.Body.String(), "InvalidAction")
+	assert.Contains(t, rr.Body.String(), "<RequestId>")
+	assert.NotContains(t, rr.Body.String(), "<ResponseMetadata>")
+	assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractEmbeddedIamRequestID(rr))
 }
 
 // TestGetPolicyDocument tests parsing of policy documents
@@ -1069,6 +2157,178 @@ func TestEmbeddedIamGetActionsFromPolicy(t *testing.T) {
 	// arn:aws:s3:::mybucket/* means all objects in mybucket, represented as "Action:mybucket"
 	assert.Contains(t, actions, "Read:mybucket")
 	assert.Contains(t, actions, "Write:mybucket")
+}
+
+// TestEmbeddedIamGetActionsPrefixScopedResource verifies that a prefix-scoped
+// resource keeps its trailing wildcard so CanDo authorizes objects under the
+// prefix. Stripping the wildcard produced a non-wildcard action that only
+// matched at bucket level, denying every PutObject under the prefix.
+func TestEmbeddedIamGetActionsPrefixScopedResource(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Action": ["s3:Get*", "s3:Put*", "s3:DeleteObject"],
+			"Resource": ["arn:aws:s3:::mcp-upload/mcp/TMS/api_keys/example/*"]
+		}]
+	}`
+
+	policy, err := api.GetPolicyDocument(&policyDoc)
+	require.NoError(t, err)
+
+	actions, err := api.getActions(&policy)
+	require.NoError(t, err)
+	assert.Contains(t, actions, "Read:mcp-upload/mcp/TMS/api_keys/example/*")
+	assert.Contains(t, actions, "Write:mcp-upload/mcp/TMS/api_keys/example/*")
+
+	identity := &Identity{Name: "prefix-user"}
+	for _, a := range actions {
+		identity.Actions = append(identity.Actions, Action(a))
+	}
+
+	assert.True(t, identity.CanDo(ACTION_WRITE, "mcp-upload", "mcp/TMS/api_keys/example/logo.png"),
+		"PutObject under the allowed prefix should be authorized")
+	assert.True(t, identity.CanDo(ACTION_READ, "mcp-upload", "mcp/TMS/api_keys/example/logo.png"),
+		"GetObject under the allowed prefix should be authorized")
+	assert.False(t, identity.CanDo(ACTION_WRITE, "mcp-upload", "other/logo.png"),
+		"PutObject outside the allowed prefix should be denied")
+}
+
+// TestEmbeddedIamGetActionsMultipartListing covers the AWS names for
+// listing multipart uploads and parts: they grant only the named listing
+// operation, never a general Read on the bucket.
+func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
+
+	// Check each action on its own so a correct mapping for one cannot hide
+	// a wrong mapping for the other.
+	for _, tc := range []struct {
+		policyAction string
+		grant        string
+		url          string
+		object       string
+	}{
+		{"s3:ListBucketMultipartUploads", "ListBucketMultipartUploads:demo", "/demo?uploads", ""},
+		{"s3:ListMultipartUploadParts", "ListMultipartUploadParts:demo", "/demo/key?uploadId=u1", "key"},
+	} {
+		t.Run(tc.policyAction, func(t *testing.T) {
+			policyDoc := `{
+				"Version": "2012-10-17",
+				"Statement": [{
+					"Effect": "Allow",
+					"Action": ["` + tc.policyAction + `"],
+					"Resource": ["arn:aws:s3:::demo", "arn:aws:s3:::demo/*"]
+				}]
+			}`
+
+			policy, err := api.GetPolicyDocument(&policyDoc)
+			require.NoError(t, err)
+
+			actions, err := api.getActions(&policy)
+			require.NoError(t, err)
+			require.NotEmpty(t, actions)
+			for _, a := range actions {
+				assert.Equal(t, tc.grant, a,
+					"%s should only grant its own listing operation", tc.policyAction)
+			}
+
+			identity := &Identity{Name: "bob"}
+			for _, a := range actions {
+				identity.Actions = append(identity.Actions, Action(a))
+			}
+
+			// The listing routes are gated on ACTION_READ, but the grant must
+			// not authorize object reads or anything else.
+			assert.False(t, identity.CanDo(ACTION_READ, "demo", "key"),
+				"a listing grant must not allow object reads")
+			assert.False(t, identity.CanDo(ACTION_WRITE, "demo", "key"),
+				"a listing grant must not allow writes")
+			assert.False(t, identity.CanDo(ACTION_LIST, "demo", ""),
+				"a listing grant must not allow ListObjects")
+
+			routed := func(url, object string) *http.Request {
+				return mux.SetURLVars(httptest.NewRequest(http.MethodGet, url, nil),
+					map[string]string{"bucket": "demo", "object": object})
+			}
+
+			req := routed(tc.url, tc.object)
+			assert.Equal(t, s3err.ErrNone, iam.VerifyActionPermission(req, identity, ACTION_READ, "demo", tc.object),
+				"the listing action should be authorized")
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(req, identity, ACTION_READ, "other", tc.object),
+				"the grant must stay scoped to the policy's bucket")
+
+			getReq := routed("/demo/key", "key")
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(getReq, identity, ACTION_READ, "demo", "key"),
+				"the grant must not authorize GetObject")
+
+			// Other ACTION_READ routes must not be authorized by a listing
+			// grant, whatever query parameters ride along.
+			policyReq := routed("/demo?policy", "")
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(policyReq, identity, ACTION_READ, "demo", ""),
+				"the grant must not authorize GetBucketPolicy")
+		})
+	}
+
+	grant := func(a string) *Identity { return &Identity{Name: "bob", Actions: []Action{Action(a)}} }
+	routed := func(url, object string) *http.Request {
+		return mux.SetURLVars(httptest.NewRequest(http.MethodGet, url, nil),
+			map[string]string{"bucket": "demo", "object": object})
+	}
+
+	// authRequestWithAuthType promotes ?prefix into the object for upload
+	// listings; the operation must still come from the route, not the prefix.
+	t.Run("upload listing with prefix", func(t *testing.T) {
+		req := routed("/demo?uploads&prefix=foo/", "")
+		assert.Equal(t, s3err.ErrNone,
+			iam.VerifyActionPermission(req, grant("ListBucketMultipartUploads:demo"), ACTION_READ, "demo", "foo/"))
+		assert.Equal(t, s3err.ErrAccessDenied,
+			iam.VerifyActionPermission(req, grant("ListMultipartUploadParts:demo"), ACTION_READ, "demo", "foo/"))
+	})
+
+	// The ?uploads route is registered before ?policy, so this reaches the
+	// upload listing handler and needs the upload listing grant.
+	t.Run("upload listing with extra subresource", func(t *testing.T) {
+		req := routed("/demo?policy&uploads", "")
+		assert.Equal(t, s3err.ErrNone,
+			iam.VerifyActionPermission(req, grant("ListBucketMultipartUploads:demo"), ACTION_READ, "demo", ""))
+		assert.Equal(t, s3err.ErrAccessDenied,
+			iam.VerifyActionPermission(req, grant("GetBucketPolicy:demo"), ACTION_READ, "demo", ""))
+	})
+
+	// Policies rebuilt from these grants must use valid action names.
+	for _, a := range []string{ACTION_LIST_MULTIPART_UPLOADS, ACTION_LIST_PARTS} {
+		assert.Equal(t, a, iamMapToIdentitiesAction(a))
+	}
+}
+
+// TestEmbeddedIamPutUserPolicyAllResourceWildcard reproduces issue #9209:
+// an AWS-style policy using "Action":"s3:*" with a bare "Resource":"*" is
+// valid AWS IAM syntax (meaning "any resource") but was rejected with
+// "no valid actions found in policy document" because the resource parser
+// required a full ARN.
+func TestEmbeddedIamPutUserPolicyAllResourceWildcard(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	// From issue #9209: bare "*" resource and bare "s3:*" action.
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Sid": "AllowS3Admin",
+			"Effect": "Allow",
+			"Action": "s3:*",
+			"Resource": "*"
+		}]
+	}`
+
+	policy, err := api.GetPolicyDocument(&policyDoc)
+	require.NoError(t, err)
+
+	actions, err := api.getActions(&policy)
+	require.NoError(t, err, "getActions must accept bare \"*\" resource")
+	assert.Contains(t, actions, ACTION_ADMIN, "s3:* should map to admin action")
 }
 
 // TestEmbeddedIamSetUserStatus tests enabling/disabling a user
@@ -1693,27 +2953,25 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
-	// Explicitly set hook to debug panic
-	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
-		return nil
-	}
-
 	// Test case: CreateUser via ExecuteAction
 	vals := url.Values{}
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(vals, false)
+	ctx := context.Background()
+	resp, iamErr := api.ExecuteAction(ctx, vals, false, "")
 	assert.Nil(t, iamErr)
 
 	// Verify response type
-	createResp, ok := resp.(iamCreateUserResponse)
+	createResp, ok := resp.(*iamCreateUserResponse)
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
-	// Verify persistence
-	assert.Len(t, api.mockConfig.Identities, 1)
-	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+	// CreateUser now uses a targeted write (credentialManager.CreateUser) rather than
+	// SaveConfiguration, so persistence is checked via the credential manager directly.
+	user, err := api.credentialManager.GetUser(ctx, "ExecuteActionUser")
+	assert.NoError(t, err)
+	assert.Equal(t, "ExecuteActionUser", user.Name)
 }
 
 // TestEmbeddedIamReadOnly tests that write operations are blocked when readOnly is true
@@ -1744,4 +3002,44 @@ func TestEmbeddedIamReadOnly(t *testing.T) {
 	responseList, err := executeEmbeddedIamRequest(api, reqList.HTTPRequest, &outList)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, responseList.Code)
+}
+
+func TestWriteIamErrorResponseMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		code       string
+		wantStatus int
+	}{
+		{"NoSuchEntity", iam.ErrCodeNoSuchEntityException, http.StatusNotFound},
+		{"EntityAlreadyExists", iam.ErrCodeEntityAlreadyExistsException, http.StatusConflict},
+		{"InvalidInput", iam.ErrCodeInvalidInputException, http.StatusBadRequest},
+		{"LimitExceeded", iam.ErrCodeLimitExceededException, http.StatusConflict},
+		{"DeleteConflict", iam.ErrCodeDeleteConflictException, http.StatusConflict},
+		{"InvalidAction", "InvalidAction", http.StatusNotFound},
+		{"AccessDenied", "AccessDenied", http.StatusForbidden},
+		{"InvalidClientTokenId", "InvalidClientTokenId", http.StatusForbidden},
+		{"SignatureDoesNotMatch", "SignatureDoesNotMatch", http.StatusForbidden},
+		{"IncompleteSignature", "IncompleteSignature", http.StatusBadRequest},
+		{"ServiceFailure", iam.ErrCodeServiceFailureException, http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/", nil)
+			writeIamErrorResponse(rec, r, "req-1", &iamError{Code: tt.code, Error: fmt.Errorf("boom")})
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			body := rec.Body.String()
+			assert.True(t, strings.HasPrefix(strings.TrimSpace(body), "<ErrorResponse") ||
+				strings.Contains(body, "<ErrorResponse"), "expected IAM ErrorResponse envelope, got %s", body)
+			assert.Contains(t, body, "<Code>"+tt.code+"</Code>")
+		})
+	}
+}
+
+func TestIamAuthErrorCode(t *testing.T) {
+	assert.Equal(t, "InvalidClientTokenId", iamAuthErrorCode(s3err.ErrInvalidAccessKeyID))
+	assert.Equal(t, "SignatureDoesNotMatch", iamAuthErrorCode(s3err.ErrSignatureDoesNotMatch))
+	assert.Equal(t, "AccessDenied", iamAuthErrorCode(s3err.ErrAccessDenied))
+	assert.Equal(t, "RequestTimeTooSkewed", iamAuthErrorCode(s3err.ErrRequestTimeTooSkewed))
+	assert.Equal(t, "IncompleteSignature", iamAuthErrorCode(s3err.ErrMissingFields))
 }

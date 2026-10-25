@@ -3,13 +3,29 @@ name: "Kafka Quick Test (Load Test with Schema Registry)"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-quicktest.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-quicktest.yml'
   workflow_dispatch:  # Allow manual trigger
 
 concurrency:
-  group: ${{ github.head_ref }}/kafka-quicktest
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -21,19 +37,24 @@ jobs:
     timeout-minutes: 15
     steps:
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
-        cache: true
+        go-version: ^1.26
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
 
+    - name: Configure Docker Hub mirror
+      run: |
+        echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Install dependencies
       run: |

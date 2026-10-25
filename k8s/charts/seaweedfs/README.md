@@ -22,11 +22,24 @@ helm install --values=values.yaml seaweedfs seaweedfs/seaweedfs
 ## Info:
 * master/filer/volume are stateful sets with anti-affinity on the hostname,
 so your deployment will be spread/HA.
-* chart is using memsql(mysql) as the filer backend to enable HA (multiple filer instances) and backup/HA memsql can provide.
-* mysql user/password are created in a k8s secret (default: `<release>-seaweedfs-db-secret`) and injected to the filer with ENV.
+* leveldb2 is the default filer backend; a mysql-compatible database (memsql, ...) enables HA (multiple filer instances) and the backup/HA it can provide.
+* with `filer.extraEnvironmentVars.WEED_MYSQL_ENABLED` set to `"true"`, mysql user/password are created in a k8s secret (default: `<release>-seaweedfs-db-secret`) and injected to the filer with ENV. On any other store neither the secret nor the `WEED_MYSQL_*` env, plain or secret-backed, is rendered.
 * cert config exists and can be enabled, but not been tested, requires cert-manager to be installed.
 
 ## Prerequisites
+
+The chart's templates render with Helm 3.16.3 and newer versions tested in CI.
+Earlier Helm versions are not covered by this chart's compatibility checks.
+When JWT signing is enabled, a live upgrade reuses keys from the existing
+security ConfigMap (including the legacy ConfigMap name); a key absent from
+that ConfigMap is generated. Plain `helm template` does not read cluster state;
+use an install and upgrade against a cluster to check key persistence.
+
+The key reader supports single-line quoted TOML strings in JWT sections,
+including indented assignments, quoted key names, and bare or simply quoted
+section-name segments. An unsupported value or quoted header fails the upgrade
+rather than silently rotating a key.
+
 ### Database
 
 leveldb is the default database, this supports multiple filer replicas that will [sync automatically](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication), with some [limitations](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication#limitation).
@@ -48,6 +61,35 @@ CREATE TABLE IF NOT EXISTS `filemeta` (
 ```
 
 Alternative database can also be configured (e.g. leveldb, postgres) following the instructions at `filer.extraEnvironmentVars`.
+
+#### RocksDB variant
+
+The `_large_disk_rocksdb` image tag ships with RocksDB pre-configured as the filer backend.
+To use this image with the Helm chart, override the image on all three components and disable
+the chart's default `WEED_LEVELDB2_ENABLED`, which would otherwise re-enable LevelDB2 and
+override the image's built-in RocksDB configuration:
+
+```yaml
+# Replace <VERSION> with the desired seaweedfs version, e.g. 3.80_large_disk_rocksdb.
+master:
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+
+volume:
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+
+filer:
+  enablePVC: true
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+  extraEnvironmentVars:
+    WEED_LEVELDB2_ENABLED: "false"
+```
+
+Notes:
+
+* `master` and `volume` use the same image tag so that all components share a consistent
+  SeaweedFS build; RocksDB itself is only used by the filer.
+* `filer.enablePVC: true` (or another form of persistent storage for the filer) is required
+  so that the RocksDB metadata store survives pod restarts — otherwise metadata will be lost.
 
 ### Node Labels
 Kubernetes nodes can have labels which help to define which node(Host) will run which pod:
@@ -77,6 +119,120 @@ https://github.com/rancher/local-path-provisioner
 
 you can use ANY storage class you like, just update the correct storage-class
 for your deployment.
+
+### Master data: hostPath vs a claim
+
+The master's `-mdir` holds its Raft log and snapshots, and with them the
+cluster's identity (its topology UUID). `master.data.type` defaults to
+`hostPath`, which does not follow a pod to another node: a master that is
+rescheduled comes back with an empty data directory and a brand new cluster
+UUID. With the chart's default of a single master replica there is no peer to
+recover the identity from either.
+
+Putting the master's data on a claim avoids that:
+
+```yaml
+master:
+  data:
+    type: "persistentVolumeClaim"
+    size: "1Gi"
+    storageClass: ""   # empty uses the cluster's default StorageClass
+```
+
+Raft state is small, so a modest claim is enough — sizing matters far more for
+volume and filer.
+
+The default is left at `hostPath` for backward compatibility:
+`volumeClaimTemplates` is immutable on a StatefulSet, so flipping the type on a
+release that already exists fails, whether the chart changes the default or you
+change it yourself:
+
+```text
+StatefulSet.apps "<release>-seaweedfs-master" is invalid: spec: Forbidden:
+updates to statefulset spec for fields other than 'replicas', ... are forbidden
+```
+
+New installs can set the claim from the start. To move an **existing** release
+onto a claim without losing the cluster UUID, use the migration below. The
+claim has to be seeded while the master is stopped: a running master rewrites
+its Raft state, so copying into a live pod is silently undone by the next
+restart.
+
+The steps below are for the chart's default of a single master
+(`master.replicas: 1`). With several master replicas, repeat steps 1, 3 and 4
+for every ordinal, or migrate one at a time and let the remaining quorum
+re-replicate.
+
+Take the names from the cluster rather than assembling them — the release
+name, `nameOverride` and `fullnameOverride` all feed the chart's fullname
+helper, so `<release>-seaweedfs` is not always right:
+
+```bash
+NS=<namespace>; REL=<release>
+# scope by instance as well as component: several releases can share a namespace
+STS=$(kubectl -n $NS get sts \
+        -l app.kubernetes.io/instance=$REL,app.kubernetes.io/component=master \
+        -o jsonpath='{.items[0].metadata.name}')
+POD=$STS-0
+# a StatefulSet names its claims <template>-<statefulset>-<ordinal>, and this
+# chart's template is data-<namespace>
+PVC=data-$NS-$STS-0
+
+# 1. back up the master data directory
+kubectl -n $NS cp $POD:/data ./master-backup
+
+# 2. stop the master, leaving the rest of the release running
+kubectl -n $NS delete sts $STS --cascade=orphan
+kubectl -n $NS delete pod $POD
+
+# 3. create the claim the new StatefulSet will adopt, and seed it through a
+#    pod that actually mounts it
+kubectl -n $NS apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $PVC
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seed
+spec:
+  containers:
+    - name: seed
+      image: alpine:3.20
+      command: ["sleep", "600"]
+      volumeMounts:
+        - name: d
+          mountPath: /data
+  volumes:
+    - name: d
+      persistentVolumeClaim:
+        claimName: $PVC
+EOF
+kubectl -n $NS wait --for=condition=Ready pod/seed --timeout=120s
+kubectl -n $NS cp ./master-backup/m9333 seed:/data/
+kubectl -n $NS exec seed -- ls /data/m9333    # conf, log, snapshot, state
+kubectl -n $NS delete pod seed
+
+# 4. upgrade; the StatefulSet adopts the claim you created
+helm upgrade $REL seaweedfs/seaweedfs -n $NS -f values.yaml
+```
+
+Confirm the UUID survived — it must match what the cluster reported before the
+migration:
+
+```bash
+kubectl -n $NS exec $POD -- curl -s localhost:9333/license/status
+```
+
+**Or accept a new cluster UUID** and, if you run the enterprise edition, have
+the license re-issued against it.
 
 ## current instances config (AIO):
 
@@ -143,8 +299,34 @@ metadata:
     app.kubernetes.io/component: s3
 stringData:
   # this key must be an inline json config file
-  seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read"]}]}'
+  seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read","List"]}]}'
 ```
+
+#### Source S3 credentials from an existing Secret
+
+To keep the keys out of `values.yaml` while still letting the chart generate the
+identities file, point an identity at an existing Secret:
+
+```yaml
+s3:
+  enabled: true
+  enableAuth: true
+  credentials:
+    admin:
+      existingSecret: minio-root
+      accessKeyKey: root-user
+      secretKeyKey: root-password
+```
+
+`accessKeyKey` and `secretKeyKey` default to the chart's own key names
+(`admin_access_key_id`, `admin_secret_access_key`, and the `read_` pair). The
+generated `seaweedfs_s3_config` references the keys as `${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}`
+and the gateway resolves them from the environment, which the chart wires up
+from the Secret. Nothing is read from the cluster at render time, so
+`helm template`, `--dry-run` and an Argo CD diff all render what an install
+applies. Rotating a key in the Secret takes effect on the next pod restart, as
+with any other environment variable. The COSI driver parses the config itself
+and does not resolve these references.
 
 ## Admin Component
 
@@ -163,10 +345,12 @@ To enable the admin interface, add the following to your values.yaml:
 ```yaml
 admin:
   enabled: true
-  port: 23646
-  grpcPort: 33646  # For worker connections
-  adminUser: "admin"
-  adminPassword: "your-secure-password"  # Leave empty to disable auth
+  port: 12535
+  grpcPort: 22535  # For worker connections
+  legacyPort: 23646  # Compat: also serve http + gRPC (+10000) for pre-12535 clients
+  secret:
+    adminUser: "admin"
+    adminPassword: "your-secure-password"  # Leave empty to disable auth
   
   # Optional: persist admin data
   data:
@@ -181,7 +365,9 @@ admin:
     className: "nginx"
 ```
 
-The admin interface will be available at `http://<admin-service>:23646` (or via ingress). Workers connect to the admin server via gRPC on port `33646`.
+The admin interface will be available at `http://<admin-service>:12535` (or via ingress). Workers connect to the admin server via gRPC on port `22535`.
+
+For backward compatibility with older clients and workers, admin also serves the previous default ports: HTTP on `23646` and gRPC on `33646` (legacyPort + 10000). The Service and NetworkPolicy expose both. Set `admin.legacyPort: 0` to disable.
 
 ### Admin Authentication
 
@@ -190,6 +376,32 @@ If `adminPassword` is set, the admin interface requires authentication:
 - Password: Value of `adminPassword`
 
 If `adminPassword` is empty or not set, the admin interface runs without authentication (not recommended for production).
+
+As an alternative, a kubernetes Secret can be used (`admin.secret.existingSecret`).
+
+### Admin listen address
+
+Since SeaweedFS 4.46, `weed admin` defaults to listening on loopback (`127.0.0.1`).
+The chart's httpGet readiness/liveness probes dial the pod IP, so the admin
+server must bind a non-loopback address for the probes to succeed. The chart
+therefore passes `-ip={{ .Values.admin.ip }}`, defaulting `admin.ip` to `0.0.0.0`
+(the pre-4.46 behaviour of listening on all interfaces).
+
+Binding a non-loopback address requires authentication: `weed admin` refuses to
+start on a non-loopback address without `-adminPassword`, so the chart fails at
+render time if `admin.ip` is non-loopback and authentication is not configured via
+`admin.secret.adminPassword`, `admin.secret.existingSecret`, or
+`WEED_ADMIN_PASSWORD` supplied through `admin.extraEnvironmentVars` /
+`admin.secretExtraEnvironmentVars`. Setting `admin.allowInsecureBind` renders
+`-allowInsecureBind` and bypasses this guard; it leaves the admin API
+unauthenticated on the network, so use it only when access is otherwise
+restricted (e.g. network policies). The whole `127.0.0.0/8` range and `::1` are
+treated as loopback (matching `weed admin`); `localhost` is treated as
+non-loopback. Set `admin.ip` to a loopback address only if you also replace the
+httpGet probes (e.g. with an `exec` probe that checks `127.0.0.1`).
+
+The `-ip` flag requires SeaweedFS 4.46 or newer; pinning `admin.imageOverride`
+to an older image is not supported with this chart version.
 
 ### Admin Data Persistence
 
@@ -212,8 +424,9 @@ To enable workers, add the following to your values.yaml:
 worker:
   enabled: true
   replicas: 2  # Scale based on workload
-  capabilities: "vacuum,balance,erasure_coding"  # Tasks this worker can handle
-  maxConcurrent: 3  # Maximum concurrent tasks per worker
+  jobType: "vacuum,volume_balance,erasure_coding"  # Job types this worker can handle
+  maxDetect: 1  # Maximum concurrent detection requests
+  maxExecute: 4  # Maximum concurrent execution jobs per worker
   
   # Working directory for task execution
   # Default: "/tmp/seaweedfs-worker"
@@ -226,7 +439,7 @@ worker:
   # Auto-discovery only works if the admin is in the same namespace and same Helm release.
   # For cross-namespace or separate release scenarios, explicitly set this value.
   # Example: If main SeaweedFS is deployed in "production" namespace:
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
   adminServer: ""
   
   # Workers need storage for task execution
@@ -248,14 +461,14 @@ worker:
       memory: "2Gi"
 ```
 
-### Worker Capabilities
+### Worker Job Types
 
-Workers can be configured with different capabilities:
+Workers can be configured with different job types:
 - **vacuum**: Reclaim deleted file space
-- **balance**: Balance volumes across volume servers
+- **volume_balance**: Balance volumes across volume servers
 - **erasure_coding**: Handle erasure coding operations
 
-You can configure workers with all capabilities or create specialized worker pools with specific capabilities.
+You can configure workers with all job types or create specialized worker pools with specific job types.
 
 ### Worker Deployment Strategy
 
@@ -264,11 +477,11 @@ For production deployments, consider:
 1. **Multiple Workers**: Deploy 2+ worker replicas for high availability
 2. **Resource Allocation**: Workers need sufficient CPU/memory for maintenance tasks
 3. **Storage**: Workers need temporary storage for vacuum and balance operations (size depends on volume size)
-4. **Specialized Workers**: Create separate worker deployments for different capabilities if needed
+4. **Specialized Workers**: Create separate worker deployments for different job types if needed
 
 Example specialized worker configuration:
 
-For specialized worker pools, deploy separate Helm releases with different capabilities:
+For specialized worker pools, deploy separate Helm releases with different job types:
 
 **values-worker-vacuum.yaml** (for vacuum operations):
 ```yaml
@@ -287,13 +500,13 @@ admin:
 worker:
   enabled: true
   replicas: 2
-  capabilities: "vacuum"
-  maxConcurrent: 2
+  jobType: "vacuum"
+  maxExecute: 2
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 **values-worker-balance.yaml** (for balance operations):
@@ -313,16 +526,17 @@ admin:
 worker:
   enabled: true
   replicas: 1
-  capabilities: "balance"
-  maxConcurrent: 1
+  jobType: "volume_balance"
+  maxExecute: 1
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
-  #   adminServer: "seaweedfs-admin.production.svc:33646"
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  #   adminServer: "seaweedfs-admin.production.svc:22535"
+  adminServer: "seaweedfs-admin.<namespace>.svc:22535"
 ```
 
 Deploy the specialized workers as separate releases:
+### Specialized Worker Deployment
 ```bash
 # Deploy vacuum workers
 helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum.yaml
@@ -331,7 +545,137 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
+## Gateway API
+
+Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.
+
+```yaml
+s3:
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: my-gateway
+        namespace: gateway-system
+        sectionName: https
+    hostnames:
+      - s3.example.com
+```
+
+With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
+
+## Network Policies
+
+In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.
+
+```bash
+helm install seaweedfs seaweedfs/seaweedfs --set networkPolicy.enabled=true
+```
+
+That alone leaves outbound traffic untouched, which is enough when the namespace's default-deny only restricts ingress. If it lists `Egress` in its `policyTypes` too - the usual baseline - the components still cannot resolve DNS, and you need the second opt-in below as well.
+
+Egress is separate because the chart knows where its own components live but not where your filer store, notification sink or remote tier does, and because in a namespace with no default-deny at all, adding egress rules would narrow the components from "may reach anything" to "may reach these peers":
+
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    kubeApiServer:
+      # the endpoint behind the kubernetes service, not its ClusterIP
+      cidrs: ["172.18.0.2/32"]
+    extraEgress:
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: postgresql
+        ports:
+          - protocol: TCP
+            port: 5432
+```
+
+`kubeApiServer.cidrs` is only demanded when something in the release actually needs the API server, which is the COSI sidecar and, on an upgrade that grows a volume PVC, the resize hook. No seaweedfs component itself speaks to it.
+
+Anything reaching the release from outside - an ingress controller, a Prometheus in another namespace - goes into `networkPolicy.extraIngress`, or into `networkPolicy.components.<component>.extraIngress` for a single component. See the `networkPolicy` block in `values.yaml` for the full set.
+
+Two things worth knowing before you turn this on:
+
+- **Monitoring stops.** The metrics ports are admitted from release pods like every other port, so with `global.seaweedfs.monitoring.enabled` the ServiceMonitors keep scraping targets a Prometheus in another namespace can no longer reach. Nothing reports it; add the scraper's namespace to `extraIngress`.
+- **The resize hook's policy is a Helm hook.** Its Job runs before the release manifest is applied, so the policy has to be a `pre-install` hook too. Helm does not garbage-collect hook resources, so on an upgrade that grows a volume PVC the policy is created and then left behind on uninstall - delete `<release>-seaweedfs-volume-resize-hook` by hand if it bothers you.
+
+The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
+
+## Pod and container security contexts
+
+Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
+
+SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. When `readOnlyRootFilesystem` is enabled for a built-in component, the chart mounts a writable `emptyDir` at `/tmp` for its chart-managed containers. Its optional size limit can be configured globally:
+
+```yaml
+global:
+  seaweedfs:
+    tmpDir:
+      sizeLimit: 1Gi
+```
+
+The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
+
+Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context and writable mounts.
+
+## OpenShift Support
+
+SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.
+
+To deploy on OpenShift, use the provided `openshift-values.yaml` which overrides the default configuration to:
+1. Use `PersistentVolumeClaims` instead of `hostPath`.
+2. Enable `runAsNonRoot` and omit hardcoded UIDs to allow OpenShift to assign valid UIDs automatically.
+3. Apply appropriate `seccompProfile` and drop capabilities.
+4. Use a read-only root filesystem with writable temporary storage at `/tmp`.
+
+Usage:
+```bash
+helm install seaweedfs seaweedfs/seaweedfs \
+  -n seaweedfs --create-namespace \
+  -f openshift-values.yaml
+```
+
 ## Enterprise
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
-which has a self-healing storage format with better data protection.
+which has advanced features, including data recovery, self-healing storage, customizable erasure coding, EC vacuum and repair, etc.
+
+To run it, set the image and point the chart at a Secret holding the license
+file:
+
+```bash
+kubectl create secret generic seaweedfs-license -n <namespace> \
+  --from-file=seaweed-license.json=/path/to/seaweed-license.json
+```
+
+```yaml
+global:
+  seaweedfs:
+    image:
+      name: chrislusf/seaweedfs-enterprise
+    license:
+      existingSecret: seaweedfs-license
+      # secretKey: seaweed-license.json     # key within the Secret
+      # mountPath: /etc/seaweedfs/license   # directory it is mounted at
+```
+
+Set the image globally rather than per component: a per-component
+`imageOverride` wins, and a cluster that mixes editions comes up looking
+healthy with enterprise features quietly off.
+
+Only the master reads the license, so the Secret is mounted read-only there
+and on all-in-one (which runs `weed server -master`). It is mounted as a
+directory, not a `subPath`, so a renewed Secret reaches the running master —
+which re-reads the file periodically — without a restart.
+
+The license is tied to the cluster UUID kept in the master's Raft state, so put
+`master.data` on a claim — a master that restarts onto an empty data directory
+generates a new UUID and the license stops matching. See
+[Master data](#master-data-hostpath-vs-a-claim). Check the binding with
+`kubectl exec <master-pod> -- curl -s localhost:9333/license/status`
+(`cluster_uuid` must equal `license_uuid`).

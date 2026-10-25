@@ -16,7 +16,7 @@ func TestVolumeMarkReadonlyAndWritableLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -61,7 +61,7 @@ func TestVolumeMarkReadonlyPersistTrue(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -93,13 +93,17 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
+
+	const volumeID = uint32(75)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// non-existent volumes should return "not found"
 	_, err := grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 98771, Persist: true})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("VolumeMarkReadonly missing-volume error mismatch: %v", err)
@@ -110,28 +114,38 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 		t.Fatalf("VolumeMarkWritable missing-volume error mismatch: %v", err)
 	}
 
-	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
+	// enter maintenance mode
+	framework.EnableMaintenanceMode(t, ctx, grpcClient)
+
+	// marking readonly only restricts the server further and is the first step
+	// of evacuating it, so maintenance mode lets it through (issue #11066)
+	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: volumeID, Persist: true})
 	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
+		t.Fatalf("VolumeMarkReadonly should succeed in maintenance mode, got: %v", err)
 	}
-	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{
-			Maintenance: true,
-			Version:     stateResp.GetState().GetVersion(),
-		},
-	})
+	statusResp, err := grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
 	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
+		t.Fatalf("VolumeStatus after readonly in maintenance failed: %v", err)
+	}
+	if !statusResp.GetIsReadOnly() {
+		t.Fatalf("VolumeStatus expected readonly=true after VolumeMarkReadonly in maintenance mode")
 	}
 
-	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 1, Persist: true})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeMarkReadonly maintenance error mismatch: %v", err)
-	}
-
-	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: 1})
+	// reopening a volume for writes is still refused on a read-only server
+	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: volumeID})
 	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
 		t.Fatalf("VolumeMarkWritable maintenance error mismatch: %v", err)
+	}
+
+	// non-existent volume in maintenance mode should still return "not found"
+	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 98773, Persist: true})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("VolumeMarkReadonly missing-volume in maintenance error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: 98774})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("VolumeMarkWritable missing-volume in maintenance error mismatch: %v", err)
 	}
 }
 
@@ -140,7 +154,7 @@ func TestDeleteCollectionRemovesVolumeAndIsIdempotent(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

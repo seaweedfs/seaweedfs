@@ -33,27 +33,32 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read service account file %s: %v", entry.Name, err)
-					continue
+					return fmt.Errorf("failed to read service account file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				sa := &iam_pb.ServiceAccount{}
-				if err := json.Unmarshal(content, sa); err != nil {
-					glog.Warningf("Failed to unmarshal service account %s: %v", entry.Name, err)
-					continue
-				}
-				s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
+			if len(content) == 0 {
+				return fmt.Errorf("service account file %s is empty", entry.Name)
 			}
+			sa := &iam_pb.ServiceAccount{}
+			if err := json.Unmarshal(content, sa); err != nil {
+				return fmt.Errorf("failed to unmarshal service account %s: %w", entry.Name, err)
+			}
+			if err := validateServiceAccountId(sa.Id); err != nil {
+				return fmt.Errorf("service account file %s: %w", entry.Name, err)
+			}
+			s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
 		}
 		return nil
 	})
@@ -71,7 +76,7 @@ func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.S
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, sa.Id+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, sa.Id+".json", data)
 	})
 }
 
@@ -133,7 +138,7 @@ func (store *FilerEtcStore) GetServiceAccount(ctx context.Context, id string) (*
 	}
 	var sa *iam_pb.ServiceAccount
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
+		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return credential.ErrServiceAccountNotFound
@@ -170,7 +175,7 @@ func (store *FilerEtcStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read service account file %s: %v", entry.Name, err)
 					continue

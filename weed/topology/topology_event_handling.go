@@ -13,12 +13,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64) {
+func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, concurrentVacuumLimitPerRack int, growThreshold float64, preallocate int64, vacuumInterval time.Duration, deleteEmptyAfter time.Duration) {
+	if vacuumInterval <= 0 {
+		vacuumInterval = 14 * time.Minute
+	}
 	go func() {
 		for {
 			if t.IsLeader() {
 				freshThreshHold := time.Now().Unix() - 3*t.pulse //3 times of sleep interval
 				t.CollectDeadNodeAndFullVolumes(freshThreshHold, t.volumeSizeLimit, growThreshold)
+				t.DecayQuietVolumeSizes()
+				t.retryPendingQuarantineReleases()
 			}
 			time.Sleep(time.Duration(float32(t.pulse*1e3)*(1+rand.Float32())) * time.Millisecond)
 		}
@@ -26,13 +31,21 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	go func(garbageThreshold float64) {
 		for {
 			if t.IsLeader() {
-				if !t.isDisableVacuum {
-					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate, true)
+				// Safety net: if vacuum was disabled by the plugin monitor but the
+				// admin server is no longer connected, automatically re-enable.
+				// This handles the case where the admin server crashes without
+				// cleanup. Does NOT override an operator's intentional disable.
+				if t.IsVacuumDisabledByPlugin() && t.adminServerConnectedFunc != nil && !t.adminServerConnectedFunc() {
+					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, clearing plugin disable")
+					t.EnableVacuumByPlugin()
+				}
+				if !t.IsVacuumDisabled() {
+					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, concurrentVacuumLimitPerRack, 0, "", preallocate, true, deleteEmptyAfter)
 				}
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()
 			}
-			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+			time.Sleep(vacuumInterval + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}(garbageThreshold)
 	go func() {
@@ -80,6 +93,25 @@ func (t *Topology) SetVolumeCrowded(volumeInfo storage.VolumeInfo) {
 	vl.SetVolumeCrowded(volumeInfo.Id)
 }
 
+// SetDataNodeMaintenanceMode records the maintenance flag a volume server
+// reported and returns whether it changed. On a change every volume the node
+// holds is re-evaluated: while the flag is on, a volume with a replica there
+// leaves the writable list, so no writes are assigned to it and the server can
+// be drained; once the flag is off the volumes are writable again. Reads are
+// untouched, and volume growth skips the node through AvailableSpaceFor.
+func (t *Topology) SetDataNodeMaintenanceMode(dn *DataNode, on bool) (changed bool) {
+	if !dn.SetMaintenanceMode(on) {
+		return false
+	}
+	glog.V(0).Infof("volume server %s maintenance mode: %v", dn.Id(), on)
+	for _, v := range dn.GetVolumes() {
+		diskType := types.ToDiskType(v.DiskType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		vl.EnsureCorrectWritables(&v)
+	}
+	return true
+}
+
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	dn.IsTerminating = true
 	for _, v := range dn.GetVolumes() {
@@ -87,6 +119,8 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.SetVolumeUnavailable(dn, v.Id)
+		// this node may have been the conflicting copy pinning a quarantine
+		defer t.releaseResolvedQuarantine(v.Id)
 	}
 
 	// unregister ec shards when volume server disconnected
@@ -100,6 +134,7 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	}
 	dn.DeltaUpdateVolumes([]storage.VolumeInfo{}, dn.GetVolumes())
 	dn.DeltaUpdateEcShards([]*erasure_coding.EcVolumeInfo{}, dn.GetEcShards())
+	t.unregisterDataNodeAddress(dn.ServerAddress(), dn)
 	if dn.Parent() != nil {
 		dn.Parent().UnlinkChildNode(dn.Id())
 	}

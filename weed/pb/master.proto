@@ -27,6 +27,8 @@ service Seaweed {
   }
   rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
   }
+  rpc VolumeListStream (VolumeListRequest) returns (stream VolumeListStreamResponse) {
+  }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
@@ -45,6 +47,8 @@ service Seaweed {
   }
   rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
   }
+  rpc GetAdminLockStatus (GetAdminLockStatusRequest) returns (GetAdminLockStatusResponse) {
+  }
   rpc Ping (PingRequest) returns (PingResponse) {
   }
   rpc RaftListClusterServers (RaftListClusterServersRequest) returns (RaftListClusterServersResponse) {
@@ -55,11 +59,23 @@ service Seaweed {
   }
   rpc RaftLeadershipTransfer (RaftLeadershipTransferRequest) returns (RaftLeadershipTransferResponse) {
   }
+  rpc ResumeVolumeGrowth (ResumeVolumeGrowthRequest) returns (ResumeVolumeGrowthResponse) {
+  }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
+  }
+  rpc CollectionStatistics (CollectionStatisticsRequest) returns (CollectionStatisticsResponse) {
   }
 }
 
 //////////////////////////////////////////////////
+
+message DiskTag {
+  uint32 disk_id = 1;
+  repeated string tags = 2;
+  // Physical disk descriptor, reported for every location including empty ones.
+  string type = 3;
+  int64 max_volume_count = 4;
+}
 
 message Heartbeat {
   string ip = 1;
@@ -89,6 +105,28 @@ message Heartbeat {
 
   // state flags
   volume_server_pb.VolumeServerState state = 23;
+
+  repeated DiskTag disk_tags = 24;
+
+  // physical disk capacity per disk type, in bytes, from the underlying filesystem
+  map<string, uint64> disk_total_bytes = 25;
+  map<string, uint64> disk_free_bytes = 26;
+
+  // Digest of every volume in this heartbeat's view of the server, letting the
+  // master check its copy is current without being sent the whole list. Absent
+  // from servers that do not compute it, and distinct from a digest of 0, which
+  // is what a server holding no volumes reports.
+  optional uint64 volume_digest = 27;
+  // Volumes whose reported state changed since the last heartbeat, sent in
+  // place of `volumes`. A master that does not understand this never sets
+  // volume_digest_supported, so it keeps being sent the whole list.
+  repeated VolumeInformationMessage changed_volumes = 28;
+
+  // Highest volume id this server has ever observed, persisted locally. Fed
+  // by HeartbeatResponse.max_volume_id echoes and by AllocateVolume requests.
+  uint32 max_volume_id_seen = 29;
+  // Topology id of the master cluster this server last heartbeated to.
+  string last_seen_topology_id = 30;
 }
 
 message HeartbeatResponse {
@@ -99,6 +137,18 @@ message HeartbeatResponse {
   repeated StorageBackend storage_backends = 5;
   repeated string duplicated_uuids = 6;
   bool preallocate = 7;
+  // The master's view of this server's volumes disagrees with the reported
+  // digest, so it needs the full volume list rather than changes alone.
+  bool resend_full_volume_list = 8;
+  // The master compares volume digests, so a server that reports one may send
+  // changed_volumes in place of its whole list.
+  bool volume_digest_supported = 9;
+  // The leader's current allocation bound; servers persist it and report it
+  // back as max_volume_id_seen so the bound survives master state loss.
+  uint32 max_volume_id = 10;
+  // The leader's cluster identity; a different value reported back later
+  // means the master's state was rebuilt.
+  string topology_id = 11;
 }
 
 message VolumeInformationMessage {
@@ -109,6 +159,7 @@ message VolumeInformationMessage {
   uint64 delete_count = 5;
   uint64 deleted_byte_count = 6;
   bool read_only = 7;
+  bool read_only_can_delete = 17;
   uint32 replica_placement = 8;
   uint32 version = 9;
   uint32 ttl = 10;
@@ -128,6 +179,8 @@ message VolumeShortInformationMessage {
   uint32 ttl = 10;
   string disk_type = 15;
   uint32 disk_id = 16;
+  bool read_only = 17;
+  bool read_only_can_delete = 18;
 }
 
 message VolumeEcShardInformationMessage {
@@ -138,6 +191,15 @@ message VolumeEcShardInformationMessage {
   uint64 expire_at_sec = 5; // used to record the destruction time of ec volume
   uint32 disk_id = 6;
   repeated int64 shard_sizes = 7; // optimized: sizes for shards in order of set bits in ec_index_bits
+  uint64 file_count = 8;   // total needles in the .ecx index (live + tombstoned)
+  uint64 delete_count = 9; // node-local tombstones in the .ecj deletion journal
+  // encode-run identity (unix nanos) from the .vif EcShardConfig; lets the admin
+  // group shards by encode generation. Numbered 14 (not 10) to skip the
+  // enterprise fork's reserved 10-13.
+  int64 encode_ts_ns = 14;
+  // fields 15-19 reserved for future upstream open-source additions.
+  // fields 20+ are owned by the enterprise fork (e.g. data_shards/parity_shards)
+  // and must not be used here without coordination.
 }
 
 message StorageBackend {
@@ -165,6 +227,9 @@ message KeepConnectedRequest {
   string filer_group = 5;
   string data_center = 6;
   string rack = 7;
+  // A draining filer leaves the lock ring but stays a cluster member, so peers
+  // keep following its metadata until the stream closes.
+  bool leave_lock_ring = 8;
 }
 
 message VolumeLocation {
@@ -177,6 +242,9 @@ message VolumeLocation {
   uint32 grpc_port = 7;
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
+  repeated uint32 remote_vids = 10;
+  repeated uint32 read_only_vids = 11;
+  repeated uint32 read_only_can_delete_vids = 12;
 }
 
 message ClusterNodeUpdate {
@@ -190,6 +258,17 @@ message ClusterNodeUpdate {
 message KeepConnectedResponse {
   VolumeLocation volume_location = 1;
   ClusterNodeUpdate cluster_node_update = 2;
+  LockRingUpdate lock_ring_update = 3;
+}
+
+// LockRingUpdate is sent by the master to all filers when the lock ring
+// membership changes. The master batches rapid changes (e.g., node drop + join)
+// and sends the complete member list atomically, avoiding intermediate ring
+// states that would cause unnecessary lock churn.
+message LockRingUpdate {
+  string filer_group = 1;
+  repeated string servers = 2;
+  int64 version = 3;
 }
 
 message LookupVolumeRequest {
@@ -211,6 +290,9 @@ message Location {
   string public_url = 2;
   uint32 grpc_port = 3;
   string data_center = 4;
+  bool data_in_remote = 5;
+  bool read_only = 6;
+  bool read_only_can_delete = 7;
 }
 
 message AssignRequest {
@@ -224,6 +306,7 @@ message AssignRequest {
   uint32 memory_map_max_size_mb = 8;
   uint32 writable_volume_count = 9;
   string disk_type = 10;
+  uint64 expected_data_size = 11; // hint for size-aware volume selection
 }
 
 message VolumeGrowRequest {
@@ -236,6 +319,18 @@ message VolumeGrowRequest {
   string data_node = 7;
   uint32 memory_map_max_size_mb = 8;
   string disk_type = 9;
+  // If > 0, grow only when the average fill ratio of the layout's writable
+  // volumes has reached this threshold (e.g. 0.6). Lets callers pre-grow on
+  // fill level with one call, instead of listing volumes to compute the
+  // ratio themselves. Ignored when there are no writable volumes.
+  float grow_avg_fill_threshold = 10;
+}
+
+message ResumeVolumeGrowthRequest {
+}
+
+message ResumeVolumeGrowthResponse {
+  bool was_frozen = 1;
 }
 
 message AssignResponse {
@@ -257,6 +352,11 @@ message StatisticsResponse {
   uint64 total_size = 4;
   uint64 used_size = 5;
   uint64 file_count = 6;
+  // sizes counting one copy of the data: a single replica of a regular volume,
+  // the data shards of an ec volume. logical_total_size scales the free space
+  // by the copies the requested replication makes.
+  uint64 logical_total_size = 7;
+  uint64 logical_used_size = 8;
 }
 
 //
@@ -271,6 +371,26 @@ message CollectionListRequest {
 }
 message CollectionListResponse {
   repeated Collection collections = 1;
+}
+
+// Summarises what each collection holds, so a caller tracking usage does not
+// have to be sent every volume in the cluster to add it up itself.
+message CollectionStatisticsRequest {
+}
+message CollectionStatisticsResponse {
+  repeated CollectionStatistics collections = 1;
+}
+message CollectionStatistics {
+  string collection = 1;
+  uint64 file_count = 2;
+  uint64 delete_count = 3;
+  uint64 deleted_byte_count = 4;
+  // one copy of the data: a single replica of a regular volume, the data
+  // shards of an ec volume
+  uint64 size = 5;
+  // what is on disk: every replica, and parity shards
+  uint64 physical_size = 6;
+  uint64 volume_count = 7;
 }
 
 message CollectionDeleteRequest {
@@ -291,7 +411,18 @@ message DiskInfo {
   repeated VolumeInformationMessage volume_infos = 6;
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
+  // On a per-physical-disk DiskInfo (from SplitByPhysicalDisk) this is the disk's
+  // identity; on the type-keyed aggregate it is only a representative fallback
+  // (the first volume's disk id).
   uint32 disk_id = 9;
+  repeated string tags = 10;
+  // Max volume count for every physical disk of this type, keyed by disk id,
+  // including disks with no volumes or EC shards; recovers empty disks that
+  // carry no per-volume/per-shard records.
+  map<uint32, int64> max_volume_count_by_disk = 11;
+  // physical disk capacity in bytes, from the underlying filesystem (0 if unknown)
+  uint64 disk_total_bytes = 12;
+  uint64 disk_free_bytes = 13;
 }
 message DataNodeInfo {
   string id = 1;
@@ -315,10 +446,42 @@ message TopologyInfo {
   map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
+  // Empty and zero take everything. Only the volumes and ec shards listed
+  // under a disk are selected; the topology and its disk counters are always
+  // reported in full.
+  string collection = 1;
+  repeated uint32 volume_ids = 2;
+  // The one collection the empty string cannot name. A named collection wins.
+  bool default_collection_only = 3;
+  // Empty and zero take everything. Wildcards are supported.
+  string remote_storage_name = 4;
+  bool local_volume_only = 5;
+  // The topology, its disks and their counters alone, without the volumes
+  // and ec shards. Selecting volumes above contradicts this and is refused.
+  // A master that predates this field ignores it and answers in full.
+  bool topology_only = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;
   uint64 volume_size_limit_mb = 2;
+}
+
+// VolumeListStream answers the same request as VolumeList without either end
+// holding every volume in the cluster at once. At 800k volumes the reply is
+// 36MB on the wire but 305MB as messages, which the master built in full
+// before sending any of it.
+message VolumeListStreamResponse {
+  // Sent once, first, listing no volumes: the topology, its disks and their
+  // counters. Every message after carries volumes for one of those disks.
+  VolumeListResponse header = 1;
+  // Which disk this batch is from. A disk arrives over as many batches as it
+  // takes, so append rather than assign.
+  string data_center = 2;
+  string rack = 3;
+  string data_node = 4;
+  string disk_type = 5;
+  repeated VolumeInformationMessage volume_infos = 6;
+  repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
 }
 
 message LookupEcVolumeRequest {
@@ -342,11 +505,13 @@ message VacuumVolumeResponse {
 }
 
 message DisableVacuumRequest {
+    bool by_plugin = 1;
 }
 message DisableVacuumResponse {
 }
 
 message EnableVacuumRequest {
+    bool by_plugin = 1;
 }
 message EnableVacuumResponse {
 }
@@ -375,6 +540,9 @@ message GetMasterConfigurationResponse {
   string leader = 5;
   uint32 volume_size_limit_m_b = 6;
   bool volume_preallocate = 7;
+  // MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
+  string maintenance_scripts = 8;
+  uint32 maintenance_sleep_minutes = 9;
 }
 
 message ListClusterNodesRequest {
@@ -411,6 +579,15 @@ message ReleaseAdminTokenRequest {
   string lock_name = 3;
 }
 message ReleaseAdminTokenResponse {
+}
+
+message GetAdminLockStatusRequest {
+  string lock_name = 1;
+}
+message GetAdminLockStatusResponse {
+  bool is_locked = 1;
+  string client_name = 2;
+  string message = 3;
 }
 
 message PingRequest {
@@ -460,4 +637,9 @@ message RaftLeadershipTransferResponse {
 }
 
 message VolumeGrowResponse {
+  // Average fill ratio of the layout's writable volumes at request time
+  // (0 when there are none). Reported whether or not growth was triggered.
+  float avg_fill = 1;
+  // Number of writable volumes at request time.
+  uint32 writable_count = 2;
 }

@@ -127,6 +127,9 @@ test_tarantool: tags = tarantool
 test_tarantool: build_tarantool_dev_env build
 	docker compose -f compose/test-tarantool-filer.yml -p seaweedfs up
 
+test_keycloak_s3: build
+	docker compose -f compose/test-keycloak-s3.yml -p seaweedfs up
+
 clean:
 	rm ./weed
 

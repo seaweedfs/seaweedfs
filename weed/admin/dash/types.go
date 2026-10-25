@@ -14,9 +14,14 @@ type ClusterTopology struct {
 	DataCenters   []DataCenter   `json:"datacenters"`
 	VolumeServers []VolumeServer `json:"volume_servers"`
 	TotalVolumes  int            `json:"total_volumes"`
-	TotalFiles    int64          `json:"total_files"`
-	TotalSize     int64          `json:"total_size"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// TotalChunks counts chunks stored in volumes, not filer entries: a file
+	// is split into one or more chunks.
+	TotalChunks int64     `json:"total_chunks"`
+	TotalSize   int64     `json:"total_size"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 type MasterNode struct {
@@ -50,6 +55,11 @@ type VolumeServer struct {
 	EcVolumes      int                  `json:"ec_volumes"`       // Number of EC volumes this server has shards for
 	EcShards       int                  `json:"ec_shards"`        // Total number of EC shards on this server
 	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
+
+	// RemoteSize is the bytes this server's remote-tiered volumes hold in
+	// cloud storage. Those bytes are excluded from DiskUsage, which only
+	// counts what occupies local disks.
+	RemoteSize int64 `json:"remote_size"`
 }
 
 func (vs *VolumeServer) GetDisplayAddress() string {
@@ -76,15 +86,24 @@ type S3Bucket struct {
 	CreatedAt          time.Time `json:"created_at"`
 	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
 	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
-	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
 	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled
+	ReadOnly           bool      `json:"read_only"`            // Whether the bucket path is read-only in filer.conf (e.g. quota enforcement)
 	VersioningStatus   string    `json:"versioning_status"`    // Versioning status: "" (never enabled), "Enabled", or "Suspended"
 	ObjectLockEnabled  bool      `json:"object_lock_enabled"`  // Whether object lock is enabled
 	ObjectLockMode     string    `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
 	ObjectLockDuration int32     `json:"object_lock_duration"` // Default retention duration in days
 	Owner              string    `json:"owner,omitempty"`      // Bucket owner identity; empty means admin-only access
+
+	LifecycleRuleCount    int `json:"lifecycle_rule_count"`
+	LifecycleEnabledCount int `json:"lifecycle_enabled_count"`
+
+	// PolicyStatementCount is the number of statements in the bucket policy,
+	// or 0 if the bucket has none. A policy document can't have zero
+	// statements (see policy_engine.ValidatePolicy), so >0 is a faithful
+	// "has a policy" flag.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3Object struct {
@@ -98,6 +117,27 @@ type S3Object struct {
 type BucketDetails struct {
 	Bucket    S3Bucket  `json:"bucket"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type BucketLifecycleRule struct {
+	ID                              string            `json:"id,omitempty"`
+	Status                          string            `json:"status"`
+	Prefix                          string            `json:"prefix,omitempty"`
+	Tags                            map[string]string `json:"tags,omitempty"`
+	SizeGreaterThan                 int64             `json:"size_greater_than,omitempty"`
+	SizeLessThan                    int64             `json:"size_less_than,omitempty"`
+	ExpirationDays                  int               `json:"expiration_days,omitempty"`
+	ExpirationDate                  string            `json:"expiration_date,omitempty"`
+	ExpiredObjectDeleteMarker       bool              `json:"expired_object_delete_marker,omitempty"`
+	NoncurrentVersionExpirationDays int               `json:"noncurrent_version_expiration_days,omitempty"`
+	NewerNoncurrentVersions         int               `json:"newer_noncurrent_versions,omitempty"`
+	AbortMultipartDays              int               `json:"abort_multipart_days,omitempty"`
+}
+
+type BucketLifecycle struct {
+	Bucket string                `json:"bucket"`
+	Rules  []BucketLifecycleRule `json:"rules"`
+	XML    string                `json:"xml,omitempty"`
 }
 
 // ObjectStoreUser is defined in admin_data.go
@@ -250,7 +290,7 @@ type CollectionInfo struct {
 	DataCenter    string   `json:"datacenter"`
 	VolumeCount   int      `json:"volume_count"`
 	EcVolumeCount int      `json:"ec_volume_count"`
-	FileCount     int64    `json:"file_count"`
+	ChunkCount    int64    `json:"chunk_count"`
 	TotalSize     int64    `json:"total_size"`
 	DiskTypes     []string `json:"disk_types"`
 }
@@ -261,7 +301,7 @@ type ClusterCollectionsData struct {
 	TotalCollections int              `json:"total_collections"`
 	TotalVolumes     int              `json:"total_volumes"`
 	TotalEcVolumes   int              `json:"total_ec_volumes"`
-	TotalFiles       int64            `json:"total_files"`
+	TotalChunks      int64            `json:"total_chunks"`
 	TotalSize        int64            `json:"total_size"`
 	LastUpdated      time.Time        `json:"last_updated"`
 }
@@ -296,6 +336,25 @@ type ClusterFilersData struct {
 	LastUpdated time.Time   `json:"last_updated"`
 }
 
+// MountClient is one connected FUSE/VFS mount as reported by a filer's
+// metadata-subscriber registry.
+type MountClient struct {
+	ClientName   string    `json:"client_name"`
+	ClientType   string    `json:"client_type"` // "mount" (Go) or "sw-vfs" (Rust VFS)
+	Address      string    `json:"address"`
+	PathPrefix   string    `json:"path_prefix"`
+	ClientId     int32     `json:"client_id"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	FilerAddress string    `json:"filer_address"`
+}
+
+type MountClientsData struct {
+	Username          string        `json:"username"`
+	MountClients      []MountClient `json:"mount_clients"`
+	TotalMountClients int           `json:"total_mount_clients"`
+	LastUpdated       time.Time     `json:"last_updated"`
+}
+
 type MessageBrokerInfo struct {
 	Address    string    `json:"address"`
 	DataCenter string    `json:"datacenter"`
@@ -309,6 +368,20 @@ type ClusterBrokersData struct {
 	Brokers      []MessageBrokerInfo `json:"brokers"`
 	TotalBrokers int                 `json:"total_brokers"`
 	LastUpdated  time.Time           `json:"last_updated"`
+}
+
+type S3ServerInfo struct {
+	Address    string    `json:"address"`
+	DataCenter string    `json:"datacenter"`
+	Version    string    `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ClusterS3ServersData struct {
+	Username       string         `json:"username"`
+	S3Servers      []S3ServerInfo `json:"s3_servers"`
+	TotalS3Servers int            `json:"total_s3_servers"`
+	LastUpdated    time.Time      `json:"last_updated"`
 }
 
 type TopicInfo struct {
@@ -447,11 +520,6 @@ type QueueStats = maintenance.QueueStats
 type WorkerDetailsData = maintenance.WorkerDetailsData
 type WorkerPerformance = maintenance.WorkerPerformance
 
-// GetTaskIcon returns the icon CSS class for a task type from its UI provider
-func GetTaskIcon(taskType MaintenanceTaskType) string {
-	return maintenance.GetTaskIcon(taskType)
-}
-
 // Status constants (these are still static)
 const (
 	TaskStatusPending    = maintenance.TaskStatusPending
@@ -536,7 +604,7 @@ type CollectionDetailsData struct {
 	EcVolumes      []EcVolumeWithShards `json:"ec_volumes"`
 	TotalVolumes   int                  `json:"total_volumes"`
 	TotalEcVolumes int                  `json:"total_ec_volumes"`
-	TotalFiles     int64                `json:"total_files"`
+	TotalChunks    int64                `json:"total_chunks"`
 	TotalSize      int64                `json:"total_size"`
 	DataCenters    []string             `json:"data_centers"`
 	DiskTypes      []string             `json:"disk_types"`
@@ -587,6 +655,30 @@ type UpdateServiceAccountRequest struct {
 	Status      string `json:"status,omitempty"` // Active, Inactive
 	Description string `json:"description,omitempty"`
 	Expiration  string `json:"expiration,omitempty"`
+}
+
+// Group management structures
+type GroupData struct {
+	Name        string   `json:"name"`
+	MemberCount int      `json:"member_count"`
+	PolicyCount int      `json:"policy_count"`
+	Status      string   `json:"status"` // "enabled" or "disabled"
+	Members     []string `json:"members"`
+	PolicyNames []string `json:"policy_names"`
+}
+
+type GroupsPageData struct {
+	Username          string      `json:"username"`
+	Groups            []GroupData `json:"groups"`
+	TotalGroups       int         `json:"total_groups"`
+	ActiveGroups      int         `json:"active_groups"`
+	AvailableUsers    []string    `json:"available_users"`
+	AvailablePolicies []string    `json:"available_policies"`
+	LastUpdated       time.Time   `json:"last_updated"`
+}
+
+type CreateGroupRequest struct {
+	Name string `json:"name"`
 }
 
 // STS Configuration display types
@@ -692,4 +784,8 @@ type IcebergTableDetailsData struct {
 	TotalSizeBytes   int64                       `json:"total_size_bytes"`
 	HasTotalSize     bool                        `json:"has_total_size"`
 	MetadataError    string                      `json:"metadata_error,omitempty"`
+	// Set when the details came from a plugin worker rather than from metadata
+	// this server can read, so the page can say whose account it is and when.
+	ObservedBy string    `json:"observed_by,omitempty"`
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }

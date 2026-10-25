@@ -499,12 +499,16 @@ func TestMultipartUploadDeleteMarkerListBehavior(t *testing.T) {
 	t.Logf("Successfully retrieved version %s after delete marker", multipartVersionId)
 
 	// Delete the delete marker to "undelete" the object
-	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+	undeleteResp, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:    aws.String(bucketName),
 		Key:       aws.String(objectKey),
 		VersionId: aws.String(deleteMarkerVersionId),
 	})
 	require.NoError(t, err, "Failed to delete the delete marker")
+	require.NotNil(t, undeleteResp.DeleteMarker, "Deleting a delete marker version should report DeleteMarker=true")
+	assert.True(t, *undeleteResp.DeleteMarker, "Deleting a delete marker version should report DeleteMarker=true")
+	require.NotNil(t, undeleteResp.VersionId, "Deleting a delete marker version should echo the version ID")
+	assert.Equal(t, deleteMarkerVersionId, *undeleteResp.VersionId, "DeleteObject should report the deleted delete-marker version ID")
 
 	// ListObjectsV2 should show the object again
 	listAfterUndelete, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
@@ -517,4 +521,77 @@ func TestMultipartUploadDeleteMarkerListBehavior(t *testing.T) {
 		"Undeleted object should have correct multipart ETag")
 
 	t.Logf("Object restored after delete marker removal, ETag=%s", multipartETag)
+}
+
+func TestVersioningCompleteMultipartUploadIsIdempotent(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+	checkVersioningStatus(t, client, bucketName, types.BucketVersioningStatusEnabled)
+
+	objectKey := "multipart-idempotent-object"
+	createResp, err := client.CreateMultipartUpload(context.TODO(), &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to create multipart upload")
+
+	partSize := 5 * 1024 * 1024
+	part1Data := bytes.Repeat([]byte("i"), partSize)
+	part2Data := bytes.Repeat([]byte("j"), partSize)
+
+	uploadPart1Resp, err := client.UploadPart(context.TODO(), &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   createResp.UploadId,
+		PartNumber: aws.Int32(1),
+		Body:       bytes.NewReader(part1Data),
+	})
+	require.NoError(t, err, "Failed to upload first part")
+
+	uploadPart2Resp, err := client.UploadPart(context.TODO(), &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   createResp.UploadId,
+		PartNumber: aws.Int32(2),
+		Body:       bytes.NewReader(part2Data),
+	})
+	require.NoError(t, err, "Failed to upload second part")
+
+	completeInput := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: createResp.UploadId,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: []types.CompletedPart{
+				{ETag: uploadPart1Resp.ETag, PartNumber: aws.Int32(1)},
+				{ETag: uploadPart2Resp.ETag, PartNumber: aws.Int32(2)},
+			},
+		},
+	}
+
+	firstCompleteResp, err := client.CompleteMultipartUpload(context.TODO(), completeInput)
+	require.NoError(t, err, "First CompleteMultipartUpload should succeed")
+	require.NotNil(t, firstCompleteResp.ETag)
+	require.NotNil(t, firstCompleteResp.VersionId)
+
+	secondCompleteResp, err := client.CompleteMultipartUpload(context.TODO(), completeInput)
+	require.NoError(t, err, "Repeated CompleteMultipartUpload should return the existing object instead of creating a second version")
+	require.NotNil(t, secondCompleteResp.ETag)
+	require.NotNil(t, secondCompleteResp.VersionId, "Repeated complete should report the existing version ID")
+	assert.Equal(t, *firstCompleteResp.ETag, *secondCompleteResp.ETag, "Repeated complete should report the same ETag")
+	assert.Equal(t, *firstCompleteResp.VersionId, *secondCompleteResp.VersionId, "Repeated complete should report the same version ID")
+
+	versionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to list object versions")
+	require.Len(t, versionsResp.Versions, 1, "Repeated completion must not create a duplicate version")
+	assert.Equal(t, *firstCompleteResp.VersionId, *versionsResp.Versions[0].VersionId, "The original multipart version should remain current")
+	assert.Empty(t, versionsResp.DeleteMarkers, "Repeated completion should not create delete markers")
 }

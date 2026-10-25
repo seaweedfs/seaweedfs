@@ -8,10 +8,17 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/spf13/viper"
 )
 
 type EncodedJwt string
 type SigningKey []byte
+
+// BearerPrefix is the RFC 6750 Authorization header scheme prefix for bearer
+// tokens. Used when constructing "Authorization: Bearer <token>" headers; the
+// scheme name itself is matched case-insensitively when parsing (see GetJwt).
+const BearerPrefix = "Bearer "
 
 // SeaweedFileIdClaims is created by Master server(s) and consumed by Volume server(s),
 // restricting the access this JWT allows to only a single file.
@@ -26,7 +33,48 @@ type SeaweedFileIdClaims struct {
 type SeaweedFilerClaims struct {
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	// SessionId is present only on STS session tokens; a token carrying it is
+	// an S3 session credential, not a filer API credential.
+	SessionId string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// SeaweedFilerAdminClaims is presented by callers of the filer's IAM gRPC
+// service to prove they are authorised to administer users, access keys, and
+// policies. The token is signed with the filer write-signing key
+// (jwt.filer_signing.key in security.toml).
+//
+// Validation is delegated to DecodeJwt below: it enforces HS256 via the
+// SigningMethodHMAC type check, and jwt/v5 validates exp/nbf on the embedded
+// RegisteredClaims. Extra JSON fields in the payload are silently ignored by
+// encoding/json, which is the desired behaviour here (forward-compat).
+type SeaweedFilerAdminClaims struct {
+	// SessionId is present only on STS session tokens; a token carrying it is
+	// an S3 session credential, not a filer admin credential.
+	SessionId string `json:"sid,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// GenJwtForFilerAdmin mints a Bearer token for the filer IAM gRPC service.
+// Returns an empty string if the signing key is not configured.
+func GenJwtForFilerAdmin(signingKey SigningKey, expiresAfterSec int) EncodedJwt {
+	if len(signingKey) == 0 {
+		return ""
+	}
+
+	claims := SeaweedFilerAdminClaims{
+		RegisteredClaims: jwt.RegisteredClaims{},
+	}
+	if expiresAfterSec > 0 {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Second * time.Duration(expiresAfterSec)))
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
 }
 
 func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
@@ -104,4 +152,58 @@ func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims)
 		}
 		return []byte(signingKey), nil
 	})
+}
+
+// FilerJwtProvider signs the credential a filer's HTTP API expects. A nil
+// provider means the process-wide jwt.filer_signing configuration applies.
+type FilerJwtProvider func(isWrite bool) EncodedJwt
+
+// LoadFilerJwtFromFile reads jwt.filer_signing from a security file the way
+// LoadClientTLSFromFile reads the TLS section, honoring the same WEED_
+// environment precedence. A nil provider means the file configures no filer
+// signing keys and the process-wide configuration applies. A file that sets
+// only one access level falls back to the process-wide key for the other.
+func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	v.AutomaticEnv()
+	v.SetEnvPrefix("weed")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+
+	signingKey := SigningKey(v.GetString("jwt.filer_signing.key"))
+	readSigningKey := SigningKey(v.GetString("jwt.filer_signing.read.key"))
+	if len(signingKey) == 0 && len(readSigningKey) == 0 {
+		return nil, nil
+	}
+	signingKeyExpires := v.GetInt("jwt.filer_signing.expires_after_seconds")
+	readSigningKeyExpires := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+	if len(signingKey) == 0 || len(readSigningKey) == 0 {
+		gv := util.GetViper()
+		if len(signingKey) == 0 {
+			signingKey = SigningKey(gv.GetString("jwt.filer_signing.key"))
+			signingKeyExpires = gv.GetInt("jwt.filer_signing.expires_after_seconds")
+		}
+		if len(readSigningKey) == 0 {
+			readSigningKey = SigningKey(gv.GetString("jwt.filer_signing.read.key"))
+			readSigningKeyExpires = gv.GetInt("jwt.filer_signing.read.expires_after_seconds")
+		}
+	}
+	if signingKeyExpires < 0 || readSigningKeyExpires < 0 {
+		return nil, fmt.Errorf("jwt.filer_signing lifetimes must not be negative")
+	}
+	if signingKeyExpires == 0 {
+		signingKeyExpires = 10
+	}
+	if readSigningKeyExpires == 0 {
+		readSigningKeyExpires = 60
+	}
+	return func(isWrite bool) EncodedJwt {
+		if isWrite {
+			return GenJwtForFilerServer(signingKey, signingKeyExpires)
+		}
+		return GenJwtForFilerServer(readSigningKey, readSigningKeyExpires)
+	}, nil
 }

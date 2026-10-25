@@ -16,6 +16,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
+const (
+	// maxStartupMessageSize limits the startup handshake body to 10 KiB.
+	// Startup parameters (username, database, etc.) are always small.
+	maxStartupMessageSize = 10000
+
+	// maxMessageSize limits runtime message bodies to 100 MiB to prevent OOM.
+	// PostgreSQL protocol allows up to 1 GiB per message in theory, but real
+	// queries are rarely larger than a few megabytes.
+	maxMessageSize = 100 * 1024 * 1024 // 100 MiB
+
+	// maxAuthMessageSize caps password/MD5 payloads, which arrive before the
+	// client is authenticated. Credentials are tiny, so the pre-auth allocation
+	// stays far below maxMessageSize.
+	maxAuthMessageSize = 10 * 1024 // 10 KiB
+)
+
 // mapErrorToPostgreSQLCode maps SeaweedFS SQL engine errors to appropriate PostgreSQL error codes
 func mapErrorToPostgreSQLCode(err error) string {
 	if err == nil {
@@ -102,7 +118,14 @@ func (s *PostgreSQLServer) handleMessage(session *PostgreSQLSession) error {
 		return err
 	}
 
-	msgLength := binary.BigEndian.Uint32(length) - 4
+	rawLength := binary.BigEndian.Uint32(length)
+	if rawLength < 4 {
+		return fmt.Errorf("invalid message length: %d (must be >= 4)", rawLength)
+	}
+	msgLength := rawLength - 4
+	if msgLength > maxMessageSize {
+		return fmt.Errorf("message too large: %d bytes", msgLength)
+	}
 	msgBody := make([]byte, msgLength)
 	if msgLength > 0 {
 		_, err = io.ReadFull(session.reader, msgBody)
@@ -114,7 +137,8 @@ func (s *PostgreSQLServer) handleMessage(session *PostgreSQLSession) error {
 	// Process message based on type
 	switch msgType[0] {
 	case PG_MSG_QUERY:
-		return s.handleSimpleQuery(session, string(msgBody[:len(msgBody)-1])) // Remove null terminator
+		query := strings.TrimSuffix(string(msgBody), "\x00") // Remove null terminator if present
+		return s.handleSimpleQuery(session, query)
 	case PG_MSG_PARSE:
 		return s.handleParse(session, msgBody)
 	case PG_MSG_BIND:

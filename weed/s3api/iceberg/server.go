@@ -1,7 +1,10 @@
 package iceberg
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -18,19 +21,58 @@ type FilerClient interface {
 
 type S3Authenticator interface {
 	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
+	DefaultAllow() bool
+}
+
+// CredentialValidator validates S3 access key / secret key pairs
+// and provides credential lookup for OAuth token verification.
+type CredentialValidator interface {
+	// ValidateS3Credential checks if the access key and secret key are valid.
+	// Returns the identity name and identity object on success.
+	ValidateS3Credential(accessKey, secretKey string) (identityName string, identity interface{}, err error)
+	// GetCredentialByAccessKey looks up a credential by access key.
+	// Returns the identity name, identity object, and secret key.
+	// Used for verifying Bearer tokens signed with a specific credential.
+	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
+}
+
+// VendedCredentials are short-lived S3 credentials scoped to one table.
+type VendedCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	Expiration      time.Time
+}
+
+// CredentialVendor mints credentials limited to a single table's prefix for a
+// caller the catalog has already authenticated and authorized, read-only when
+// readOnly is set. A nil result with no error means the deployment has vending
+// switched off.
+type CredentialVendor interface {
+	VendTableCredentials(ctx context.Context, principal, bucket, prefix string, readOnly bool) (*VendedCredentials, error)
 }
 
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
-	filerClient   FilerClient
-	tablesManager *s3tables.Manager
-	prefix        string // optional prefix for routes
-	authenticator S3Authenticator
+	filerClient         FilerClient
+	tablesManager       *s3tables.Manager
+	prefix              string // optional prefix for routes
+	authenticator       S3Authenticator
+	credentialValidator CredentialValidator
+	credentialVendor    CredentialVendor
+	s3Endpoint          string // http(s):// URL advertised in LoadTable FileIO config
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
 func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	manager := s3tables.NewManager()
+	// Mirror the S3 port: fall open by default only when the gateway itself is
+	// open. With auth configured, an authenticated catalog caller must pass the
+	// normal permission check instead of being allowed because no policy denied
+	// it — even if the full identity struct ever fails to reach the handler.
+	if authenticator != nil {
+		manager.SetDefaultAllow(authenticator.DefaultAllow())
+	}
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
@@ -39,13 +81,49 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	}
 }
 
+// SetCredentialVendor enables credential vending for clients that ask for it
+// with X-Iceberg-Access-Delegation: vended-credentials.
+func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
+	s.credentialVendor = vendor
+}
+
+// SetCredentialValidator sets the credential validator for OAuth token support.
+func (s *Server) SetCredentialValidator(cv CredentialValidator) {
+	s.credentialValidator = cv
+}
+
+// SetS3Endpoint configures the S3 endpoint URL to vend to clients as part of
+// the LoadTable FileIO config, so they can read table data files directly
+// without separately discovering the S3 API address. See issue #9103.
+func (s *Server) SetS3Endpoint(endpoint string) {
+	s.s3Endpoint = endpoint
+}
+
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Add middleware to log all requests/responses
 	router.Use(loggingMiddleware)
 
+	// Reject `..`/`.`/NUL in {prefix}/{namespace}/{table} vars before any
+	// handler runs. The router uses SkipClean(true), so traversal segments
+	// would otherwise reach path.Join in stage-marker / location builders.
+	// Registered after loggingMiddleware so rejected requests still get
+	// audit-logged.
+	router.Use(validateRequestPath)
+
+	// Clients pointed at a catalog URI ending in /v1 still append the API
+	// version themselves, producing /v1/v1/... requests (iceberg-java does
+	// this when configured with a /v1-suffixed URI). Collapse the repeated
+	// segments before routing so those requests reach the intended handler;
+	// a table bucket can never be named "v1" (names require 3-63 chars), so
+	// the rewrite is unambiguous.
+	router.Use(collapseDoubledV1Middleware(router))
+
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
+
+	// OAuth2 token endpoint - no auth needed (this IS the auth endpoint)
+	router.HandleFunc("/v1/oauth/tokens", s.handleOAuthTokens).Methods(http.MethodPost)
 
 	// Namespace endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
@@ -53,14 +131,30 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/properties", s.Auth(s.handleUpdateNamespaceProperties)).Methods(http.MethodPost)
 
 	// Table endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/register", s.Auth(s.handleRegisterTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/tables/rename", s.Auth(s.handleRenameTable)).Methods(http.MethodPost)
+
+	// View endpoints - wrapped with Auth middleware
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
+
+	// Multi-table transaction commit - wrapped with Auth middleware
+	router.HandleFunc("/v1/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
 	// With prefix support - wrapped with Auth middleware
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
@@ -68,12 +162,24 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/properties", s.Auth(s.handleUpdateNamespaceProperties)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/register", s.Auth(s.handleRegisterTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/tables/rename", s.Auth(s.handleRenameTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleListViews)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views", s.Auth(s.handleCreateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleLoadView)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
 	// Catch-all for debugging
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +188,39 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	})
 
 	glog.V(2).Infof("Registered Iceberg REST Catalog routes")
+}
+
+// collapseDoubledV1Middleware rewrites /v1/v1/... (and deeper repetitions) to
+// the single-/v1 path and re-dispatches through the router once. The collapsed
+// path never starts with /v1/v1 again, so re-entry cannot recurse. The path
+// the client sent is kept in the request context for SigV4 verification,
+// which must check the signature against what was actually signed.
+func collapseDoubledV1Middleware(router *mux.Router) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			if path != "/v1/v1" && !strings.HasPrefix(path, "/v1/v1/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for path == "/v1/v1" || strings.HasPrefix(path, "/v1/v1/") {
+				path = path[len("/v1"):]
+			}
+			signedPath := r.URL.EscapedPath()
+			if signedPath == "" {
+				signedPath = r.URL.Path
+			}
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = path
+			r2.URL.RawPath = ""
+			r2.RequestURI = r2.URL.EscapedPath()
+			if r.URL.RawQuery != "" {
+				r2.RequestURI += "?" + r.URL.RawQuery
+			}
+			r2 = r2.WithContext(s3_constants.SetOriginalRequestPathInContext(r2.Context(), signedPath))
+			router.ServeHTTP(w, r2)
+		})
+	}
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -121,11 +260,41 @@ func (w *responseWriter) WriteHeader(code int) {
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// A request carrying a Bearer token is an Iceberg REST client. When
+		// the token is invalid or expired, answer 401 immediately so clients
+		// (Iceberg Java OAuth2Manager, pyiceberg) refresh their token and
+		// retry. Falling through to the S3 authenticator instead would parse
+		// the Authorization header as SigV4, fail with NotImplemented (501),
+		// and clients would retry the dead token forever.
+		// The auth scheme is case-insensitive (RFC 7235), matching
+		// authenticateBearer below.
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
+			if identityName, identity, accessKey, secretKey, ok := s.authenticateBearerKey(r); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				ctx = s3_constants.SetAccessKeyIdInContext(ctx, accessKey)
+				ctx = s3_constants.SetStoredAccessKeyIdInContext(ctx, accessKey, secretKey)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
+			}
+			// RFC 6750 / Iceberg REST spec: 401 is the refresh signal.
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Bearer token is invalid or expired")
+			return
+		}
+
 		if s.authenticator == nil {
 			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
 			return
 		}
 
+		// The verifier records the key of the credential that matched into
+		// this holder; the vended credentials name it.
+		r = s3_constants.EnsureIdentityHolder(r)
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
 			apiErr := s3err.GetAPIError(errCode)

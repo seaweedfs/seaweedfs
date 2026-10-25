@@ -2,14 +2,15 @@ package dash
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sort"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -22,19 +23,31 @@ const (
 type AdminData struct {
 	Username          string              `json:"username"`
 	TotalVolumes      int                 `json:"total_volumes"`
-	TotalFiles        int64               `json:"total_files"`
+	TotalChunks       int64               `json:"total_chunks"`
 	TotalSize         int64               `json:"total_size"`
 	VolumeSizeLimitMB uint64              `json:"volume_size_limit_mb"`
 	MasterNodes       []MasterNode        `json:"master_nodes"`
 	VolumeServers     []VolumeServer      `json:"volume_servers"`
 	FilerNodes        []FilerNode         `json:"filer_nodes"`
 	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
+	S3Nodes           []S3Node            `json:"s3_nodes"`
 	DataCenters       []DataCenter        `json:"datacenters"`
 	LastUpdated       time.Time           `json:"last_updated"`
 
 	// EC shard totals for dashboard
 	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
 	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
+
+	// TotalMountClients is the number of connected FUSE/VFS mount clients across filers.
+	TotalMountClients int `json:"total_mount_clients"`
+
+	// Trends holds at-a-glance sparklines built from the admin's own recent
+	// cluster snapshots (no Prometheus required).
+	Trends DashboardTrends `json:"trends"`
+
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 // Object Store Users management structures
@@ -45,13 +58,15 @@ type ObjectStoreUser struct {
 	SecretKey   string   `json:"secret_key"`
 	Permissions []string `json:"permissions"`
 	PolicyNames []string `json:"policy_names"`
+	IsStatic    bool     `json:"is_static"` // loaded from static config file, not editable
 }
 
 type ObjectStoreUsersData struct {
-	Username    string            `json:"username"`
-	Users       []ObjectStoreUser `json:"users"`
-	TotalUsers  int               `json:"total_users"`
-	LastUpdated time.Time         `json:"last_updated"`
+	Username         string            `json:"username"`
+	Users            []ObjectStoreUser `json:"users"`
+	TotalUsers       int               `json:"total_users"`
+	HasAnonymousUser bool              `json:"has_anonymous_user"`
+	LastUpdated      time.Time         `json:"last_updated"`
 }
 
 // User management request structures
@@ -80,6 +95,11 @@ type AccessKeyInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CreateAccessKeyRequest struct {
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+}
+
 type UpdateAccessKeyStatusRequest struct {
 	Status string `json:"status" binding:"required"`
 }
@@ -90,6 +110,35 @@ type UserDetails struct {
 	Actions     []string        `json:"actions"`
 	PolicyNames []string        `json:"policy_names"`
 	AccessKeys  []AccessKeyInfo `json:"access_keys"`
+	Groups      []string        `json:"groups"`
+}
+
+// RoleReadOnly is the session role assigned to read-only (view-only) admin
+// accounts. It matches the value stored by HandleLogin when the read-only
+// credentials are used.
+const RoleReadOnly = "readonly"
+
+// IsReadOnlyRole reports whether the given admin session role grants only
+// view-only access. Any other role (admin, or the empty role used when auth
+// is disabled) is treated as non-read-only.
+func IsReadOnlyRole(role string) bool {
+	return role == RoleReadOnly
+}
+
+// RedactSecretKey clears the plaintext S3 secret key from an object-store
+// user record. The access key (a public identifier) is retained so the
+// identity can still be listed; only the reusable secret is removed.
+func (u *ObjectStoreUser) RedactSecretKey() {
+	u.SecretKey = ""
+}
+
+// RedactSecretKeys clears the plaintext S3 secret keys from a user's access
+// key records. Access key identifiers are retained so the set of keys remains
+// visible; only the reusable secrets are removed.
+func (d *UserDetails) RedactSecretKeys() {
+	for i := range d.AccessKeys {
+		d.AccessKeys[i].SecretKey = ""
+	}
 }
 
 type FilerNode struct {
@@ -103,6 +152,12 @@ type MessageBrokerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
 	Rack        string    `json:"rack"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+type S3Node struct {
+	Address     string    `json:"address"`
+	DataCenter  string    `json:"datacenter"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
@@ -135,6 +190,9 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	// Get message broker nodes status
 	messageBrokers := s.getMessageBrokerNodesStatus()
 
+	// Get S3 nodes status
+	s3Nodes := s.getS3NodesStatus()
+
 	// Get volume size limit from master configuration
 	var volumeSizeLimitMB uint64 = 30000 // Default to 30GB
 	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -163,81 +221,124 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	}
 	totalEcVolumes = len(ecVolumeSet)
 
+	// Count connected FUSE/VFS mount clients (best-effort; don't fail the dashboard)
+	totalMountClients := 0
+	if mountData, mountErr := s.GetMountClients(); mountErr == nil {
+		totalMountClients = mountData.TotalMountClients
+	}
+
 	// Prepare admin data
 	adminData := AdminData{
 		Username:          username,
 		TotalVolumes:      topology.TotalVolumes,
-		TotalFiles:        topology.TotalFiles,
+		TotalChunks:       topology.TotalChunks,
 		TotalSize:         topology.TotalSize,
 		VolumeSizeLimitMB: volumeSizeLimitMB,
 		MasterNodes:       masterNodes,
 		VolumeServers:     volumeServersData.VolumeServers,
 		FilerNodes:        filerNodes,
 		MessageBrokers:    messageBrokers,
+		S3Nodes:           s3Nodes,
 		DataCenters:       topology.DataCenters,
 		LastUpdated:       topology.UpdatedAt,
 		TotalEcVolumes:    totalEcVolumes,
 		TotalEcShards:     totalEcShards,
+		TotalMountClients: totalMountClients,
+		Trends:            s.GetDashboardTrends(),
+		TierStats:         topology.TierStats,
 	}
 
 	return adminData, nil
 }
 
 // ShowAdmin displays the main admin page (now uses GetAdminData)
-func (s *AdminServer) ShowAdmin(c *gin.Context) {
-	username := c.GetString("username")
+func (s *AdminServer) ShowAdmin(w http.ResponseWriter, r *http.Request) {
+	username := UsernameFromContext(r.Context())
 
 	adminData, err := s.GetAdminData(username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get admin data: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get admin data: "+err.Error())
 		return
 	}
 
 	// Return JSON for API calls
-	c.JSON(http.StatusOK, adminData)
+	writeJSON(w, http.StatusOK, adminData)
 }
 
 // ShowOverview displays cluster overview
-func (s *AdminServer) ShowOverview(c *gin.Context) {
+func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 	topology, err := s.GetClusterTopology()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, topology)
+	writeJSON(w, http.StatusOK, topology)
 }
 
-// getMasterNodesStatus checks status of all master nodes
+// getMasterNodesStatus returns the full set of master nodes in the cluster.
+// It prefers the authoritative raft membership (RaftListClusterServers) and
+// falls back to the currently-connected master if the raft call fails, so the
+// dashboard never shows an empty list.
 func (s *AdminServer) getMasterNodesStatus() []MasterNode {
-	var masterNodes []MasterNode
+	masterMap := make(map[string]MasterNode)
+	raftReturnedEmpty := false
 
-	// Since we have a single master address, create one entry
-	var isLeader bool = true // Assume leader since it's the only master we know about
-
-	// Try to get leader info from this master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		_, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resp, err := client.RaftListClusterServers(ctx, &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
 			return err
 		}
-		// For now, assume this master is the leader since we can connect to it
-		isLeader = true
+		raftReturnedEmpty = len(resp.ClusterServers) == 0
+		for _, server := range resp.ClusterServers {
+			// Skip malformed raft addresses instead of letting an
+			// unconvertible value into masterMap.
+			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
+				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
+				continue
+			}
+			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			if httpAddress == "" {
+				glog.Warningf("skip master with invalid raft address %q", server.Address)
+				continue
+			}
+			masterMap[httpAddress] = MasterNode{
+				Address:  httpAddress,
+				IsLeader: server.IsLeader,
+			}
+		}
 		return nil
 	})
 
 	if err != nil {
-		isLeader = false
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to list raft cluster masters from %s: %v", currentMaster, err)
 	}
 
-	currentMaster := s.masterClient.GetMaster(context.Background())
-	if currentMaster != "" {
-		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(currentMaster),
-			IsLeader: isLeader,
-		})
+	if len(masterMap) == 0 {
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		if currentMaster != "" {
+			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
+			// A successful empty raft response means raft is not initialized
+			// (standalone/non-raft cluster); the only master IS the leader.
+			// A failed RPC or a nonempty response whose entries were all
+			// rejected must not claim leadership.
+			masterMap[addr] = MasterNode{
+				Address:  addr,
+				IsLeader: raftReturnedEmpty,
+			}
+		}
 	}
 
+	masterNodes := make([]MasterNode, 0, len(masterMap))
+	for _, m := range masterMap {
+		masterNodes = append(masterNodes, m)
+	}
+	sort.Slice(masterNodes, func(i, j int) bool {
+		return masterNodes[i].Address < masterNodes[j].Address
+	})
 	return masterNodes
 }
 
@@ -247,9 +348,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 
 	// Get filer nodes from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.FilerType))
 		if err != nil {
 			return err
 		}
@@ -257,7 +356,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		// Process each filer node
 		for _, node := range resp.ClusterNodes {
 			filerNodes = append(filerNodes, FilerNode{
-				Address:     node.Address,
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
 				LastUpdated: time.Now(),
@@ -288,9 +387,7 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 
 	// Get message broker nodes from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
@@ -321,4 +418,42 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 	})
 
 	return messageBrokers
+}
+
+// getS3NodesStatus checks status of all S3 nodes using master's ListClusterNodes
+func (s *AdminServer) getS3NodesStatus() []S3Node {
+	var s3Nodes []S3Node
+
+	// Get S3 nodes from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.S3Type))
+		if err != nil {
+			return err
+		}
+
+		// Process each S3 node
+		for _, node := range resp.ClusterNodes {
+			s3Nodes = append(s3Nodes, S3Node{
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
+				DataCenter:  node.DataCenter,
+				LastUpdated: time.Now(),
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to get S3 nodes from master %s: %v", currentMaster, err)
+		// Return empty list if we can't get S3 info from master
+		return []S3Node{}
+	}
+
+	// Sort S3 nodes by address for consistent ordering on page refresh
+	sort.Slice(s3Nodes, func(i, j int) bool {
+		return s3Nodes[i].Address < s3Nodes[j].Address
+	})
+
+	return s3Nodes
 }

@@ -1,0 +1,168 @@
+package mount
+
+import (
+	"os/user"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+)
+
+type cachedGroupIDs struct {
+	groups    []string
+	expiresAt time.Time
+}
+
+var (
+	supplementaryGroupCache    = make(map[uint32]*cachedGroupIDs)
+	supplementaryGroupCacheMu  sync.RWMutex
+	supplementaryGroupCacheTTL = 5 * time.Minute
+
+	lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
+		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+		if err != nil {
+			glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		groupIDs, err := u.GroupIds()
+		if err != nil {
+			glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
+			return nil, err
+		}
+		return groupIDs, nil
+	}
+)
+
+// cachedLookupSupplementaryGroupIDs returns supplementary group IDs for a UID,
+// caching results for 5 minutes to avoid repeated expensive system calls.
+func cachedLookupSupplementaryGroupIDs(callerUid uint32) ([]string, error) {
+	now := time.Now()
+
+	supplementaryGroupCacheMu.RLock()
+	cached, ok := supplementaryGroupCache[callerUid]
+	supplementaryGroupCacheMu.RUnlock()
+	if ok && now.Before(cached.expiresAt) {
+		return cached.groups, nil
+	}
+
+	groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
+	if err != nil {
+		return nil, err
+	}
+
+	supplementaryGroupCacheMu.Lock()
+	supplementaryGroupCache[callerUid] = &cachedGroupIDs{
+		groups:    groupIDs,
+		expiresAt: now.Add(supplementaryGroupCacheTTL),
+	}
+	supplementaryGroupCacheMu.Unlock()
+
+	return groupIDs, nil
+}
+
+// clearSupplementaryGroupCache wipes the UID->groups cache for test isolation.
+func clearSupplementaryGroupCache() {
+	supplementaryGroupCacheMu.Lock()
+	defer supplementaryGroupCacheMu.Unlock()
+	for k := range supplementaryGroupCache {
+		delete(supplementaryGroupCache, k)
+	}
+}
+
+/**
+ * Check file access permissions
+ *
+ * This will be called for the access() system call.  If the
+ * 'default_permissions' mount option is given, this method is not
+ * called.
+ *
+ * This method is not called under Linux kernel versions 2.4.x
+ */
+func (wfs *WFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) (code fuse.Status) {
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, code := wfs.maybeReadEntry(ctx, input.NodeId)
+	if code != fuse.OK {
+		return code
+	}
+	if entry == nil || entry.Attributes == nil {
+		return fuse.EIO
+	}
+	// Map entry uid/gid from filer-space to local-space so the permission
+	// check compares like with like (caller uid/gid from FUSE are local).
+	fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+	if wfs.option.UidGidMapper != nil {
+		fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+	}
+	if hasAccess(input.Uid, input.Gid, fileUid, fileGid, entry.Attributes.FileMode, input.Mask) {
+		return fuse.OK
+	}
+	return fuse.EACCES
+}
+
+func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask uint32) bool {
+	mask &= fuse.R_OK | fuse.W_OK | fuse.X_OK
+	if mask == 0 {
+		return true
+	}
+	if callerUid == 0 {
+		return mask&fuse.X_OK == 0 || perm&0o111 != 0
+	}
+
+	if callerUid == fileUid {
+		return (perm>>6)&mask == mask
+	}
+
+	isMember := callerGid == fileGid
+	if !isMember {
+		groupIDs, err := cachedLookupSupplementaryGroupIDs(callerUid)
+		if err != nil {
+			// Cannot determine supplementary group membership.
+			// Fall through to "other" permission check since we already
+			// know the caller is not the owner (checked above) and not
+			// in the primary group.
+			return (perm & mask) == mask
+		}
+		fileGidStr := strconv.Itoa(int(fileGid))
+		for _, gidStr := range groupIDs {
+			if gidStr == fileGidStr {
+				isMember = true
+				break
+			}
+		}
+	}
+
+	if isMember {
+		return (perm>>3)&mask == mask
+	}
+
+	return (perm & mask) == mask
+}
+
+// checkStickyBit enforces the POSIX sticky-bit rule: when a directory has the
+// sticky bit set, only the file owner, the directory owner, or root may
+// delete or rename entries within it.
+func checkStickyBit(dirMode, dirUid, targetUid, callerUid uint32) fuse.Status {
+	if dirMode&0o1000 == 0 {
+		return fuse.OK
+	}
+	if callerUid == 0 || callerUid == dirUid || callerUid == targetUid {
+		return fuse.OK
+	}
+	return fuse.EPERM
+}
+
+// openFlagsToAccessMask converts open(2) flags to an access permission mask.
+func openFlagsToAccessMask(flags uint32) uint32 {
+	switch flags & uint32(o_ACCMODE) {
+	case syscall.O_WRONLY:
+		return fuse.W_OK
+	case syscall.O_RDWR:
+		return fuse.R_OK | fuse.W_OK
+	default: // O_RDONLY
+		return fuse.R_OK
+	}
+}

@@ -2,6 +2,8 @@ package command
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -11,9 +13,11 @@ import (
 )
 
 var (
-	shellOptions      shell.ShellOptions
-	shellInitialFiler *string
-	shellCluster      *string
+	shellOptions        shell.ShellOptions
+	shellInitialFiler   *string
+	shellCluster        *string
+	shellDebug          *bool
+	shellConnectTimeout *time.Duration
 )
 
 func init() {
@@ -22,6 +26,8 @@ func init() {
 	shellOptions.FilerGroup = cmdShell.Flag.String("filerGroup", "", "filerGroup for the filers")
 	shellInitialFiler = cmdShell.Flag.String("filer", "", "filer host and port for initial connection, e.g. localhost:8888")
 	shellCluster = cmdShell.Flag.String("cluster", "", "cluster defined in shell.toml")
+	shellDebug = cmdShell.Flag.Bool("debug", false, "print informational logs to stderr")
+	shellConnectTimeout = cmdShell.Flag.Duration("connectTimeout", 30*time.Second, "timeout for the initial master connection and filer discovery")
 }
 
 var cmdShell = &Command{
@@ -60,9 +66,17 @@ func runShell(command *Command, args []string) bool {
 		filerAddress = viper.GetString("cluster." + cluster + ".filer")
 	}
 	shellOptions.FilerAddress = pb.ServerAddress(filerAddress)
-	fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
+	shellOptions.Debug = *shellDebug
+	shellOptions.ConnectTimeout = *shellConnectTimeout
+	if shellOptions.Debug {
+		fmt.Fprintf(os.Stderr, "master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
+	}
 
-	shell.RunShell(shellOptions)
+	if err := shell.RunShell(shellOptions); err != nil {
+		// The command already printed the error; a piped run has to fail the
+		// script wrapping it too.
+		SetCommandExitStatus(1)
+	}
 
 	return true
 

@@ -15,6 +15,7 @@ const (
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeReplication   TaskType = "replication"
+	TaskTypeECBalance     TaskType = "ec_balance"
 )
 
 // Common task status constants
@@ -26,17 +27,17 @@ const (
 
 // Task and capacity management configuration constants
 const (
-	// MaxConcurrentTasksPerDisk defines the maximum number of concurrent tasks per disk
-	// This prevents overloading a single disk with too many simultaneous operations
-	MaxConcurrentTasksPerDisk = 10
+	// MaxConcurrentTasksPerDisk defines the maximum number of pending+assigned tasks per disk.
+	// Set to 0 to disable hard load capping and rely on effective capacity checks.
+	MaxConcurrentTasksPerDisk = 0
 
-	// MaxTotalTaskLoadPerDisk defines the maximum total task load (pending + active) per disk
-	// This allows more tasks to be queued but limits the total pipeline depth
-	MaxTotalTaskLoadPerDisk = 20
+	// MaxTotalTaskLoadPerDisk defines the maximum total planning load (pending + active) per disk.
+	// Set to 0 to disable hard load capping for planning.
+	MaxTotalTaskLoadPerDisk = 0
 
-	// MaxTaskLoadForECPlacement defines the maximum task load to consider a disk for EC placement
-	// This threshold ensures disks aren't overloaded when planning EC operations
-	MaxTaskLoadForECPlacement = 10
+	// MaxTaskLoadForECPlacement defines the maximum task load to consider a disk for EC placement.
+	// Set to 0 to disable this filter.
+	MaxTaskLoadForECPlacement = 0
 )
 
 // StorageSlotChange represents storage impact at both volume and shard levels

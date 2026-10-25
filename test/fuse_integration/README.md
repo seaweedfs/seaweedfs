@@ -216,7 +216,7 @@ jobs:
     - uses: actions/checkout@v3
     - uses: actions/setup-go@v3
       with:
-        go-version: '1.24'
+        go-version: '1.26'
     
     - name: Install FUSE
       run: sudo apt-get install -y fuse
@@ -232,7 +232,7 @@ jobs:
 
 ### Docker Testing
 ```dockerfile
-FROM golang:1.24
+FROM golang:1.26
 RUN apt-get update && apt-get install -y fuse
 COPY . /seaweedfs
 WORKDIR /seaweedfs

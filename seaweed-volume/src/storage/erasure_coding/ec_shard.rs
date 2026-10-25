@@ -1,0 +1,390 @@
+//! EcVolumeShard: a single shard file (.ec00-.ec13) of an erasure-coded volume.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+
+use crate::storage::types::*;
+use crate::storage::volume_open::open_volume_file;
+
+pub const DATA_SHARDS_COUNT: usize = 10;
+pub const PARITY_SHARDS_COUNT: usize = 4;
+pub const TOTAL_SHARDS_COUNT: usize = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
+pub const MAX_SHARD_COUNT: usize = 32;
+pub const MIN_TOTAL_DISKS: usize = TOTAL_SHARDS_COUNT / PARITY_SHARDS_COUNT + 1;
+pub const ERASURE_CODING_LARGE_BLOCK_SIZE: usize = 1024 * 1024 * 1024; // 1GB
+pub const ERASURE_CODING_SMALL_BLOCK_SIZE: usize = 1024 * 1024; // 1MB
+
+pub type ShardId = u8;
+
+/// Validate a wire shard id. `ShardId` is `u8` but only 0..MAX_SHARD_COUNT are valid.
+/// Rejects 256 (would truncate to 0 and delete .ec00) and 270 (would alias 14).
+pub fn shard_id_try_from(v: u32) -> Result<ShardId, String> {
+    if v < MAX_SHARD_COUNT as u32 {
+        Ok(v as ShardId)
+    } else {
+        Err(format!(
+            "invalid shard id {} (max {})",
+            v,
+            MAX_SHARD_COUNT - 1
+        ))
+    }
+}
+
+/// A single erasure-coded shard file.
+pub struct EcVolumeShard {
+    pub volume_id: VolumeId,
+    pub shard_id: ShardId,
+    pub collection: String,
+    pub dir: String,
+    pub disk_type: DiskType,
+    ecd_file: Option<File>,
+    ecd_file_size: i64,
+}
+
+impl EcVolumeShard {
+    /// Create a new shard reference (does not open the file).
+    pub fn new(dir: &str, collection: &str, volume_id: VolumeId, shard_id: ShardId) -> Self {
+        EcVolumeShard {
+            volume_id,
+            shard_id,
+            collection: collection.to_string(),
+            dir: dir.to_string(),
+            disk_type: DiskType::default(),
+            ecd_file: None,
+            ecd_file_size: 0,
+        }
+    }
+
+    /// Shard file name, e.g. "dir/collection_42.ec03"
+    pub fn file_name(&self) -> String {
+        let base =
+            crate::storage::volume::volume_file_name(&self.dir, &self.collection, self.volume_id);
+        format!("{}.ec{:02}", base, self.shard_id)
+    }
+
+    /// Open the shard file for reading.
+    pub fn open(&mut self) -> io::Result<()> {
+        let path = self.file_name();
+        let file = open_volume_file(OpenOptions::new().read(true), &path)?;
+        self.ecd_file_size = file.metadata()?.len() as i64;
+        self.ecd_file = Some(file);
+        Ok(())
+    }
+
+    /// Create the shard file for writing.
+    pub fn create(&mut self) -> io::Result<()> {
+        let path = self.file_name();
+        let file = open_volume_file(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true),
+            &path,
+        )?;
+        self.ecd_file = Some(file);
+        self.ecd_file_size = 0;
+        Ok(())
+    }
+
+    /// Read data at a specific offset, filling `buf` unless the shard ends first.
+    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        let file = self
+            .ecd_file
+            .as_ref()
+            .ok_or_else(|| io::Error::other("shard file not open"))?;
+
+        crate::storage::io::read_full_at(file, buf, offset)
+    }
+
+    /// Write data to the shard file (appends).
+    pub fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+        let file = self
+            .ecd_file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("shard file not open"))?;
+        file.write_all(data)?;
+        self.ecd_file_size += data.len() as i64;
+        Ok(())
+    }
+
+    pub fn file_size(&self) -> i64 {
+        self.ecd_file_size
+    }
+
+    /// A duplicate of the mounted shard handle, for a reader that has to
+    /// outlive the store guard.
+    ///
+    /// This is the same descriptor `read_at` serves from, so it carries the
+    /// `O_NOATIME` from `open_volume_file` and keeps pointing at the shard
+    /// that was mounted, whatever later happens to the path. `dup` shares the
+    /// kernel file offset, which is why every read through it must be
+    /// positional (`read_at`), never seek-based.
+    pub fn try_clone_file(&self) -> io::Result<File> {
+        self.ecd_file
+            .as_ref()
+            .ok_or_else(|| io::Error::other("shard file not open"))?
+            .try_clone()
+    }
+
+    /// Protobuf descriptor for this shard. Mirrors Go's ToEcShardInfo.
+    pub fn to_ec_shard_info(&self) -> crate::pb::volume_server_pb::EcShardInfo {
+        crate::pb::volume_server_pb::EcShardInfo {
+            shard_id: self.shard_id as u32,
+            size: self.file_size(),
+            collection: self.collection.clone(),
+            volume_id: self.volume_id.0,
+            ..Default::default()
+        }
+    }
+
+    /// Close the shard file.
+    pub fn close(&mut self) {
+        if let Some(ref file) = self.ecd_file {
+            let _ = file.sync_all();
+        }
+        self.ecd_file = None;
+    }
+
+    /// Delete the shard file from disk.
+    pub fn destroy(&mut self) {
+        self.close();
+        let _ = fs::remove_file(self.file_name());
+    }
+}
+
+/// ShardBits: bitmap tracking which shards are present.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShardBits(pub u32);
+
+impl ShardBits {
+    pub fn add_shard_id(&mut self, id: ShardId) {
+        assert!((id as usize) < 32, "shard id {} out of bounds (max 31)", id,);
+        self.0 |= 1 << id;
+    }
+
+    pub fn remove_shard_id(&mut self, id: ShardId) {
+        assert!((id as usize) < 32, "shard id {} out of bounds (max 31)", id,);
+        self.0 &= !(1 << id);
+    }
+
+    pub fn has_shard_id(&self, id: ShardId) -> bool {
+        if (id as usize) >= 32 {
+            return false;
+        }
+        self.0 & (1 << id) != 0
+    }
+
+    pub fn shard_id_count(&self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    /// Iterator over present shard IDs.
+    pub fn shard_ids(&self) -> Vec<ShardId> {
+        let mut ids = Vec::with_capacity(self.shard_id_count());
+        for i in 0..32 {
+            if self.has_shard_id(i) {
+                ids.push(i);
+            }
+        }
+        ids
+    }
+
+    pub fn minus(&self, other: ShardBits) -> ShardBits {
+        ShardBits(self.0 & !other.0)
+    }
+}
+
+/// Parses the generation of a 2PC-staged `<base>.v<N>` file: `None` means the
+/// name is not a generation file of `base`.
+pub fn ec_file_generation(name: &str, base: &str) -> Option<u32> {
+    let suffix = name.strip_prefix(&format!("{}.v", base))?;
+    match suffix.parse::<u32>() {
+        Ok(g) if g > 0 => Some(g),
+        _ => None,
+    }
+}
+
+/// Removes 2PC generation files staged under `base`:
+/// `<base>.ecNN.v<N>`, `<base>.ecx.v<N>`, `<base>.ecj.v<N>`, `<base>.ecsum.v<N>`
+/// and `<base>.vif.v<N>`. `generations_older_than == 0` removes every
+/// generation; otherwise only generations strictly below it. Returns the
+/// first real removal failure. Mirrors Go's `RemoveEcGenerationFiles`.
+pub fn remove_ec_generation_files(base: &str, generations_older_than: u32) -> io::Result<()> {
+    let path = std::path::Path::new(base);
+    let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) else {
+        return Ok(());
+    };
+    let ec_prefix = format!("{}.ec", fname.to_string_lossy());
+    let vif_name = format!("{}.vif", fname.to_string_lossy());
+    let mut first_err: Option<io::Error> = None;
+    let mut record = |res: io::Result<()>| {
+        if let Err(e) = res
+            && first_err.is_none()
+        {
+            first_err = Some(e);
+        }
+    };
+    match fs::read_dir(parent) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        // A skipped entry means an incomplete sweep; report it
+                        // instead of pretending the cleanup finished.
+                        record(Err(e));
+                        continue;
+                    }
+                };
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some((artifact, _)) = name.rsplit_once(".v") else {
+                    continue;
+                };
+                if artifact != vif_name && !artifact.starts_with(&ec_prefix) {
+                    continue;
+                }
+                let Some(generation) = ec_file_generation(&name, artifact) else {
+                    continue;
+                };
+                if generations_older_than > 0 && generation >= generations_older_than {
+                    continue;
+                }
+                record(match fs::remove_file(entry.path()) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                    _ => Ok(()),
+                });
+            }
+        }
+        Err(e) if e.kind() != io::ErrorKind::NotFound => record(Err(e)),
+        Err(_) => {}
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Removes every staged generation `<shard_file>.v<N>` of one shard file.
+/// Returns true when at least one generation file was removed.
+pub fn remove_ec_shard_generations(shard_file: &str) -> io::Result<bool> {
+    let path = std::path::Path::new(shard_file);
+    let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) else {
+        return Ok(false);
+    };
+    let fname = fname.to_string_lossy().into_owned();
+    let mut removed = false;
+    match fs::read_dir(parent) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if ec_file_generation(&name, &fname).is_some() {
+                    match fs::remove_file(entry.path()) {
+                        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                        _ => removed = true,
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        Err(_) => {}
+    }
+    Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shard_bits() {
+        let mut bits = ShardBits::default();
+        assert_eq!(bits.shard_id_count(), 0);
+
+        bits.add_shard_id(0);
+        bits.add_shard_id(3);
+        bits.add_shard_id(13);
+        assert_eq!(bits.shard_id_count(), 3);
+        assert!(bits.has_shard_id(0));
+        assert!(bits.has_shard_id(3));
+        assert!(!bits.has_shard_id(1));
+
+        bits.remove_shard_id(3);
+        assert!(!bits.has_shard_id(3));
+        assert_eq!(bits.shard_id_count(), 2);
+    }
+
+    #[test]
+    fn test_shard_bits_ids() {
+        let mut bits = ShardBits::default();
+        bits.add_shard_id(1);
+        bits.add_shard_id(5);
+        bits.add_shard_id(9);
+        assert_eq!(bits.shard_ids(), vec![1, 5, 9]);
+    }
+
+    #[test]
+    fn test_shard_bits_minus() {
+        let mut a = ShardBits::default();
+        a.add_shard_id(0);
+        a.add_shard_id(1);
+        a.add_shard_id(2);
+
+        let mut b = ShardBits::default();
+        b.add_shard_id(1);
+
+        let c = a.minus(b);
+        assert_eq!(c.shard_ids(), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_shard_file_name() {
+        let shard = EcVolumeShard::new("/data", "pics", VolumeId(42), 3);
+        assert_eq!(shard.file_name(), "/data/pics_42.ec03");
+    }
+
+    #[test]
+    fn test_shard_file_name_no_collection() {
+        let shard = EcVolumeShard::new("/data", "", VolumeId(7), 13);
+        assert_eq!(shard.file_name(), "/data/7.ec13");
+    }
+
+    #[test]
+    fn test_shard_id_try_from_u32_rejects_overflow() {
+        use super::{MAX_SHARD_COUNT, shard_id_try_from};
+        assert_eq!(shard_id_try_from(0).unwrap(), 0u8);
+        assert_eq!(shard_id_try_from(14).unwrap(), 14u8);
+        assert_eq!(shard_id_try_from(31).unwrap(), 31u8);
+        assert!(shard_id_try_from(32).is_err());
+        assert!(shard_id_try_from(256).is_err());
+        assert!(shard_id_try_from(270).is_err());
+        assert!(shard_id_try_from(u32::MAX).is_err());
+        assert_eq!(MAX_SHARD_COUNT, 32);
+    }
+
+    #[test]
+    fn test_shard_batch_validation_is_atomic_rejects_without_partial_prefix() {
+        use super::shard_id_try_from;
+        // The mount/unmount handlers pre-validate the ENTIRE req.shard_ids into
+        // a Vec<ShardId> BEFORE acquiring the write lock or mutating any EC
+        // state. This test pins the validation half of that contract at the
+        // unit level: a batch like [0, 32] must fail as a whole, so by
+        // construction no validated prefix (e.g. shard 0) is ever applied.
+        // The handler-level tests below assert the no-state-change half.
+        let batch = vec![0u32, 32u32];
+        let validated: Result<Vec<_>, _> =
+            batch.iter().map(|&sid| shard_id_try_from(sid)).collect();
+        assert!(
+            validated.is_err(),
+            "batch {:?} must be rejected as a whole",
+            batch
+        );
+        // A fully-valid batch still validates cleanly.
+        let ok: Result<Vec<_>, _> = [0u32, 1u32, 13u32]
+            .iter()
+            .map(|&sid| shard_id_try_from(sid))
+            .collect();
+        assert_eq!(ok.unwrap(), vec![0u8, 1u8, 13u8]);
+    }
+}

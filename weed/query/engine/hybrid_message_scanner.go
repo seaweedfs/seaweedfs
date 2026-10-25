@@ -320,12 +320,6 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 	return results, stats, nil
 }
 
-// scanUnflushedData queries brokers for unflushed in-memory data using buffer_start deduplication
-func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, error) {
-	results, _, err := hms.scanUnflushedDataWithStats(ctx, partition, options)
-	return results, err
-}
-
 // scanUnflushedDataWithStats queries brokers for unflushed data and returns statistics
 func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, *HybridScanStats, error) {
 	var results []HybridScanResult
@@ -436,27 +430,6 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 	return results, stats, nil
 }
 
-// convertDataMessageToRecord converts mq_pb.DataMessage to schema_pb.RecordValue
-func (hms *HybridMessageScanner) convertDataMessageToRecord(msg *mq_pb.DataMessage) (*schema_pb.RecordValue, string, error) {
-	// Parse the message data as RecordValue
-	recordValue := &schema_pb.RecordValue{}
-	if err := proto.Unmarshal(msg.Value, recordValue); err != nil {
-		return nil, "", fmt.Errorf("failed to unmarshal message data: %v", err)
-	}
-
-	// Add system columns
-	if recordValue.Fields == nil {
-		recordValue.Fields = make(map[string]*schema_pb.Value)
-	}
-
-	// Add timestamp
-	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-		Kind: &schema_pb.Value_Int64Value{Int64Value: msg.TsNs},
-	}
-
-	return recordValue, string(msg.Key), nil
-}
-
 // discoverTopicPartitions discovers the actual partitions for this topic by scanning the filesystem
 // This finds real partition directories like v2025-09-01-07-16-34/0000-0630/
 func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([]topic.Partition, error) {
@@ -519,15 +492,6 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 
 	fmt.Printf("Discovered %d partitions for topic %s\n", len(allPartitions), hms.topic.String())
 	return allPartitions, nil
-}
-
-// scanPartitionHybrid scans a specific partition using the hybrid approach
-// This is where the magic happens - seamlessly reading ALL data sources:
-// 1. Unflushed in-memory data from brokers (REAL-TIME)
-// 2. Live logs + Parquet files from disk (FLUSHED/ARCHIVED)
-func (hms *HybridMessageScanner) scanPartitionHybrid(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, error) {
-	results, _, err := hms.scanPartitionHybridWithStats(ctx, partition, options)
-	return results, err
 }
 
 // scanPartitionHybridWithStats scans a specific partition using streaming merge for memory efficiency
@@ -625,6 +589,9 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 				return err
 			}
 
+			if resp.Entry == nil {
+				continue
+			}
 			// Count files that are not .parquet files (live log files)
 			// Live log files typically have timestamps or are named like log files
 			fileName := resp.Entry.Name
@@ -644,23 +611,6 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 	return fileCount, nil
 }
 
-// isControlEntry checks if a log entry is a control entry without actual data
-// Based on MQ system analysis, control entries are:
-// 1. DataMessages with populated Ctrl field (publisher close signals)
-// 2. Entries with empty keys (as filtered by subscriber)
-// NOTE: Messages with empty data but valid keys (like NOOP messages) are NOT control entries
-func (hms *HybridMessageScanner) isControlEntry(logEntry *filer_pb.LogEntry) bool {
-	// Pre-decode DataMessage if needed
-	var dataMessage *mq_pb.DataMessage
-	if len(logEntry.Data) > 0 {
-		dataMessage = &mq_pb.DataMessage{}
-		if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
-			dataMessage = nil // Failed to decode, treat as raw data
-		}
-	}
-	return hms.isControlEntryWithDecoded(logEntry, dataMessage)
-}
-
 // isControlEntryWithDecoded checks if a log entry is a control entry using pre-decoded DataMessage
 // This avoids duplicate protobuf unmarshaling when the DataMessage is already decoded
 func (hms *HybridMessageScanner) isControlEntryWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) bool {
@@ -677,26 +627,6 @@ func (hms *HybridMessageScanner) isControlEntryWithDecoded(logEntry *filer_pb.Lo
 	// Messages with valid keys (even if data is empty) are legitimate messages
 	// Examples: NOOP messages from Schema Registry
 	return false
-}
-
-// isNullOrEmpty checks if a schema_pb.Value is null or empty
-func isNullOrEmpty(value *schema_pb.Value) bool {
-	if value == nil {
-		return true
-	}
-
-	switch v := value.Kind.(type) {
-	case *schema_pb.Value_StringValue:
-		return v.StringValue == ""
-	case *schema_pb.Value_BytesValue:
-		return len(v.BytesValue) == 0
-	case *schema_pb.Value_ListValue:
-		return v.ListValue == nil || len(v.ListValue.Values) == 0
-	case nil:
-		return true // No kind set means null
-	default:
-		return false
-	}
 }
 
 // isSchemaless checks if the scanner is configured for a schema-less topic
@@ -731,61 +661,6 @@ func (hms *HybridMessageScanner) isSchemaless() bool {
 
 	// Schema-less = only has _value field as the data field (plus system fields)
 	return hasValue && dataFieldCount == 1
-}
-
-// convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
-// This handles both:
-// 1. Live log entries (raw message format)
-// 2. Parquet entries (already in schema_pb.RecordValue format)
-// 3. Schema-less topics (raw bytes in _value field)
-func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
-	// For schema-less topics, put raw data directly into _value field
-	if hms.isSchemaless() {
-		recordValue := &schema_pb.RecordValue{
-			Fields: make(map[string]*schema_pb.Value),
-		}
-		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-		}
-		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-		}
-		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
-		}
-		return recordValue, "live_log", nil
-	}
-
-	// Try to unmarshal as RecordValue first (Parquet format)
-	recordValue := &schema_pb.RecordValue{}
-	if err := proto.Unmarshal(logEntry.Data, recordValue); err == nil {
-		// This is an archived message from Parquet files
-		// FIX: Add system columns from LogEntry to RecordValue
-		if recordValue.Fields == nil {
-			recordValue.Fields = make(map[string]*schema_pb.Value)
-		}
-
-		// Add system columns from LogEntry
-		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-		}
-		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-		}
-
-		return recordValue, "parquet_archive", nil
-	}
-
-	// If not a RecordValue, this is raw live message data - parse with schema
-	return hms.parseRawMessageWithSchema(logEntry)
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // parseRawMessageWithSchema parses raw live message data using the topic's schema
@@ -1265,9 +1140,7 @@ func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*P
 		// Extract statistics from this parquet file
 		stats, err := h.extractParquetFileStats(entry, lookupFileIdFn, chunkCache)
 		if err != nil {
-			// Log error but continue processing other files
-			fmt.Printf("Warning: failed to extract stats from %s: %v\n", entry.Name, err)
-			return nil
+			return err
 		}
 
 		if stats != nil {
@@ -1281,11 +1154,20 @@ func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*P
 
 // extractParquetFileStats extracts column statistics from a single parquet file
 func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunkCache *chunk_cache.ChunkCacheInMemory) (*ParquetFileStats, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("cannot operate on nil entry")
+	}
+	if chunkCache == nil {
+		return nil, fmt.Errorf("cannot operate on nil chunkCache")
+	}
 	// Create reader for the parquet file
 	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, fmt.Errorf("resolve chunks of %s: %w", entry.Name, err)
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
-	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
+	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn, nil)
 	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)
 
 	// Create parquet reader - this only reads metadata, not data

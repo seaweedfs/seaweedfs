@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -45,6 +46,56 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 			return nil, nil, 0, err, nil
 		}
 		chunkOffset = offsetInt
+	}
+
+	if isAppend && !so.SaveInside {
+		fullPath := fs.fixFilePath(ctx, r, fileName)
+		entry, findErr := fs.filer.FindEntry(ctx, util.FullPath(fullPath))
+		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+			return nil, nil, 0, fmt.Errorf("find entry for append %q: %w", fullPath, findErr), nil
+		}
+		if findErr == nil && entry != nil && !entry.IsDirectory() && entry.Remote == nil && len(entry.HardLinkId) == 0 && len(entry.GetChunks()) == 0 && (len(entry.Content) > 0 || entry.FileSize == 0) {
+			if entry.FileSize > uint64(len(entry.Content)) {
+				return nil, nil, 0, fmt.Errorf("inline file %q has inconsistent size: metadata=%d content=%d", fullPath, entry.FileSize, len(entry.Content)), nil
+			}
+
+			remainingInlineBudget := fs.option.SaveToFilerLimit - int64(len(entry.Content))
+			if remainingInlineBudget > 0 {
+				// Read at most the remaining inline budget. Reaching the limit means
+				// the resulting file must be chunked, even if this is also EOF.
+				prefix, readErr := io.ReadAll(io.LimitReader(reader, remainingInlineBudget))
+				if readErr != nil {
+					return nil, nil, 0, fmt.Errorf("read input: %w", readErr), nil
+				}
+				if int64(len(prefix)) < remainingInlineBudget {
+					inlineAppend := append([]byte{}, prefix...)
+					md5Hash = md5.New()
+					_, _ = md5Hash.Write(inlineAppend)
+					if len(inlineAppend) > 0 {
+						stats.FilerHandlerCounter.WithLabelValues(stats.ContentSaveToFiler).Inc()
+					}
+					return nil, md5Hash, int64(len(inlineAppend)), nil, inlineAppend
+				}
+				if chunkSize <= 0 {
+					return nil, nil, 0, fmt.Errorf("invalid chunk size %d for inline append promotion", chunkSize), nil
+				}
+				reader = io.MultiReader(bytes.NewReader(prefix), reader)
+			} else {
+				// Probe one byte so an empty append can preserve the inline entry
+				// even when the configured threshold is disabled or below its size.
+				prefix, readErr := io.ReadAll(io.LimitReader(reader, 1))
+				if readErr != nil {
+					return nil, nil, 0, fmt.Errorf("read input: %w", readErr), nil
+				}
+				if len(prefix) == 0 {
+					return nil, md5.New(), 0, nil, []byte{}
+				}
+				if chunkSize <= 0 {
+					return nil, nil, 0, fmt.Errorf("invalid chunk size %d for inline append promotion", chunkSize), nil
+				}
+				reader = io.MultiReader(bytes.NewReader(prefix), reader)
+			}
+		}
 	}
 
 	return fs.uploadReaderToChunks(ctx, r, reader, chunkOffset, chunkSize, fileName, contentType, isAppend, so)
@@ -98,7 +149,9 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
-			if dataSize < fs.option.SaveToFilerLimit {
+			// A short first read proves EOF, so the buffer holds the whole file.
+			// A full chunk may have more data behind it — store it chunked.
+			if dataSize < fs.option.SaveToFilerLimit && dataSize < int64(chunkSize) {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)
@@ -196,10 +249,6 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 	return uploadResult, err, data
 }
 
-func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
-	return fs.dataToChunkWithSSE(ctx, nil, fileName, contentType, data, chunkOffset, so)
-}
-
 func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
 	dataReader := util.NewBytesReader(data)
 
@@ -210,9 +259,14 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var uploadResult *operation.UploadResult
 	var failedFileChunks []*filer_pb.FileChunk
 
-	err := util.Retry("filerDataToChunk", func() error {
+	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
+	// a target gone read-only or full mid-write 5xxs until the master notices.
+	shouldRetry := func(err error) bool {
+		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
+	}
+	err := util.RetryOnError("filerDataToChunk", shouldRetry, func() error {
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so)
+		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if uploadErr != nil {
 			glog.V(4).InfofCtx(ctx, "retry later due to assign error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
@@ -239,6 +293,13 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	if err != nil {
 		glog.ErrorfCtx(ctx, "upload error: %v", err)
 		return failedFileChunks, err
+	}
+
+	// A retry that lands elsewhere strands the earlier attempts: a volume server
+	// 5xxs after storing the needle locally when replication fails, and each
+	// attempt used its own file id, so nothing references them now.
+	if len(failedFileChunks) > 0 {
+		fs.filer.DeleteUncommittedChunks(ctx, failedFileChunks)
 	}
 
 	// if last chunk exhausted the reader exactly at the border

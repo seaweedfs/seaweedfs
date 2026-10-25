@@ -59,7 +59,17 @@ is_incremental = false
 # experimental, let me know if it works
 enabled = false
 account_name = ""
+# leave account_key empty to authenticate with Entra ID instead of a shared key,
+# picking up a workload identity or managed identity from the environment. The
+# identity needs a data-plane role such as Storage Blob Data Contributor.
 account_key = ""
+# optional user-assigned identity, when account_key is empty. Workload identity
+# takes its tenant and token from AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE,
+# which the Azure workload identity webhook projects into the pod.
+client_id = ""
+# blob service url, for accounts outside the public cloud. Empty resolves to
+# https://<account_name>.blob.core.windows.net/
+endpoint = ""
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
 is_incremental = false

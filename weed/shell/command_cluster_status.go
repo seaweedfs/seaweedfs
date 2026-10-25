@@ -53,6 +53,9 @@ type ClusterStatusPrinter struct {
 	maxParallelization int
 
 	locked              bool
+	lockHeld            bool
+	lockHolder          string
+	lockMessage         string
 	collections         []string
 	topology            *master_pb.TopologyInfo
 	volumeSizeLimitMb   uint64
@@ -91,12 +94,17 @@ func (c *commandClusterStatus) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
+	lockHolder, lockMessage, lockHeld := commandEnv.shellLockHolder()
+
 	sp := &ClusterStatusPrinter{
 		writer:             writer,
 		humanize:           *humanize,
 		maxParallelization: *maxParallelization,
 
 		locked:            commandEnv.isLocked(),
+		lockHeld:          lockHeld,
+		lockHolder:        lockHolder,
+		lockMessage:       lockMessage,
 		collections:       collections,
 		topology:          topology,
 		volumeSizeLimitMb: volumeSizeLimitMb,
@@ -327,14 +335,26 @@ func (sp *ClusterStatusPrinter) printClusterInfo() {
 		for _, ri := range dci.RackInfos {
 			for _, dni := range ri.DataNodeInfos {
 				nodes++
-				disks += len(dni.DiskInfos)
+				// The master keys DiskInfos by disk type, so multiple
+				// same-type physical disks on one node collapse into a single
+				// entry. Count physical disks via SplitByPhysicalDisk so a node
+				// with N disks of one type reports N, not 1.
+				for _, di := range dni.DiskInfos {
+					disks += len(di.SplitByPhysicalDisk())
+				}
 			}
 		}
 	}
 
 	status := "unlocked"
-	if sp.locked {
+	if sp.lockHeld || sp.locked {
 		status = "LOCKED"
+		if sp.lockHolder != "" {
+			status += " by " + sp.lockHolder
+		}
+		if sp.lockMessage != "" {
+			status += " (" + sp.lockMessage + ")"
+		}
 	}
 
 	sp.write("cluster:")

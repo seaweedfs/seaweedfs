@@ -2,10 +2,14 @@ package weed_server
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"math/rand/v2"
 	"os"
 	"path"
+	"sort"
+	"sync"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
@@ -28,9 +32,9 @@ type RaftServerOption struct {
 	DataDir           string
 	Topo              *topology.Topology
 	RaftResumeState   bool
+	SingleMaster      bool
 	HeartbeatInterval time.Duration
 	ElectionTimeout   time.Duration
-	RaftBootstrap     bool
 }
 
 type RaftServer struct {
@@ -56,6 +60,10 @@ func (s StateMachine) Save() ([]byte, error) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 		TopologyId:  s.topo.GetTopologyId(),
 	}
+	if s.topo.IsGrowthFrozen() {
+		state.GrowthFrozen = new(bool)
+		*state.GrowthFrozen = true
+	}
 	glog.V(1).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
 }
@@ -71,6 +79,12 @@ func (s StateMachine) Recovery(data []byte) error {
 	if state.TopologyId != "" {
 		s.topo.SetTopologyId(state.TopologyId)
 		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
+	}
+	if state.GrowthFrozen != nil {
+		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
 	}
 	return nil
 }
@@ -91,16 +105,25 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
 	}
+	if state.GrowthFrozen != nil {
+		s.topo.SetGrowthFrozen(*state.GrowthFrozen)
+	}
+	if err := s.topo.PersistMaxVolumeId(state.MaxVolumeId); err != nil {
+		glog.Warningf("persist max volume id %d: %v", state.MaxVolumeId, err)
+	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
 	return nil
 }
 
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
-	return &topology.MaxVolumeIdCommand{
-		MaxVolumeId: s.topo.GetMaxVolumeId(),
-		TopologyId:  s.topo.GetTopologyId(),
-	}, nil
+	frozen := s.topo.IsGrowthFrozen()
+	state := &topology.MaxVolumeIdCommand{
+		MaxVolumeId:  s.topo.GetMaxVolumeId(),
+		TopologyId:   s.topo.GetTopologyId(),
+		GrowthFrozen: &frozen,
+	}
+	return state, nil
 }
 
 func (s *StateMachine) Restore(r io.ReadCloser) error {
@@ -112,6 +135,14 @@ func (s *StateMachine) Restore(r io.ReadCloser) error {
 		return err
 	}
 	return nil
+}
+
+var registerMaxVolumeIdCommandOnce sync.Once
+
+func registerMaxVolumeIdCommand() {
+	registerMaxVolumeIdCommandOnce.Do(func() {
+		raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	})
 }
 
 func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
@@ -126,22 +157,32 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		raft.SetLogLevel(2)
 	}
 
-	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	registerMaxVolumeIdCommand()
 
 	var err error
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
 	if !option.RaftResumeState {
+		// Recover the TopologyId from the snapshot before clearing state.
+		// The TopologyId is a cluster identity used for license validation
+		// and must survive raft state cleanup.
+		recoverTopologyIdFromSnapshot(s.dataDir, option.Topo)
+
 		// clear previous log to ensure fresh start
 		os.RemoveAll(path.Join(s.dataDir, "log"))
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
+		// clear persisted vote state (currentTerm/votedFor) so that stale
+		// terms from previous runs cannot cause election conflicts when the
+		// log has been wiped.
+		os.Remove(path.Join(s.dataDir, "state"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), os.ModePerm); err != nil {
 		return nil, err
 	}
+	option.Topo.SetMaxVolumeIdFile(path.Join(s.dataDir, "max_volume_id"))
 
 	stateMachine := StateMachine{topo: option.Topo}
 	s.raftServer, err = raft.NewServer(string(s.serverAddr), s.dataDir, transporter, stateMachine, option.Topo, s.serverAddr.ToGrpcAddress())
@@ -155,8 +196,36 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err := s.raftServer.LoadSnapshot(); err != nil {
 		return nil, err
 	}
+
+	// In single-master mode resuming state, the log is not empty so the
+	// normal self-join path won't promote to leader. The server will
+	// self-elect after the election timeout, so use a tiny timeout to
+	// make this near-instant, then restore the original after election.
+	fastResume := option.SingleMaster && option.RaftResumeState && !s.raftServer.IsLogEmpty()
+	if fastResume {
+		s.raftServer.SetElectionTimeout(time.Millisecond)
+	}
+
 	if err := s.raftServer.Start(); err != nil {
 		return nil, err
+	}
+
+	if fastResume {
+		go func() {
+			defer s.raftServer.SetElectionTimeout(option.ElectionTimeout)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			timeout := time.After(option.ElectionTimeout)
+			for s.raftServer.Leader() == "" {
+				select {
+				case <-timeout:
+					glog.Warningf("Fast resume timed out waiting for leader election, restoring election timeout to %v", option.ElectionTimeout)
+					return
+				case <-ticker.C:
+				}
+			}
+			glog.V(0).Infof("Resumed as leader with election timeout restored to %v", option.ElectionTimeout)
+		}()
 	}
 
 	for name, peer := range s.peers {
@@ -199,15 +268,77 @@ func (s *RaftServer) Peers() (members []string) {
 	return
 }
 
-func (s *RaftServer) DoJoinCommand() {
-
-	glog.V(0).Infoln("Initializing new cluster")
-
-	if _, err := s.raftServer.Do(&raft.DefaultJoinCommand{
-		Name:             s.raftServer.Name(),
-		ConnectionString: s.serverAddr.ToGrpcAddress(),
-	}); err != nil {
-		glog.Errorf("fail to send join command: %v", err)
+// recoverTopologyIdFromSnapshot reads the TopologyId from the latest
+// seaweedfs/raft snapshot before state cleanup.
+func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
+	snapshotDir := path.Join(dataDir, "snapshot")
+	dir, err := os.Open(snapshotDir)
+	if err != nil {
+		return
+	}
+	defer dir.Close()
+	filenames, err := dir.Readdirnames(-1)
+	if err != nil || len(filenames) == 0 {
+		return
 	}
 
+	sort.Strings(filenames)
+	file, err := os.Open(path.Join(snapshotDir, filenames[len(filenames)-1]))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	// Snapshot format: 8-hex-digit CRC32 checksum, newline, JSON body.
+	var checksum uint32
+	if _, err := fmt.Fscanf(file, "%08x\n", &checksum); err != nil {
+		return
+	}
+	b, err := io.ReadAll(file)
+	if err != nil || crc32.ChecksumIEEE(b) != checksum {
+		return
+	}
+
+	// The snapshot JSON wraps the FSM state in a "state" field.
+	var snap struct {
+		State json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(b, &snap); err != nil || len(snap.State) == 0 {
+		return
+	}
+	recoverTopologyIdFromState(snap.State, topo)
+}
+
+// HasExistingState returns true when the raft log already contains entries,
+// indicating this server was previously joined and does not need a new
+// JoinCommand on startup.
+func (s *RaftServer) HasExistingState() bool {
+	if s.raftServer != nil {
+		return !s.raftServer.IsLogEmpty()
+	}
+	if s.RaftHashicorp != nil {
+		return s.RaftHashicorp.LastIndex() > 0
+	}
+	return false
+}
+
+// Bootstrap mints a new raft cluster out of the configured peers. Only call it
+// when no leader exists anywhere: a master that starts with no raft state and
+// finds a leader must be admitted by that leader instead, or the two clusters
+// never merge. Committed state is never bootstrapped over — hashicorp refuses,
+// and goraft callers reach here only past HasExistingState.
+func (s *RaftServer) Bootstrap() error {
+	glog.V(0).Infoln("Initializing new cluster")
+
+	if s.RaftHashicorp != nil {
+		return s.RaftHashicorp.BootstrapCluster(s.AddPeersConfiguration()).Error()
+	}
+	if s.raftServer == nil {
+		return nil
+	}
+	_, err := s.raftServer.Do(&raft.DefaultJoinCommand{
+		Name:             s.raftServer.Name(),
+		ConnectionString: s.serverAddr.ToGrpcAddress(),
+	})
+	return err
 }

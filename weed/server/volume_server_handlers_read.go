@@ -35,13 +35,25 @@ import (
 const reqIsProxied = "proxied"
 
 func NotFound(w http.ResponseWriter) {
+	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func InternalError(w http.ResponseWriter) {
+func InternalError(w http.ResponseWriter, r *http.Request, err error) {
+	stats.VolumeServerFileReadFailures.Inc()
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
-	w.WriteHeader(http.StatusInternalServerError)
+	if err == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodHead {
+		glog.V(0).Infof("response method:%s URL:%s with httpStatus:%d and error:%v",
+			r.Method, redactedURL(r), http.StatusInternalServerError, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writeJsonError(w, r, http.StatusInternalServerError, err)
 }
 
 func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +67,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
 	if err != nil || len(lookupResult.Locations) <= 0 {
 		glog.V(0).Infoln("lookup error:", err, r.URL.Path)
+		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		NotFound(w)
 		return
 	}
@@ -63,16 +76,17 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
 		})
 	}
-	var tragetUrl *url.URL
+	var targetUrl *url.URL
 	location := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
 	for _, loc := range lookupResult.Locations {
 		if !strings.Contains(loc.Url, location) {
 			rawURL, _ := util_http.NormalizeUrl(loc.Url)
-			tragetUrl, _ = url.Parse(rawURL)
+			targetUrl, _ = url.Parse(rawURL)
 			break
 		}
 	}
-	if tragetUrl == nil {
+	if targetUrl == nil {
+		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.EmptyReadProxyLoc).Inc()
 		glog.Errorf("failed lookup target host is empty locations: %+v, %s", lookupResult.Locations, location)
 		NotFound(w)
@@ -81,15 +95,15 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	if vs.ReadMode == "proxy" {
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadProxyReq).Inc()
 		// proxy client request to target server
-		r.URL.Host = tragetUrl.Host
-		r.URL.Scheme = tragetUrl.Scheme
+		r.URL.Host = targetUrl.Host
+		r.URL.Scheme = targetUrl.Scheme
 		query := r.URL.Query()
 		query.Set(reqIsProxied, "true")
 		r.URL.RawQuery = query.Encode()
 		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 		if err != nil {
-			glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
-			InternalError(w)
+			glog.V(0).Infof("failed to instance http request of url %s: %v", redactedURL(r), err)
+			InternalError(w, r, nil)
 			return
 		}
 		for k, vv := range r.Header {
@@ -101,8 +115,8 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		response, err := util_http.GetGlobalHttpClient().Do(request)
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.FailedReadProxyReq).Inc()
-			glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
-			InternalError(w)
+			glog.V(0).Infof("request remote url %s: %v", redactedURL(r), err)
+			InternalError(w, r, nil)
 			return
 		}
 		defer util_http.CloseResponse(response)
@@ -123,16 +137,30 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	} else {
 		// redirect
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadRedirectReq).Inc()
-		tragetUrl.Path = fmt.Sprintf("%s/%s,%s", tragetUrl.Path, vid, fid)
+		targetUrl.Path = fmt.Sprintf("%s/%s,%s", targetUrl.Path, vid, fid)
 		arg := url.Values{}
 		if c := r.FormValue("collection"); c != "" {
 			arg.Set("collection", c)
 		}
 		arg.Set(reqIsProxied, "true")
-		tragetUrl.RawQuery = arg.Encode()
-		http.Redirect(w, r, tragetUrl.String(), http.StatusMovedPermanently)
+		targetUrl.RawQuery = arg.Encode()
+		http.Redirect(w, r, targetUrl.String(), http.StatusMovedPermanently)
 		return
 	}
+}
+
+// notModified checks If-Modified-Since only when there is no If-None-Match
+// (RFC 9110 13.2.2).
+func notModified(r *http.Request, etag string, lastModified uint64) bool {
+	if inm := r.Header.Values("If-None-Match"); len(inm) != 0 {
+		return etagListMatches(strings.Join(inm, ","), etag, true)
+	}
+	ims := r.Header.Get("If-Modified-Since")
+	if ims == "" || lastModified == 0 {
+		return false
+	}
+	t, err := time.Parse(http.TimeFormat, ims)
+	return err == nil && t.Unix() >= int64(lastModified)
 }
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +190,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
 		if vs.ReadMode == "local" {
+			stats.VolumeServerFileReadInvalidNeedles.Inc()
 			glog.V(0).Infoln("volume is not local:", err, r.URL.Path)
 			NotFound(w)
 			return
@@ -205,34 +234,41 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
 		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
-		if err == storage.ErrorNotFound || err == storage.ErrorDeleted || errors.Is(err, erasure_coding.NotFoundError) {
+		invalid_needle := err == storage.ErrorNotFound || errors.Is(err, erasure_coding.NotFoundError)
+		if invalid_needle {
+			stats.VolumeServerFileReadInvalidNeedles.Inc()
+		}
+		if invalid_needle || err == storage.ErrorDeleted {
 			NotFound(w)
 		} else {
-			InternalError(w)
+			InternalError(w, r, err)
 		}
 		return
 	}
 	if n.Cookie != cookie {
+		// A meta-only read ended the request; record its success.
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
 		NotFound(w)
 		return
 	}
 	if n.LastModified != 0 {
 		w.Header().Set("Last-Modified", time.Unix(int64(n.LastModified), 0).UTC().Format(http.TimeFormat))
-		if r.Header.Get("If-Modified-Since") != "" {
-			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if t.Unix() >= int64(n.LastModified) {
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
+	}
+	SetEtag(w, n.Etag())
+	if notModified(r, n.Etag(), n.LastModified) {
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
 			}
 		}
-	}
-	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	SetEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)
@@ -299,13 +335,18 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
-	if r.Method == http.MethodHead {
-		return true, true
-	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
 	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
 	if shouldResize || shouldCrop {
+		// A transformed image's length is not the needle's; the payload is
+		// needed to answer — also true for HEAD, which reports it.
 		return false, false
+	}
+	if r.Method == http.MethodHead {
+		// Attempt only, so a needle up to PagedReadLimit is still read whole:
+		// on a spinning disk one read is cheaper than a header read followed
+		// by a trailer read.
+		return true, false
 	}
 	return true, false
 }
@@ -455,6 +496,10 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == http.MethodHead {
+		// HEAD ends at the metadata read; record its success.
+		if v := vs.store.GetVolume(volumeId); v != nil {
+			v.NoteMetaOnlySuccess()
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}

@@ -125,7 +125,10 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	)
 	glog.V(0).Info("Started idle partition cleanup task (check: 1m, timeout: 5m)")
 
-	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	existingNodes, listErr := cluster.ListExistingPeerUpdates(context.Background(), mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	if listErr != nil {
+		glog.Warningf("broker failed to list existing peers: %v", listErr)
+	}
 	for _, newNode := range existingNodes {
 		mqBroker.OnBrokerUpdate(newNode, time.Now())
 	}
@@ -200,14 +203,6 @@ func (b *MessageQueueBroker) AdjustedUrl(location *filer_pb.Location) string {
 func (b *MessageQueueBroker) GetDataCenter() string {
 
 	return ""
-
-}
-
-func (b *MessageQueueBroker) withMasterClient(streamingMode bool, master pb.ServerAddress, fn func(client master_pb.SeaweedClient) error) error {
-
-	return pb.WithMasterClient(streamingMode, master, b.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		return fn(client)
-	})
 
 }
 

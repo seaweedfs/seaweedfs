@@ -5,17 +5,24 @@ all: gen
 gen:
 	protoc master.proto --go_out=./master_pb --go-grpc_out=./master_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc volume_server.proto --go_out=./volume_server_pb --go-grpc_out=./volume_server_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
-	protoc filer.proto --go_out=./filer_pb --go-grpc_out=./filer_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	protoc filer.proto --go_out=./filer_pb --go-grpc_out=./filer_pb --go-vtproto_out=./filer_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative --go-vtproto_opt=paths=source_relative,features=marshal+unmarshal+size
 	protoc remote.proto --go_out=./remote_pb --go-grpc_out=./remote_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc iam.proto --go_out=./iam_pb --go-grpc_out=./iam_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mount.proto --go_out=./mount_pb --go-grpc_out=./mount_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	mkdir -p ./mount_peer_pb
+	protoc mount_peer.proto --go_out=./mount_peer_pb --go-grpc_out=./mount_peer_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc s3.proto --go_out=./s3_pb --go-grpc_out=./s3_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	mkdir -p ./s3_lifecycle_pb
+	protoc s3_lifecycle.proto --go_out=./s3_lifecycle_pb --go-grpc_out=./s3_lifecycle_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_broker.proto --go_out=./mq_pb --go-grpc_out=./mq_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_schema.proto --go_out=./schema_pb --go-grpc_out=./schema_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_agent.proto --go_out=./mq_agent_pb --go-grpc_out=./mq_agent_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc worker.proto --go_out=./worker_pb --go-grpc_out=./worker_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	mkdir -p ./plugin_pb
+	protoc plugin.proto --go_out=./plugin_pb --go-grpc_out=./plugin_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto
+	cp volume_server.proto master.proto remote.proto ../../seaweed-volume/proto/
 
 fbs:
 	flatc --go -o . --go-namespace message_fbs message.fbs

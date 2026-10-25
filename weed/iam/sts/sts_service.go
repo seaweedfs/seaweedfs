@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -68,6 +69,21 @@ func (fd FlexibleDuration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fd.Duration.String())
 }
 
+// ClaimBasedPolicyRoleArn is the AWS-shaped sentinel ARN that callers pass
+// in the AssumeRoleWithWebIdentity RoleArn field to opt into claim-based
+// policy resolution. Using a recognisable role-style ARN here (rather than
+// requiring an empty RoleArn) lets SDKs and AWS CLI builds that always
+// require RoleArn to be set still reach this code path.
+const ClaimBasedPolicyRoleArn = "arn:aws:iam:::role/sts-claim-based"
+
+// IsClaimBasedPolicyRoleArn reports whether the supplied RoleArn opts the
+// caller into claim-based policy mode. Either the empty string (caller
+// omitted RoleArn entirely; common for SDKs that didn't expect to need one)
+// or the explicit sentinel triggers the mode.
+func IsClaimBasedPolicyRoleArn(arn string) bool {
+	return arn == "" || arn == ClaimBasedPolicyRoleArn
+}
+
 // STSService provides Security Token Service functionality
 // This service is now completely stateless - all session information is embedded
 // in JWT tokens, eliminating the need for session storage and enabling true
@@ -78,13 +94,44 @@ type STSService struct {
 	providers            map[string]providers.IdentityProvider
 	issuerToProvider     map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
 	tokenGenerator       *TokenGenerator
+	credGenerator        *CredentialGenerator
 	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
+
+	// iamManagedOIDCMu guards iamManagedOIDCByIssuer. The map is the live view
+	// of providers persisted in the IAM-managed OIDCProviderStore; it is
+	// atomically replaced by SetIAMManagedOIDCProviders whenever the store
+	// changes (either via a local IAM API call or a metadata-subscribe event
+	// from a peer). Lookups consult this map first and fall back to the
+	// static-config issuerToProvider so admin-managed entries always take
+	// precedence over the bootstrap config.
+	//
+	// The slice value lets multiple records share an issuer when each is
+	// scoped to a different account; lookup picks the entry whose AccountID
+	// matches the role being assumed (or the global, AccountID="" entry as a
+	// fallback). Without this, two accounts' records for the same issuer
+	// would race for one map slot and a token could be validated by a
+	// provider that wasn't scoped to the role's account.
+	iamManagedOIDCMu       sync.RWMutex
+	iamManagedOIDCByIssuer map[string][]ScopedOIDCProvider
+}
+
+// ScopedOIDCProvider pairs an OIDC IdentityProvider with the account it is
+// scoped to. AccountID="" means the provider is global (usable from any
+// account).
+type ScopedOIDCProvider struct {
+	AccountID string
+	Provider  providers.IdentityProvider
 }
 
 // GetTokenGenerator returns the token generator used by the STS service.
 // This keeps the underlying field unexported while still allowing read-only access.
 func (s *STSService) GetTokenGenerator() *TokenGenerator {
 	return s.tokenGenerator
+}
+
+// GetCredentialGenerator returns the credential generator used by the STS service.
+func (s *STSService) GetCredentialGenerator() *CredentialGenerator {
+	return s.credGenerator
 }
 
 // STSConfig holds STS service configuration
@@ -140,6 +187,11 @@ type AssumeRoleWithWebIdentityRequest struct {
 
 	// Policy is an optional session policy (optional)
 	Policy *string `json:"Policy,omitempty"`
+
+	// RoleId is the assumed role's unique ID, set by the IAM manager after it
+	// resolves the role. It is embedded in the session so the session is bound
+	// to this role and not to whatever role later holds the same name.
+	RoleId string `json:"-"`
 }
 
 // AssumeRoleWithCredentialsRequest represents a request to assume role with username/password
@@ -164,6 +216,9 @@ type AssumeRoleWithCredentialsRequest struct {
 
 	// Policy is an optional session policy (optional)
 	Policy *string `json:"Policy,omitempty"`
+
+	// RoleId is set by the IAM manager; see AssumeRoleWithWebIdentityRequest.
+	RoleId string `json:"-"`
 }
 
 // AssumeRoleResponse represents the response from assume role operations
@@ -254,6 +309,27 @@ type SessionInfo struct {
 
 	// Credentials are the temporary credentials for this session
 	Credentials *Credentials `json:"credentials"`
+
+	// ParentUser is the stable hashed identity (sub+iss) derived at federation time.
+	ParentUser string `json:"parentUser,omitempty"`
+
+	// RoleId is the unique ID of the role the session was issued for; empty
+	// for sessions issued before role IDs were recorded.
+	RoleId string `json:"roleId,omitempty"`
+
+	// SourceAccessKeyId is the access key the session was minted for, when the
+	// minting service recorded it (AssumeRoleForPrincipal).
+	SourceAccessKeyId string `json:"sourceAccessKeyId,omitempty"`
+
+	// BoundAccessKeyId is the stored credential the session is bound to, when
+	// the minting service recorded one (AssumeRoleForPrincipal). A legacy
+	// SourceAccessKeyId is never treated as a binding.
+	BoundAccessKeyId string `json:"boundAccessKeyId,omitempty"`
+
+	// BoundAccessKeyFingerprint identifies the credential instance the
+	// session is bound to, so a key re-created under the same id does not
+	// match.
+	BoundAccessKeyFingerprint string `json:"boundAccessKeyFingerprint,omitempty"`
 }
 
 // NewSTSService creates a new STS service
@@ -270,6 +346,9 @@ func (s *STSService) Initialize(config *STSConfig) error {
 		return fmt.Errorf(ErrConfigCannotBeNil)
 	}
 
+	// Apply defaults before validation
+	config.ApplyDefaults()
+
 	if err := s.validateConfig(config); err != nil {
 		return fmt.Errorf("invalid STS configuration: %w", err)
 	}
@@ -278,6 +357,7 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	// Initialize token generator for stateless JWT operations
 	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
+	s.credGenerator = NewCredentialGenerator(config.SigningKey)
 
 	// Load identity providers from configuration
 	if err := s.loadProvidersFromConfig(config); err != nil {
@@ -286,6 +366,21 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	s.initialized = true
 	return nil
+}
+
+// ApplyDefaults applies default values to the STS configuration
+func (c *STSConfig) ApplyDefaults() {
+	if c.TokenDuration.Duration <= 0 {
+		c.TokenDuration.Duration = time.Duration(DefaultTokenDuration) * time.Second
+	}
+
+	if c.MaxSessionLength.Duration <= 0 {
+		c.MaxSessionLength.Duration = time.Duration(DefaultMaxSessionLength) * time.Second
+	}
+
+	if c.Issuer == "" {
+		c.Issuer = DefaultIssuer
+	}
 }
 
 // validateConfig validates the STS configuration
@@ -403,6 +498,96 @@ func (s *STSService) GetProviders() map[string]providers.IdentityProvider {
 	return s.providers
 }
 
+// SetIAMManagedOIDCProviders atomically replaces the IAM-managed OIDC
+// provider map. Pass nil or an empty map to clear all managed entries. The
+// caller passes a fully-built map keyed by issuer URL; the slice value lets
+// per-account records coexist under the same issuer.
+func (s *STSService) SetIAMManagedOIDCProviders(byIssuer map[string][]ScopedOIDCProvider) {
+	// Defensively copy so callers can keep mutating their map without affecting
+	// in-flight lookups. A nil input becomes an empty map for cheap reads.
+	cp := make(map[string][]ScopedOIDCProvider, len(byIssuer))
+	for issuer, scoped := range byIssuer {
+		if issuer == "" {
+			continue
+		}
+		entries := make([]ScopedOIDCProvider, 0, len(scoped))
+		for _, sp := range scoped {
+			if sp.Provider == nil {
+				continue
+			}
+			entries = append(entries, sp)
+		}
+		if len(entries) > 0 {
+			cp[issuer] = entries
+		}
+	}
+	s.iamManagedOIDCMu.Lock()
+	old := s.iamManagedOIDCByIssuer
+	s.iamManagedOIDCByIssuer = cp
+	s.iamManagedOIDCMu.Unlock()
+
+	// Providers dropped by the swap may own background workers (the JTI
+	// cleanup goroutine); stop them so a replaced provider does not leak.
+	kept := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range cp {
+		for _, sp := range scoped {
+			kept[sp.Provider] = struct{}{}
+		}
+	}
+	stopped := make(map[providers.IdentityProvider]struct{})
+	for _, scoped := range old {
+		for _, sp := range scoped {
+			if _, ok := kept[sp.Provider]; ok {
+				continue
+			}
+			if _, ok := stopped[sp.Provider]; ok {
+				continue
+			}
+			stopped[sp.Provider] = struct{}{}
+			if sd, ok := sp.Provider.(interface{ Shutdown(context.Context) error }); ok {
+				if err := sd.Shutdown(context.Background()); err != nil {
+					glog.Warningf("OIDC provider %q shutdown after replacement: %v", sp.Provider.Name(), err)
+				}
+			}
+		}
+	}
+}
+
+// lookupOIDCProviderForAccount returns the provider that should validate
+// tokens from `issuer` when the caller is assuming a role in `accountID`.
+// Selection order:
+//  1. IAM-managed record exactly scoped to accountID (when accountID != "");
+//  2. IAM-managed record with empty AccountID (global);
+//  3. static-config issuerToProvider (legacy path; account-agnostic).
+//
+// Without the (issuer, account) key, two records for the same issuer (e.g.
+// account A with clientIDs=[a] and account B with clientIDs=[b]) would race
+// for one map slot, and a token destined for account B could be validated by
+// account A's record. The role-account check in
+// IAMManager.enforceProviderAccountScope blocks the cross-account assumption
+// itself, but the validation must use the right record's clientIDs and
+// thumbprints in the first place.
+func (s *STSService) lookupOIDCProviderForAccount(issuer, accountID string) (providers.IdentityProvider, bool) {
+	s.iamManagedOIDCMu.RLock()
+	scoped := s.iamManagedOIDCByIssuer[issuer]
+	var globalMatch providers.IdentityProvider
+	for _, sp := range scoped {
+		if accountID != "" && sp.AccountID == accountID {
+			s.iamManagedOIDCMu.RUnlock()
+			return sp.Provider, true
+		}
+		if sp.AccountID == "" && globalMatch == nil {
+			globalMatch = sp.Provider
+		}
+	}
+	s.iamManagedOIDCMu.RUnlock()
+	if globalMatch != nil {
+		return globalMatch, true
+	}
+	p, ok := s.issuerToProvider[issuer]
+	return p, ok
+}
+
 // SetTrustPolicyValidator sets the trust policy validator for role assumption validation
 func (s *STSService) SetTrustPolicyValidator(validator TrustPolicyValidator) {
 	s.trustPolicyValidator = validator
@@ -433,38 +618,63 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		sessionPolicy = normalized
 	}
 
-	// 1. Validate the web identity token with appropriate provider
-	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken)
+	// 1. Validate the web identity token with appropriate provider. The role
+	// ARN's account scopes which IAM-managed record may validate the token —
+	// see lookupOIDCProviderForAccount. ParseRoleARN returns "" when the
+	// caller passed a legacy or claim-based ARN, in which case lookup falls
+	// back to a global (account-less) record only.
+	roleAccountID := utils.ParseRoleARN(request.RoleArn).AccountID
+	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken, roleAccountID, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate web identity token: %w", err)
 	}
 
-	// 2. Check if the role exists and can be assumed (includes trust policy validation)
-	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
-		return nil, fmt.Errorf("role assumption denied: %w", err)
+	// 2. Decide between concrete-role mode and claim-based policy mode.
+	// Claim-based mode requires both the sentinel RoleArn and a non-empty
+	// ClaimPolicies list — the second check guards against an IDP that just
+	// happens not to emit the policy claim today.
+	claimMode := IsClaimBasedPolicyRoleArn(request.RoleArn) && len(externalIdentity.ClaimPolicies) > 0
+	effectiveRoleArn := request.RoleArn
+	if claimMode {
+		// Replace an empty RoleArn with the constant sentinel so the assumed-
+		// role ARN GenerateAssumedRoleArn produces below carries a stable,
+		// session-name-keyed principal that policy evaluation can log and
+		// rate-limit on.
+		effectiveRoleArn = ClaimBasedPolicyRoleArn
+	} else if request.RoleArn == "" {
+		return nil, fmt.Errorf("RoleArn is required when claim-based policy mode is not configured")
+	} else if request.RoleArn == ClaimBasedPolicyRoleArn {
+		return nil, fmt.Errorf("claim-based policy mode requires the IDP to emit policies via the configured policyClaim")
 	}
 
-	// 3. Calculate session duration, capping at the source token's expiration
-	// This ensures sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, externalIdentity.TokenExpiration)
+	// 3. Trust-policy validation only runs in concrete-role mode. In
+	// claim-mode the IDP is the sole authority for both authentication and
+	// authorization, so there is no role definition to consult.
+	if !claimMode {
+		if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
+			return nil, fmt.Errorf("role assumption denied: %w", err)
+		}
+	}
+
+	// 4. Calculate session duration
+	sessionDuration := s.CalculateSessionDuration(request.DurationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
-	// 4. Generate session ID and credentials
+	// 5. Generate session ID and credentials
 	sessionId, err := GenerateSessionId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
 
-	credGenerator := NewCredentialGenerator()
-	credentials, err := credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
+	credentials, err := s.credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// 5. Create comprehensive JWT session token with all session information embedded
+	// 6. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
-		AssumedRoleId: request.RoleArn,
-		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
+		AssumedRoleId: effectiveRoleArn,
+		Arn:           GenerateAssumedRoleArn(effectiveRoleArn, request.RoleSessionName),
 		Subject:       externalIdentity.UserID,
 	}
 
@@ -488,13 +698,59 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// Add sub as well since it's commonly used
 	requestContext["sub"] = externalIdentity.UserID
 
+	// Surface federated group memberships so resource (permission) policies can do
+	// group-based ABAC - not just role trust policies. Stored as a []string; the
+	// string-condition evaluator already handles multi-valued context keys, and the
+	// S3 middleware additionally exposes it as jwt:groups. Without this, "groups"
+	// was excluded from the OIDC attributes (see oidc_provider processedClaims) and
+	// so only usable at assume-time (trust policy), never at request-time - meaning
+	// a single role's permission policy could not scope access by the caller's
+	// groups (aggregate/ABAC).
+	if len(externalIdentity.Groups) > 0 {
+		requestContext["groups"] = externalIdentity.Groups
+	}
+
+	// Same for the caller's roles (the `roles` claim). Surfaced as a []string so a
+	// resource policy can gate on jwt:roles - the S3 middleware exposes it that way.
+	// Without this, "roles" was excluded from the OIDC attributes (processedClaims)
+	// and so unusable in a request-time permission policy.
+	if len(externalIdentity.Roles) > 0 {
+		requestContext["roles"] = externalIdentity.Roles
+	}
+
+	// Compute a stable parent-user hash from (sub, iss). Only this tuple is
+	// guaranteed stable across token refresh per OIDC Core 1.0, so this is the
+	// right key for any per-identity state (audit trail, future quotas).
+	parentUser := ComputeParentUser(externalIdentity.UserID, externalIdentity.Issuer)
+	if parentUser != "" {
+		// Surface as aws:userid so policies can reference it directly without
+		// caring about token-rotation churn.
+		requestContext["aws:userid"] = parentUser
+	}
+
+	// Surface principal session tags as aws:PrincipalTag/<key>. The OIDC
+	// provider has already filtered the claim namespace through its
+	// AllowedPrincipalTagKeys list (see filterPrincipalTags), so anything
+	// reaching us here is on the operator's opt-in list. The full claim
+	// is dropped if the allowlist is empty, which is the secure default.
+	for k, v := range externalIdentity.PrincipalTags {
+		requestContext["aws:PrincipalTag/"+k] = v
+	}
+
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
-		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
-		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithRoleInfo(effectiveRoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithRoleId(request.RoleId).
+		WithIdentityProvider(provider.Name(), externalIdentity.UserID, externalIdentity.Issuer).
 		WithMaxDuration(sessionDuration).
 		WithRequestContext(requestContext)
+	if claimMode {
+		sessionClaims.WithPolicies(externalIdentity.ClaimPolicies)
+	}
+	if parentUser != "" {
+		sessionClaims.WithParentUser(parentUser)
+	}
 	if sessionPolicy != "" {
 		sessionClaims.WithSessionPolicy(sessionPolicy)
 	}
@@ -557,53 +813,162 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	// 4. Calculate session duration
-	// For credential-based auth, there's no source token with expiration to cap against
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, nil)
+	// 4-7. Mint the session
+	return s.issueSession(request.RoleArn, request.RoleId, request.RoleSessionName, sessionPolicy,
+		request.DurationSeconds, provider.Name(), externalIdentity.UserID)
+}
+
+// issueSession mints temporary credentials and the self-contained JWT that
+// carries the whole session, shared by every assume-role entry point.
+func (s *STSService) issueSession(roleArn, roleId, roleSessionName, sessionPolicy string,
+	durationSeconds *int64, providerName, subject string, options ...func(*STSSessionClaims)) (*AssumeRoleResponse, error) {
+
+	sessionDuration := s.CalculateSessionDuration(durationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
-	// 5. Generate session ID and temporary credentials
 	sessionId, err := GenerateSessionId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
 
-	credGenerator := NewCredentialGenerator()
-	tempCredentials, err := credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
+	tempCredentials, err := s.credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// 6. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
-		AssumedRoleId: request.RoleArn,
-		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
-		Subject:       externalIdentity.UserID,
+		AssumedRoleId: roleArn,
+		Arn:           GenerateAssumedRoleArn(roleArn, roleSessionName),
+		Subject:       subject,
 	}
 
-	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
-		WithSessionName(request.RoleSessionName).
-		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
-		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithSessionName(roleSessionName).
+		WithRoleInfo(roleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithRoleId(roleId).
+		WithIdentityProvider(providerName, subject, "").
 		WithMaxDuration(sessionDuration)
 	if sessionPolicy != "" {
 		sessionClaims.WithSessionPolicy(sessionPolicy)
 	}
+	for _, option := range options {
+		option(sessionClaims)
+	}
 
-	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
 	}
 	tempCredentials.SessionToken = jwtToken
 
-	// 7. Build and return response (no session storage needed!)
-
 	return &AssumeRoleResponse{
 		Credentials:     tempCredentials,
 		AssumedRoleUser: assumedRoleUser,
 	}, nil
+}
+
+// validateSessionDurationSeconds bounds a requested session lifetime the way
+// AWS STS does. Every assume-role entry point runs it, so a duration that came
+// from configuration is checked the same as one from a request.
+func (s *STSService) validateSessionDurationSeconds(durationSeconds *int64) error {
+	if durationSeconds == nil {
+		return nil
+	}
+	maxSec := int64(DefaultMaxSessionLength)
+	if s.Config != nil && s.Config.MaxSessionLength.Duration > 0 {
+		configuredMax := int64(s.Config.MaxSessionLength.Duration / time.Second)
+		if configuredMax >= 900 {
+			maxSec = configuredMax
+		}
+	}
+	if *durationSeconds < 900 || *durationSeconds > maxSec {
+		return fmt.Errorf("DurationSeconds must be between 900 and %d seconds", maxSec)
+	}
+	return nil
+}
+
+// AssumeRoleForPrincipalRequest asks for a session on behalf of a principal the
+// calling service has already authenticated.
+type AssumeRoleForPrincipalRequest struct {
+	// RoleArn is the ARN of the role to assume.
+	RoleArn string
+
+	// Principal identifies the already-authenticated caller.
+	Principal string
+
+	// RoleSessionName names the session.
+	RoleSessionName string
+
+	// ProviderName records how the caller was authenticated.
+	ProviderName string
+
+	// Policy optionally narrows the session below the role's own permissions.
+	Policy *string
+
+	// DurationSeconds requests a session lifetime.
+	DurationSeconds *int64
+
+	// SourceAccessKeyId optionally records the access key the caller
+	// authenticated with, so the session can be tied to that key.
+	SourceAccessKeyId string
+
+	// BoundAccessKeyId binds the session to a stored credential: the session
+	// ends when that key is gone. Distinct from SourceAccessKeyId, which is
+	// audit-only on sessions minted before the binding existed.
+	BoundAccessKeyId string
+
+	// BoundAccessKeyFingerprint identifies the bound credential instance.
+	BoundAccessKeyFingerprint string
+}
+
+// AssumeRoleForPrincipal issues session credentials for a caller that a
+// SeaweedFS service authenticated itself, such as the Iceberg catalog vending
+// scoped credentials for a table it has already authorized. There is no
+// external token left to verify at this point, so the role's trust policy is
+// the control point and is still enforced.
+func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *AssumeRoleForPrincipalRequest) (*AssumeRoleResponse, error) {
+	if !s.initialized {
+		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
+	}
+	if request == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+	if request.RoleArn == "" {
+		return nil, fmt.Errorf("role ARN cannot be empty")
+	}
+	if request.Principal == "" {
+		return nil, fmt.Errorf("principal cannot be empty")
+	}
+	if err := s.validateSessionDurationSeconds(request.DurationSeconds); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	sessionPolicy := ""
+	if request.Policy != nil {
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
+	}
+
+	identity := &providers.ExternalIdentity{
+		UserID:      request.Principal,
+		DisplayName: request.Principal,
+		Provider:    request.ProviderName,
+	}
+	if err := s.validateRoleAssumptionForCredentials(ctx, request.RoleArn, identity); err != nil {
+		return nil, fmt.Errorf("role assumption denied: %w", err)
+	}
+
+	// Iceberg credential vending resolves no role definition, so its sessions
+	// carry no role ID and stay bound by name.
+	return s.issueSession(request.RoleArn, "", request.RoleSessionName, sessionPolicy,
+		request.DurationSeconds, request.ProviderName, request.Principal,
+		func(c *STSSessionClaims) {
+			c.WithSourceAccessKeyId(request.SourceAccessKeyId)
+			c.WithBoundAccessKey(request.BoundAccessKeyId, request.BoundAccessKeyFingerprint)
+		})
 }
 
 // ValidateSessionToken validates a session token and returns session information
@@ -625,7 +990,7 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 
 	// Convert JWT claims back to SessionInfo
 	// All session information is embedded in the JWT token itself
-	return claims.ToSessionInfo(), nil
+	return claims.ToSessionInfo(s.credGenerator), nil
 }
 
 // NOTE: Session revocation is not supported in the stateless JWT design.
@@ -643,12 +1008,13 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 
 // Helper methods for AssumeRoleWithWebIdentity
 
-// validateAssumeRoleWithWebIdentityRequest validates the request parameters
+// validateAssumeRoleWithWebIdentityRequest validates the request parameters.
+//
+// RoleArn validation lives in AssumeRoleWithWebIdentity itself rather than
+// here: once we've parsed the JWT we know whether the caller has
+// ClaimPolicies and can decide between concrete-role mode and claim-mode,
+// which in turn determines whether an empty/sentinel RoleArn is acceptable.
 func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRoleWithWebIdentityRequest) error {
-	if request.RoleArn == "" {
-		return fmt.Errorf("RoleArn is required")
-	}
-
 	if request.WebIdentityToken == "" {
 		return fmt.Errorf("WebIdentityToken is required")
 	}
@@ -657,20 +1023,13 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 		return fmt.Errorf("RoleSessionName is required")
 	}
 
-	// Validate session duration if provided
-	if request.DurationSeconds != nil {
-		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
-			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
-		}
-	}
-
-	return nil
+	return s.validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
 // SECURITY: JWT tokens with a specific issuer claim MUST only be validated by the provider for that issuer
 // SECURITY: This method only accepts JWT tokens. Non-JWT authentication must use AssumeRoleWithCredentials with explicit ProviderName.
-func (s *STSService) validateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+func (s *STSService) validateWebIdentityToken(ctx context.Context, token, roleAccountID string, singleUse bool) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
 	// Try to extract issuer from JWT token for strict validation
 	issuer, err := s.extractIssuerFromJWT(token)
 	if err != nil {
@@ -681,16 +1040,22 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 		return nil, nil, fmt.Errorf("web identity token must be a valid JWT token: %w", err)
 	}
 
-	// Look up the specific provider for this issuer
-	provider, exists := s.issuerToProvider[issuer]
+	// Look up the specific provider for this issuer, scoped to the role's
+	// account when known. IAM-managed records (admin-controlled, mutable at
+	// runtime) take precedence over the static-config map so an operator's
+	// CreateOpenIDConnectProvider call can shadow a bootstrap entry without
+	// requiring a restart.
+	provider, exists := s.lookupOIDCProviderForAccount(issuer, roleAccountID)
 	if !exists {
 		// SECURITY: If no provider is registered for this issuer, fail immediately
 		// This prevents JWT tokens from being validated by unintended providers
 		return nil, nil, fmt.Errorf("no identity provider registered for issuer: %s", issuer)
 	}
 
-	// Authenticate with the correct provider for this issuer
-	identity, err := provider.Authenticate(ctx, token)
+	// Authenticate with the correct provider for this issuer. Only the STS
+	// exchange authenticates single-use: a bearer token is presented on every
+	// request, so consuming it here would reject all but the first one.
+	identity, err := authenticateOIDCProvider(ctx, provider, token, singleUse)
 	if err != nil {
 		// Map provider errors to STS errors using errors.Is() for robust error checking
 		// This eliminates fragile string matching and provides reliable error classification
@@ -717,9 +1082,34 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 }
 
 // ValidateWebIdentityToken is a public method that exposes secure token validation for external use
-// This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency
+// This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency.
+// External callers without role context get the account-agnostic lookup (global IAM-managed records
+// only, then static-config); call ValidateWebIdentityTokenForAccount when the assumed-role account
+// is known.
 func (s *STSService) ValidateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	return s.validateWebIdentityToken(ctx, token)
+	return s.validateWebIdentityToken(ctx, token, "", false)
+}
+
+// ValidateWebIdentityTokenForAccount mirrors ValidateWebIdentityToken but
+// scopes the IAM-managed provider lookup to roleAccountID. Pass "" for
+// callers that don't yet know the account (e.g. claim-based mode).
+func (s *STSService) ValidateWebIdentityTokenForAccount(ctx context.Context, token, roleAccountID string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+	return s.validateWebIdentityToken(ctx, token, roleAccountID, false)
+}
+
+// authenticateOIDCProvider authenticates the token, consuming it for replay
+// protection when the caller is the single-use STS exchange and the provider
+// supports it. Other providers and non-exchange callers authenticate without
+// consuming.
+func authenticateOIDCProvider(ctx context.Context, provider providers.IdentityProvider, token string, singleUse bool) (*providers.ExternalIdentity, error) {
+	if singleUse {
+		if su, ok := provider.(interface {
+			AuthenticateSingleUse(context.Context, string) (*providers.ExternalIdentity, error)
+		}); ok {
+			return su.AuthenticateSingleUse(ctx, token)
+		}
+	}
+	return provider.Authenticate(ctx, token)
 }
 
 // extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification
@@ -823,32 +1213,16 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	return nil
 }
 
-// calculateSessionDuration calculates the session duration, respecting the source token's expiration
-// If the incoming web identity token has an exp claim, the session duration is capped to not exceed it
-// This ensures that sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
-func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpiration *time.Time) time.Duration {
+// CalculateSessionDuration returns the requested DurationSeconds, or the
+// configured TokenDuration default, capped at MaxSessionLength. The source
+// token's exp deliberately plays no part: per AWS semantics the session
+// outlives the (already verified) web identity token.
+func (s *STSService) CalculateSessionDuration(durationSeconds *int64) time.Duration {
 	var duration time.Duration
 	if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
 	} else {
-		// Use default from config
 		duration = s.Config.TokenDuration.Duration
-	}
-
-	// If the source token has an expiration, cap the session duration to not exceed it
-	// This follows the principle: "if calculated exp > incoming exp claim, then limit outgoing exp to incoming exp"
-	if tokenExpiration != nil && !tokenExpiration.IsZero() {
-		timeUntilTokenExpiry := time.Until(*tokenExpiration)
-		if timeUntilTokenExpiry <= 0 {
-			// Token already expired - use minimal duration as defense-in-depth
-			// The token should have been rejected during validation, but we handle this defensively
-			glog.V(2).Infof("Source token already expired, using minimal session duration")
-			duration = time.Minute
-		} else if timeUntilTokenExpiry < duration {
-			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
-				duration, timeUntilTokenExpiry)
-			duration = timeUntilTokenExpiry
-		}
 	}
 
 	// Cap at MaxSessionLength if configured
@@ -859,21 +1233,6 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpir
 	}
 
 	return duration
-}
-
-// extractSessionIdFromToken extracts session ID from JWT session token
-func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
-	// Validate JWT and extract session claims
-	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
-	if err != nil {
-		// For test compatibility, also handle direct session IDs
-		if len(sessionToken) == 32 { // Typical session ID length
-			return sessionToken
-		}
-		return ""
-	}
-
-	return claims.SessionId
 }
 
 // validateAssumeRoleWithCredentialsRequest validates the credentials request parameters
@@ -898,14 +1257,7 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 		return fmt.Errorf("ProviderName is required")
 	}
 
-	// Validate session duration if provided
-	if request.DurationSeconds != nil {
-		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
-			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
-		}
-	}
-
-	return nil
+	return s.validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes

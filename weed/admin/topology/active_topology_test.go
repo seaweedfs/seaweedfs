@@ -261,11 +261,11 @@ func TestTargetSelectionScenarios(t *testing.T) {
 			expectedTargets: 4,  // All 4 disks available
 		},
 		{
-			name:            "Vacuum task - avoid conflicting disks",
+			name:            "Vacuum task - cross-type tasks do not block per disk",
 			topology:        createTopologyWithConflicts(),
 			taskType:        TaskTypeVacuum,
 			excludeNode:     "",
-			expectedTargets: 1, // Only 1 disk without conflicts (conflicts exclude more disks)
+			expectedTargets: 4, // All 4 disks available; per-volume safety is enforced by HasAnyTask
 		},
 	}
 
@@ -279,8 +279,6 @@ func TestTargetSelectionScenarios(t *testing.T) {
 			for _, disk := range availableDisks {
 				assert.NotEqual(t, tt.excludeNode, disk.NodeID,
 					"Available disk should not be on excluded node")
-
-				assert.Less(t, disk.LoadCount, 2, "Disk load should be less than 2")
 			}
 		})
 	}
@@ -353,12 +351,10 @@ func TestDiskLoadCalculation(t *testing.T) {
 	assert.Equal(t, 1, targetDisk.LoadCount)
 }
 
-// TestTaskConflictDetection tests task conflict detection
-func TestTaskConflictDetection(t *testing.T) {
+func TestCrossTypeTasksDoNotBlockPerDisk(t *testing.T) {
 	topology := NewActiveTopology(10)
 	topology.UpdateTopology(createSampleTopology())
 
-	// Add a balance task
 	err := topology.AddPendingTask(TaskSpec{
 		TaskID:     "balance1",
 		TaskType:   TaskTypeBalance,
@@ -371,13 +367,10 @@ func TestTaskConflictDetection(t *testing.T) {
 			{ServerID: "10.0.0.2:8080", DiskID: 1},
 		},
 	})
-	assert.NoError(t, err, "Should add balance task successfully")
-	topology.AssignTask("balance1")
+	require.NoError(t, err)
+	require.NoError(t, topology.AssignTask("balance1"))
 
-	// Try to get available disks for vacuum (conflicts with balance)
 	availableDisks := topology.GetAvailableDisks(TaskTypeVacuum, "")
-
-	// Source disk should not be available due to conflict
 	sourceDiskAvailable := false
 	for _, disk := range availableDisks {
 		if disk.NodeID == "10.0.0.1:8080" && disk.DiskID == 0 {
@@ -385,7 +378,162 @@ func TestTaskConflictDetection(t *testing.T) {
 			break
 		}
 	}
-	assert.False(t, sourceDiskAvailable, "Source disk should not be available due to task conflict")
+	assert.True(t, sourceDiskAvailable,
+		"Source disk should remain available for an unrelated task type")
+}
+
+// Regression for #9147: a 4-disk cluster with one in-flight balance task must
+// still expose all 4 disks to EC placement so MinTotalDisks can be satisfied.
+func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
+	topology := NewActiveTopology(10)
+	topology.UpdateTopology(createSampleTopology()) // 2 nodes x 2 disks
+
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "balance1",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   42,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 0},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, topology.AssignTask("balance1"))
+
+	ecCandidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
+	assert.Equal(t, 4, len(ecCandidates),
+		"EC must still see all 4 disks even with an unrelated in-flight balance")
+}
+
+// #9369: same-type physical disks collapse into one DiskInfo at the master;
+// the active topology must still expose one entry per physical disk_id.
+func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	const numServers = 7
+	const disksPerServer = 2
+	nodes := make([]*master_pb.DataNodeInfo, 0, numServers)
+	for i := 1; i <= numServers; i++ {
+		volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, disksPerServer)
+		for d := uint32(0); d < disksPerServer; d++ {
+			volumeInfos = append(volumeInfos, &master_pb.VolumeInformationMessage{
+				Id:       uint32(i*10 + int(d)),
+				DiskId:   d,
+				DiskType: "hdd",
+			})
+		}
+		nodes = append(nodes, &master_pb.DataNodeInfo{
+			Id: fmt.Sprintf("127.0.0.1:%d", 8080+i),
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"hdd": {
+					DiskId:         0,
+					VolumeCount:    int64(disksPerServer),
+					MaxVolumeCount: 200,
+					VolumeInfos:    volumeInfos,
+				},
+			},
+		})
+	}
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id:            "rack1",
+				DataNodeInfos: nodes,
+			}},
+		}},
+	}))
+
+	candidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
+	assert.Equal(t, numServers*disksPerServer, len(candidates))
+
+	seen := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		key := fmt.Sprintf("%s:%d", c.NodeID, c.DiskID)
+		assert.False(t, seen[key], "duplicate placement target %s", key)
+		seen[key] = true
+	}
+}
+
+// TestVolumeIndexResolvesPhysicalDiskZero pins that a volume genuinely on
+// physical disk 0 resolves to its own disk via GetVolumeLocations even when the
+// aggregate DiskInfo.DiskId is seeded from a non-zero sibling (as ToDiskInfo
+// does from volumes[0]). Re-deriving the per-record disk id would fold disk 0
+// onto the sibling, then the lookup would find no matching volume and drop it.
+func TestVolumeIndexResolvesPhysicalDiskZero(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "127.0.0.1:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						"hdd": {
+							DiskId:         6, // seeded from volumes[0].DiskId
+							MaxVolumeCount: 200,
+							VolumeInfos: []*master_pb.VolumeInformationMessage{
+								{Id: 11, DiskId: 6, DiskType: "hdd"},
+								{Id: 10, DiskId: 0, DiskType: "hdd"},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}))
+
+	loc10 := topology.GetVolumeLocations(10, "")
+	require.Len(t, loc10, 1, "volume on physical disk 0 must resolve to one disk")
+	assert.Equal(t, uint32(0), loc10[0].DiskID, "volume 10 lives on physical disk 0")
+
+	loc11 := topology.GetVolumeLocations(11, "")
+	require.Len(t, loc11, 1)
+	assert.Equal(t, uint32(6), loc11[0].DiskID, "volume 11 lives on physical disk 6")
+}
+
+// TestECShardIndexResolvesPhysicalDiskZero is the EC-shard twin of
+// TestVolumeIndexResolvesPhysicalDiskZero: rebuildIndexes builds ecShardIndex
+// the same way, so an EC shard on physical disk 0 must resolve via
+// GetECShardLocations rather than being folded onto a non-zero sibling.
+func TestECShardIndexResolvesPhysicalDiskZero(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "127.0.0.1:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						"hdd": {
+							DiskId:         6, // seeded from a non-zero sibling
+							MaxVolumeCount: 200,
+							EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+								{Id: 21, DiskId: 6, Collection: "c1", EcIndexBits: 0b1},
+								{Id: 20, DiskId: 0, Collection: "c1", EcIndexBits: 0b1},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}))
+
+	loc20 := topology.GetECShardLocations(20, "c1")
+	require.Len(t, loc20, 1, "EC shard on physical disk 0 must resolve to one disk")
+	assert.Equal(t, uint32(0), loc20[0].DiskID, "shard 20 lives on physical disk 0")
+
+	loc21 := topology.GetECShardLocations(21, "c1")
+	require.Len(t, loc21, 1)
+	assert.Equal(t, uint32(6), loc21[0].DiskID, "shard 21 lives on physical disk 6")
 }
 
 // TestPublicInterfaces tests the public interface methods

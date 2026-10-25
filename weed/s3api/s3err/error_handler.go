@@ -3,7 +3,7 @@ package s3err
 import (
 	"bytes"
 	"encoding/xml"
-	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 type mimeType string
@@ -19,6 +20,8 @@ type mimeType string
 const (
 	mimeNone mimeType = ""
 	MimeXML  mimeType = "application/xml"
+
+	errorResponseBodyDrainTimeout = 30 * time.Second
 )
 
 func WriteAwsXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, result interface{}) {
@@ -41,6 +44,16 @@ func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) 
 }
 
 func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
+	WriteErrorResponseWithMessage(w, r, errorCode, "")
+}
+
+// WriteErrorResponseWithMessage writes an S3 error response that uses the
+// standard error code mapping (status + Code). When message is non-empty,
+// it overrides the default Message field so the caller can surface why the
+// request was rejected (e.g. which POST policy condition failed) instead
+// of the generic APIError Description.
+func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, errorCode ErrorCode, message string) {
+	r, reqID := request_id.Ensure(r)
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
@@ -49,19 +62,34 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 	}
 
 	apiError := GetAPIError(errorCode)
-	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
+	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object, reqID)
+	if message != "" {
+		errorResponse.Message = message
+	}
+	drainRequestBody(w, r)
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }
 
-func getRESTErrorResponse(err APIError, resource string, bucket, object string) RESTErrorResponse {
+func drainRequestBody(w http.ResponseWriter, r *http.Request) {
+	if r == nil || r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(time.Now().Add(errorResponseBodyDrainTimeout)); err == nil {
+		defer rc.SetReadDeadline(time.Time{})
+	}
+	_, _ = io.Copy(io.Discard, r.Body)
+}
+
+func getRESTErrorResponse(err APIError, resource string, bucket, object, requestID string) RESTErrorResponse {
 	return RESTErrorResponse{
 		Code:       err.Code,
 		BucketName: bucket,
 		Key:        object,
 		Message:    err.Description,
 		Resource:   resource,
-		RequestID:  fmt.Sprintf("%d", time.Now().UnixNano()),
+		RequestID:  requestID,
 	}
 }
 
@@ -75,7 +103,8 @@ func EncodeXMLResponse(response interface{}) []byte {
 }
 
 func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
+	_, reqID := request_id.Ensure(r)
+	w.Header().Set(request_id.AmzRequestIDHeader, reqID)
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Handle CORS headers for requests with Origin header
@@ -108,16 +137,30 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
+}
+
 func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, response []byte, mType mimeType) {
 	setCommonHeaders(w, r)
-	if response != nil {
+	canHaveBody := bodyAllowedForStatus(statusCode)
+	if response != nil && canHaveBody {
 		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
 	}
 	if mType != mimeNone {
 		w.Header().Set("Content-Type", string(mType))
 	}
 	w.WriteHeader(statusCode)
-	if response != nil {
+	if response != nil && canHaveBody && r.Method != http.MethodHead {
 		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {

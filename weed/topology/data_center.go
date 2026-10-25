@@ -56,14 +56,14 @@ func (dc *DataCenter) ToInfo() (info DataCenterInfo) {
 	return
 }
 
-func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
+func (dc *DataCenter) ToDataCenterInfo(filter VolumeFilter) *master_pb.DataCenterInfo {
 	m := &master_pb.DataCenterInfo{
 		Id:        string(dc.Id()),
 		DiskInfos: dc.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)
-		m.RackInfos = append(m.RackInfos, rack.ToRackInfo())
+		m.RackInfos = append(m.RackInfos, rack.ToRackInfo(filter))
 	}
 	return m
 }

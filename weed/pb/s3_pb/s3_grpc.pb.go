@@ -26,6 +26,8 @@ const (
 	SeaweedS3IamCache_GetPolicy_FullMethodName      = "/messaging_pb.SeaweedS3IamCache/GetPolicy"
 	SeaweedS3IamCache_ListPolicies_FullMethodName   = "/messaging_pb.SeaweedS3IamCache/ListPolicies"
 	SeaweedS3IamCache_DeletePolicy_FullMethodName   = "/messaging_pb.SeaweedS3IamCache/DeletePolicy"
+	SeaweedS3IamCache_PutGroup_FullMethodName       = "/messaging_pb.SeaweedS3IamCache/PutGroup"
+	SeaweedS3IamCache_RemoveGroup_FullMethodName    = "/messaging_pb.SeaweedS3IamCache/RemoveGroup"
 )
 
 // SeaweedS3IamCacheClient is the client API for SeaweedS3IamCache service.
@@ -40,6 +42,8 @@ type SeaweedS3IamCacheClient interface {
 	GetPolicy(ctx context.Context, in *iam_pb.GetPolicyRequest, opts ...grpc.CallOption) (*iam_pb.GetPolicyResponse, error)
 	ListPolicies(ctx context.Context, in *iam_pb.ListPoliciesRequest, opts ...grpc.CallOption) (*iam_pb.ListPoliciesResponse, error)
 	DeletePolicy(ctx context.Context, in *iam_pb.DeletePolicyRequest, opts ...grpc.CallOption) (*iam_pb.DeletePolicyResponse, error)
+	PutGroup(ctx context.Context, in *iam_pb.PutGroupRequest, opts ...grpc.CallOption) (*iam_pb.PutGroupResponse, error)
+	RemoveGroup(ctx context.Context, in *iam_pb.RemoveGroupRequest, opts ...grpc.CallOption) (*iam_pb.RemoveGroupResponse, error)
 }
 
 type seaweedS3IamCacheClient struct {
@@ -110,6 +114,26 @@ func (c *seaweedS3IamCacheClient) DeletePolicy(ctx context.Context, in *iam_pb.D
 	return out, nil
 }
 
+func (c *seaweedS3IamCacheClient) PutGroup(ctx context.Context, in *iam_pb.PutGroupRequest, opts ...grpc.CallOption) (*iam_pb.PutGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.PutGroupResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3IamCache_PutGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3IamCacheClient) RemoveGroup(ctx context.Context, in *iam_pb.RemoveGroupRequest, opts ...grpc.CallOption) (*iam_pb.RemoveGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.RemoveGroupResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3IamCache_RemoveGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedS3IamCacheServer is the server API for SeaweedS3IamCache service.
 // All implementations must embed UnimplementedSeaweedS3IamCacheServer
 // for forward compatibility.
@@ -122,6 +146,8 @@ type SeaweedS3IamCacheServer interface {
 	GetPolicy(context.Context, *iam_pb.GetPolicyRequest) (*iam_pb.GetPolicyResponse, error)
 	ListPolicies(context.Context, *iam_pb.ListPoliciesRequest) (*iam_pb.ListPoliciesResponse, error)
 	DeletePolicy(context.Context, *iam_pb.DeletePolicyRequest) (*iam_pb.DeletePolicyResponse, error)
+	PutGroup(context.Context, *iam_pb.PutGroupRequest) (*iam_pb.PutGroupResponse, error)
+	RemoveGroup(context.Context, *iam_pb.RemoveGroupRequest) (*iam_pb.RemoveGroupResponse, error)
 	mustEmbedUnimplementedSeaweedS3IamCacheServer()
 }
 
@@ -149,6 +175,12 @@ func (UnimplementedSeaweedS3IamCacheServer) ListPolicies(context.Context, *iam_p
 }
 func (UnimplementedSeaweedS3IamCacheServer) DeletePolicy(context.Context, *iam_pb.DeletePolicyRequest) (*iam_pb.DeletePolicyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeletePolicy not implemented")
+}
+func (UnimplementedSeaweedS3IamCacheServer) PutGroup(context.Context, *iam_pb.PutGroupRequest) (*iam_pb.PutGroupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutGroup not implemented")
+}
+func (UnimplementedSeaweedS3IamCacheServer) RemoveGroup(context.Context, *iam_pb.RemoveGroupRequest) (*iam_pb.RemoveGroupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveGroup not implemented")
 }
 func (UnimplementedSeaweedS3IamCacheServer) mustEmbedUnimplementedSeaweedS3IamCacheServer() {}
 func (UnimplementedSeaweedS3IamCacheServer) testEmbeddedByValue()                           {}
@@ -279,6 +311,42 @@ func _SeaweedS3IamCache_DeletePolicy_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedS3IamCache_PutGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.PutGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3IamCacheServer).PutGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3IamCache_PutGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3IamCacheServer).PutGroup(ctx, req.(*iam_pb.PutGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3IamCache_RemoveGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.RemoveGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3IamCacheServer).RemoveGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3IamCache_RemoveGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3IamCacheServer).RemoveGroup(ctx, req.(*iam_pb.RemoveGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedS3IamCache_ServiceDesc is the grpc.ServiceDesc for SeaweedS3IamCache service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -309,6 +377,14 @@ var SeaweedS3IamCache_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeletePolicy",
 			Handler:    _SeaweedS3IamCache_DeletePolicy_Handler,
+		},
+		{
+			MethodName: "PutGroup",
+			Handler:    _SeaweedS3IamCache_PutGroup_Handler,
+		},
+		{
+			MethodName: "RemoveGroup",
+			Handler:    _SeaweedS3IamCache_RemoveGroup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

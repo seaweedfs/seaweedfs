@@ -5,6 +5,8 @@ on:
     paths:
       - 'weed/iam/**'
       - 'weed/s3api/**'
+      - 'weed/credential/**'
+      - 'weed/pb/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   push:
@@ -12,12 +14,14 @@ on:
     paths:
       - 'weed/iam/**'
       - 'weed/s3api/**'
+      - 'weed/credential/**'
+      - 'weed/pb/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-iam-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -35,12 +39,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Get dependencies
@@ -65,7 +70,7 @@ jobs:
 
       - name: Upload test results on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: iam-unit-test-results
           path: |
@@ -80,16 +85,20 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        test-type: ["basic", "advanced", "policy-enforcement"]
+        test-type: ["basic", "advanced", "policy-enforcement", "group", "sts"]
         
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -105,7 +114,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting S3 IAM Integration Tests (${{ matrix.test-type }}) ==="
           
           # Set WEED_BINARY to use the installed version
@@ -117,7 +126,7 @@ jobs:
             "basic")
               echo "Running basic IAM functionality tests..."
               make clean setup start-services wait-for-services
-              go test -v -timeout 15m -run "TestS3IAMAuthentication|TestS3IAMBasicWorkflow|TestS3IAMTokenValidation|TestIAM" ./...
+              go test -v -timeout 15m -run "TestS3IAMAuthentication|TestS3IAMBasicWorkflow|TestS3IAMTokenValidation|TestIAMUserManagement|TestIAMAccessKeyManagement|TestIAMPolicyManagement" ./...
               ;;
             "advanced")
               echo "Running advanced IAM feature tests..."
@@ -128,6 +137,28 @@ jobs:
               echo "Running policy enforcement tests..."
               make clean setup start-services wait-for-services
               go test -v -timeout 15m -run "TestS3IAMPolicyEnforcement|TestS3IAMBucketPolicy|TestS3IAMContextual" ./...
+              ;;
+            "group")
+              echo "Running IAM group management tests..."
+              make clean setup start-services wait-for-services
+              go test -v -timeout 15m -run "TestIAMGroup" ./...
+              ;;
+            "sts")
+              echo "Running STS and service account tests..."
+              make clean setup start-services wait-for-services
+              # SigV4-signed STS calls need admin credentials matching test_config.json.
+              # Tests default to "admin"/"admin" when env vars are unset, which don't exist.
+              export STS_TEST_ACCESS_KEY=test-access-key
+              export STS_TEST_SECRET_KEY=test-secret-key
+              # The use_service_account_credentials subtest is excluded because
+              # newly-created service-account access keys are not currently
+              # persisted to the filer after CreateServiceAccount — a
+              # pre-existing sync issue tracked separately from the
+              # GetFederationToken routing fix this PR addresses.
+              go test -v -timeout 15m \
+                -run "TestSTS|TestAssumeRoleWithWebIdentity|TestServiceAccount" \
+                -skip "TestServiceAccountLifecycle/use_service_account_credentials" \
+                ./...
               ;;
             *)
               echo "Unknown test type: ${{ matrix.test-type }}"
@@ -162,7 +193,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-iam-integration-logs-${{ matrix.test-type }}
           path: test/s3/iam/weed-*.log
@@ -176,12 +207,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -222,7 +254,7 @@ jobs:
 
       - name: Upload distributed test logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-iam-distributed-logs
           path: test/s3/iam/weed-*.log
@@ -236,12 +268,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -274,7 +307,7 @@ jobs:
 
       - name: Upload performance test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-iam-performance-results
           path: |

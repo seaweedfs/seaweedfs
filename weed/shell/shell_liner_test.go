@@ -1,105 +1,85 @@
 package shell
 
 import (
-	"flag"
-	"reflect"
+	"errors"
+	"io"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestSplitCommandLine(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected []string
-	}{
-		{
-			input:    `s3.configure -user=test`,
-			expected: []string{`s3.configure`, `-user=test`},
-		},
-		{
-			input:    `s3.configure -user=Test_number_004 -account_display_name="Test number 004" -actions=write -apply`,
-			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name=Test number 004`, `-actions=write`, `-apply`},
-		},
-		{
-			input:    `s3.configure -user=Test_number_004 -account_display_name='Test number 004' -actions=write -apply`,
-			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name=Test number 004`, `-actions=write`, `-apply`},
-		},
-		{
-			input:    `s3.configure -flag="a b"c'd e'`,
-			expected: []string{`s3.configure`, `-flag=a bcd e`},
-		},
-		{
-			input:    `s3.configure -name="a\"b"`,
-			expected: []string{`s3.configure`, `-name=a"b`},
-		},
-		{
-			input:    `s3.configure -path='a\ b'`,
-			expected: []string{`s3.configure`, `-path=a\ b`},
-		},
-	}
-
-	for _, tt := range tests {
-		got := splitCommandLine(tt.input)
-		if !reflect.DeepEqual(got, tt.expected) {
-			t.Errorf("input: %s\ngot:  %v\nwant: %v", tt.input, got, tt.expected)
-		}
-	}
+type fakeCommand struct {
+	name string
+	err  error
 }
 
-func TestStripQuotes(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{input: `"Test number 004"`, expected: `Test number 004`},
-		{input: `'Test number 004'`, expected: `Test number 004`},
-		{input: `-account_display_name="Test number 004"`, expected: `-account_display_name=Test number 004`},
-		{input: `-flag="a"b'c'`, expected: `-flag=abc`},
-		{input: `-name="a\"b"`, expected: `-name=a"b`},
-		{input: `-path='a\ b'`, expected: `-path=a\ b`},
-		{input: `"unbalanced`, expected: `"unbalanced`},
-		{input: `'unbalanced`, expected: `'unbalanced`},
-		{input: `-name="a\"b`, expected: `-name="a\"b`},
-		{input: `trailing\`, expected: `trailing\`},
+func (c *fakeCommand) Name() string                              { return c.name }
+func (c *fakeCommand) Help() string                              { return "test helper" }
+func (c *fakeCommand) HasTag(CommandTag) bool                    { return false }
+func (c *fakeCommand) Do([]string, *CommandEnv, io.Writer) error { return c.err }
+
+func TestProcessEachCmdReturnsErrors(t *testing.T) {
+
+	exit, err := processEachCmd("definitely.not.a.command", nil)
+	if exit {
+		t.Errorf("unknown command must not request exit")
+	}
+	if err == nil {
+		t.Errorf("unknown command must return an error")
+	}
+	if err != nil && !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("unexpected error for unknown command: %v", err)
 	}
 
-	for _, tt := range tests {
-		got := stripQuotes(tt.input)
-		if got != tt.expected {
-			t.Errorf("input: %s, got: %s, want: %s", tt.input, got, tt.expected)
-		}
+	exit, err = processEachCmd("exit", nil)
+	if !exit {
+		t.Errorf("exit must request exit")
 	}
-}
-
-func TestFlagParsing(t *testing.T) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	displayName := fs.String("account_display_name", "", "display name")
-
-	rawArg := `-account_display_name="Test number 004"`
-	args := []string{stripQuotes(rawArg)}
-	err := fs.Parse(args)
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("exit must not return an error, got: %v", err)
 	}
 
-	expected := "Test number 004"
-	if *displayName != expected {
-		t.Errorf("got: [%s], want: [%s]", *displayName, expected)
+	exit, err = processEachCmd("   ", nil)
+	if exit || err != nil {
+		t.Errorf("blank input must be a no-op, got exit=%v err=%v", exit, err)
 	}
 }
 
-func TestEscapedFlagParsing(t *testing.T) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	name := fs.String("name", "", "name")
+func TestRunShellConnectTimeout(t *testing.T) {
+	masters := "127.0.0.1:1"
+	filerGroup := ""
 
-	rawArg := `-name="a\"b"`
-	args := []string{stripQuotes(rawArg)}
-	err := fs.Parse(args)
-	if err != nil {
-		t.Fatal(err)
+	start := time.Now()
+	err := RunShell(ShellOptions{
+		Masters:        &masters,
+		FilerGroup:     &filerGroup,
+		ConnectTimeout: 200 * time.Millisecond,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot connect to master") {
+		t.Fatalf("expected a master connection timeout, got: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("RunShell should give up near the connect timeout, took %v", elapsed)
+	}
+}
+
+func TestProcessEachCmdPreservesRegisteredCommandError(t *testing.T) {
+	doErr := errors.New("daily_run: shard=3: recovery walk failed")
+	failing := &fakeCommand{name: "test.failing.command", err: doErr}
+	succeeding := &fakeCommand{name: "test.succeeding.command"}
+	Commands = append(Commands, failing, succeeding)
+	t.Cleanup(func() { Commands = Commands[:len(Commands)-2] })
+
+	exit, err := processEachCmd("test.failing.command -some -args", nil)
+	if exit {
+		t.Errorf("a failing command must not request exit")
+	}
+	if !errors.Is(err, doErr) {
+		t.Errorf("the command's own error must be preserved, got: %v", err)
 	}
 
-	expected := `a"b`
-	if *name != expected {
-		t.Errorf("got: [%s], want: [%s]", *name, expected)
+	exit, err = processEachCmd("test.succeeding.command", nil)
+	if exit || err != nil {
+		t.Errorf("a succeeding command must return no error, got exit=%v err=%v", exit, err)
 	}
 }

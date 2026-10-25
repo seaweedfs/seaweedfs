@@ -2,9 +2,11 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -15,6 +17,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
+)
+
+type MetadataCacheStrategy string
+
+const (
+	MetadataCacheEager MetadataCacheStrategy = "eager"
+	MetadataCacheLazy  MetadataCacheStrategy = "lazy"
 )
 
 func init() {
@@ -29,15 +38,21 @@ func (c *commandRemoteMount) Name() string {
 }
 
 func (c *commandRemoteMount) Help() string {
-	return `mount remote storage and pull its metadata
+	return `mount remote storage and optionally pull its metadata
 
 	# assume a remote storage is configured to name "cloud1"
 	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 
-	# mount and pull one bucket
+	# mount and pull one bucket (full upfront metadata sync)
 	remote.mount -dir=/xxx -remote=cloud1/bucket
+	# mount without upfront sync; metadata is fetched lazily on access
+	remote.mount -dir=/xxx -remote=cloud1/bucket -metadataStrategy=lazy
 	# mount and pull one directory in the bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
+	# mount with on-demand directory listing cached for 5 minutes
+	remote.mount -dir=/xxx -remote=cloud1/bucket -listingCacheTTL=300
+	# mount as a streaming source: reads go to the remote instead of waiting for the local cache
+	remote.mount -dir=/xxx -remote=cloud1/bucket -cacheWait=0
 
 	# after mount, start a separate process to write updates to remote storage
 	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=/xxx
@@ -55,7 +70,10 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
+	metadataStrategy := remoteMountCommand.String("metadataStrategy", string(MetadataCacheEager), "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
+	listingCacheTTL := remoteMountCommand.Int("listingCacheTTL", 0, "seconds to cache remote directory listings (0 = disabled)")
+	cacheWait := remoteMountCommand.Duration("cacheWait", -1, "how long a read of an uncached object waits for the local cache, ex. 0 or 500ms (default: by object size)")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -67,7 +85,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// find configuration for remote storage
-	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote_storage.ParseLocationName(*remote))
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), remote_storage.ParseLocationName(*remote))
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}
@@ -76,10 +94,32 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	if err != nil {
 		return err
 	}
+	remoteStorageLocation.ListingCacheTtlSeconds = int32(*listingCacheTTL)
+	if *cacheWait >= 0 {
+		waitMs := cacheWait.Milliseconds()
+		if waitMs > math.MaxInt32 {
+			return fmt.Errorf("cacheWait %v is too long", *cacheWait)
+		}
+		// truncating to 0 would read as "never wait" instead of the asked-for wait
+		if waitMs == 0 && *cacheWait > 0 {
+			return fmt.Errorf("cacheWait %v is shorter than 1ms", *cacheWait)
+		}
+		remoteStorageLocation.CacheWaitMs = proto.Int32(int32(waitMs))
+	}
 
-	// sync metadata from remote
-	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
-		return fmt.Errorf("pull metadata: %w", err)
+	strategy := MetadataCacheStrategy(strings.ToLower(*metadataStrategy))
+	if strategy != MetadataCacheLazy && strategy != MetadataCacheEager {
+		return fmt.Errorf("metadataStrategy must be %s or %s, got %q", MetadataCacheLazy, MetadataCacheEager, *metadataStrategy)
+	}
+
+	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf); err != nil {
+		return fmt.Errorf("mount setup: %w", err)
+	}
+
+	if strategy == MetadataCacheEager {
+		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf, false, false); err != nil {
+			return fmt.Errorf("cache metadata: %w", err)
+		}
 	}
 
 	// store a mount configuration in filer
@@ -93,7 +133,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
-	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
 	if err != nil {
 		return mappings, err
 	}
@@ -108,17 +148,15 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return filer.ProtoToText(writer, message)
 }
 
-func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
-
-	// find existing directory, and ensure the directory is empty
-	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
-		_, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		_, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
 			Name:      name,
 		})
 		if lookupErr != nil {
-			if strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
 				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 					Directory: parent,
 					Entry: &filer_pb.Entry{
@@ -127,7 +165,7 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 						Attributes: &filer_pb.FuseAttributes{
 							Mtime:    time.Now().Unix(),
 							Crtime:   time.Now().Unix(),
-							FileMode: uint32(0644 | os.ModeDir),
+							FileMode: uint32(0755 | os.ModeDir),
 						},
 						RemoteEntry: &filer_pb.RemoteEntry{
 							StorageName: remoteConf.Name,
@@ -136,6 +174,7 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 				})
 				return createErr
 			}
+			return lookupErr
 		}
 
 		mountToDirIsEmpty := true
@@ -156,16 +195,6 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-
-	// pull metadata from remote
-	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
-		return fmt.Errorf("cache metadata: %w", err)
-	}
-
-	return nil
 }
 
 // if an entry has synchronized metadata but has not synchronized content
@@ -189,6 +218,7 @@ func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, exis
 	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
 	existingEntry.Attributes.Md5 = nil
 	existingEntry.Attributes.TtlSec = 0 // Remote entries should not have TTL
+	existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 	existingEntry.Chunks = nil
 	existingEntry.Content = nil
 	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{

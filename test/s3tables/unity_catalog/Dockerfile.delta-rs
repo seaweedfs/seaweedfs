@@ -1,0 +1,11 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+    "deltalake==0.21.0" \
+    "pyarrow==17.0.0" \
+    "requests==2.32.3"
+
+WORKDIR /app
+COPY delta_rs_writer.py /app/delta_rs_writer.py
+
+ENTRYPOINT ["python3", "/app/delta_rs_writer.py"]

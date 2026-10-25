@@ -118,7 +118,7 @@ func TestReadFromBufferCorruption(t *testing.T) {
 
 	// Try to read - should detect corruption
 	startPos := MessagePosition{Time: lb.startTime}
-	buf, offset, err := lb.ReadFromBuffer(startPos)
+	buf, offset, _, err := lb.ReadFromBuffer(startPos)
 
 	// Should return corruption error
 	if err == nil {

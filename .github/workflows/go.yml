@@ -3,12 +3,22 @@ name: "go: build binary"
 on:
   push:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/go
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -19,13 +29,13 @@ jobs:
     name: Go Vet
     runs-on: ubuntu-latest
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
     - name: Get dependencies
       run: |
         cd weed; go get -v -t -d ./...
@@ -38,30 +48,128 @@ jobs:
         # Fail only if there are actual vet errors (not counting the filtered lock warnings)
         if grep -q "vet:" vet-output.txt; then exit 1; fi
 
+  vet-32bit:
+    name: Go Vet 32-bit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
+    - name: Go Vet linux/386 (type-checks code and tests for 32-bit int overflows)
+      run: |
+        GOOS=linux GOARCH=386 go vet ./... 2>&1 | grep -v "MessageState contains sync.Mutex" | grep -v "IdentityAccessManagement contains sync.RWMutex" | tee vet-32bit-output.txt
+        if grep -q "vet:" vet-32bit-output.txt; then exit 1; fi
+
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
     - name: Build
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
+
+  build-cross:
+    name: Build cross-platform (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      # One target's breakage should not hide the other three.
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
+    # Nothing else on a PR compiles these, so per-OS syscall constants creep
+    # back into shared files unnoticed and only a release build catches it.
+    - name: Cross-compile
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        go build ./weed/...
+        # Tests too: they reach for per-OS syscall constants the build does
+        # not, and only compiling them catches an untagged one.
+        go vet ./weed/mount/... ./weed/command/... 2>&1 |
+          grep -v "MessageState contains sync.Mutex" | tee /tmp/vet.txt
+        if grep -q "vet:" /tmp/vet.txt; then exit 1; fi
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
     - name: Test
+      env:
+        RUN_REDIS_TESTS: "1"
       run: cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...
+
+  test-32bit:
+    name: Test 32-bit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
+    # 386 test binaries run natively on the amd64 runner. This catches what vet
+    # can't: unaligned 64-bit atomics and arithmetic that wraps at runtime.
+    # -short skips the e2e suites already covered on amd64.
+    - name: Test linux/386
+      run: cd weed; GOOS=linux GOARCH=386 go test -short ./...
+
+  build-azurekms:
+    name: Build and test with azurekms tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
+    # weed/kms/azure is excluded from every default build, so without this
+    # nothing compiles it and tag-gated code silently rots.
+    - name: Build and test with azurekms
+      run: |
+        cd weed
+        go build -tags azurekms ./...
+        go test -tags azurekms ./kms/...

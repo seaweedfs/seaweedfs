@@ -1,6 +1,8 @@
 package balance
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -8,6 +10,149 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
+
+// serverSpec describes a server for the topology builder.
+type serverSpec struct {
+	id             string // e.g. "node-1"
+	diskType       string // e.g. "ssd", "hdd"
+	diskID         uint32
+	dc             string
+	rack           string
+	maxVolumes     int64
+	diskTotalBytes uint64 // physical disk capacity (0 = not reported)
+	diskFreeBytes  uint64
+}
+
+// buildTopology constructs an ActiveTopology from server specs and volume metrics.
+func buildTopology(servers []serverSpec, metrics []*types.VolumeHealthMetrics) *topology.ActiveTopology {
+	at := topology.NewActiveTopology(0)
+
+	volumesByServer := make(map[string][]*master_pb.VolumeInformationMessage)
+	for _, m := range metrics {
+		volumesByServer[m.Server] = append(volumesByServer[m.Server], &master_pb.VolumeInformationMessage{
+			Id:         m.VolumeID,
+			Size:       m.Size,
+			Collection: m.Collection,
+			Version:    1,
+		})
+	}
+
+	// Group servers by dc → rack for topology construction
+	type rackKey struct{ dc, rack string }
+	rackNodes := make(map[rackKey][]*master_pb.DataNodeInfo)
+
+	for _, s := range servers {
+		maxVol := s.maxVolumes
+		if maxVol == 0 {
+			maxVol = 1000
+		}
+		node := &master_pb.DataNodeInfo{
+			Id:      s.id,
+			Address: s.id + ":8080",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				s.diskType: {
+					Type:           s.diskType,
+					DiskId:         s.diskID,
+					VolumeInfos:    volumesByServer[s.id],
+					VolumeCount:    int64(len(volumesByServer[s.id])),
+					MaxVolumeCount: maxVol,
+					DiskTotalBytes: s.diskTotalBytes,
+					DiskFreeBytes:  s.diskFreeBytes,
+				},
+			},
+		}
+		key := rackKey{s.dc, s.rack}
+		rackNodes[key] = append(rackNodes[key], node)
+	}
+
+	// Build DC → Rack tree
+	dcRacks := make(map[string][]*master_pb.RackInfo)
+	for key, nodes := range rackNodes {
+		dcRacks[key.dc] = append(dcRacks[key.dc], &master_pb.RackInfo{
+			Id:            key.rack,
+			DataNodeInfos: nodes,
+		})
+	}
+
+	var dcInfos []*master_pb.DataCenterInfo
+	for dcID, racks := range dcRacks {
+		dcInfos = append(dcInfos, &master_pb.DataCenterInfo{
+			Id:        dcID,
+			RackInfos: racks,
+		})
+	}
+
+	at.UpdateTopology(&master_pb.TopologyInfo{DataCenterInfos: dcInfos})
+	return at
+}
+
+// makeVolumes generates n VolumeHealthMetrics for a server starting at volumeIDBase.
+func makeVolumes(server, diskType, dc, rack, collection string, volumeIDBase uint32, n int) []*types.VolumeHealthMetrics {
+	out := make([]*types.VolumeHealthMetrics, n)
+	for i := range out {
+		out[i] = &types.VolumeHealthMetrics{
+			VolumeID:      volumeIDBase + uint32(i),
+			Server:        server,
+			ServerAddress: server + ":8080",
+			DiskType:      diskType,
+			Collection:    collection,
+			Size:          1024,
+			DataCenter:    dc,
+			Rack:          rack,
+		}
+	}
+	return out
+}
+
+func defaultConf() *Config {
+	return &Config{
+		BaseConfig: base.BaseConfig{
+			Enabled:             true,
+			ScanIntervalSeconds: 30,
+			MaxConcurrent:       1,
+		},
+		MinServerCount:     2,
+		ImbalanceThreshold: 0.2,
+	}
+}
+
+// assertNoDuplicateVolumes verifies every task moves a distinct volume.
+func assertNoDuplicateVolumes(t *testing.T, tasks []*types.TaskDetectionResult) {
+	t.Helper()
+	seen := make(map[uint32]bool)
+	for i, task := range tasks {
+		if seen[task.VolumeID] {
+			t.Errorf("duplicate volume %d in task %d", task.VolumeID, i)
+		}
+		seen[task.VolumeID] = true
+	}
+}
+
+// computeEffectiveCounts returns per-server volume counts after applying all planned moves.
+// servers seeds the map so that empty destination servers (no volumes in metrics) are tracked.
+func computeEffectiveCounts(servers []serverSpec, metrics []*types.VolumeHealthMetrics, tasks []*types.TaskDetectionResult) map[string]int {
+	// Build address → server ID mapping from the topology spec
+	addrToServer := make(map[string]string, len(servers))
+	counts := make(map[string]int, len(servers))
+	for _, s := range servers {
+		counts[s.id] = 0
+		addrToServer[s.id+":8080"] = s.id
+		addrToServer[s.id] = s.id
+	}
+	for _, m := range metrics {
+		counts[m.Server]++
+	}
+	for _, task := range tasks {
+		counts[task.Server]-- // source loses one
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			addr := task.TypedParams.Targets[0].Node
+			if serverID, ok := addrToServer[addr]; ok {
+				counts[serverID]++
+			}
+		}
+	}
+	return counts
+}
 
 func createMockTopology(volumes ...*types.VolumeHealthMetrics) *topology.ActiveTopology {
 	at := topology.NewActiveTopology(0)
@@ -171,7 +316,7 @@ func TestDetection_MixedDiskTypes(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf)
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -231,25 +376,1234 @@ func TestDetection_ImbalancedDiskType(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf)
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
 
 	if len(tasks) == 0 {
 		t.Error("Expected tasks for imbalanced SSD cluster, got 0")
-	} else {
-		// Verify task details
-		task := tasks[0]
+	}
+
+	// With 100 volumes on server-1 and 10 on server-2, avg=55, detection should
+	// propose multiple moves until imbalance drops below 20% threshold.
+	// All tasks should move volumes from ssd-server-1 to ssd-server-2.
+	if len(tasks) < 2 {
+		t.Errorf("Expected multiple balance tasks, got %d", len(tasks))
+	}
+
+	for i, task := range tasks {
 		if task.VolumeID == 0 {
-			t.Error("Task has invalid VolumeID")
+			t.Errorf("Task %d has invalid VolumeID", i)
 		}
-		// Expect volume to be moving from ssd-server-1 to ssd-server-2
 		if task.TypedParams.Sources[0].Node != "ssd-server-1:8080" {
-			t.Errorf("Expected source ssd-server-1:8080, got %s", task.TypedParams.Sources[0].Node)
+			t.Errorf("Task %d: expected source ssd-server-1:8080, got %s", i, task.TypedParams.Sources[0].Node)
 		}
 		if task.TypedParams.Targets[0].Node != "ssd-server-2:8080" {
-			t.Errorf("Expected target ssd-server-2:8080, got %s", task.TypedParams.Targets[0].Node)
+			t.Errorf("Task %d: expected target ssd-server-2:8080, got %s", i, task.TypedParams.Targets[0].Node)
+		}
+	}
+}
+
+// Issue #10160 in the maintenance worker: an over-configured maxVolumeCount makes
+// a physically full server look under-utilized by slot count, so the greedy
+// least-utilized-destination pick would drain onto it. The physical-disk gate
+// must steer moves to a genuinely empty disk and never target the full one.
+func TestDetection_SkipsPhysicallyFullDestination(t *testing.T) {
+	const gb = uint64(1) << 30
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10},
+		{id: "disk-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},   // 96% used
+		{id: "disk-empty", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 900 * gb}, // 10% used
+	}
+	metrics := makeVolumes("src", "hdd", "dc1", "rack1", "c1", 1, 8)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("expected balance tasks for the imbalanced cluster, got 0")
+	}
+	targetedEmpty := false
+	for i, task := range tasks {
+		tgt := task.TypedParams.Targets[0].Node
+		if tgt == "disk-full:8080" {
+			t.Errorf("task %d targeted the physically full server %s", i, tgt)
+		}
+		if tgt == "disk-empty:8080" {
+			targetedEmpty = true
+		}
+	}
+	if !targetedEmpty {
+		t.Error("expected at least one task to target the physically empty server")
+	}
+}
+
+// When every candidate destination is physically full, the worker must create no
+// tasks rather than pile onto a full disk.
+func TestDetection_NoDestinationWhenAllDisksFull(t *testing.T) {
+	const gb = uint64(1) << 30
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},
+		{id: "disk-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},
+	}
+	metrics := makeVolumes("src", "hdd", "dc1", "rack1", "c1", 1, 8)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tasks when all destinations are physically full, got %d", len(tasks))
+	}
+}
+
+// near-full is at 85% (under the mark) but moving one 100-byte volume onto its
+// 1000-byte disk would reach 95%, so it must not be targeted.
+func TestDetection_ProjectsVolumeOntoNearFullDestination(t *testing.T) {
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10},
+		{id: "near-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000, diskFreeBytes: 150},
+	}
+	metrics := make([]*types.VolumeHealthMetrics, 8)
+	for i := range metrics {
+		metrics[i] = &types.VolumeHealthMetrics{
+			VolumeID: uint32(i + 1), Server: "src", ServerAddress: "src:8080",
+			DiskType: "hdd", Collection: "c1", Size: 100, DataCenter: "dc1", Rack: "rack1",
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tasks: the projected move would cross 90%% disk usage, got %d", len(tasks))
+	}
+}
+
+func TestDetection_SkipsRemoteTieredVolumes(t *testing.T) {
+	metrics := []*types.VolumeHealthMetrics{}
+
+	for i := 0; i < 100; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(i + 1),
+			Server:        "ssd-server-1",
+			ServerAddress: "ssd-server-1:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+			HasRemoteCopy: true,
+		})
+	}
+	for i := 0; i < 10; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(100 + i + 1),
+			Server:        "ssd-server-2",
+			ServerAddress: "ssd-server-2:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+			HasRemoteCopy: true,
+		})
+	}
+
+	at := createMockTopology(metrics...)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks for remote-tiered volumes, got %d", len(tasks))
+	}
+}
+
+func TestDetection_RespectsMaxResults(t *testing.T) {
+	// Setup: 2 SSD servers with big imbalance (100 vs 10)
+	metrics := []*types.VolumeHealthMetrics{}
+
+	for i := 0; i < 100; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(i + 1),
+			Server:        "ssd-server-1",
+			ServerAddress: "ssd-server-1:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+		})
+	}
+	for i := 0; i < 10; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(100 + i + 1),
+			Server:        "ssd-server-2",
+			ServerAddress: "ssd-server-2:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+		})
+	}
+
+	conf := &Config{
+		BaseConfig: base.BaseConfig{
+			Enabled:             true,
+			ScanIntervalSeconds: 30,
+			MaxConcurrent:       1,
+		},
+		MinServerCount:     2,
+		ImbalanceThreshold: 0.2,
+	}
+
+	at := createMockTopology(metrics...)
+	clusterInfo := &types.ClusterInfo{
+		ActiveTopology: at,
+	}
+
+	// Request only 3 results — there are enough volumes to produce more,
+	// so truncated should be true.
+	tasks, truncated, err := Detection(metrics, clusterInfo, conf, 3)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) != 3 {
+		t.Errorf("Expected exactly 3 tasks (maxResults=3), got %d", len(tasks))
+	}
+	if !truncated {
+		t.Errorf("Expected truncated=true when maxResults caps results")
+	}
+
+	// Verify truncated=false when detection finishes naturally (no cap)
+	at2 := createMockTopology(metrics...)
+	clusterInfo2 := &types.ClusterInfo{ActiveTopology: at2}
+	tasks2, truncated2, err := Detection(metrics, clusterInfo2, conf, 500)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if truncated2 {
+		t.Errorf("Expected truncated=false when detection finishes naturally, got true (len=%d)", len(tasks2))
+	}
+}
+
+// --- Complicated scenario tests ---
+
+// TestDetection_ThreeServers_ConvergesToBalance verifies that with 3 servers
+// (60/30/10 volumes) the algorithm moves volumes from the heaviest server first,
+// then re-evaluates, potentially shifting from the second-heaviest too.
+func TestDetection_ThreeServers_ConvergesToBalance(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 60)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 30)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 10)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) < 2 {
+		t.Fatalf("Expected multiple tasks for 60/30/10 imbalance, got %d", len(tasks))
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+
+	// Verify convergence: effective counts should be within 20% imbalance.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	total := 0
+	maxC, minC := 0, len(metrics)
+	for _, c := range effective {
+		total += c
+		if c > maxC {
+			maxC = c
+		}
+		if c < minC {
+			minC = c
+		}
+	}
+	avg := float64(total) / float64(len(effective))
+	imbalance := float64(maxC-minC) / avg
+	if imbalance > 0.2 {
+		t.Errorf("After %d moves, cluster still imbalanced: effective=%v, imbalance=%.1f%%",
+			len(tasks), effective, imbalance*100)
+	}
+
+	// All sources should be from the overloaded nodes, never node-c
+	for i, task := range tasks {
+		src := task.TypedParams.Sources[0].Node
+		if src == "node-c:8080" {
+			t.Errorf("Task %d: should not move FROM the underloaded server node-c", i)
+		}
+	}
+}
+
+// TestDetection_SkipsPreExistingPendingTasks verifies that volumes with
+// already-registered pending tasks in ActiveTopology are skipped.
+func TestDetection_SkipsPreExistingPendingTasks(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+	}
+
+	// node-a has 20, node-b has 5
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 20)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 5)...)
+
+	at := buildTopology(servers, metrics)
+
+	// Pre-register pending tasks for the first 15 volumes on node-a.
+	// This simulates a previous detection run that already planned moves.
+	for i := 0; i < 15; i++ {
+		volID := uint32(1 + i)
+		err := at.AddPendingTask(topology.TaskSpec{
+			TaskID:       fmt.Sprintf("existing-%d", volID),
+			TaskType:     topology.TaskTypeBalance,
+			VolumeID:     volID,
+			VolumeSize:   1024,
+			Sources:      []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
+			Destinations: []topology.TaskDestinationSpec{{ServerID: "node-b", DiskID: 2}},
+		})
+		if err != nil {
+			t.Fatalf("AddPendingTask failed: %v", err)
+		}
+	}
+
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// None of the results should reference a volume with an existing task (IDs 1-15).
+	for i, task := range tasks {
+		if task.VolumeID >= 1 && task.VolumeID <= 15 {
+			t.Errorf("Task %d: volume %d already has a pending task, should have been skipped",
+				i, task.VolumeID)
+		}
+	}
+
+	// With 15 pending A→B moves, effective counts are A=5, B=20.
+	// Detection sees B as overloaded and may plan moves from B (5 volumes).
+	// Should produce a reasonable number of tasks without over-scheduling.
+	if len(tasks) > 5 {
+		t.Errorf("Expected at most 5 new tasks, got %d", len(tasks))
+	}
+	if len(tasks) == 0 {
+		t.Errorf("Expected at least 1 new task since projected imbalance still exists")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+}
+
+// TestDetection_NoDuplicateVolumesAcrossIterations verifies that the loop
+// never selects the same volume twice, even under high maxResults.
+func TestDetection_NoDuplicateVolumesAcrossIterations(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "ssd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "ssd", diskID: 2, dc: "dc1", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "ssd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "ssd", "dc1", "rack1", "c1", 100, 10)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 200)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) <= 1 {
+		t.Fatalf("Expected multiple tasks to verify no-duplicate invariant across iterations, got %d", len(tasks))
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+}
+
+// TestDetection_ThreeServers_MaxServerShifts verifies that after enough moves
+// from the top server, the algorithm detects a new max server and moves from it.
+func TestDetection_ThreeServers_MaxServerShifts(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	// node-a: 40, node-b: 38, node-c: 10. avg ≈ 29.3
+	// Initial imbalance = (40-10)/29.3 ≈ 1.02 → move from node-a.
+	// After a few moves from node-a, node-b becomes the new max and should be
+	// picked as the source.
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 40)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 38)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 10)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) < 3 {
+		t.Fatalf("Expected several tasks for 40/38/10 imbalance, got %d", len(tasks))
+	}
+
+	// Collect source servers
+	sourceServers := make(map[string]int)
+	for _, task := range tasks {
+		sourceServers[task.Server]++
+	}
+
+	// Both node-a and node-b should appear as sources (max server shifts)
+	if sourceServers["node-a"] == 0 {
+		t.Error("Expected node-a to be a source for some moves")
+	}
+	if sourceServers["node-b"] == 0 {
+		t.Error("Expected node-b to be a source after node-a is drained enough")
+	}
+	if sourceServers["node-c"] > 0 {
+		t.Error("node-c (underloaded) should never be a source")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+}
+
+// TestDetection_FourServers_DestinationSpreading verifies that with 4 servers
+// (1 heavy, 3 light) the algorithm spreads moves across multiple destinations.
+func TestDetection_FourServers_DestinationSpreading(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "ssd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "ssd", diskID: 2, dc: "dc1", rack: "rack2"},
+		{id: "node-c", diskType: "ssd", diskID: 3, dc: "dc1", rack: "rack3"},
+		{id: "node-d", diskType: "ssd", diskID: 4, dc: "dc1", rack: "rack4"},
+	}
+
+	// node-a: 80, b/c/d: 5 each. avg=23.75
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "ssd", "dc1", "rack1", "c1", 1, 80)...)
+	metrics = append(metrics, makeVolumes("node-b", "ssd", "dc1", "rack2", "c1", 100, 5)...)
+	metrics = append(metrics, makeVolumes("node-c", "ssd", "dc1", "rack3", "c1", 200, 5)...)
+	metrics = append(metrics, makeVolumes("node-d", "ssd", "dc1", "rack4", "c1", 300, 5)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) < 5 {
+		t.Fatalf("Expected many tasks, got %d", len(tasks))
+	}
+
+	// Count destination servers
+	destServers := make(map[string]int)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			destServers[task.TypedParams.Targets[0].Node]++
+		}
+	}
+
+	// With 3 eligible destinations (b, c, d) and pending-task-aware scoring,
+	// moves should go to more than just one destination.
+	if len(destServers) < 2 {
+		t.Errorf("Expected moves to spread across destinations, but only got: %v", destServers)
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+}
+
+// TestDetection_ConvergenceVerification verifies that after all planned moves,
+// the effective volume distribution is within the configured threshold.
+func TestDetection_ConvergenceVerification(t *testing.T) {
+	tests := []struct {
+		name      string
+		counts    []int // volumes per server
+		threshold float64
+	}{
+		{"2-server-big-gap", []int{100, 10}, 0.2},
+		{"3-server-staircase", []int{90, 50, 10}, 0.2},
+		{"4-server-one-hot", []int{200, 20, 20, 20}, 0.2},
+		{"3-server-tight-threshold", []int{30, 20, 10}, 0.1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var servers []serverSpec
+			var metrics []*types.VolumeHealthMetrics
+			volBase := uint32(1)
+
+			for i, count := range tt.counts {
+				id := fmt.Sprintf("node-%d", i)
+				servers = append(servers, serverSpec{
+					id: id, diskType: "hdd", diskID: uint32(i + 1),
+					dc: "dc1", rack: "rack1",
+				})
+				metrics = append(metrics, makeVolumes(id, "hdd", "dc1", "rack1", "c1", volBase, count)...)
+				volBase += uint32(count)
+			}
+
+			at := buildTopology(servers, metrics)
+			clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+			conf := defaultConf()
+			conf.ImbalanceThreshold = tt.threshold
+
+			tasks, _, err := Detection(metrics, clusterInfo, conf, 500)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+
+			if len(tasks) == 0 {
+				t.Fatal("Expected balance tasks, got 0")
+			}
+
+			assertNoDuplicateVolumes(t, tasks)
+
+			// Verify convergence
+			effective := computeEffectiveCounts(servers, metrics, tasks)
+			total := 0
+			maxC, minC := 0, len(metrics)
+			for _, c := range effective {
+				total += c
+				if c > maxC {
+					maxC = c
+				}
+				if c < minC {
+					minC = c
+				}
+			}
+			avg := float64(total) / float64(len(effective))
+			imbalance := float64(maxC-minC) / avg
+			if imbalance > tt.threshold {
+				t.Errorf("After %d moves, still imbalanced: effective=%v, imbalance=%.1f%% (threshold=%.1f%%)",
+					len(tasks), effective, imbalance*100, tt.threshold*100)
+			}
+			t.Logf("%s: %d moves, effective=%v, imbalance=%.1f%%",
+				tt.name, len(tasks), effective, imbalance*100)
+		})
+	}
+}
+
+// TestDetection_ExhaustedServerFallsThrough verifies that when the most
+// overloaded server has all its volumes blocked by pre-existing tasks,
+// the algorithm falls through to the next overloaded server instead of stopping.
+func TestDetection_ExhaustedServerFallsThrough(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	// node-a: 50 volumes, node-b: 40 volumes, node-c: 10 volumes
+	// avg = 33.3, imbalance = (50-10)/33.3 = 1.2 > 0.2
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 40)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 10)...)
+
+	at := buildTopology(servers, metrics)
+
+	// Block ALL of node-a's volumes with pre-existing tasks
+	for i := 0; i < 50; i++ {
+		volID := uint32(1 + i)
+		err := at.AddPendingTask(topology.TaskSpec{
+			TaskID:       fmt.Sprintf("existing-%d", volID),
+			TaskType:     topology.TaskTypeBalance,
+			VolumeID:     volID,
+			VolumeSize:   1024,
+			Sources:      []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
+			Destinations: []topology.TaskDestinationSpec{{ServerID: "node-c", DiskID: 3}},
+		})
+		if err != nil {
+			t.Fatalf("AddPendingTask failed: %v", err)
+		}
+	}
+
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// node-a is exhausted, but node-b (40 vols) vs node-c (10 vols) is still
+	// imbalanced. The algorithm should fall through and move from node-b.
+	if len(tasks) == 0 {
+		t.Fatal("Expected tasks from node-b after node-a was exhausted, got 0")
+	}
+
+	for i, task := range tasks {
+		if task.Server == "node-a" {
+			t.Errorf("Task %d: should not move FROM node-a (all volumes blocked)", i)
+		}
+	}
+
+	// Verify node-b is the source
+	hasNodeBSource := false
+	for _, task := range tasks {
+		if task.Server == "node-b" {
+			hasNodeBSource = true
+			break
+		}
+	}
+	if !hasNodeBSource {
+		t.Error("Expected node-b to be a source after node-a was exhausted")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+	t.Logf("Created %d tasks from node-b after node-a exhausted", len(tasks))
+}
+
+// TestDetection_HeterogeneousCapacity verifies that the balancer uses
+// utilization ratio (volumes/maxVolumes) rather than raw volume counts.
+// A server with more volumes but proportionally lower utilization should
+// NOT be picked as the source over a server with fewer volumes but higher
+// utilization.
+func TestDetection_HeterogeneousCapacity(t *testing.T) {
+	// Simulate a cluster like:
+	//   server-1: 600 volumes, max 700  → utilization 85.7%
+	//   server-2: 690 volumes, max 700  → utilization 98.6%  ← most utilized
+	//   server-3: 695 volumes, max 700  → utilization 99.3%  ← most utilized
+	//   server-4: 900 volumes, max 1260 → utilization 71.4%  ← least utilized
+	//
+	// The old algorithm (raw counts) would pick server-4 as source (900 > 695).
+	// The correct behavior is to pick server-3 (or server-2) as source since
+	// they have the highest utilization ratio.
+	servers := []serverSpec{
+		{id: "server-1", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-2", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-3", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-4", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1260},
+	}
+
+	volCounts := map[string]int{
+		"server-1": 600,
+		"server-2": 690,
+		"server-3": 695,
+		"server-4": 900,
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	vid := uint32(1)
+	for _, server := range []string{"server-1", "server-2", "server-3", "server-4"} {
+		count := volCounts[server]
+		metrics = append(metrics, makeVolumes(server, "hdd", "dc1", "rack1", "", vid, count)...)
+		vid += uint32(count)
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	cfg := &Config{
+		BaseConfig:         base.BaseConfig{Enabled: true},
+		ImbalanceThreshold: 0.20,
+		MinServerCount:     2,
+	}
+
+	tasks, _, err := Detection(metrics, clusterInfo, cfg, 5)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks but got none")
+	}
+
+	// The source of the first task should be the most utilized server
+	// (server-3 at 99.3% or server-2 at 98.6%), NOT server-4.
+	firstSource := tasks[0].Server
+	if firstSource == "server-4" {
+		t.Errorf("Balancer incorrectly picked server-4 (lowest utilization 71.4%%) as source; should pick server-3 (99.3%%) or server-2 (98.6%%)")
+	}
+	if firstSource != "server-3" && firstSource != "server-2" {
+		t.Errorf("Expected server-3 or server-2 as first source, got %s", firstSource)
+	}
+	t.Logf("First balance task: move from %s (correct: highest utilization)", firstSource)
+}
+
+// TestDetection_ZeroVolumeServerIncludedInBalance verifies that a server
+// with zero volumes (seeded from topology with a matching disk type) is
+// correctly included in the balance calculation and receives moves to
+// equalize the distribution.
+func TestDetection_ZeroVolumeServerIncludedInBalance(t *testing.T) {
+	// 4 servers total, but only 3 have volumes.
+	// node-d has a disk of the same type but zero volumes, so it appears in the
+	// topology and is seeded into serverVolumeCounts with count=0.
+
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-d", diskType: "hdd", diskID: 4, dc: "dc1", rack: "rack1", maxVolumes: 20},
+	}
+
+	// node-a: 8 volumes, node-b: 2, node-c: 1, node-d: 0
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "", 1, 8)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "", 20, 2)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "", 30, 1)...)
+	// node-d has 0 volumes — no metrics
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 8/2/1/0 distribution, got 0")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+
+	// With 11 volumes across 4 servers, the best achievable is 3/3/3/2
+	// (imbalance=36.4%), which exceeds the 20% threshold. The algorithm should
+	// stop when max-min<=1 rather than oscillating endlessly.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	total := 0
+	maxC, minC := 0, len(metrics)
+	for _, c := range effective {
+		total += c
+		if c > maxC {
+			maxC = c
+		}
+		if c < minC {
+			minC = c
+		}
+	}
+
+	// The diff between max and min should be at most 1 (as balanced as possible)
+	if maxC-minC > 1 {
+		t.Errorf("After %d moves, distribution not optimally balanced: effective=%v, max-min=%d (want ≤1)",
+			len(tasks), effective, maxC-minC)
+	}
+
+	// Count destinations — moves should spread, not pile onto one server
+	destCounts := make(map[string]int)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			destCounts[task.TypedParams.Targets[0].Node]++
+		}
+	}
+
+	// Moves should go to at least 2 different destinations
+	if len(destCounts) < 2 {
+		t.Errorf("Expected moves to spread across destinations, but got: %v", destCounts)
+	}
+
+	// Should need only ~5 moves for 8/2/1/0 → 3/3/3/2, not 8+ (oscillation)
+	if len(tasks) > 8 {
+		t.Errorf("Too many moves (%d) — likely oscillating; expected ≤8 for this distribution", len(tasks))
+	}
+
+	avg := float64(total) / float64(len(effective))
+	imbalance := float64(maxC-minC) / avg
+	t.Logf("Distribution 8/2/1/0 → %v after %d moves (imbalance=%.1f%%)",
+		effective, len(tasks), imbalance*100)
+}
+
+func TestDetection_DataCenterFilter(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc2", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	// node-c is in dc2, should be excluded by filter
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc2", "rack1", "c1", 200, 30)...)
+
+	// Only include metrics from dc1
+	dc1Metrics := make([]*types.VolumeHealthMetrics, 0)
+	for _, m := range metrics {
+		if m.DataCenter == "dc1" {
+			dc1Metrics = append(dc1Metrics, m)
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	conf := defaultConf()
+	conf.DataCenterFilter = "dc1"
+
+	tasks, _, err := Detection(dc1Metrics, clusterInfo, conf, 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within dc1, got 0")
+	}
+
+	// With DC filter, only node-a and node-b are considered in topology seeding.
+	// node-c should never appear as source or destination.
+	for _, task := range tasks {
+		if task.Server == "node-c" {
+			t.Errorf("node-c (dc2) should not be a source with dc1 filter")
+		}
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c (dc2) should not be a target with dc1 filter")
+				}
+			}
+		}
+	}
+
+	if len(tasks) > 0 {
+		t.Logf("Created %d tasks within dc1 scope", len(tasks))
+	}
+}
+
+func TestDetection_NodeFilter(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 5)...)
+
+	// Only include metrics from node-a and node-b
+	filteredMetrics := make([]*types.VolumeHealthMetrics, 0)
+	for _, m := range metrics {
+		if m.Server == "node-a" || m.Server == "node-b" {
+			filteredMetrics = append(filteredMetrics, m)
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	conf := defaultConf()
+	conf.NodeFilter = "node-a,node-b"
+
+	tasks, _, err := Detection(filteredMetrics, clusterInfo, conf, 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within node-a,node-b scope, got 0")
+	}
+
+	for _, task := range tasks {
+		if task.Server == "node-c" {
+			t.Errorf("node-c should not be a source with node filter")
+		}
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c should not be a target with node filter")
+				}
+			}
+		}
+	}
+
+	t.Logf("Created %d tasks within node-a,node-b scope", len(tasks))
+}
+
+// TestDetection_HeterogeneousMax_NoOvershootNoOscillation is a regression test
+// for a volume.balance bug in the plugin worker: when servers have different
+// MaxVolumeCount values and the cluster is near (but above) the imbalance
+// threshold, the greedy max→min algorithm could schedule moves that FLIP
+// which server is the most-utilized, producing oscillation across a single
+// detection cycle and pushing destination servers above the cluster-ideal
+// utilization.
+//
+// Setup:
+//
+//	node-a: 11 volumes, max=20  → util=0.55
+//	node-b:  5 volumes, max=10  → util=0.50
+//	ideal = 16/30 ≈ 0.533
+//
+// One naive move a→b leaves a=10/20=0.50 and b=6/10=0.60 — which flips the
+// imbalance and pushes b well above the cluster ideal. The next iteration
+// (without a per-move guard) would plan the reverse move, and so on.
+//
+// Invariants that must hold after detection:
+//  1. No destination's effective utilization exceeds the cluster-ideal ratio.
+//  2. Tasks flow in at most one direction between any server pair (no
+//     oscillation within a single detection cycle).
+//  3. The final imbalance (after applying all planned moves) is not strictly
+//     worse than the initial imbalance.
+func TestDetection_HeterogeneousMax_NoOvershootNoOscillation(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 11)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 5)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	// Strict threshold makes detection eager to move, exposing the overshoot
+	// bug when naive greedy selection is used.
+	conf := defaultConf()
+	conf.ImbalanceThreshold = 0.05
+
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 50)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	maxCap := map[string]float64{"node-a": 20, "node-b": 10}
+	const idealUtil = 16.0 / 30.0 // 0.5333...
+
+	// (1) No destination server (recipient of at least one move) should end up
+	// above the cluster-ideal utilization. Source servers may remain slightly
+	// above ideal when no further beneficial move is possible — that is fine.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	destinations := make(map[string]bool)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			addr := task.TypedParams.Targets[0].Node
+			// address → server id mapping matches buildTopology: "<id>:8080"
+			for _, s := range servers {
+				if s.id+":8080" == addr || s.id == addr {
+					destinations[s.id] = true
+					break
+				}
+			}
+		}
+	}
+	for server := range destinations {
+		util := float64(effective[server]) / maxCap[server]
+		if util > idealUtil+1e-9 {
+			t.Errorf("destination %s effective util %.3f exceeds cluster ideal %.3f (count=%d, cap=%.0f)",
+				server, util, idealUtil, effective[server], maxCap[server])
+		}
+	}
+
+	// (2) Tasks should never flow both directions between node-a and node-b.
+	aAsSource, bAsSource := 0, 0
+	for _, task := range tasks {
+		switch task.Server {
+		case "node-a":
+			aAsSource++
+		case "node-b":
+			bAsSource++
+		}
+	}
+	if aAsSource > 0 && bAsSource > 0 {
+		t.Errorf("detection oscillated: %d tasks with node-a as source and %d with node-b as source",
+			aAsSource, bAsSource)
+	}
+
+	// (3) Final imbalance must not be worse than initial imbalance.
+	initUtilA := 11.0 / 20.0 // 0.55
+	initUtilB := 5.0 / 10.0  // 0.50
+	initDiff := initUtilA - initUtilB
+
+	finalUtilA := float64(effective["node-a"]) / maxCap["node-a"]
+	finalUtilB := float64(effective["node-b"]) / maxCap["node-b"]
+	finalDiff := finalUtilA - finalUtilB
+	if finalDiff < 0 {
+		finalDiff = -finalDiff
+	}
+	if finalDiff > initDiff+1e-9 {
+		t.Errorf("detection made imbalance worse: initial diff %.3f, final diff %.3f (tasks=%d, effective=%v)",
+			initDiff, finalDiff, len(tasks), effective)
+	}
+
+	t.Logf("tasks=%d, effective=%v, final diff=%.3f (initial=%.3f)", len(tasks), effective, finalDiff, initDiff)
+}
+
+// TestDetection_RespectsClusterIdealUtilization verifies that in a 3-server
+// cluster with heterogeneous MaxVolumeCount values, detection does not push
+// any destination above its proportional fair share of the cluster-ideal
+// utilization. Without a per-move guard, the greedy algorithm happily fills
+// the most-underutilized disk well past the cluster ideal, mirroring the
+// real-world "nodes get filled up to ~99% capacity" failure mode reported
+// after the 4.17 upgrade.
+//
+// Setup:
+//
+//	node-a: 20 volumes, max=40  (util 0.50)
+//	node-b: 10 volumes, max=20  (util 0.50)
+//	node-c:  1 volume,  max=10  (util 0.10)   <- small, underloaded
+//	ideal = 31/70 ≈ 0.443
+//
+// A count-only greedy balancer would drain a and b into c until c.util reaches
+// ~0.5 (matching the heavier servers), pushing c's utilization above the
+// cluster ideal. The correct behavior is to stop moves to c once its
+// utilization reaches the cluster ideal.
+func TestDetection_RespectsClusterIdealUtilization(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 40},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 20)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 1)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 200)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	const idealUtil = 31.0 / 70.0 // 0.4428...
+	maxCap := map[string]float64{"node-a": 40, "node-b": 20, "node-c": 10}
+
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	for server, count := range effective {
+		util := float64(count) / maxCap[server]
+		// Allow one-volume slack to account for integer rounding on small caps:
+		// a server with cap=10 cannot land exactly on 0.443; the nearest counts
+		// are 4 (0.40) and 5 (0.50). The guard should stop at 4.
+		slack := 1.0 / maxCap[server]
+		if util > idealUtil+slack+1e-9 {
+			t.Errorf("server %s (cap=%.0f) effective util %.3f exceeds cluster ideal %.3f (+%.3f slack); count=%d",
+				server, maxCap[server], util, idealUtil, slack, count)
+		}
+	}
+
+	t.Logf("tasks=%d, effective=%v, ideal=%.3f", len(tasks), effective, idealUtil)
+}
+
+// TestResolveBalanceDestination_UsesEffectiveCapacity verifies that
+// resolveBalanceDestination respects ActiveTopology's effective available
+// capacity — i.e., the destination check factors in pending and assigned
+// tasks already registered against the disk. Without this, the destination
+// planner reads a stale VolumeCount from the topology snapshot and keeps
+// approving the same disk even after many moves have been planned against
+// it within a single detection cycle.
+func TestResolveBalanceDestination_UsesEffectiveCapacity(t *testing.T) {
+	servers := []serverSpec{
+		{id: "src-node", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "dst-node", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("src-node", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	// dst-node starts with 8 volumes → 2 slots free
+	metrics = append(metrics, makeVolumes("dst-node", "hdd", "dc1", "rack1", "c1", 1000, 8)...)
+
+	at := buildTopology(servers, metrics)
+
+	// Simulate two prior balance moves already planned in this detection cycle
+	// that target dst-node:2. Effective capacity should drop to 0.
+	for i := 0; i < 2; i++ {
+		err := at.AddPendingTask(topology.TaskSpec{
+			TaskID:     fmt.Sprintf("pending-%d", i),
+			TaskType:   topology.TaskTypeBalance,
+			VolumeID:   uint32(9000 + i),
+			VolumeSize: 1024,
+			Sources: []topology.TaskSourceSpec{
+				{ServerID: "src-node", DiskID: 1},
+			},
+			Destinations: []topology.TaskDestinationSpec{
+				{ServerID: "dst-node", DiskID: 2},
+			},
+		})
+		if err != nil {
+			t.Fatalf("seeding pending task %d failed: %v", i, err)
+		}
+	}
+
+	candidate := &types.VolumeHealthMetrics{
+		VolumeID:      500,
+		Server:        "src-node",
+		ServerAddress: "src-node:8080",
+		DiskType:      "hdd",
+		Collection:    "c1",
+		Size:          1024,
+		DataCenter:    "dc1",
+		Rack:          "rack1",
+	}
+
+	if _, err := resolveBalanceDestination(at, candidate, "dst-node"); err == nil {
+		t.Error("expected resolveBalanceDestination to fail because dst-node's disk is effectively full " +
+			"(VolumeCount=8, MaxVolumeCount=10, 2 pending destination tasks)")
+	}
+
+	// Sanity check: a server with no pending tasks targeting it should still
+	// resolve successfully, proving the helper itself is working.
+	servers2 := []serverSpec{
+		{id: "src-node", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "dst-node", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+	metrics2 := append([]*types.VolumeHealthMetrics(nil),
+		makeVolumes("src-node", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics2 = append(metrics2, makeVolumes("dst-node", "hdd", "dc1", "rack1", "c1", 1000, 8)...)
+	at2 := buildTopology(servers2, metrics2)
+	plan, err := resolveBalanceDestination(at2, candidate, "dst-node")
+	if err != nil {
+		t.Fatalf("expected resolveBalanceDestination to succeed on fresh topology: %v", err)
+	}
+	if plan.TargetNode != "dst-node" {
+		t.Errorf("unexpected target node: got %q want %q", plan.TargetNode, "dst-node")
+	}
+}
+
+// TestDetection_SkipsVolumeWhenTargetHoldsReplica reproduces issue #11839.
+// The emptiest server (node-d) already holds a replica of the lowest-ID
+// volumes on the fuller servers, so those volumes cannot legally move to it.
+// Detection must skip them and move on to volumes that can, instead of
+// redirecting the move to a third, equally full server — which ping-pongs
+// the same volumes back and forth on every detection cycle.
+func TestDetection_SkipsVolumeWhenTargetHoldsReplica(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "node-d", diskType: "hdd", diskID: 4, dc: "dc1", rack: "rack1", maxVolumes: 100},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	replicaMap := make(map[uint32][]types.ReplicaLocation)
+	addReplica := func(id uint32, node string) {
+		replicaMap[id] = append(replicaMap[id], types.ReplicaLocation{
+			DataCenter: "dc1", Rack: "rack1", NodeID: node,
+		})
+	}
+	// place registers a replica of volume id on server (a metric); the first
+	// placement of a volume also records its second replica on peer.
+	place := func(server, peer string, lo, hi uint32) {
+		for id := lo; id <= hi; id++ {
+			metrics = append(metrics, &types.VolumeHealthMetrics{
+				VolumeID: id, Server: server, ServerAddress: server + ":8080",
+				DiskType: "hdd", Collection: "c1", Size: 1024,
+				DataCenter: "dc1", Rack: "rack1", ExpectedReplicas: 1, // rp=001
+			})
+			if _, seen := replicaMap[id]; !seen {
+				addReplica(id, server)
+				addReplica(id, peer)
+			}
+		}
+	}
+
+	// The lowest-ID volumes on each full server already have their second
+	// replica on node-d, so node-d is never a legal target for them.
+	place("node-a", "node-d", 1, 10)
+	place("node-b", "node-d", 11, 20)
+	place("node-c", "node-d", 21, 30)
+
+	// Higher-ID volumes replicate within {a,b,c} and can move to node-d.
+	place("node-a", "node-b", 31, 55)
+	place("node-b", "node-c", 56, 70)
+	place("node-c", "node-a", 81, 105)
+	place("node-c", "node-b", 106, 120)
+	place("node-b", "node-a", 31, 55)   // second copies
+	place("node-c", "node-b", 56, 70)   // second copies
+	place("node-a", "node-c", 81, 105)  // second copies
+	place("node-b", "node-c", 106, 120) // second copies
+
+	// Per-server counts: a=60, b=65, c=65 of cap 100. node-d has no metrics of
+	// its own (it only holds the replica-map copies), so it is the clear min.
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at, VolumeReplicaMap: replicaMap}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("expected balance tasks: 60/65/65 vs 0 is far above the imbalance threshold")
+	}
+
+	addrToNode := map[string]string{
+		"node-a:8080": "node-a", "node-b:8080": "node-b",
+		"node-c:8080": "node-c", "node-d:8080": "node-d",
+	}
+	srcOf := make(map[uint32]string)
+	dstOf := make(map[uint32]string)
+	for _, task := range tasks {
+		for _, tgt := range task.TypedParams.Targets {
+			dst := addrToNode[tgt.Node]
+			if dst != "node-d" {
+				t.Errorf("volume %d moved %s -> %s: only node-d is under-utilized", task.VolumeID, task.Server, tgt.Node)
+			}
+			dstOf[task.VolumeID] = dst
+		}
+		srcOf[task.VolumeID] = task.Server
+	}
+	assertNoDuplicateVolumes(t, tasks)
+
+	// Apply the planned moves and re-run detection: a volume already moved
+	// must never be picked again (the reported oscillation).
+	for _, m := range metrics {
+		if m.Server == srcOf[m.VolumeID] {
+			m.Server = dstOf[m.VolumeID]
+			m.ServerAddress = m.Server + ":8080"
+		}
+	}
+	for id, dst := range dstOf {
+		for i, loc := range replicaMap[id] {
+			if loc.NodeID == srcOf[id] {
+				replicaMap[id][i].NodeID = dst
+			}
+		}
+	}
+	for id, locs := range replicaMap {
+		seen := make(map[string]bool)
+		for _, loc := range locs {
+			if seen[loc.NodeID] {
+				t.Fatalf("volume %d ended with two replicas on %s", id, loc.NodeID)
+			}
+			seen[loc.NodeID] = true
+		}
+	}
+
+	at2 := buildTopology(servers, metrics)
+	clusterInfo2 := &types.ClusterInfo{ActiveTopology: at2, VolumeReplicaMap: replicaMap}
+	tasks2, _, err := Detection(metrics, clusterInfo2, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("second Detection failed: %v", err)
+	}
+	for _, task := range tasks2 {
+		if dstOf[task.VolumeID] != "" {
+			t.Errorf("volume %d moved again in the next detection cycle (%s)", task.VolumeID, task.Server)
 		}
 	}
 }

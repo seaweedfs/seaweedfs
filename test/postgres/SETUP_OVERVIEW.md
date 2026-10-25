@@ -280,7 +280,7 @@ This test setup proves:
 - Comprehensive error handling
 
 ### ✅ Performance and Scalability
-- Direct SQL engine integration (same as `weed sql`)
+- Direct SQL engine integration (same as `weed-sql`)
 - No translation overhead for real queries
 - Efficient data access from stored formats
 - Scalable architecture with service discovery

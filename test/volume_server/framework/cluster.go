@@ -18,8 +18,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+// goBuildTags names the build tags a server the harness compiles must carry to
+// hold the same offsets as the test binary asking for it. A 4-byte server and a
+// 5-byte one disagree about every .idx row and reject each other's .vif, and
+// the mixed Go/Rust suites run both at once.
+func goBuildTags() []string {
+	if types.OffsetSize == 5 {
+		return []string{"-tags", "5BytesOffset"}
+	}
+	return nil
+}
 
 const (
 	defaultWaitTimeout    = 30 * time.Second
@@ -27,17 +40,22 @@ const (
 	testVolumeSizeLimitMB = 32
 )
 
+var (
+	weedBinaryOnce sync.Once
+	weedBinaryPath string
+	weedBinaryErr  error
+)
+
 // Cluster is a lightweight SeaweedFS master + one volume server test harness.
 type Cluster struct {
 	testingTB testing.TB
 	profile   matrix.Profile
 
-	weedBinary   string
-	volumeBinary string
-	baseDir      string
-	configDir    string
-	logsDir      string
-	keepLogs     bool
+	weedBinary string
+	baseDir    string
+	configDir  string
+	logsDir    string
+	keepLogs   bool
 
 	masterPort     int
 	masterGrpcPort int
@@ -48,16 +66,29 @@ type Cluster struct {
 	masterCmd *exec.Cmd
 	volumeCmd *exec.Cmd
 
+	volumeDataDirs []string
+
 	cleanupOnce sync.Once
 }
 
 // StartSingleVolumeCluster boots one master and one volume server.
 func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
-	t.Helper()
+	return StartSingleVolumeClusterWithDataDirs(t, profile, 1)
+}
 
-	weedBinary, volumeBinary, err := FindOrBuildServerBinaries()
+// StartSingleVolumeClusterWithDataDirs boots one master and one volume server
+// with dataDirCount separate data directories (passed to -dir as a comma list).
+// Each directory becomes its own DiskLocation on the volume server, letting
+// tests exercise multi-disk EC placement paths.
+func StartSingleVolumeClusterWithDataDirs(t testing.TB, profile matrix.Profile, dataDirCount int) *Cluster {
+	t.Helper()
+	if dataDirCount < 1 {
+		t.Fatalf("dataDirCount must be >= 1, got %d", dataDirCount)
+	}
+
+	weedBinary, err := FindOrBuildWeedBinary()
 	if err != nil {
-		t.Fatalf("resolve server binaries: %v", err)
+		t.Fatalf("resolve weed binary: %v", err)
 	}
 
 	baseDir, keepLogs, err := newWorkDir()
@@ -68,8 +99,19 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 	configDir := filepath.Join(baseDir, "config")
 	logsDir := filepath.Join(baseDir, "logs")
 	masterDataDir := filepath.Join(baseDir, "master")
-	volumeDataDir := filepath.Join(baseDir, "volume")
-	for _, dir := range []string{configDir, logsDir, masterDataDir, volumeDataDir} {
+	volumeDataDirs := make([]string, dataDirCount)
+	// Single-dir layout stays at baseDir/volume so existing fixtures
+	// (CorruptDatFile etc.) that hardcode that path keep working. Only
+	// multi-dir clusters get the "volumeN" layout.
+	for i := 0; i < dataDirCount; i++ {
+		if dataDirCount == 1 {
+			volumeDataDirs[i] = filepath.Join(baseDir, "volume")
+		} else {
+			volumeDataDirs[i] = filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
+		}
+	}
+	setupDirs := append([]string{configDir, logsDir, masterDataDir}, volumeDataDirs...)
+	for _, dir := range setupDirs {
 		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 			t.Fatalf("create %s: %v", dir, mkErr)
 		}
@@ -79,21 +121,17 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		t.Fatalf("write security config: %v", err)
 	}
 
-	masterPort, masterGrpcPort, err := allocateMasterPortPair()
-	if err != nil {
-		t.Fatalf("allocate master port pair: %v", err)
-	}
-
-	ports, err := allocatePorts(3)
+	miniPorts, ports, err := testutil.AllocatePortSet(1, 3)
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	c := &Cluster{
 		testingTB:      t,
 		profile:        profile,
 		weedBinary:     weedBinary,
-		volumeBinary:   volumeBinary,
 		baseDir:        baseDir,
 		configDir:      configDir,
 		logsDir:        logsDir,
@@ -118,11 +156,12 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		t.Fatalf("wait for master readiness: %v\nmaster log tail:\n%s", err, masterLog)
 	}
 
-	if err = c.startVolume(volumeDataDir); err != nil {
+	if err = c.startVolume(volumeDataDirs); err != nil {
 		masterLog := c.tailLog("master.log")
 		c.Stop()
 		t.Fatalf("start volume: %v\nmaster log tail:\n%s", err, masterLog)
 	}
+	c.volumeDataDirs = volumeDataDirs
 	if err = c.waitForHTTP(c.VolumeAdminURL() + "/status"); err != nil {
 		volumeLog := c.tailLog("volume.log")
 		c.Stop()
@@ -157,6 +196,38 @@ func (c *Cluster) Stop() {
 	})
 }
 
+// RestartVolumeServer kills the volume server and starts a new one against
+// the same data dirs and ports. The master keeps running. The previous run's
+// volume.log is moved to volume.log.previous so the first run's logs survive
+// a second-run startup failure.
+func (c *Cluster) RestartVolumeServer() {
+	c.testingTB.Helper()
+	stopProcess(c.volumeCmd)
+	c.volumeCmd = nil
+	// Rotate the log; absent on the first call after a clean start, which
+	// is fine — startVolume will create it. Any real filesystem failure
+	// surfaces immediately on the next os.Create in startVolume.
+	oldLog := filepath.Join(c.logsDir, "volume.log")
+	_ = os.Rename(oldLog, filepath.Join(c.logsDir, "volume.log.previous"))
+	if err := c.startVolume(c.volumeDataDirs); err != nil {
+		c.testingTB.Fatalf("restart volume server: %v", err)
+	}
+	if err := c.waitForHTTP(c.VolumeAdminURL() + "/status"); err != nil {
+		c.testingTB.Fatalf("wait for volume admin readiness after restart: %v\nvolume log tail:\n%s", err, c.tailLog("volume.log"))
+	}
+	if err := c.waitForTCP(c.VolumeGRPCAddress()); err != nil {
+		c.testingTB.Fatalf("wait for volume grpc readiness after restart: %v\nvolume log tail:\n%s", err, c.tailLog("volume.log"))
+	}
+}
+
+// StopVolumeServer kills the volume server but leaves the master and data
+// dirs alone. Pair with RestartVolumeServer or Stop.
+func (c *Cluster) StopVolumeServer() {
+	c.testingTB.Helper()
+	stopProcess(c.volumeCmd)
+	c.volumeCmd = nil
+}
+
 func (c *Cluster) startMaster(dataDir string) error {
 	logFile, err := os.Create(filepath.Join(c.logsDir, "master.log"))
 	if err != nil {
@@ -182,12 +253,16 @@ func (c *Cluster) startMaster(dataDir string) error {
 	return c.masterCmd.Start()
 }
 
-func (c *Cluster) startVolume(dataDir string) error {
+func (c *Cluster) startVolume(dataDirs []string) error {
 	logFile, err := os.Create(filepath.Join(c.logsDir, "volume.log"))
 	if err != nil {
 		return err
 	}
 
+	maxPerDir := make([]string, len(dataDirs))
+	for i := range dataDirs {
+		maxPerDir[i] = "16"
+	}
 	args := []string{
 		"-config_dir=" + c.configDir,
 		"volume",
@@ -195,12 +270,16 @@ func (c *Cluster) startVolume(dataDir string) error {
 		"-port=" + strconv.Itoa(c.volumePort),
 		"-port.grpc=" + strconv.Itoa(c.volumeGrpcPort),
 		"-port.public=" + strconv.Itoa(c.volumePubPort),
-		"-dir=" + dataDir,
-		"-max=16",
+		"-dir=" + strings.Join(dataDirs, ","),
+		"-max=" + strings.Join(maxPerDir, ","),
 		"-master=127.0.0.1:" + strconv.Itoa(c.masterPort),
 		"-readMode=" + c.profile.ReadMode,
 		"-concurrentUploadLimitMB=" + strconv.Itoa(c.profile.ConcurrentUploadLimitMB),
 		"-concurrentDownloadLimitMB=" + strconv.Itoa(c.profile.ConcurrentDownloadLimitMB),
+		// Integration tests deliberately exercise loopback S3 endpoints
+		// (the test rig boots weed-mini next to the volume server); allow
+		// the SSRF guard to be bypassed for them.
+		"-volume.allowUntrustedRemoteEndpoints",
 	}
 	if c.profile.InflightUploadTimeout > 0 {
 		args = append(args, "-inflightUploadDataTimeout="+c.profile.InflightUploadTimeout.String())
@@ -212,7 +291,7 @@ func (c *Cluster) startVolume(dataDir string) error {
 		args = append(args, "-fileSizeLimitMB="+strconv.Itoa(c.profile.FileSizeLimitMB))
 	}
 
-	c.volumeCmd = exec.Command(c.volumeBinary, args...)
+	c.volumeCmd = exec.Command(c.weedBinary, args...)
 	c.volumeCmd.Dir = c.baseDir
 	c.volumeCmd.Stdout = logFile
 	c.volumeCmd.Stderr = logFile
@@ -268,73 +347,6 @@ func stopProcess(cmd *exec.Cmd) {
 	}
 }
 
-func allocatePorts(count int) ([]int, error) {
-	const minPort = 10000
-	const maxPort = 55535
-	const host = "127.0.0.1"
-	rangeSize := maxPort - minPort + 1
-
-	listeners := make([]net.Listener, 0, count)
-	ports := make([]int, 0, count)
-	seen := make(map[int]struct{}, count)
-
-	closeAll := func() {
-		for _, ll := range listeners {
-			_ = ll.Close()
-		}
-	}
-
-	startOffset := int(time.Now().UnixNano() % int64(rangeSize))
-	for i := 0; i < count; i++ {
-		found := false
-		for offset := 0; offset < rangeSize; offset++ {
-			port := minPort + (startOffset+offset)%rangeSize
-			if _, exists := seen[port]; exists {
-				continue
-			}
-
-			l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-			if err != nil {
-				continue
-			}
-
-			seen[port] = struct{}{}
-			listeners = append(listeners, l)
-			ports = append(ports, port)
-			found = true
-			startOffset = (startOffset + offset + 1) % rangeSize
-			break
-		}
-		if !found {
-			closeAll()
-			return nil, fmt.Errorf("unable to allocate %d ports within range [%d,%d]", count, minPort, maxPort)
-		}
-	}
-	for _, l := range listeners {
-		_ = l.Close()
-	}
-	return ports, nil
-}
-
-func allocateMasterPortPair() (int, int, error) {
-	for masterPort := 10000; masterPort <= 55535; masterPort++ {
-		masterGrpcPort := masterPort + 10000
-		l1, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(masterPort)))
-		if err != nil {
-			continue
-		}
-		l2, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(masterGrpcPort)))
-		if err != nil {
-			_ = l1.Close()
-			continue
-		}
-		_ = l2.Close()
-		_ = l1.Close()
-		return masterPort, masterGrpcPort, nil
-	}
-	return 0, 0, errors.New("unable to find available master port pair")
-}
-
 func newWorkDir() (dir string, keepLogs bool, err error) {
 	keepLogs = os.Getenv("VOLUME_SERVER_IT_KEEP_LOGS") == "1"
 	dir, err = os.MkdirTemp("", "seaweedfs_volume_server_it_")
@@ -359,7 +371,7 @@ func writeSecurityConfig(configDir string, profile matrix.Profile) error {
 		b.WriteString("\"\n")
 		b.WriteString("expires_after_seconds = 60\n")
 	}
-	if profile.AccessUI {
+	if profile.EnableUIAccess {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
@@ -381,111 +393,45 @@ func FindOrBuildWeedBinary() (string, error) {
 		return "", fmt.Errorf("WEED_BINARY is set but not executable: %s", fromEnv)
 	}
 
-	repoRoot, err := detectRepoRoot()
-	if err != nil {
-		return "", err
-	}
-	if candidate := filepath.Join(repoRoot, "weed", "weed"); isExecutableFile(candidate) {
-		return candidate, nil
-	}
-
-	binDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return "", fmt.Errorf("create binary directory %s: %w", binDir, err)
-	}
-	binPath := filepath.Join(binDir, "weed")
-	if isExecutableFile(binPath) {
-		return binPath, nil
-	}
-
-	cmd := exec.Command("go", "build", "-o", binPath, ".")
-	cmd.Dir = filepath.Join(repoRoot, "weed")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build weed binary: %w\n%s", err, out.String())
-	}
-	if !isExecutableFile(binPath) {
-		return "", fmt.Errorf("built weed binary is not executable: %s", binPath)
-	}
-	return binPath, nil
-}
-
-// FindOrBuildServerBinaries returns master and volume executables.
-// Master always runs from the Go weed binary; volume can be switched via env.
-func FindOrBuildServerBinaries() (masterBinary string, volumeBinary string, err error) {
-	masterBinary, err = FindOrBuildWeedBinary()
-	if err != nil {
-		return "", "", err
-	}
-	volumeBinary, err = FindOrBuildVolumeServerBinary(masterBinary)
-	if err != nil {
-		return "", "", err
-	}
-	return masterBinary, volumeBinary, nil
-}
-
-// FindOrBuildVolumeServerBinary resolves the executable used for volume-server processes.
-//
-// Behavior:
-//   - `VOLUME_SERVER_BINARY=/path/to/bin`: use explicit executable path.
-//   - `VOLUME_SERVER_IMPL=rust`: build/use Rust volume server launcher.
-//   - default: use the same Go `weed` binary.
-func FindOrBuildVolumeServerBinary(defaultBinary string) (string, error) {
-	if fromEnv := os.Getenv("VOLUME_SERVER_BINARY"); fromEnv != "" {
-		if isExecutableFile(fromEnv) {
-			return fromEnv, nil
+	weedBinaryOnce.Do(func() {
+		repoRoot := ""
+		if _, file, _, ok := runtime.Caller(0); ok {
+			repoRoot = filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 		}
-		return "", fmt.Errorf("VOLUME_SERVER_BINARY is set but not executable: %s", fromEnv)
-	}
+		if repoRoot == "" {
+			weedBinaryErr = errors.New("unable to detect repository root")
+			return
+		}
 
-	impl := strings.ToLower(strings.TrimSpace(os.Getenv("VOLUME_SERVER_IMPL")))
-	if impl == "" || impl == "go" {
-		return defaultBinary, nil
-	}
-	if impl != "rust" {
-		return "", fmt.Errorf("unsupported VOLUME_SERVER_IMPL %q (supported: go, rust)", impl)
-	}
+		binDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			weedBinaryErr = fmt.Errorf("create binary directory %s: %w", binDir, err)
+			return
+		}
+		binPath := filepath.Join(binDir, "weed")
 
-	repoRoot, err := detectRepoRoot()
-	if err != nil {
-		return "", err
-	}
-	return FindOrBuildRustVolumeServerBinary(repoRoot)
-}
+		args := append([]string{"build"}, goBuildTags()...)
+		args = append(args, "-o", binPath, ".")
+		cmd := exec.Command("go", args...)
+		cmd.Dir = filepath.Join(repoRoot, "weed")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			weedBinaryErr = fmt.Errorf("build weed binary: %w\n%s", err, out.String())
+			return
+		}
+		if !isExecutableFile(binPath) {
+			weedBinaryErr = fmt.Errorf("built weed binary is not executable: %s", binPath)
+			return
+		}
+		weedBinaryPath = binPath
+	})
 
-// FindOrBuildRustVolumeServerBinary builds the Rust volume server launcher when needed.
-func FindOrBuildRustVolumeServerBinary(repoRoot string) (string, error) {
-	manifestPath := filepath.Join(repoRoot, "rust", "volume_server", "Cargo.toml")
-	if _, err := os.Stat(manifestPath); err != nil {
-		return "", fmt.Errorf("rust volume server manifest not found at %s: %w", manifestPath, err)
+	if weedBinaryErr != nil {
+		return "", weedBinaryErr
 	}
-
-	targetDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_rust_target")
-	binPath := filepath.Join(targetDir, "release", "weed-volume-rs")
-	if isExecutableFile(binPath) && os.Getenv("VOLUME_SERVER_RUST_REBUILD") != "1" {
-		return binPath, nil
-	}
-
-	cmd := exec.Command("cargo", "build", "--release", "--manifest-path", manifestPath, "--target-dir", targetDir)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build rust volume server binary: %w\n%s", err, out.String())
-	}
-	if !isExecutableFile(binPath) {
-		return "", fmt.Errorf("built rust volume server binary is not executable: %s", binPath)
-	}
-	return binPath, nil
-}
-
-func detectRepoRoot() (string, error) {
-	if _, file, _, ok := runtime.Caller(0); ok {
-		return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..")), nil
-	}
-	return "", errors.New("unable to detect repository root")
+	return weedBinaryPath, nil
 }
 
 func isExecutableFile(path string) bool {
@@ -550,4 +496,11 @@ func (c *Cluster) VolumePublicURL() string {
 
 func (c *Cluster) BaseDir() string {
 	return c.baseDir
+}
+
+// VolumeDataDirs returns the data directories the volume server was started with.
+// Index 0 corresponds to DiskLocation 0, index 1 to DiskLocation 1, and so on.
+// Tests can scan these directories to verify where files physically landed.
+func (c *Cluster) VolumeDataDirs() []string {
+	return append([]string(nil), c.volumeDataDirs...)
 }

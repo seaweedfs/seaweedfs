@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -13,13 +14,13 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 	var collections []CollectionInfo
 	var totalVolumes int
 	var totalEcVolumes int
-	var totalFiles int64
+	var totalChunks int64
 	var totalSize int64
 	collectionMap := make(map[string]*CollectionInfo)
 
 	// Get actual collection information from volume data
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -46,7 +47,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 								// Get or create collection info
 								if collection, exists := collectionMap[collectionName]; exists {
 									collection.VolumeCount++
-									collection.FileCount += int64(volInfo.FileCount)
 									collection.TotalSize += int64(volInfo.Size)
 
 									// Update data center if this collection spans multiple DCs
@@ -67,7 +67,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 									}
 
 									totalVolumes++
-									totalFiles += int64(volInfo.FileCount)
 									totalSize += int64(volInfo.Size)
 								} else {
 									newCollection := CollectionInfo{
@@ -75,13 +74,11 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 										DataCenter:    dc.Id,
 										VolumeCount:   1,
 										EcVolumeCount: 0,
-										FileCount:     int64(volInfo.FileCount),
 										TotalSize:     int64(volInfo.Size),
 										DiskTypes:     []string{diskType},
 									}
 									collectionMap[collectionName] = &newCollection
 									totalVolumes++
-									totalFiles += int64(volInfo.FileCount)
 									totalSize += int64(volInfo.Size)
 								}
 							}
@@ -133,7 +130,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 											DataCenter:    dc.Id,
 											VolumeCount:   0,
 											EcVolumeCount: 1,
-											FileCount:     0,
 											TotalSize:     0,
 											DiskTypes:     []string{diskType},
 										}
@@ -144,6 +140,16 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 							}
 						}
 					}
+				}
+			}
+
+			// Chunk counts come from the shared collection aggregation, which
+			// nets out tombstones and counts a chunk once no matter how many
+			// volume replicas or EC shard holders report it.
+			for collectionName, stats := range collectCollectionStats(resp.TopologyInfo) {
+				if collection, exists := collectionMap[collectionName]; exists {
+					collection.ChunkCount = stats.FileCount
+					totalChunks += stats.FileCount
 				}
 			}
 		}
@@ -173,7 +179,7 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 			TotalCollections: 0,
 			TotalVolumes:     0,
 			TotalEcVolumes:   0,
-			TotalFiles:       0,
+			TotalChunks:      0,
 			TotalSize:        0,
 			LastUpdated:      time.Now(),
 		}, nil
@@ -184,7 +190,7 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 		TotalCollections: len(collections),
 		TotalVolumes:     totalVolumes,
 		TotalEcVolumes:   totalEcVolumes,
-		TotalFiles:       totalFiles,
+		TotalChunks:      totalChunks,
 		TotalSize:        totalSize,
 		LastUpdated:      time.Now(),
 	}, nil
@@ -208,7 +214,6 @@ func (s *AdminServer) GetCollectionDetails(collectionName string, page int, page
 
 	var regularVolumes []VolumeWithTopology
 	var ecVolumes []EcVolumeWithShards
-	var totalFiles int64
 	var totalSize int64
 	dataCenters := make(map[string]bool)
 	diskTypes := make(map[string]bool)
@@ -222,10 +227,15 @@ func (s *AdminServer) GetCollectionDetails(collectionName string, page int, page
 	regularVolumes = regularVolumeData.Volumes
 	totalSize = regularVolumeData.TotalSize
 
-	// Calculate total files from regular volumes
-	for _, vol := range regularVolumes {
-		totalFiles += int64(vol.FileCount)
+	// Chunk counts come from the shared collection aggregation, which nets out
+	// tombstones and counts a chunk once no matter how many volume replicas or
+	// EC shard holders report it. Fail rather than render a zero that reads
+	// like an empty collection.
+	stats, err := s.getCollectionStats()
+	if err != nil {
+		return nil, err
 	}
+	totalChunks := stats[collectionName].FileCount
 
 	// Collect data centers and disk types from regular volumes
 	for _, vol := range regularVolumes {
@@ -371,7 +381,7 @@ func (s *AdminServer) GetCollectionDetails(collectionName string, page int, page
 		EcVolumes:      paginatedEcVolumes,
 		TotalVolumes:   len(regularVolumes),
 		TotalEcVolumes: len(ecVolumes),
-		TotalFiles:     totalFiles,
+		TotalChunks:    totalChunks,
 		TotalSize:      totalSize,
 		DataCenters:    dcList,
 		DiskTypes:      diskTypeList,

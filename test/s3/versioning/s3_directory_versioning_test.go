@@ -122,7 +122,7 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 				assert.Equal(t, int64(0), *version.Size, "Directory %s should have size 0", expectedDir)
 				assert.True(t, *version.IsLatest, "Directory %s should be marked as latest", expectedDir)
 				assert.Equal(t, "\"d41d8cd98f00b204e9800998ecf8427e\"", *version.ETag, "Directory %s should have MD5 of empty string as ETag", expectedDir)
-				assert.Equal(t, types.ObjectStorageClassStandard, version.StorageClass, "Directory %s should have STANDARD storage class", expectedDir)
+				assert.Equal(t, types.ObjectVersionStorageClassStandard, version.StorageClass, "Directory %s should have STANDARD storage class", expectedDir)
 				break
 			}
 		}
@@ -157,6 +157,85 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	t.Logf("Found %d directories and %d files", directoryCount, fileCount)
 	assert.Equal(t, len(expectedDirectories), directoryCount, "Should find exactly %d directories", len(expectedDirectories))
 	assert.Equal(t, len(testFiles), fileCount, "Should find exactly %d files", len(testFiles))
+}
+
+// TestListObjectVersionsDeepPrefixExcludesAncestorDirectories verifies that a
+// prefix+delimiter version listing does not leak ancestor directory markers that
+// the listing only descends through to reach the prefix. Veeam's immutable
+// backup repository (versioning + object lock) issues exactly this request from
+// Cloud.FindLastCheckpointId and aborts when it sees an unexpected key like
+// "Veeam/" that does not match the deep prefix it asked for. The version listing
+// must match ListObjectsV2 / AWS: only keys at or under the prefix appear.
+func TestListObjectVersionsDeepPrefixExcludesAncestorDirectories(t *testing.T) {
+	bucketName := "test-versioning-deep-prefix"
+
+	client := setupS3Client(t)
+
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	defer cleanupBucket(t, client, bucketName)
+
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Explicit directory markers for every parent path, as Veeam creates them.
+	ancestorMarkers := []string{
+		"Veeam/",
+		"Veeam/Backup/",
+		"Veeam/Backup/job1/",
+		"Veeam/Backup/job1/Clients/",
+		"Veeam/Backup/job1/Clients/aaaa/",
+		"Veeam/Backup/job1/Clients/aaaa/bbbb/",
+	}
+	prefix := "Veeam/Backup/job1/Clients/aaaa/bbbb/Metadata/"
+	checkpointKey := prefix + "Checkpoint"
+
+	for _, dirKey := range append(ancestorMarkers, prefix) {
+		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(dirKey),
+			Body:   strings.NewReader(""),
+		})
+		require.NoError(t, err, "Failed to create directory marker %s", dirKey)
+	}
+
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(checkpointKey),
+		Body:   strings.NewReader("checkpoint"),
+	})
+	require.NoError(t, err)
+
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket:    aws.String(bucketName),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
+	})
+	require.NoError(t, err)
+
+	var gotKeys []string
+	for _, v := range listResp.Versions {
+		gotKeys = append(gotKeys, *v.Key)
+		assert.True(t, strings.HasPrefix(*v.Key, prefix),
+			"version key %q must start with the requested prefix %q", *v.Key, prefix)
+	}
+
+	// Only the prefix's own marker and the real object at/under it may appear.
+	assert.ElementsMatch(t, []string{prefix, checkpointKey}, gotKeys,
+		"deep-prefix version listing must not include ancestor directory markers")
+
+	// None of the ancestor markers ("Veeam/", ...) may surface as versions.
+	for _, marker := range ancestorMarkers {
+		assert.NotContains(t, gotKeys, marker,
+			"ancestor directory marker %q must not appear in a deep-prefix version listing", marker)
+	}
 }
 
 // TestListObjectVersionsDeleteMarkers tests that delete markers are properly separated from versions
@@ -537,13 +616,18 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify the null version was actually deleted (not a delete marker created)
+	// Verify the null content version is gone and the delete marker stands in.
 	listResp, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, 3, "Should be back to 3 versions after deleting null version")
-	assert.Empty(t, listResp.DeleteMarkers, "Should have no delete markers during suspended versioning delete")
+	// A suspended-versioning DELETE removes the null version and records a single
+	// null delete marker that overwrites any prior one (S3 spec), so the object
+	// reads as deleted without markers piling up.
+	require.Len(t, listResp.DeleteMarkers, 1, "Suspended delete should record exactly one null delete marker")
+	assert.Equal(t, "null", aws.ToString(listResp.DeleteMarkers[0].VersionId), "Suspended delete marker should have version id null")
+	assert.Equal(t, objectKey, aws.ToString(listResp.DeleteMarkers[0].Key), "Delete marker should be for the deleted object")
 
 	// Verify null version is gone
 	nullVersionFound = false
@@ -596,7 +680,7 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 		Key:    aws.String(objectKey),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "true", deleteResp.DeleteMarker, "Should create delete marker when versioning is enabled")
+	assert.True(t, aws.ToBool(deleteResp.DeleteMarker), "Should create delete marker when versioning is enabled")
 
 	// Verify final state
 	listResp, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
@@ -604,7 +688,19 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, 4, "Should have 3 original versions + 1 new version")
-	assert.Len(t, listResp.DeleteMarkers, 1, "Should have 1 delete marker")
+	// The historical null suspended marker plus the new enabled-mode delete marker.
+	require.Len(t, listResp.DeleteMarkers, 2, "Should have the null suspended marker and the enabled-mode delete marker")
+	var sawNull, sawEnabled bool
+	for _, dm := range listResp.DeleteMarkers {
+		assert.Equal(t, objectKey, aws.ToString(dm.Key), "Delete marker should be for the deleted object")
+		if aws.ToString(dm.VersionId) == "null" {
+			sawNull = true
+		} else {
+			sawEnabled = true
+		}
+	}
+	assert.True(t, sawNull, "Suspended phase should leave a null delete marker")
+	assert.True(t, sawEnabled, "Enabled delete should add a real-version-id delete marker")
 
 	t.Logf("Successfully verified suspended versioning delete behavior")
 }
@@ -664,7 +760,8 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.NotContains(t, *listedObject.Key, versionId, "Object key should not contain version ID")
 
 	// Verify object properties
-	assert.Equal(t, int64(len(content)), listedObject.Size, "Object size should match")
+	require.NotNil(t, listedObject.Size, "Object size should not be nil")
+	assert.Equal(t, int64(len(content)), *listedObject.Size, "Object size should match")
 	assert.NotNil(t, listedObject.ETag, "Object should have ETag")
 	assert.NotNil(t, listedObject.LastModified, "Object should have LastModified")
 
@@ -674,7 +771,7 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.NotEmpty(t, listedObject.Owner.DisplayName, "Owner DisplayName should not be empty")
 
 	t.Logf("Listed object: Key=%s, Size=%d, Owner.ID=%s, Owner.DisplayName=%s",
-		*listedObject.Key, listedObject.Size, *listedObject.Owner.ID, *listedObject.Owner.DisplayName)
+		*listedObject.Key, *listedObject.Size, *listedObject.Owner.ID, *listedObject.Owner.DisplayName)
 
 	// Test list-objects-v2 operation as well
 	listV2Resp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{

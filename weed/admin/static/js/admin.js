@@ -1,5 +1,19 @@
 // SeaweedFS Dashboard JavaScript
 
+// URL prefix helper for subdirectory deployment
+function basePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
+// Current-location checks against app paths, ignoring the URL prefix
+function isCurrentPath(path) {
+    return window.location.pathname === basePath(path);
+}
+
+function currentPathStartsWith(path) {
+    return window.location.pathname.startsWith(basePath(path));
+}
+
 // Global variables
 let bucketToDelete = '';
 
@@ -11,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFileManagerEventHandlers();
 
     // Initialize delete button visibility on file browser page
-    if (window.location.pathname === '/files') {
+    if (isCurrentPath('/files')) {
         updateDeleteSelectedButton();
     }
 });
@@ -31,6 +45,9 @@ function initializeDashboard() {
 
     // Set up submenu behavior
     setupSubmenuBehavior();
+
+    // Set up mobile sidebar behavior
+    setupMobileSidebar();
 }
 
 // HTMX event listeners
@@ -63,7 +80,7 @@ function initializeTooltips() {
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
     setInterval(function () {
-        if (window.location.pathname === '/dashboard') {
+        if (isCurrentPath('/dashboard')) {
             htmx.trigger('#dashboard-content', 'refresh');
         }
     }, 30000);
@@ -80,9 +97,9 @@ function setActiveNavigation() {
 
         if (href === currentPath) {
             isActive = true;
-        } else if (currentPath === '/' && href === '/admin') {
+        } else if (isCurrentPath('/') && href === basePath('/admin')) {
             isActive = true;
-        } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
+        } else if (currentPathStartsWith('/s3/') && href === basePath('/s3/buckets')) {
             isActive = true;
         }
         // Note: Removed the problematic cluster condition that was highlighting all submenu items
@@ -97,10 +114,8 @@ function setActiveNavigation() {
 
 // Set up submenu behavior
 function setupSubmenuBehavior() {
-    const currentPath = window.location.pathname;
-
     // If we're on a cluster page, expand the cluster submenu
-    if (currentPath.startsWith('/cluster/')) {
+    if (currentPathStartsWith('/cluster/')) {
         const clusterSubmenu = document.getElementById('clusterSubmenu');
         if (clusterSubmenu) {
             clusterSubmenu.classList.add('show');
@@ -115,28 +130,13 @@ function setupSubmenuBehavior() {
     }
 
     // If we're on an object store page, expand the object store submenu
-    if (currentPath.startsWith('/object-store/')) {
+    if (currentPathStartsWith('/object-store/')) {
         const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
         if (objectStoreSubmenu) {
             objectStoreSubmenu.classList.add('show');
 
             // Update the parent toggle button state
             const toggleButton = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
-            if (toggleButton) {
-                toggleButton.classList.remove('collapsed');
-                toggleButton.setAttribute('aria-expanded', 'true');
-            }
-        }
-    }
-
-    // If we're on a maintenance page, expand the maintenance submenu
-    if (currentPath.startsWith('/maintenance')) {
-        const maintenanceSubmenu = document.getElementById('maintenanceSubmenu');
-        if (maintenanceSubmenu) {
-            maintenanceSubmenu.classList.add('show');
-
-            // Update the parent toggle button state
-            const toggleButton = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
             if (toggleButton) {
                 toggleButton.classList.remove('collapsed');
                 toggleButton.setAttribute('aria-expanded', 'true');
@@ -155,14 +155,6 @@ function setupSubmenuBehavior() {
 
     const objectStoreSubmenuLinks = document.querySelectorAll('#objectStoreSubmenu .nav-link');
     objectStoreSubmenuLinks.forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            // Don't prevent the navigation, just stop the collapse behavior
-            e.stopPropagation();
-        });
-    });
-
-    const maintenanceSubmenuLinks = document.querySelectorAll('#maintenanceSubmenu .nav-link');
-    maintenanceSubmenuLinks.forEach(function (link) {
         link.addEventListener('click', function (e) {
             // Don't prevent the navigation, just stop the collapse behavior
             e.stopPropagation();
@@ -215,28 +207,33 @@ function setupSubmenuBehavior() {
         });
     }
 
-    // Handle the main maintenance toggle
-    const maintenanceToggle = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
-    if (maintenanceToggle) {
-        maintenanceToggle.addEventListener('click', function (e) {
-            e.preventDefault();
+}
 
-            const submenu = document.getElementById('maintenanceSubmenu');
-            const isExpanded = submenu.classList.contains('show');
+// Mobile sidebar toggle and backdrop behavior
+function setupMobileSidebar() {
+    const sidebar = document.getElementById('sidebarMenu');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar || !backdrop) return;
 
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
+    const hideSidebar = () => {
+        const bsCollapse = bootstrap.Collapse.getInstance(sidebar);
+        if (bsCollapse) {
+            bsCollapse.hide();
+        }
+    };
+
+    // Close sidebar when backdrop is clicked
+    backdrop.addEventListener('click', hideSidebar);
+
+    // Close sidebar when a nav link is clicked (on mobile)
+    const sidebarToggler = document.querySelector("button[data-bs-target='#sidebarMenu']");
+    sidebar.querySelectorAll('a.nav-link:not([data-bs-toggle="collapse"])').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (sidebarToggler && getComputedStyle(sidebarToggler).display !== 'none') {
+                hideSidebar();
             }
         });
-    }
+    });
 }
 
 // Loading indicator functions
@@ -282,7 +279,7 @@ function showErrorMessage(message) {
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
-                <i class="fas fa-exclamation-triangle me-2"></i>
+                <i class="bi bi-exclamation-triangle me-2"></i>
                 ${message}
             </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
@@ -322,7 +319,7 @@ function showSuccessMessage(message) {
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
-                <i class="fas fa-check-circle me-2"></i>
+                <i class="bi bi-check-circle me-2"></i>
                 ${message}
             </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
@@ -399,11 +396,7 @@ window.Dashboard = {
 // Initialize event handlers
 function initializeEventHandlers() {
     // S3 Bucket Management
-    const createBucketForm = document.getElementById('createBucketForm');
-    if (createBucketForm) {
-        createBucketForm.addEventListener('submit', handleCreateBucket);
-    }
-
+   
     // Delete bucket buttons
     document.addEventListener('click', function (e) {
         if (e.target.closest('.delete-bucket-btn')) {
@@ -481,7 +474,7 @@ async function handleCreateBucket(event) {
     };
 
     try {
-        const response = await fetch('/api/s3/buckets', {
+        const response = await fetch(basePath('/api/s3/buckets'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -493,7 +486,7 @@ async function handleCreateBucket(event) {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Bucket "${bucketData.name}" created successfully!`);
+            showAlert(`Bucket "${bucketData.name}" created successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
@@ -508,11 +501,11 @@ async function handleCreateBucket(event) {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to create bucket');
+            showAlert(result.error || 'Failed to create bucket', 'danger');
         }
     } catch (error) {
         console.error('Error creating bucket:', error);
-        showAlert('danger', 'Network error occurred while creating bucket');
+        showAlert('Network error occurred while creating bucket', 'danger');
     }
 }
 
@@ -545,7 +538,7 @@ async function deleteBucket() {
     }
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketToDelete}`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketToDelete}`), {
             method: 'DELETE'
         });
 
@@ -553,7 +546,7 @@ async function deleteBucket() {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Bucket "${bucketToDelete}" deleted successfully!`);
+            showAlert(`Bucket "${bucketToDelete}" deleted successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('deleteBucketModal'));
@@ -565,11 +558,11 @@ async function deleteBucket() {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to delete bucket');
+            showAlert(result.error || 'Failed to delete bucket', 'danger');
         }
     } catch (error) {
         console.error('Error deleting bucket:', error);
-        showAlert('danger', 'Network error occurred while deleting bucket');
+        showAlert('Network error occurred while deleting bucket', 'danger');
     }
 
     bucketToDelete = '';
@@ -593,21 +586,23 @@ function exportBucketList() {
 
         return {
             name: cells[0].textContent.trim(),
-            created: cells[1].textContent.trim(),
-            objects: cells[2].textContent.trim(),
-            size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim()
+            owner: cells[1].textContent.trim(),
+            created: cells[2].textContent.trim(),
+            logicalSize: cells[3].textContent.trim(),
+            physicalSize: cells[4].textContent.trim(),
+            quota: cells[5].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
+        ['Name', 'Owner', 'Created', 'Logical Size', 'Physical Size', 'Quota'].join(','),
         ...data.map(row => [
             row.name,
+            row.owner,
             row.created,
-            row.objects,
-            row.size,
+            row.logicalSize,
+            row.physicalSize,
             row.quota
         ].join(','))
     ].join('\n');
@@ -624,38 +619,7 @@ function exportBucketList() {
     window.URL.revokeObjectURL(url);
 }
 
-// Show alert message
-function showAlert(type, message) {
-    // Remove existing alerts
-    const existingAlerts = document.querySelectorAll('.alert-floating');
-    existingAlerts.forEach(alert => alert.remove());
-
-    // Create new alert
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type} alert-dismissible fade show alert-floating`;
-    alert.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 9999;
-        min-width: 300px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    `;
-
-    alert.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-
-    document.body.appendChild(alert);
-
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        if (alert.parentNode) {
-            alert.remove();
-        }
-    }, 5000);
-}
+// showAlert is provided by modal-alerts.js with signature: showAlert(message, type)
 
 // Format date for display
 function formatDate(date) {
@@ -666,7 +630,7 @@ function formatDate(date) {
 function adminCopyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-            showAlert('success', 'Copied to clipboard!');
+            showToast('Copied to clipboard!');
         }).catch(err => {
             console.error('Failed to copy text: ', err);
             fallbackCopyText(text);
@@ -692,13 +656,13 @@ function fallbackCopyText(text) {
     try {
         const successful = document.execCommand('copy');
         if (successful) {
-            showAlert('success', 'Copied to clipboard!');
+            showToast('Copied to clipboard!');
         } else {
-            showAlert('danger', 'Failed to copy to clipboard');
+            showAlert('Failed to copy to clipboard', 'danger');
         }
     } catch (err) {
         console.error('Fallback copy failed: ', err);
-        showAlert('danger', 'Failed to copy to clipboard');
+        showAlert('Failed to copy to clipboard', 'danger');
     }
 
     document.body.removeChild(textArea);
@@ -775,11 +739,23 @@ function exportVolumes() {
     downloadCSV(csv, 'seaweedfs-volumes.csv');
 }
 
+// Export the full cluster volume list (all volumes + EC shards, more fields than
+// the table) as a JSON report served by the admin API. Carries the active
+// collection filter from the page URL.
+function exportVolumeList() {
+    let url = basePath('/api/volumes/export');
+    const collection = new URLSearchParams(window.location.search).get('collection');
+    if (collection) {
+        url += '?collection=' + encodeURIComponent(collection);
+    }
+    window.open(url, '_blank');
+}
+
 // Export collections data as CSV
 function exportCollections() {
     const table = document.getElementById('collectionsTable');
     if (!table) {
-        showAlert('error', 'Collections table not found');
+        showAlert('Collections table not found', 'error');
         return;
     }
 
@@ -815,7 +791,7 @@ function exportCollections() {
 function exportMasters() {
     const table = document.getElementById('mastersTable');
     if (!table) {
-        showAlert('error', 'Masters table not found');
+        showAlert('Masters table not found', 'error');
         return;
     }
 
@@ -849,7 +825,7 @@ function exportMasters() {
 function exportFilers() {
     const table = document.getElementById('filersTable');
     if (!table) {
-        showAlert('error', 'Filers table not found');
+        showAlert('Filers table not found', 'error');
         return;
     }
 
@@ -885,7 +861,7 @@ function exportFilers() {
 function exportUsers() {
     const table = document.getElementById('usersTable');
     if (!table) {
-        showAlert('error', 'Users table not found');
+        showAlert('Users table not found', 'error');
         return;
     }
 
@@ -931,7 +907,7 @@ function confirmDeleteCollection(button) {
 // Delete collection
 async function deleteCollection(collectionName) {
     try {
-        const response = await fetch(`/api/collections/${collectionName}`, {
+        const response = await fetch(basePath(`/api/collections/${collectionName}`), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -997,7 +973,7 @@ function updateDeleteSelectedButton() {
     if (deleteBtn) {
         if (checkboxes.length > 0) {
             deleteBtn.style.display = 'inline-block';
-            deleteBtn.innerHTML = `<i class="fas fa-trash me-1"></i>Delete Selected (${checkboxes.length})`;
+            deleteBtn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected (${checkboxes.length})`;
         } else {
             deleteBtn.style.display = 'none';
         }
@@ -1035,7 +1011,7 @@ function confirmDeleteSelected() {
     const selectedPaths = getSelectedFilePaths();
 
     if (selectedPaths.length === 0) {
-        showAlert('warning', 'No files selected');
+        showAlert('No files selected', 'warning');
         return;
     }
 
@@ -1056,7 +1032,7 @@ function confirmDeleteSelected() {
 // Delete multiple selected files
 async function deleteSelectedFiles(filePaths) {
     if (!filePaths || filePaths.length === 0) {
-        showAlert('warning', 'No files selected');
+        showAlert('No files selected', 'warning');
         return;
     }
 
@@ -1064,10 +1040,10 @@ async function deleteSelectedFiles(filePaths) {
     const deleteBtn = document.getElementById('deleteSelectedBtn');
     const originalText = deleteBtn.innerHTML;
     deleteBtn.disabled = true;
-    deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
+    deleteBtn.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Deleting...';
 
     try {
-        const response = await fetch('/api/files/delete-multiple', {
+        const response = await fetch(basePath('/api/files/delete-multiple'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1080,9 +1056,9 @@ async function deleteSelectedFiles(filePaths) {
 
             if (result.deleted > 0) {
                 if (result.failed === 0) {
-                    showAlert('success', `Successfully deleted ${result.deleted} item(s)`);
+                    showAlert(`Successfully deleted ${result.deleted} item(s)`, 'success');
                 } else {
-                    showAlert('warning', `Deleted ${result.deleted} item(s), failed to delete ${result.failed} item(s)`);
+                    showAlert(`Deleted ${result.deleted} item(s), failed to delete ${result.failed} item(s)`, 'warning');
                     if (result.errors && result.errors.length > 0) {
                         console.warn('Deletion errors:', result.errors);
                     }
@@ -1097,15 +1073,15 @@ async function deleteSelectedFiles(filePaths) {
                 if (result.errors && result.errors.length > 0) {
                     errorMessage += ': ' + result.errors.join(', ');
                 }
-                showAlert('error', errorMessage);
+                showAlert(errorMessage, 'error');
             }
         } else {
             const error = await response.json();
-            showAlert('error', `Failed to delete files: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to delete files: ${error.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Delete error:', error);
-        showAlert('error', 'Failed to delete files');
+        showAlert('Failed to delete files', 'error');
     } finally {
         // Re-enable the button
         deleteBtn.disabled = false;
@@ -1152,10 +1128,10 @@ async function submitCreateFolder() {
     const submitButton = document.querySelector('#createFolderModal .btn-primary');
     const originalText = submitButton.innerHTML;
     submitButton.disabled = true;
-    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
+    submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Creating...';
 
     try {
-        const response = await fetch('/api/files/create-folder', {
+        const response = await fetch(basePath('/api/files/create-folder'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1232,7 +1208,7 @@ async function submitUploadFile() {
     progressBar.textContent = '0%';
     uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
     submitButton.disabled = true;
-    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
+    submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Uploading...';
 
     try {
         const xhr = new XMLHttpRequest();
@@ -1308,7 +1284,7 @@ async function submitUploadFile() {
         });
 
         // Send request
-        xhr.open('POST', '/api/files/upload');
+        xhr.open('POST', basePath('/api/files/upload'));
         xhr.send(formData);
 
     } catch (error) {
@@ -1326,7 +1302,7 @@ async function submitUploadFile() {
 function exportFileList() {
     const table = document.getElementById('fileTable');
     if (!table) {
-        showAlert('error', 'File table not found');
+        showAlert('File table not found', 'error');
         return;
     }
 
@@ -1361,18 +1337,18 @@ function exportFileList() {
 // Download file
 function downloadFile(filePath) {
     // Create download link using admin API
-    const downloadUrl = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+    const downloadUrl = basePath(`/api/files/download?path=${encodeURIComponent(filePath)}`);
     window.open(downloadUrl, '_blank');
 }
 
 // View file
 async function viewFile(filePath) {
     try {
-        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/view?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
-            showAlert('error', `Failed to view file: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to view file: ${error.error || 'Unknown error'}`, 'error');
             return;
         }
 
@@ -1381,18 +1357,18 @@ async function viewFile(filePath) {
 
     } catch (error) {
         console.error('View file error:', error);
-        showAlert('error', 'Failed to view file');
+        showAlert('Failed to view file', 'error');
     }
 }
 
 // Show file properties
 async function showProperties(filePath) {
     try {
-        const response = await fetch(`/api/files/properties?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/properties?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
-            showAlert('error', `Failed to get file properties: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to get file properties: ${error.error || 'Unknown error'}`, 'error');
             return;
         }
 
@@ -1401,7 +1377,7 @@ async function showProperties(filePath) {
 
     } catch (error) {
         console.error('Properties error:', error);
-        showAlert('error', 'Failed to get file properties');
+        showAlert('Failed to get file properties', 'error');
     }
 }
 
@@ -1419,7 +1395,7 @@ function confirmDelete(filePath) {
 // Delete file/folder
 async function deleteFile(filePath) {
     try {
-        const response = await fetch('/api/files/delete', {
+        const response = await fetch(basePath('/api/files/delete'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1428,16 +1404,16 @@ async function deleteFile(filePath) {
         });
 
         if (response.ok) {
-            showAlert('success', `Successfully deleted "${filePath}"`);
+            showAlert(`Successfully deleted "${filePath}"`, 'success');
             // Reload the page to update the file list
             window.location.reload();
         } else {
             const error = await response.json();
-            showAlert('error', `Failed to delete file: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to delete file: ${error.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Delete error:', error);
-        showAlert('error', 'Failed to delete file');
+        showAlert('Failed to delete file', 'error');
     }
 }
 
@@ -1533,7 +1509,7 @@ function setupDragAndDrop() {
             overlay.className = 'drag-overlay';
             overlay.innerHTML = `
                 <div class="text-center p-5">
-                    <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                    <i class="bi bi-cloud-upload icon-3x text-primary mb-3"></i>
                     <h5>Drop files here to upload</h5>
                     <p class="text-muted">Release to upload files to this directory</p>
                 </div>
@@ -1613,7 +1589,7 @@ function updateFileListPreview() {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
             <div class="d-flex align-items-center">
-                <i class="fas ${fileIcon} me-2 text-muted"></i>
+                <i class="bi ${fileIcon} me-2 text-muted"></i>
                 <span class="text-truncate" style="max-width: 200px;" title="${file.name}">${file.name}</span>
             </div>
             <small class="text-muted">${formatBytes(file.size)}</small>
@@ -1635,47 +1611,47 @@ function getFileIconByName(fileName) {
         case 'gif':
         case 'bmp':
         case 'svg':
-            return 'fa-image';
+            return 'bi-image';
         case 'mp4':
         case 'avi':
         case 'mov':
         case 'wmv':
         case 'flv':
-            return 'fa-video';
+            return 'bi-camera-video';
         case 'mp3':
         case 'wav':
         case 'flac':
         case 'aac':
-            return 'fa-music';
+            return 'bi-music-note';
         case 'pdf':
-            return 'fa-file-pdf';
+            return 'bi-file-earmark-pdf';
         case 'doc':
         case 'docx':
-            return 'fa-file-word';
+            return 'bi-file-earmark-word';
         case 'xls':
         case 'xlsx':
-            return 'fa-file-excel';
+            return 'bi-file-earmark-excel';
         case 'ppt':
         case 'pptx':
-            return 'fa-file-powerpoint';
+            return 'bi-file-earmark-slides';
         case 'txt':
         case 'md':
-            return 'fa-file-text';
+            return 'bi-file-earmark-text';
         case 'zip':
         case 'rar':
         case '7z':
         case 'tar':
         case 'gz':
-            return 'fa-file-archive';
+            return 'bi-file-earmark-zip';
         case 'js':
         case 'ts':
         case 'html':
         case 'css':
         case 'json':
         case 'xml':
-            return 'fa-file-code';
+            return 'bi-file-earmark-code';
         default:
-            return 'fa-file';
+            return 'bi-file-earmark';
     }
 }
 
@@ -1740,7 +1716,7 @@ async function handleUpdateQuota(event) {
     };
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketName}/quota`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketName}/quota`), {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -1752,7 +1728,7 @@ async function handleUpdateQuota(event) {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Quota for bucket "${bucketName}" updated successfully!`);
+            showAlert(`Quota for bucket "${bucketName}" updated successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('manageQuotaModal'));
@@ -1764,11 +1740,11 @@ async function handleUpdateQuota(event) {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to update bucket quota');
+            showAlert(result.error || 'Failed to update bucket quota', 'danger');
         }
     } catch (error) {
         console.error('Error updating bucket quota:', error);
-        showAlert('danger', 'Network error occurred while updating bucket quota');
+        showAlert('Network error occurred while updating bucket quota', 'danger');
     }
 }
 
@@ -1785,7 +1761,7 @@ function showFileViewer(data) {
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="fileViewerModalLabel">
-                            <i class="fas fa-eye me-2"></i>File Viewer: ${file.name}
+                            <i class="bi bi-eye me-2"></i>File Viewer: ${file.name}
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -1794,7 +1770,7 @@ function showFileViewer(data) {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-primary" onclick="downloadFile('${file.full_path}')">
-                            <i class="fas fa-download me-1"></i>Download
+                            <i class="bi bi-download me-1"></i>Download
                         </button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     </div>
@@ -1827,7 +1803,7 @@ function createFileViewerContent(file, content) {
     if (file.mime.startsWith('image/')) {
         return `
             <div class="text-center">
-                <img src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                <img src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path) + '&inline=true')}"
                      class="img-fluid" alt="${file.name}" style="max-height: 500px;">
             </div>
         `;
@@ -1836,7 +1812,7 @@ function createFileViewerContent(file, content) {
         return `
             <div class="mb-3">
                 <small class="text-muted">
-                    <i class="fas fa-info-circle me-1"></i>
+                    <i class="bi bi-info-circle me-1"></i>
                     Size: ${formatBytes(file.size)} | Type: ${file.mime}
                 </small>
             </div>
@@ -1845,7 +1821,7 @@ function createFileViewerContent(file, content) {
     } else if (file.mime === 'application/pdf') {
         return `
             <div class="text-center">
-                <embed src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                <embed src="${basePath('/api/files/download?path=' + encodeURIComponent(file.full_path) + '&inline=true')}"
                        type="application/pdf" width="100%" height="500px">
             </div>
         `;
@@ -1858,7 +1834,7 @@ function createFileViewerContent(file, content) {
 function createNonViewableContent(reason) {
     return `
         <div class="text-center py-5">
-            <i class="fas fa-file fa-3x text-muted mb-3"></i>
+            <i class="bi bi-file-earmark icon-3x text-muted mb-3"></i>
             <h5 class="text-muted">Cannot preview file</h5>
             <p class="text-muted">${reason}</p>
         </div>
@@ -1936,7 +1912,7 @@ function showPropertiesModal(properties) {
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="propertiesModalLabel">
-                            <i class="fas fa-info me-2"></i>Properties: ${properties.name}
+                            <i class="bi bi-info me-2"></i>Properties: ${properties.name}
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -1975,7 +1951,7 @@ function createPropertiesContent(properties) {
     let html = `
         <div class="row">
             <div class="col-md-6">
-                <h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>
+                <h6 class="text-primary"><i class="bi bi-file-earmark me-1"></i>Basic Information</h6>
                 <table class="table table-sm">
                     <tr><td><strong>Name:</strong></td><td>${properties.name}</td></tr>
                     <tr><td><strong>Full Path:</strong></td><td><code>${properties.full_path}</code></td></tr>
@@ -1993,7 +1969,7 @@ function createPropertiesContent(properties) {
                 </table>
             </div>
             <div class="col-md-6">
-                <h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>
+                <h6 class="text-primary"><i class="bi bi-clock me-1"></i>Timestamps</h6>
                 <table class="table table-sm">
     `;
 
@@ -2007,7 +1983,7 @@ function createPropertiesContent(properties) {
     html += `
                 </table>
                 
-                <h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>
+                <h6 class="text-primary"><i class="bi bi-shield me-1"></i>Permissions</h6>
                 <table class="table table-sm">
                     <tr><td><strong>Mode:</strong></td><td><code>${properties.file_mode_formatted || properties.file_mode}</code></td></tr>
                     <tr><td><strong>UID:</strong></td><td>${properties.uid || 'N/A'}</td></tr>
@@ -2022,7 +1998,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-hourglass-half me-1"></i>TTL (Time To Live)</h6>
+                    <h6 class="text-primary"><i class="bi bi-hourglass-split me-1"></i>TTL (Time To Live)</h6>
                     <table class="table table-sm">
                         <tr><td><strong>TTL:</strong></td><td>${properties.ttl_formatted || properties.ttl_seconds + ' seconds'}</td></tr>
                     </table>
@@ -2036,7 +2012,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunks (${properties.chunk_count})</h6>
+                    <h6 class="text-primary"><i class="bi bi-puzzle me-1"></i>Chunks (${properties.chunk_count})</h6>
                     <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
                         <table class="table table-sm">
                             <thead>
@@ -2075,7 +2051,7 @@ function createPropertiesContent(properties) {
         html += `
             <div class="row mt-3">
                 <div class="col-12">
-                    <h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>
+                    <h6 class="text-primary"><i class="bi bi-tags me-1"></i>Extended Attributes</h6>
                     <table class="table table-sm">
         `;
 
@@ -2196,7 +2172,7 @@ function showSecretKey(accessKey, secretKey) {
 
     const content = `
         <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
+            <i class="bi bi-info-circle me-2"></i>
             <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
         </div>
         <div class="mb-3">
@@ -2204,7 +2180,7 @@ function showSecretKey(accessKey, secretKey) {
             <div class="input-group">
                 <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2213,7 +2189,7 @@ function showSecretKey(accessKey, secretKey) {
             <div class="input-group">
                 <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2223,7 +2199,7 @@ function showSecretKey(accessKey, secretKey) {
                 <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
 export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2239,19 +2215,15 @@ function showNewAccessKeyModal(accessKeyData) {
 
     const content = `
         <div class="alert alert-success">
-            <i class="fas fa-check-circle me-2"></i>
+            <i class="bi bi-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
-        </div>
-        <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle me-2"></i>
-            <strong>Important:</strong> This is the only time the secret key will be displayed. Please save it securely.
         </div>
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
                 <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2260,7 +2232,7 @@ function showNewAccessKeyModal(accessKeyData) {
             <div class="input-group">
                 <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2270,7 +2242,7 @@ function showNewAccessKeyModal(accessKeyData) {
                 <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
 export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
-                    <i class="fas fa-copy"></i>
+                    <i class="bi bi-copy"></i>
                 </button>
             </div>
         </div>
@@ -2289,21 +2261,21 @@ function copyFromInput(inputId) {
         try {
             const successful = document.execCommand('copy');
             if (successful) {
-                showAlert('success', 'Copied to clipboard!');
+                showToast('Copied to clipboard!');
             } else {
                 // Try modern clipboard API as fallback
                 navigator.clipboard.writeText(input.value).then(() => {
-                    showAlert('success', 'Copied to clipboard!');
+                    showToast('Copied to clipboard!');
                 }).catch(() => {
-                    showAlert('danger', 'Failed to copy');
+                    showAlert('Failed to copy', 'danger');
                 });
             }
         } catch (err) {
             // Try modern clipboard API as fallback
             navigator.clipboard.writeText(input.value).then(() => {
-                showAlert('success', 'Copied to clipboard!');
+                showToast('Copied to clipboard!');
             }).catch(() => {
-                showAlert('danger', 'Failed to copy');
+                showAlert('Failed to copy', 'danger');
             });
         }
     }

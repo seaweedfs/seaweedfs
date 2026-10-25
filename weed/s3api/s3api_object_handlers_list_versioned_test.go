@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"strconv"
 	"strings"
@@ -135,7 +136,7 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 			commonPrefixes := []PrefixEntry{}
 			bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, tt.bucket)
 
-			_, err := s3a.doListFilerEntries(filerClient, bucketPrefix[:len(bucketPrefix)-1], tt.prefix, cursor, "", tt.delimiter, false, tt.bucket, func(dir string, entry *filer_pb.Entry) {
+			_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: bucketPrefix[:len(bucketPrefix)-1], prefix: tt.prefix, delimiter: tt.delimiter, bucket: tt.bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				if cursor.maxKeys <= 0 {
 					return
 				}
@@ -236,7 +237,7 @@ func TestVersionedObjectsNoDuplication(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -294,7 +295,7 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -343,7 +344,7 @@ func TestVersionedObjectsMaxKeys(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(3)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -405,7 +406,7 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(customClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), customClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -430,6 +431,120 @@ type customTestFilerClient struct {
 func (c *customTestFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	(*c.traversedDirs)[in.Directory] = true
 	return c.testFilerClient.ListEntries(ctx, in, opts...)
+}
+
+// TestListObjectVersionsResult_XMLInterleaving validates that Version and DeleteMarker elements
+// are interleaved in the correct sort order in the XML output, matching the S3 API contract.
+func TestListObjectVersionsResult_XMLInterleaving(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-24 * time.Hour)
+
+	dm := &DeleteMarkerEntry{
+		Key:          "object1.txt",
+		VersionId:    "newer-dm",
+		IsLatest:     true,
+		LastModified: now,
+	}
+	ver := &VersionEntry{
+		Key:          "object1.txt",
+		VersionId:    "older-version",
+		IsLatest:     false,
+		LastModified: earlier,
+		ETag:         "\"abc\"",
+		Size:         100,
+		StorageClass: "STANDARD",
+	}
+
+	// Entries are in correct sort order: newest first for same key
+	result := &S3ListObjectVersionsResult{
+		Name:    "test-bucket",
+		MaxKeys: 1000,
+		Entries: []VersionListEntry{
+			{DeleteMarker: dm},
+			{Version: ver},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Verify DeleteMarker appears BEFORE Version in the XML output
+	dmIdx := strings.Index(xmlStr, "<DeleteMarker>")
+	vIdx := strings.Index(xmlStr, "<Version>")
+	assert.True(t, dmIdx >= 0, "DeleteMarker element should be present")
+	assert.True(t, vIdx >= 0, "Version element should be present")
+	assert.True(t, dmIdx < vIdx, "DeleteMarker should appear before Version for same key (newest first), got DM at %d, V at %d", dmIdx, vIdx)
+}
+
+// TestListObjectVersionsResult_XMLInterleavingMultipleKeys validates interleaving across multiple keys
+func TestListObjectVersionsResult_XMLInterleavingMultipleKeys(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-24 * time.Hour)
+
+	dm := &DeleteMarkerEntry{Key: "aaa", VersionId: "dm1", IsLatest: true, LastModified: now}
+	v1 := &VersionEntry{Key: "aaa", VersionId: "v1", IsLatest: false, LastModified: earlier, StorageClass: "STANDARD"}
+	v2 := &VersionEntry{Key: "bbb", VersionId: "v2", IsLatest: true, LastModified: now, StorageClass: "STANDARD"}
+
+	// Expected XML order: aaa/DM, aaa/V, bbb/V
+	result := &S3ListObjectVersionsResult{
+		Name:    "test-bucket",
+		MaxKeys: 1000,
+		Entries: []VersionListEntry{
+			{DeleteMarker: dm},
+			{Version: v1},
+			{Version: v2},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Find positions of each element
+	dmIdx := strings.Index(xmlStr, "<DeleteMarker>")
+	v1Idx := strings.Index(xmlStr, "<Version><Key>aaa</Key>")
+	v2Idx := strings.Index(xmlStr, "<Version><Key>bbb</Key>")
+
+	assert.True(t, dmIdx >= 0, "DeleteMarker should be present")
+	assert.True(t, v1Idx >= 0, "Version for aaa should be present")
+	assert.True(t, v2Idx >= 0, "Version for bbb should be present")
+	assert.True(t, dmIdx < v1Idx, "aaa DeleteMarker should appear before aaa Version")
+	assert.True(t, v1Idx < v2Idx, "aaa Version should appear before bbb Version")
+}
+
+// TestListObjectVersionsResult_XMLCommonPrefixes validates that CommonPrefixes entries
+// are correctly marshaled when interleaved with Version and DeleteMarker entries.
+func TestListObjectVersionsResult_XMLCommonPrefixes(t *testing.T) {
+	now := time.Now()
+
+	ver := &VersionEntry{Key: "docs/readme.txt", VersionId: "v1", IsLatest: true, LastModified: now, StorageClass: "STANDARD"}
+
+	result := &S3ListObjectVersionsResult{
+		Name:      "test-bucket",
+		MaxKeys:   1000,
+		Delimiter: "/",
+		Entries: []VersionListEntry{
+			{Version: ver},
+			{Prefix: &PrefixEntry{Prefix: "images/"}},
+			{Prefix: &PrefixEntry{Prefix: "logs/"}},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Verify CommonPrefixes elements are present with correct content
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>images/</Prefix></CommonPrefixes>")
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>logs/</Prefix></CommonPrefixes>")
+
+	// Verify ordering: Version before CommonPrefixes (as placed in Entries)
+	vIdx := strings.Index(xmlStr, "<Version>")
+	cpIdx := strings.Index(xmlStr, "<CommonPrefixes>")
+	assert.True(t, vIdx >= 0, "Version element should be present")
+	assert.True(t, cpIdx >= 0, "CommonPrefixes element should be present")
+	assert.True(t, vIdx < cpIdx, "Version should appear before CommonPrefixes as ordered in Entries")
 }
 
 // TestListObjectVersions_PrefixWithLeadingSlash tests that prefixes with leading slashes work correctly
@@ -514,4 +629,129 @@ func TestListObjectVersions_PrefixWithLeadingSlash(t *testing.T) {
 				"Normalized prefix should correctly match/not match the path based on full filter logic")
 		})
 	}
+}
+
+func TestComputeStartFrom(t *testing.T) {
+	tests := []struct {
+		name          string
+		keyMarker     string
+		relativePath  string
+		wantStart     string
+		wantInclusive bool
+	}{
+		{"empty marker", "", "", "", false},
+		{"empty marker with path", "", "dir", "", false},
+		{"root level file", "file1.txt", "", "file1", true},
+		{"root level with subpath", "Mailboxes/5ac/file1", "", "Mailboxes", true},
+		{"matching subdir", "Mailboxes/5ac/file1", "Mailboxes", "5ac", true},
+		{"deeper subdir", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac", "ItemsData", true},
+		{"at leaf level", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac/ItemsData", "file1", true},
+		{"unrelated directory", "other/path", "Mailboxes", "", false},
+		{"marker equals relativePath", "Mailboxes", "Mailboxes", "", false},
+		{"marker before directory", "aaa/file", "zzz", "", false},
+		{"dir prefix below slash", "d.x", "", "d", true},
+		{"dir prefix below slash nested", "a-b/file", "", "a", true},
+		{"dir prefix at marker end", "d-", "", "d", true},
+		{"no qualifying prefix", "zzz", "", "zzz", true},
+		{"leading below-slash byte", ".hidden", "", ".hidden", true},
+		{"leading below-slash byte nested", ".hidden/file", "", ".hidden", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc := &versionCollector{keyMarker: tt.keyMarker}
+			startFrom, inclusive := vc.computeStartFrom(tt.relativePath)
+			assert.Equal(t, tt.wantStart, startFrom)
+			assert.Equal(t, tt.wantInclusive, inclusive)
+		})
+	}
+}
+
+func TestProcessDirectorySkipsBeforeMarker(t *testing.T) {
+	tests := []struct {
+		name       string
+		keyMarker  string
+		entryPath  string
+		shouldSkip bool
+	}{
+		{"no marker", "", "dir_a", false},
+		{"dir before marker", "dir_b/file", "dir_a", true},
+		{"marker descends into dir", "dir_a/file", "dir_a", false},
+		{"dir after marker", "dir_a/file", "dir_b", false},
+		{"same prefix different suffix", "dir_a0/file", "dir_a", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skip := tt.keyMarker != "" &&
+				!strings.HasPrefix(tt.keyMarker, tt.entryPath+"/") &&
+				tt.entryPath+"/" < tt.keyMarker
+			assert.Equal(t, tt.shouldSkip, skip)
+		})
+	}
+}
+
+// TestVersionedListSkipsMarkerObject covers the exclusive marker on a versioned bucket,
+// where the marker names an object but the entry is its ".versions" directory.
+func TestVersionedListSkipsMarkerObject(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				liveVersionsDir("file-1"),
+				liveVersionsDir("file-2"),
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test-bucket", marker: "file-1", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"file-2"}, seen, "the marker object should not be returned")
+}
+
+// TestVersionedListSkipsEchoedVersionsMarker covers a backend that echoes the marker it
+// was given, when that marker is a ".versions" directory name.
+func TestVersionedListSkipsEchoedVersionsMarker(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				liveVersionsDir("file-1"),
+				liveVersionsDir("file-2"),
+			},
+		},
+		returnFollowing: true,
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test-bucket", marker: "file-1" + s3_constants.VersionsFolder, bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"file-2"}, seen, "the echoed marker entry should not be returned")
+}
+
+// TestListObjectVersionsMaxKeysZero verifies that max-keys=0 returns an empty,
+// non-truncated page without listing the bucket, matching ListObjects.
+func TestListObjectVersionsMaxKeysZero(t *testing.T) {
+	s3a := &S3ApiServer{}
+	result, err := s3a.listObjectVersions("bucket", "prefix/", "key-marker", "version-marker", "/", 0)
+	assert.NoError(t, err)
+	assert.Empty(t, result.Entries)
+	assert.False(t, result.IsTruncated)
+	assert.Equal(t, 0, result.MaxKeys)
+	assert.Equal(t, "", result.NextKeyMarker)
+	assert.Equal(t, "", result.NextVersionIdMarker)
+	assert.Equal(t, "key-marker", result.KeyMarker)
+	assert.Equal(t, "version-marker", result.VersionIdMarker)
+	assert.Equal(t, "/", result.Delimiter)
 }

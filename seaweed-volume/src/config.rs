@@ -1,0 +1,2181 @@
+use clap::Parser;
+use std::ffi::OsString;
+use std::net::UdpSocket;
+use std::path::{Path, PathBuf};
+
+use crate::security::tls::TlsPolicy;
+
+/// How this module reads the environment.
+///
+/// Production passes [`process_env`]; tests pass a map. Injecting the lookup
+/// is what lets the tests cover `HOME` and the `WEED_*` overrides without
+/// `std::env::set_var`, which is `unsafe` in Rust 2024 because it races with
+/// every other thread in the process — and the lib test binary runs tokio
+/// runtimes, TLS stacks and AWS clients that read the environment lazily on
+/// threads no test mutex can reach.
+type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+/// The real process environment, as an [`EnvLookup`].
+fn process_env(key: &str) -> Option<OsString> {
+    std::env::var_os(key)
+}
+
+/// `std::env::var`'s view of an [`EnvLookup`]: unset and non-UTF-8 both read
+/// as absent, exactly as `std::env::var(key).ok()` does.
+fn env_string(env: EnvLookup<'_>, key: &str) -> Option<String> {
+    env(key).and_then(|value| value.into_string().ok())
+}
+
+/// SeaweedFS Volume Server (Rust implementation)
+///
+/// Start a volume server to provide storage spaces.
+#[derive(Parser, Debug)]
+#[command(name = "weed-volume", version, about)]
+pub struct Cli {
+    /// HTTP listen port
+    #[arg(long = "port", default_value_t = 8080)]
+    pub port: u16,
+
+    /// gRPC listen port. If 0, defaults to port + 10000.
+    #[arg(long = "port.grpc", default_value_t = 0)]
+    pub port_grpc: u16,
+
+    /// Port opened to public. If 0, defaults to same as --port.
+    #[arg(long = "port.public", default_value_t = 0)]
+    pub port_public: u16,
+
+    /// IP or server name, also used as identifier.
+    /// If empty, auto-detected.
+    #[arg(long = "ip", default_value = "")]
+    pub ip: String,
+
+    /// Volume server ID. If empty, defaults to ip:port.
+    #[arg(long = "id", default_value = "")]
+    pub id: String,
+
+    /// Publicly accessible address.
+    #[arg(long = "publicUrl", default_value = "")]
+    pub public_url: String,
+
+    /// IP address to bind to. If empty, defaults to same as --ip.
+    #[arg(long = "ip.bind", default_value = "")]
+    pub bind_ip: String,
+
+    /// Comma-separated master server addresses.
+    #[arg(long = "master", default_value = "localhost:9333")]
+    pub master: String,
+
+    /// Comma-separated master servers (deprecated, use --master instead).
+    #[arg(long = "mserver", default_value = "")]
+    pub mserver: String,
+
+    /// Number of seconds between stop sending heartbeats and stopping the volume server.
+    #[arg(long = "preStopSeconds", default_value_t = 10)]
+    pub pre_stop_seconds: u32,
+
+    /// Connection idle seconds.
+    #[arg(long = "idleTimeout", default_value_t = 30)]
+    pub idle_timeout: u32,
+
+    /// Current volume server's data center name.
+    #[arg(long = "dataCenter", default_value = "")]
+    pub data_center: String,
+
+    /// Current volume server's rack name.
+    #[arg(long = "rack", default_value = "")]
+    pub rack: String,
+
+    /// Choose [memory|redb|redbMedium|redbLarge] mode for memory~performance balance.
+    /// The redb tiers give each volume's on-disk index a 4, 8, or 16 MiB page
+    /// cache respectively; total index memory is roughly (volumes x cache).
+    /// `leveldb`/`leveldbMedium`/`leveldbLarge` are accepted as aliases for the
+    /// corresponding redb backends (Rust volume server uses redb under the hood).
+    #[arg(long = "index", default_value = "memory")]
+    pub index: String,
+
+    /// [hdd|ssd|<tag>] hard drive or solid state drive or any tag.
+    #[arg(long = "disk", default_value = "")]
+    pub disk: String,
+
+    /// Comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive).
+    #[arg(long = "tags", default_value = "")]
+    pub tags: String,
+
+    /// Adjust jpg orientation when uploading.
+    #[arg(long = "images.fix.orientation", default_value_t = false)]
+    pub fix_jpg_orientation: bool,
+
+    /// [local|proxy|redirect] how to deal with non-local volume.
+    #[arg(long = "readMode", default_value = "proxy")]
+    pub read_mode: String,
+
+    /// CPU profile output file.
+    #[arg(long = "cpuprofile", default_value = "")]
+    pub cpu_profile: String,
+
+    /// Memory profile output file.
+    #[arg(long = "memprofile", default_value = "")]
+    pub mem_profile: String,
+
+    /// Limit background compaction or copying speed in mega bytes per second.
+    #[arg(long = "compactionMBps", default_value_t = 0)]
+    pub compaction_mb_per_second: u32,
+
+    /// Limit maintenance (replication/balance) IO rate in MB/s. 0 means no limit.
+    #[arg(long = "maintenanceMBps", default_value_t = 0)]
+    pub maintenance_mb_per_second: u32,
+
+    /// Limit how many vacuum commits run at once on this server; queued
+    /// commits hold no volume lock. 0 means unlimited.
+    #[arg(long = "compactionMaxParallelCommits", default_value_t = 0)]
+    pub max_parallel_vacuum_commits: usize,
+
+    /// Limit file size to avoid out of memory.
+    #[arg(long = "fileSizeLimitMB", default_value_t = 256)]
+    pub file_size_limit_mb: u32,
+
+    /// Limit total concurrent upload size in MB, 0 means unlimited.
+    #[arg(long = "concurrentUploadLimitMB", default_value_t = 0)]
+    pub concurrent_upload_limit_mb: u32,
+
+    /// Limit total concurrent download size in MB, 0 means unlimited.
+    #[arg(long = "concurrentDownloadLimitMB", default_value_t = 0)]
+    pub concurrent_download_limit_mb: u32,
+
+    /// Enable pprof-equivalent HTTP handlers. Precludes --memprofile and --cpuprofile.
+    #[arg(long = "pprof", default_value_t = false)]
+    pub pprof: bool,
+
+    /// Prometheus metrics listen port.
+    #[arg(long = "metricsPort", default_value_t = 0)]
+    pub metrics_port: u16,
+
+    /// Metrics listen IP. If empty, defaults to same as --ip.bind.
+    #[arg(long = "metricsIp", default_value = "")]
+    pub metrics_ip: String,
+
+    /// Directories to store data files. dir[,dir]...
+    /// If empty, defaults to the platform temp directory (Go's os.TempDir()).
+    #[arg(long = "dir", default_value = "")]
+    pub dir: String,
+
+    /// Directory to store .idx files.
+    #[arg(long = "dir.idx", default_value = "")]
+    pub dir_idx: String,
+
+    /// Maximum numbers of volumes, count[,count]...
+    /// If set to zero, the limit will be auto configured as free disk space divided by volume size.
+    #[arg(long = "max", default_value = "8")]
+    pub max: String,
+
+    /// Comma separated IP addresses having write permission. No limit if empty.
+    #[arg(long = "whiteList", default_value = "")]
+    pub white_list: String,
+
+    /// Minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly.
+    /// Deprecated: use --minFreeSpace instead.
+    #[arg(long = "minFreeSpacePercent", default_value = "1")]
+    pub min_free_space_percent: String,
+
+    /// Min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB).
+    /// Low disk space will mark all volumes as ReadOnly.
+    #[arg(long = "minFreeSpace", default_value = "")]
+    pub min_free_space: String,
+
+    /// Inflight upload data wait timeout of volume servers.
+    /// Go `time.Duration` syntax: `300ms`, `1.5h`, `2h45m`; a bare number other than `0` is rejected.
+    #[arg(
+        long = "inflightUploadDataTimeout",
+        default_value = "60s",
+        value_parser = parse_go_duration
+    )]
+    pub inflight_upload_data_timeout: std::time::Duration,
+
+    /// Inflight download data wait timeout of volume servers.
+    /// Go `time.Duration` syntax: `300ms`, `1.5h`, `2h45m`; a bare number other than `0` is rejected.
+    #[arg(
+        long = "inflightDownloadDataTimeout",
+        default_value = "60s",
+        value_parser = parse_go_duration
+    )]
+    pub inflight_download_data_timeout: std::time::Duration,
+
+    /// <experimental> if true, prevents slow reads from blocking other requests,
+    /// but large file read P99 latency will increase.
+    #[arg(long = "hasSlowRead", default_value_t = true)]
+    pub has_slow_read: bool,
+
+    /// <experimental> larger values can optimize query performance but will increase memory usage.
+    /// Use with hasSlowRead normally.
+    #[arg(long = "readBufferSizeMB", default_value_t = 4)]
+    pub read_buffer_size_mb: u32,
+
+    /// Alive time for leveldb (default to 0). If leveldb of volume is not accessed in
+    /// ldbTimeout hours, it will be offloaded to reduce opened files and memory consumption.
+    #[arg(long = "index.leveldbTimeout", default_value_t = 0)]
+    pub ldb_timeout: i64,
+
+    /// Serves runtime profiling data on the port specified by --debug.port.
+    #[arg(long = "debug", default_value_t = false)]
+    pub debug: bool,
+
+    /// HTTP port for debugging.
+    #[arg(long = "debug.port", default_value_t = 6060)]
+    pub debug_port: u16,
+
+    /// Path to security.toml configuration file for JWT signing keys.
+    #[arg(long = "securityFile", default_value = "")]
+    pub security_file: String,
+
+    /// If true, FetchAndWriteNeedle accepts arbitrary remote S3 endpoints
+    /// including loopback / link-local hosts. Default rejects internal /
+    /// metadata endpoints.
+    #[arg(long = "volume.allowUntrustedRemoteEndpoints", default_value_t = false)]
+    pub allow_untrusted_remote_endpoints: bool,
+
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchBytes", default_value_t = 1024 * 1024)]
+    pub fsync_min_batch_bytes: u64,
+
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    #[arg(long = "fsyncMinBatchRequests", default_value_t = 128)]
+    pub fsync_min_batch_requests: usize,
+
+    /// How long a below-minimum fsync batch waits for more requests once the
+    /// queue drains; 0 flushes immediately.
+    #[arg(
+        long = "fsyncBatchWait",
+        default_value = "500us",
+        value_parser = parse_go_duration
+    )]
+    pub fsync_batch_wait: std::time::Duration,
+
+    /// A file of command line options, each line in optionName=optionValue format.
+    #[arg(long = "options", default_value = "")]
+    pub options: String,
+}
+
+/// Resolved configuration after applying defaults and validation.
+#[derive(Debug)]
+pub struct VolumeServerConfig {
+    pub port: u16,
+    pub grpc_port: u16,
+    pub public_port: u16,
+    pub ip: String,
+    pub bind_ip: String,
+    pub public_url: String,
+    pub id: String,
+    pub masters: Vec<String>,
+    pub pre_stop_seconds: u32,
+    pub idle_timeout: u32,
+    pub data_center: String,
+    pub rack: String,
+    pub index_type: NeedleMapKind,
+    pub disk_type: String,
+    pub folders: Vec<String>,
+    pub folder_max_limits: Vec<i32>,
+    pub folder_tags: Vec<Vec<String>>,
+    pub min_free_spaces: Vec<MinFreeSpace>,
+    pub disk_types: Vec<String>,
+    pub idx_folder: String,
+    pub white_list: Vec<String>,
+    pub fix_jpg_orientation: bool,
+    pub read_mode: ReadMode,
+    pub cpu_profile: String,
+    pub mem_profile: String,
+    pub compaction_byte_per_second: i64,
+    pub maintenance_byte_per_second: i64,
+    /// Max concurrent vacuum commits; 0 means unlimited.
+    pub max_parallel_vacuum_commits: usize,
+    pub file_size_limit_bytes: i64,
+    pub concurrent_upload_limit: i64,
+    pub concurrent_download_limit: i64,
+    pub inflight_upload_data_timeout: std::time::Duration,
+    pub inflight_download_data_timeout: std::time::Duration,
+    pub has_slow_read: bool,
+    pub read_buffer_size_mb: u32,
+    pub ldb_timeout: i64,
+    pub pprof: bool,
+    pub metrics_port: u16,
+    pub metrics_ip: String,
+    pub debug: bool,
+    pub debug_port: u16,
+    pub ui_enabled: bool,
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires_seconds: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires_seconds: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
+    pub grpc_client_cert_file: String,
+    pub grpc_client_key_file: String,
+    pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
+    pub tls_policy: TlsPolicy,
+    /// Path to security.toml — stored for SIGHUP reload.
+    pub security_file: String,
+    /// If true, FetchAndWriteNeedle skips remote S3 endpoint validation
+    /// (allows loopback / link-local / metadata hosts).
+    pub allow_untrusted_remote_endpoints: bool,
+    /// Minimum bytes an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_bytes: u64,
+    /// Minimum requests an fsync batch gathers before a drained queue flushes
+    /// without waiting.
+    pub fsync_min_batch_requests: usize,
+    /// How long a below-minimum fsync batch waits for stragglers.
+    pub fsync_batch_wait: std::time::Duration,
+}
+
+pub use crate::storage::needle_map::NeedleMapKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadMode {
+    Local,
+    Proxy,
+    Redirect,
+}
+
+#[derive(Debug, Clone)]
+pub enum MinFreeSpace {
+    Percent(f64),
+    Bytes(u64),
+}
+
+/// Convert single-dash long options to double-dash for clap compatibility.
+/// Go's `flag` package uses `-port`, clap expects `--port`.
+/// This allows both `-port 8080` and `--port 8080` to work.
+fn normalize_args_vec(args: Vec<String>) -> Vec<String> {
+    let mut args = args;
+    // Skip args[0] (binary name).
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        // Stop processing after "--"
+        if arg == "--" {
+            break;
+        }
+        // Already double-dash or not a flag: leave as-is
+        if arg.starts_with("--") || !arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        // Single char flags like -h, -V: leave as-is
+        let without_dash = &arg[1..];
+        // Check if it's a single-dash long option: more than 1 char and not a negative number
+        if without_dash.len() > 1 && !without_dash.starts_with(|c: char| c.is_ascii_digit()) {
+            // Handle -key=value format
+            if let Some(eq_pos) = without_dash.find('=') {
+                let key = &without_dash[..eq_pos];
+                if key.len() > 1 {
+                    args[i] = format!("--{}", without_dash);
+                }
+            } else {
+                args[i] = format!("-{}", arg);
+            }
+        }
+        i += 1;
+    }
+    args
+}
+
+/// Parse CLI arguments and resolve all defaults — mirroring Go's `runVolume()` + `startVolumeServer()`.
+///
+/// Supports `-options <file>` to load defaults from a file (same format as Go's fla9).
+/// CLI arguments take precedence over file values.
+pub fn parse_cli() -> VolumeServerConfig {
+    let args: Vec<String> = std::env::args().collect();
+    let normalized = normalize_args_vec(args);
+    let merged = merge_options_file(normalized);
+    let cli = Cli::parse_from(merged);
+    resolve_config_with_env(cli, &process_env)
+}
+
+/// Find `-options`/`--options` in args, parse the referenced file, and inject
+/// file-based defaults for any flags not already set on the command line.
+///
+/// File format (matching Go's fla9.ParseFile):
+///   - One option per line: `key=value`, `key value`, or `key:value`
+///   - Lines starting with `#` are comments; blank lines are ignored
+///   - Leading `-` on key names is stripped
+///   - CLI arguments take precedence over file values
+fn merge_options_file(args: Vec<String>) -> Vec<String> {
+    // Find the options file path from the args
+    let options_path = find_options_arg(&args);
+    if options_path.is_empty() {
+        return args;
+    }
+
+    let content = match std::fs::read_to_string(&options_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "WARNING: could not read options file {}: {}",
+                options_path, e
+            );
+            return args;
+        }
+    };
+
+    // Collect which flags are already explicitly set on the command line.
+    let mut cli_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut i = 1; // skip binary name
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            let key = if let Some(eq) = long.find('=') {
+                long[..eq].to_string()
+            } else {
+                long.to_string()
+            };
+            cli_flags.insert(key);
+        } else if arg.len() > 2
+            && let Some(without_dash) = arg.strip_prefix('-')
+        {
+            // Single-dash long option (already normalized to -- at this point,
+            // but handle both for safety)
+            let key = if let Some(eq) = without_dash.find('=') {
+                without_dash[..eq].to_string()
+            } else {
+                without_dash.to_string()
+            };
+            cli_flags.insert(key);
+        }
+        i += 1;
+    }
+
+    // Parse file and append missing options
+    let mut extra_args: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Split on first `=`, ` `, or `:`
+        let (name, value) = if let Some(pos) = trimmed.find(['=', ' ', ':']) {
+            (
+                trimmed[..pos].trim().to_string(),
+                trimmed[pos + 1..].trim().to_string(),
+            )
+        } else {
+            (trimmed.to_string(), String::new())
+        };
+
+        // Strip leading dashes from name
+        let name = name.trim_start_matches('-').to_string();
+        if name.is_empty() || name == "options" {
+            continue;
+        }
+
+        // Skip if already set on CLI
+        if cli_flags.contains(&name) {
+            continue;
+        }
+
+        extra_args.push(format!("--{}", name));
+        if !value.is_empty() {
+            extra_args.push(value);
+        }
+    }
+
+    let mut merged = args;
+    merged.extend(extra_args);
+    merged
+}
+
+/// Extract the options file path from args (looks for --options or -options).
+fn find_options_arg(args: &[String]) -> String {
+    for i in 1..args.len() {
+        if (args[i] == "--options" || args[i] == "-options") && i + 1 < args.len() {
+            return args[i + 1].clone();
+        }
+        if let Some(rest) = args[i].strip_prefix("--options=") {
+            return rest.to_string();
+        }
+        if let Some(rest) = args[i].strip_prefix("-options=") {
+            return rest.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Parse a duration with Go's `time.ParseDuration` grammar, as Go's
+/// `flag.Duration` flags do: `[0-9]*(\.[0-9]*)?<unit>` repeated, units
+/// `ns`/`us`/`µs`/`μs`/`ms`/`s`/`m`/`h`. A bare `0` is the only unit-less
+/// value; a leading sign parses in Go but a negative has no
+/// `std::time::Duration`, so it is an error, not a clamp.
+fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
+    let orig = s;
+    let invalid = || format!("time: invalid duration {:?}", orig);
+
+    let mut s = s;
+    if let Some(rest) = s.strip_prefix('-') {
+        if rest.is_empty() {
+            return Err(invalid());
+        }
+        return Err(format!("negative duration {:?} is not supported", orig));
+    }
+    if let Some(rest) = s.strip_prefix('+') {
+        s = rest;
+    }
+    if s == "0" {
+        return Ok(std::time::Duration::ZERO);
+    }
+    if s.is_empty() {
+        return Err(invalid());
+    }
+
+    // Go bounds the total by 1<<63 (int64 nanoseconds): overflow is an error.
+    const MAX: u64 = 1 << 63;
+    let mut total: u64 = 0;
+    let mut bytes = s.as_bytes();
+    while !bytes.is_empty() {
+        if !(bytes[0] == b'.' || bytes[0].is_ascii_digit()) {
+            return Err(invalid());
+        }
+
+        // Consume [0-9]*
+        let mut i = 0;
+        let mut v: u64 = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            v = v
+                .checked_mul(10)
+                .and_then(|v| v.checked_add(u64::from(bytes[i] - b'0')))
+                .filter(|v| *v <= MAX)
+                .ok_or_else(invalid)?;
+            i += 1;
+        }
+        let pre = i != 0;
+        bytes = &bytes[i..];
+
+        // Consume (\.[0-9]*)?
+        let mut f: u64 = 0;
+        let mut scale: f64 = 1.0;
+        let mut post = false;
+        if let Some((b'.', rest)) = bytes.split_first() {
+            bytes = rest;
+            let mut i = 0;
+            let mut overflow = false;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                if !overflow {
+                    // Like Go's leadingFraction, digits past ~19 are dropped.
+                    match f
+                        .checked_mul(10)
+                        .and_then(|f| f.checked_add(u64::from(bytes[i] - b'0')))
+                        .filter(|f| *f <= MAX)
+                    {
+                        Some(next) => {
+                            f = next;
+                            scale *= 10.0;
+                        }
+                        None => overflow = true,
+                    }
+                }
+                i += 1;
+            }
+            post = i != 0;
+            bytes = &bytes[i..];
+        }
+        if !pre && !post {
+            return Err(invalid());
+        }
+
+        // Consume the unit: everything up to the next digit or '.'.
+        let unit_len = bytes
+            .iter()
+            .position(|c| *c == b'.' || c.is_ascii_digit())
+            .unwrap_or(bytes.len());
+        if unit_len == 0 {
+            return Err(format!("time: missing unit in duration {:?}", orig));
+        }
+        // The boundary is an ASCII byte or the end, so it is a char boundary.
+        let unit = std::str::from_utf8(&bytes[..unit_len]).map_err(|_| invalid())?;
+        bytes = &bytes[unit_len..];
+        let unit_nanos: u64 = match unit {
+            "ns" => 1,
+            "us" | "\u{00b5}s" | "\u{03bc}s" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60 * 1_000_000_000,
+            "h" => 3600 * 1_000_000_000,
+            _ => {
+                return Err(format!(
+                    "time: unknown unit {:?} in duration {:?}",
+                    unit, orig
+                ));
+            }
+        };
+
+        if v > MAX / unit_nanos {
+            return Err(invalid());
+        }
+        v *= unit_nanos;
+        if f > 0 {
+            // Go's float math, so `1.5h` rounds the same way on both sides.
+            v += (f as f64 * (unit_nanos as f64 / scale)) as u64;
+            if v > MAX {
+                return Err(invalid());
+            }
+        }
+        total = total
+            .checked_add(v)
+            .filter(|t| *t <= MAX)
+            .ok_or_else(invalid)?;
+    }
+    if total > MAX - 1 {
+        return Err(invalid());
+    }
+    Ok(std::time::Duration::from_nanos(total))
+}
+
+/// Byte-size suffixes of Go's `util.ParseBytes`, lower-cased: SI (`kb`, `k`)
+/// and IEC (`kib`, `ki`) forms, `b`, and no suffix.
+fn byte_unit_multiplier(unit: &str) -> Option<u64> {
+    const K: u64 = 1_000;
+    const KI: u64 = 1 << 10;
+    Some(match unit {
+        "" | "b" => 1,
+        "kb" | "k" => K,
+        "kib" | "ki" => KI,
+        "mb" | "m" => K * K,
+        "mib" | "mi" => KI * KI,
+        "gb" | "g" => K * K * K,
+        "gib" | "gi" => KI * KI * KI,
+        "tb" | "t" => K * K * K * K,
+        "tib" | "ti" => KI * KI * KI * KI,
+        "pb" | "p" => K * K * K * K * K,
+        "pib" | "pi" => KI * KI * KI * KI * KI,
+        "eb" | "e" => K * K * K * K * K * K,
+        "eib" | "ei" => KI * KI * KI * KI * KI * KI,
+        _ => return None,
+    })
+}
+
+/// Parse a human-readable byte count with Go's `util.ParseBytes` grammar:
+/// decimal number, optional whitespace, then a [`byte_unit_multiplier`]
+/// suffix, case-insensitive. `10GiB` → 10737418240, `1.5TB` → 1500000000000.
+///
+/// Thousands commas parse as in Go but never arrive from `-minFreeSpace`,
+/// which is split on commas into per-directory entries first.
+fn parse_bytes(s: &str) -> Result<u64, String> {
+    let digits_end = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
+        .unwrap_or(s.len());
+    let num = s[..digits_end].replace(',', "");
+    let value: f64 = num
+        .parse()
+        .map_err(|e| format!("invalid byte size {:?}: {}", s, e))?;
+    let unit = s[digits_end..].trim().to_lowercase();
+    let multiplier =
+        byte_unit_multiplier(&unit).ok_or_else(|| format!("unhandled size name: {}", unit))?;
+    let bytes = value * multiplier as f64;
+    if bytes >= u64::MAX as f64 {
+        return Err(format!("too large: {}", s));
+    }
+    Ok(bytes as u64)
+}
+
+/// Parse one `-minFreeSpace` entry like Go's `util.ParseMinFreeSpace()`: a
+/// plain number is a percentage in `0..=100`, anything else a byte size
+/// above 100 bytes. `150` errors rather than reading as bytes.
+fn parse_min_free_space(s: &str) -> Result<MinFreeSpace, String> {
+    let s = s.trim();
+    if let Ok(percent) = s.parse::<f64>() {
+        // Go's range check lets NaN through; rejecting it is the one
+        // intentional difference.
+        if !(0.0..=100.0).contains(&percent) {
+            return Err(format!("minFreeSpace is invalid: {:?}", s));
+        }
+        return Ok(MinFreeSpace::Percent(percent));
+    }
+    match parse_bytes(s) {
+        Ok(bytes) if bytes > 100 => Ok(MinFreeSpace::Bytes(bytes)),
+        _ => Err(format!("minFreeSpace is invalid: {:?}", s)),
+    }
+}
+
+/// Parse minFreeSpace / minFreeSpacePercent like Go's
+/// `util.MustParseMinFreeSpace()`: `--minFreeSpace` wins when set, and any
+/// invalid comma-separated entry fails the whole list.
+fn parse_min_free_spaces(
+    min_free_space: &str,
+    min_free_space_percent: &str,
+) -> Result<Vec<MinFreeSpace>, String> {
+    let source = if !min_free_space.is_empty() {
+        min_free_space
+    } else {
+        min_free_space_percent
+    };
+    source.split(',').map(parse_min_free_space).collect()
+}
+
+/// Parse comma-separated tag groups like "fast:ssd,archive" into per-folder tag vectors.
+/// Mirrors Go's `parseVolumeTags()`.
+fn parse_volume_tags(tags_arg: &str, folder_count: usize) -> Vec<Vec<String>> {
+    if folder_count == 0 {
+        return vec![];
+    }
+    let tags_arg = tags_arg.trim();
+    let tag_entries: Vec<&str> = if tags_arg.is_empty() {
+        vec![]
+    } else {
+        tags_arg.split(',').collect()
+    };
+
+    let mut folder_tags: Vec<Vec<String>> = vec![vec![]; folder_count];
+
+    if tag_entries.len() == 1 && !tag_entries[0].is_empty() {
+        // Single entry: replicate to all folders
+        let normalized: Vec<String> = tag_entries[0]
+            .split(':')
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        for tags in folder_tags.iter_mut() {
+            *tags = normalized.clone();
+        }
+    } else {
+        for (i, tags) in folder_tags.iter_mut().enumerate() {
+            if i < tag_entries.len() {
+                *tags = tag_entries[i]
+                    .split(':')
+                    .map(|t| t.trim().to_lowercase())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+            }
+        }
+    }
+
+    folder_tags
+}
+
+fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
+    // Backward compatibility: --mserver overrides --master
+    let master_string = if !cli.mserver.is_empty() {
+        &cli.mserver
+    } else {
+        &cli.master
+    };
+    let masters: Vec<String> = master_string
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Parse folders
+    let dir_value = if cli.dir.trim().is_empty() {
+        default_volume_dir()
+    } else {
+        cli.dir
+    };
+    let folders: Vec<String> = dir_value
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let folder_count = folders.len();
+
+    // Parse max volume counts
+    let mut folder_max_limits: Vec<i32> = cli
+        .max
+        .split(',')
+        .map(|s| {
+            s.trim().parse::<i32>().unwrap_or_else(|_| {
+                panic!("The max specified in --max is not a valid number: {}", s)
+            })
+        })
+        .collect();
+    // Replicate single value to all folders
+    if folder_max_limits.len() == 1 && folder_count > 1 {
+        let v = folder_max_limits[0];
+        folder_max_limits.resize(folder_count, v);
+    }
+    if folders.len() != folder_max_limits.len() {
+        panic!(
+            "{} directories by --dir, but only {} max is set by --max",
+            folders.len(),
+            folder_max_limits.len()
+        );
+    }
+
+    // Parse min free spaces
+    let mut min_free_spaces =
+        parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent).unwrap_or_else(
+            |e| panic!("The value specified in -minFreeSpace not a valid value: {e}"),
+        );
+    if min_free_spaces.len() == 1 && folder_count > 1 {
+        let v = min_free_spaces[0].clone();
+        min_free_spaces.resize(folder_count, v);
+    }
+    if folders.len() != min_free_spaces.len() {
+        panic!(
+            "{} directories by --dir, but only {} minFreeSpace values",
+            folders.len(),
+            min_free_spaces.len()
+        );
+    }
+
+    // Parse disk types
+    let mut disk_types: Vec<String> = cli.disk.split(',').map(|s| s.trim().to_string()).collect();
+    if disk_types.len() == 1 && folder_count > 1 {
+        let v = disk_types[0].clone();
+        disk_types.resize(folder_count, v);
+    }
+    if folders.len() != disk_types.len() {
+        panic!(
+            "{} directories by --dir, but only {} disk types by --disk",
+            folders.len(),
+            disk_types.len()
+        );
+    }
+
+    // Parse tags
+    let folder_tags = parse_volume_tags(&cli.tags, folder_count);
+
+    // Resolve IP
+    let ip = if cli.ip.is_empty() {
+        detect_host_address()
+    } else {
+        cli.ip
+    };
+
+    // Resolve bind IP
+    let bind_ip = if cli.bind_ip.is_empty() {
+        ip.clone()
+    } else {
+        cli.bind_ip
+    };
+
+    // Resolve public port
+    let public_port = if cli.port_public == 0 {
+        cli.port
+    } else {
+        cli.port_public
+    };
+
+    // Resolve gRPC port
+    let grpc_port = if cli.port_grpc == 0 {
+        10000 + cli.port
+    } else {
+        cli.port_grpc
+    };
+
+    // Resolve public URL
+    let public_url = if cli.public_url.is_empty() {
+        format!("{}:{}", ip, public_port)
+    } else {
+        cli.public_url
+    };
+
+    // Resolve volume server ID
+    let id = if cli.id.is_empty() {
+        format!("{}:{}", ip, cli.port)
+    } else {
+        cli.id
+    };
+
+    // Resolve metrics IP
+    let metrics_ip = if !cli.metrics_ip.is_empty() {
+        cli.metrics_ip
+    } else if !bind_ip.is_empty() {
+        bind_ip.clone()
+    } else {
+        ip.clone()
+    };
+
+    // Parse index type. Accept both `redb*` (preferred — what the volume server
+    // actually uses) and the legacy `leveldb*` names as aliases.
+    let index_type = match cli.index.as_str() {
+        "memory" => NeedleMapKind::InMemory,
+        "redb" | "leveldb" => NeedleMapKind::Redb,
+        "redbMedium" | "leveldbMedium" => NeedleMapKind::RedbMedium,
+        "redbLarge" | "leveldbLarge" => NeedleMapKind::RedbLarge,
+        other => panic!(
+            "Unknown index type: {}. Use memory|redb|redbMedium|redbLarge \
+             (leveldb/leveldbMedium/leveldbLarge accepted as aliases)",
+            other
+        ),
+    };
+
+    // Parse read mode
+    let read_mode = match cli.read_mode.as_str() {
+        "local" => ReadMode::Local,
+        "proxy" => ReadMode::Proxy,
+        "redirect" => ReadMode::Redirect,
+        other => panic!("Unknown readMode: {}. Use local|proxy|redirect", other),
+    };
+
+    // Parse security config from TOML file
+    let sec = parse_security_config_with_env(&cli.security_file, env);
+
+    // Parse whitelist: merge CLI --whiteList with guard.white_list from security.toml
+    let mut white_list: Vec<String> = cli
+        .white_list
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    white_list.extend(sec.guard_white_list.iter().cloned());
+
+    VolumeServerConfig {
+        port: cli.port,
+        grpc_port,
+        public_port,
+        ip,
+        bind_ip,
+        public_url,
+        id,
+        masters,
+        pre_stop_seconds: cli.pre_stop_seconds,
+        idle_timeout: cli.idle_timeout,
+        data_center: cli.data_center,
+        rack: cli.rack,
+        index_type,
+        disk_type: cli.disk,
+        folders,
+        folder_max_limits,
+        folder_tags,
+        min_free_spaces,
+        disk_types,
+        idx_folder: cli.dir_idx,
+        white_list,
+        fix_jpg_orientation: cli.fix_jpg_orientation,
+        read_mode,
+        cpu_profile: cli.cpu_profile,
+        mem_profile: cli.mem_profile,
+        compaction_byte_per_second: cli.compaction_mb_per_second as i64 * 1024 * 1024,
+        maintenance_byte_per_second: cli.maintenance_mb_per_second as i64 * 1024 * 1024,
+        max_parallel_vacuum_commits: cli.max_parallel_vacuum_commits,
+        file_size_limit_bytes: cli.file_size_limit_mb as i64 * 1024 * 1024,
+        concurrent_upload_limit: cli.concurrent_upload_limit_mb as i64 * 1024 * 1024,
+        concurrent_download_limit: cli.concurrent_download_limit_mb as i64 * 1024 * 1024,
+        inflight_upload_data_timeout: cli.inflight_upload_data_timeout,
+        inflight_download_data_timeout: cli.inflight_download_data_timeout,
+        fsync_min_batch_bytes: cli.fsync_min_batch_bytes,
+        fsync_min_batch_requests: cli.fsync_min_batch_requests,
+        fsync_batch_wait: cli.fsync_batch_wait,
+        has_slow_read: cli.has_slow_read,
+        read_buffer_size_mb: cli.read_buffer_size_mb,
+        ldb_timeout: cli.ldb_timeout,
+        pprof: cli.pprof,
+        metrics_port: cli.metrics_port,
+        metrics_ip,
+        debug: cli.debug,
+        debug_port: cli.debug_port,
+        ui_enabled: sec.jwt_signing_key.is_empty() || sec.access_ui,
+        jwt_signing_key: sec.jwt_signing_key,
+        jwt_signing_expires_seconds: sec.jwt_signing_expires,
+        jwt_read_signing_key: sec.jwt_read_signing_key,
+        jwt_read_signing_expires_seconds: sec.jwt_read_signing_expires,
+        https_cert_file: sec.https_cert_file,
+        https_key_file: sec.https_key_file,
+        https_ca_file: sec.https_ca_file,
+        https_client_enabled: sec.https_client_enabled,
+        https_client_cert_file: sec.https_client_cert_file,
+        https_client_key_file: sec.https_client_key_file,
+        https_client_ca_file: sec.https_client_ca_file,
+        grpc_cert_file: sec.grpc_cert_file,
+        grpc_key_file: sec.grpc_key_file,
+        grpc_client_cert_file: sec.grpc_client_cert_file,
+        grpc_client_key_file: sec.grpc_client_key_file,
+        grpc_ca_file: sec.grpc_ca_file,
+        grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
+        grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
+        tls_policy: sec.tls_policy,
+        security_file: cli.security_file,
+        allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
+    }
+}
+
+fn default_volume_dir() -> String {
+    std::env::temp_dir().to_string_lossy().into_owned()
+}
+
+/// Parsed security configuration from security.toml.
+#[derive(Debug, Default)]
+pub struct SecurityConfig {
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
+    pub grpc_client_cert_file: String,
+    pub grpc_client_key_file: String,
+    pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
+    pub tls_policy: TlsPolicy,
+    pub access_ui: bool,
+    /// IPs from [guard] white_list in security.toml
+    pub guard_white_list: Vec<String>,
+}
+
+const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
+
+/// Parse a security.toml file to extract JWT signing keys and TLS configuration.
+/// Format:
+/// ```toml
+/// [jwt.signing]
+/// key = "secret"
+/// expires_after_seconds = 60
+///
+/// [jwt.signing.read]
+/// key = "read-secret"
+/// expires_after_seconds = 60
+///
+/// [https.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
+///
+/// [tls]
+/// min_version = "TLS 1.2"
+/// max_version = "TLS 1.3"
+/// cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+///
+/// [https.client]
+/// enabled = true
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
+///
+/// [grpc]
+/// ca = "/path/to/ca.pem"
+/// allowed_wildcard_domain = ".example.com"
+///
+/// [grpc.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// client_cert = "/path/to/client-cert.pem"
+/// client_key = "/path/to/client-key.pem"
+/// allowed_commonNames = "volume-a.internal,volume-b.internal"
+/// ```
+pub fn parse_security_config(path: &str) -> SecurityConfig {
+    parse_security_config_with_env(path, &process_env)
+}
+
+fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityConfig {
+    let Some(config_path) = resolve_security_config_path(path, env) else {
+        let mut cfg = SecurityConfig::default();
+        apply_env_overrides(&mut cfg, env);
+        return cfg;
+    };
+
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            let mut cfg = SecurityConfig::default();
+            apply_env_overrides(&mut cfg, env);
+            return cfg;
+        }
+    };
+
+    let mut cfg = SecurityConfig::default();
+
+    #[derive(PartialEq)]
+    enum Section {
+        None,
+        JwtSigning,
+        JwtSigningRead,
+        HttpsClient,
+        Grpc,
+        HttpsVolume,
+        GrpcVolume,
+        Tls,
+        Guard,
+        Access,
+    }
+
+    let mut section = Section::None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "[jwt.signing.read]" {
+            section = Section::JwtSigningRead;
+            continue;
+        }
+        if trimmed == "[jwt.signing]" {
+            section = Section::JwtSigning;
+            continue;
+        }
+        if trimmed == "[https.client]" {
+            section = Section::HttpsClient;
+            continue;
+        }
+        if trimmed == "[grpc]" {
+            section = Section::Grpc;
+            continue;
+        }
+        if trimmed == "[https.volume]" {
+            section = Section::HttpsVolume;
+            continue;
+        }
+        if trimmed == "[grpc.volume]" {
+            section = Section::GrpcVolume;
+            continue;
+        }
+        if trimmed == "[tls]" {
+            section = Section::Tls;
+            continue;
+        }
+        if trimmed == "[guard]" {
+            section = Section::Guard;
+            continue;
+        }
+        if trimmed == "[access]" {
+            section = Section::Access;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            section = Section::None;
+            continue;
+        }
+
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"');
+            match section {
+                Section::JwtSigningRead => match key {
+                    "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => {
+                        cfg.jwt_read_signing_expires = value.parse().unwrap_or(60)
+                    }
+                    _ => {}
+                },
+                Section::JwtSigning => match key {
+                    "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => {
+                        cfg.jwt_signing_expires = value.parse().unwrap_or(10)
+                    }
+                    _ => {}
+                },
+                Section::HttpsClient => match key {
+                    "enabled" => cfg.https_client_enabled = value.parse().unwrap_or(false),
+                    "cert" => cfg.https_client_cert_file = value.to_string(),
+                    "key" => cfg.https_client_key_file = value.to_string(),
+                    "ca" => cfg.https_client_ca_file = value.to_string(),
+                    _ => {}
+                },
+                Section::Grpc => match key {
+                    "ca" => cfg.grpc_ca_file = value.to_string(),
+                    "allowed_wildcard_domain" => {
+                        cfg.grpc_allowed_wildcard_domain = value.to_string()
+                    }
+                    _ => {}
+                },
+                Section::HttpsVolume => match key {
+                    "cert" => cfg.https_cert_file = value.to_string(),
+                    "key" => cfg.https_key_file = value.to_string(),
+                    "ca" => cfg.https_ca_file = value.to_string(),
+                    _ => {}
+                },
+                Section::GrpcVolume => match key {
+                    "cert" => cfg.grpc_cert_file = value.to_string(),
+                    "key" => cfg.grpc_key_file = value.to_string(),
+                    "client_cert" => cfg.grpc_client_cert_file = value.to_string(),
+                    "client_key" => cfg.grpc_client_key_file = value.to_string(),
+                    // Go only reads CA from [grpc], not [grpc.volume]
+                    "allowed_commonNames" => {
+                        cfg.grpc_volume_allowed_common_names =
+                            value.split(',').map(|name| name.to_string()).collect();
+                    }
+                    _ => {}
+                },
+                Section::Tls => match key {
+                    "min_version" => cfg.tls_policy.min_version = value.to_string(),
+                    "max_version" => cfg.tls_policy.max_version = value.to_string(),
+                    "cipher_suites" => cfg.tls_policy.cipher_suites = value.to_string(),
+                    _ => {}
+                },
+                Section::Guard => {
+                    if key == "white_list" {
+                        cfg.guard_white_list = value
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                }
+                Section::Access => {
+                    if key == "ui" {
+                        cfg.access_ui = value.parse().unwrap_or(false)
+                    }
+                }
+                Section::None => {}
+            }
+        }
+    }
+
+    // Match Go's v.SetDefault: when a signing key is present but
+    // expires_after_seconds was never specified, apply Go's defaults.
+    if !cfg.jwt_signing_key.is_empty() && cfg.jwt_signing_expires == 0 {
+        cfg.jwt_signing_expires = 10;
+    }
+    if !cfg.jwt_read_signing_key.is_empty() && cfg.jwt_read_signing_expires == 0 {
+        cfg.jwt_read_signing_expires = 60;
+    }
+
+    // Override with WEED_ environment variables (matches Go's Viper convention:
+    // prefix WEED_, uppercase, replace . with _).
+    // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
+    apply_env_overrides(&mut cfg, env);
+
+    cfg
+}
+
+fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBuf> {
+    if !path.is_empty() {
+        return Some(PathBuf::from(path));
+    }
+
+    default_security_config_candidates(
+        std::env::current_dir().ok().as_deref(),
+        home_dir_from_env(env).as_deref(),
+    )
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
+fn default_security_config_candidates(
+    current_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = current_dir {
+        candidates.push(dir.join(SECURITY_CONFIG_FILE_NAME));
+    }
+    if let Some(home) = home_dir {
+        candidates.push(home.join(".seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    }
+    candidates.push(PathBuf::from("/usr/local/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    candidates.push(PathBuf::from("/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    candidates
+}
+
+fn home_dir_from_env(env: EnvLookup<'_>) -> Option<PathBuf> {
+    env("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env("USERPROFILE")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+/// Apply WEED_ environment variable overrides to a SecurityConfig.
+/// Matches Go's Viper convention: WEED_ prefix, uppercase, dots replaced with underscores.
+fn apply_env_overrides(cfg: &mut SecurityConfig, env: EnvLookup<'_>) {
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_KEY") {
+        cfg.jwt_signing_key = v.into_bytes();
+    }
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_signing_expires = v.parse().unwrap_or(cfg.jwt_signing_expires);
+    }
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_KEY") {
+        cfg.jwt_read_signing_key = v.into_bytes();
+    }
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_read_signing_expires = v.parse().unwrap_or(cfg.jwt_read_signing_expires);
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_CERT") {
+        cfg.https_cert_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_KEY") {
+        cfg.https_key_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_VOLUME_CA") {
+        cfg.https_ca_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_ENABLED") {
+        cfg.https_client_enabled = v == "true" || v == "1";
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_CERT") {
+        cfg.https_client_cert_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_KEY") {
+        cfg.https_client_key_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_HTTPS_CLIENT_CA") {
+        cfg.https_client_ca_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CERT") {
+        cfg.grpc_cert_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_KEY") {
+        cfg.grpc_key_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CLIENT_CERT") {
+        cfg.grpc_client_cert_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CLIENT_KEY") {
+        cfg.grpc_client_key_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_CA") {
+        cfg.grpc_ca_file = v;
+    } else if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_CA") {
+        cfg.grpc_ca_file = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_ALLOWED_WILDCARD_DOMAIN") {
+        cfg.grpc_allowed_wildcard_domain = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
+        cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
+    }
+    if let Some(v) = env_string(env, "WEED_TLS_MIN_VERSION") {
+        cfg.tls_policy.min_version = v;
+    }
+    if let Some(v) = env_string(env, "WEED_TLS_MAX_VERSION") {
+        cfg.tls_policy.max_version = v;
+    }
+    if let Some(v) = env_string(env, "WEED_TLS_CIPHER_SUITES") {
+        cfg.tls_policy.cipher_suites = v;
+    }
+    if let Some(v) = env_string(env, "WEED_GUARD_WHITE_LIST") {
+        cfg.guard_white_list = v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Some(v) = env_string(env, "WEED_ACCESS_UI") {
+        cfg.access_ui = v == "true" || v == "1";
+    }
+}
+
+/// Detect the host's IP address.
+/// Mirrors Go's `util.DetectedHostAddress()`.
+fn detect_host_address() -> String {
+    // Connect to a remote address to determine the local outbound IP
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0")
+        && socket.connect("8.8.8.8:80").is_ok()
+        && let Ok(addr) = socket.local_addr()
+    {
+        return addr.ip().to_string();
+    }
+    "localhost".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serialises the tests that move the process working directory against
+    /// the ones that read it. `set_current_dir` is safe, but it is still
+    /// process-global: without this, a `parse_security_config("")` in one test
+    /// would search another test's temporary directory.
+    ///
+    /// Nothing here guards the environment any more — tests inject an
+    /// [`EnvLookup`] instead of mutating the real one.
+    fn process_state_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn with_temp_current_dir<F: FnOnce()>(dir: &Path, f: F) {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        f();
+        std::env::set_current_dir(previous).unwrap();
+    }
+
+    /// The whole environment a test wants the config layer to see, ready to
+    /// pass as `&env`. `&|_| None` is an environment with nothing set at all.
+    fn fake_env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let map: HashMap<String, OsString> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), OsString::from(*value)))
+            .collect();
+        move |key| map.get(key).cloned()
+    }
+
+    #[test]
+    fn test_parse_go_duration_accepts_go_grammar() {
+        use std::time::Duration;
+        let cases = [
+            ("60s", Duration::from_secs(60)),
+            ("5m", Duration::from_secs(300)),
+            ("1h", Duration::from_secs(3600)),
+            ("1.5h", Duration::from_secs(5400)),
+            ("2h45m", Duration::from_secs(2 * 3600 + 45 * 60)),
+            ("300ms", Duration::from_millis(300)),
+            ("1.5s", Duration::from_millis(1500)),
+            ("250us", Duration::from_micros(250)),
+            ("250\u{00b5}s", Duration::from_micros(250)),
+            ("250\u{03bc}s", Duration::from_micros(250)),
+            ("7ns", Duration::from_nanos(7)),
+            (".5s", Duration::from_millis(500)),
+            ("5.s", Duration::from_secs(5)),
+            ("+10s", Duration::from_secs(10)),
+            ("0", Duration::ZERO),
+            ("0s", Duration::ZERO),
+            // Go: fraction digits past the 19th are ignored, not an error.
+            ("1.00000000000000000001s", Duration::from_secs(1)),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_go_duration(input), Ok(expected), "input={:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_parse_go_duration_rejects_what_go_rejects() {
+        // Each of these makes Go's flag.Duration fail flag parsing; the old
+        // Rust parser turned them all into the 60 s default.
+        let rejected = [
+            "30",                    // bare number other than 0
+            "30sec",                 // unknown unit
+            "abc",                   // no number at all
+            "",                      // empty
+            "1h ",                   // trailing space is not a unit
+            "s",                     // unit without number
+            ".s",                    // dot without digits
+            "1.5",                   // fraction without unit
+            "1h-30m",                // sign is only allowed at the front
+            "-",                     // sign alone
+            "5124095576030432h",     // overflows int64 nanoseconds
+            "307445734561825861m",   // overflows int64 nanoseconds
+            "9223372036854775808ns", // 1<<63, one past int64
+        ];
+        for input in rejected {
+            let result = parse_go_duration(input);
+            assert!(result.is_err(), "input={:?} parsed as {:?}", input, result);
+            let message = result.unwrap_err();
+            assert!(
+                message.contains(&format!("{:?}", input)) || input.is_empty(),
+                "error for {:?} does not name the value: {}",
+                input,
+                message
+            );
+        }
+        // Largest value Go accepts: 1<<63 - 1 nanoseconds.
+        assert_eq!(
+            parse_go_duration("9223372036854775807ns"),
+            Ok(std::time::Duration::from_nanos(i64::MAX as u64))
+        );
+        // Go accepts negatives; std::time::Duration cannot, so it errors.
+        let negative = parse_go_duration("-1s").unwrap_err();
+        assert!(negative.contains("negative"), "{}", negative);
+    }
+
+    /// Clap refuses the flag so the process exits with a usage error, exactly
+    /// where Go's flag package does.
+    #[test]
+    fn test_cli_rejects_invalid_duration_flags() {
+        for value in ["30sec", "abc", "30"] {
+            let result = Cli::try_parse_from(["bin", "--inflightUploadDataTimeout", value]);
+            assert!(
+                result.is_err(),
+                "--inflightUploadDataTimeout={} was accepted as {:?}",
+                value,
+                result.map(|cli| cli.inflight_upload_data_timeout)
+            );
+            let err = Cli::try_parse_from(["bin", "--inflightDownloadDataTimeout", value])
+                .err()
+                .unwrap_or_else(|| panic!("--inflightDownloadDataTimeout={} was accepted", value));
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(err.to_string().contains(value), "{}", err);
+        }
+        let cli = Cli::parse_from(["bin", "--inflightUploadDataTimeout", "1.5h"]);
+        assert_eq!(
+            cli.inflight_upload_data_timeout,
+            std::time::Duration::from_secs(5400)
+        );
+        // The default still parses through the same grammar.
+        let cli = Cli::parse_from(["bin"]);
+        assert_eq!(
+            cli.inflight_upload_data_timeout,
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            cli.inflight_download_data_timeout,
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_matches_go_parse_bytes() {
+        // Expected values are what Go's util.ParseBytes returns (weed/util/bytes_test.go).
+        let cases: [(&str, u64); 14] = [
+            ("42", 42),
+            ("42MB", 42_000_000),
+            ("42 MB", 42_000_000),
+            ("42 mib", 44_040_192),
+            ("42M", 42_000_000),
+            ("100Ki", 100 * 1024),
+            ("10GiB", 10 * 1024 * 1024 * 1024),
+            ("10gib", 10 * 1024 * 1024 * 1024),
+            ("10GB", 10_000_000_000),
+            ("1.5TB", 1_500_000_000_000),
+            // Go's ParseBytes accepts thousands commas; the -minFreeSpace flag
+            // never delivers one (see test_min_free_space_flag_commas_are_list_separators).
+            ("1,024MB", 1_024_000_000),
+            ("1,024", 1024),
+            ("1PiB", 1 << 50),
+            ("1eb", 1_000_000_000_000_000_000),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_bytes(input), Ok(expected), "input={:?}", input);
+        }
+        for input in [
+            "10GiBx",
+            "GiB",
+            "",
+            "-5GB",
+            "1.2.3GB",
+            "10 Gi B",
+            "99999999999999999999EB",
+        ] {
+            assert!(
+                parse_bytes(input).is_err(),
+                "input={:?} was accepted",
+                input
+            );
+        }
+    }
+
+    fn expect_percent(result: Result<MinFreeSpace, String>, expected: f64, input: &str) {
+        match result {
+            Ok(MinFreeSpace::Percent(v)) => {
+                assert!(
+                    (v - expected).abs() < f64::EPSILON,
+                    "input={:?}: {}",
+                    input,
+                    v
+                )
+            }
+            other => panic!(
+                "input={:?}: expected Percent({}), got {:?}",
+                input, expected, other
+            ),
+        }
+    }
+
+    fn expect_bytes(result: Result<MinFreeSpace, String>, expected: u64, input: &str) {
+        match result {
+            Ok(MinFreeSpace::Bytes(v)) => assert_eq!(v, expected, "input={:?}", input),
+            other => panic!(
+                "input={:?}: expected Bytes({}), got {:?}",
+                input, expected, other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_space_matches_go() {
+        // Fixtures from weed/util/minfreespace_test.go plus the byte-unit table.
+        expect_percent(parse_min_free_space("42"), 42.0, "42");
+        expect_percent(parse_min_free_space(" 42 "), 42.0, " 42 ");
+        expect_percent(parse_min_free_space("50"), 50.0, "50");
+        expect_percent(parse_min_free_space("100"), 100.0, "100");
+        expect_percent(parse_min_free_space("0"), 0.0, "0");
+        expect_percent(parse_min_free_space("2.5"), 2.5, "2.5");
+        expect_bytes(parse_min_free_space("100Ki"), 100 * 1024, "100Ki");
+        expect_bytes(parse_min_free_space("100GiB"), 100 << 30, "100GiB");
+        expect_bytes(parse_min_free_space("42M"), 42_000_000, "42M");
+        expect_bytes(parse_min_free_space(" 42M "), 42_000_000, " 42M ");
+        expect_bytes(parse_min_free_space("10GiB"), 10 << 30, "10GiB");
+        expect_bytes(parse_min_free_space("10gib"), 10 << 30, "10gib");
+        expect_bytes(parse_min_free_space("1.5TB"), 1_500_000_000_000, "1.5TB");
+        // Comma inputs never arrive whole from the flag; see
+        // test_min_free_space_flag_commas_are_list_separators.
+        expect_bytes(parse_min_free_space("1,024MB"), 1_024_000_000, "1,024MB");
+        expect_bytes(parse_min_free_space("1,000"), 1000, "1,000");
+
+        // Go: percent outside 0..=100, or a byte size of at most 100 bytes.
+        for input in [
+            "150", "101", "-1", "1e3", "inf", "nan", "100B", "50B", "0B", "10GiBx", "", "abc",
+            "10 Gi B",
+        ] {
+            let result = parse_min_free_space(input);
+            assert!(
+                result.is_err(),
+                "input={:?} was accepted as {:?}",
+                input,
+                result
+            );
+            assert!(
+                result
+                    .as_ref()
+                    .unwrap_err()
+                    .contains(&format!("{:?}", input.trim())),
+                "error for {:?} does not name the value: {:?}",
+                input,
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_percent() {
+        let result = parse_min_free_spaces("", "1").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            MinFreeSpace::Percent(v) => assert!((v - 1.0).abs() < f64::EPSILON),
+            _ => panic!("Expected Percent"),
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_bytes() {
+        let result = parse_min_free_spaces("10GiB", "").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            MinFreeSpace::Bytes(v) => assert_eq!(*v, 10 * 1024 * 1024 * 1024),
+            _ => panic!("Expected Bytes"),
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_list_and_precedence() {
+        // --minFreeSpace wins over --minFreeSpacePercent, as in Go's EmptyTo().
+        let result = parse_min_free_spaces("5, 10GiB", "1").unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], MinFreeSpace::Percent(v) if v == 5.0));
+        assert!(matches!(result[1], MinFreeSpace::Bytes(v) if v == 10 << 30));
+        // One bad entry fails the whole list and names that entry.
+        let err = parse_min_free_spaces("5,10GiBx", "1").unwrap_err();
+        assert!(err.contains("\"10GiBx\""), "{}", err);
+        // Both flags empty: Go fatals (ParseMinFreeSpace("") fails) rather than
+        // assuming 1%.
+        assert!(parse_min_free_spaces("", "").is_err());
+    }
+
+    /// A comma in `-minFreeSpace` separates per-directory entries, as in Go's
+    /// `MustParseMinFreeSpace`: `1,024MB` is `1` (percent) and `024MB`, and
+    /// one `-dir` fails the count check.
+    #[test]
+    fn test_min_free_space_flag_commas_are_list_separators() {
+        let result = parse_min_free_spaces("1,024MB", "").unwrap();
+        assert_eq!(result.len(), 2, "{result:?}");
+        assert!(
+            matches!(result[0], MinFreeSpace::Percent(v) if v == 1.0),
+            "{result:?}"
+        );
+        assert!(
+            matches!(result[1], MinFreeSpace::Bytes(v) if v == 24_000_000),
+            "{result:?}"
+        );
+
+        let _guard = process_state_lock();
+        let cli = Cli::parse_from(["bin", "--dir", "/tmp/a", "--minFreeSpace", "1,024MB"]);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve_config_with_env(cli, &|_| None).min_free_spaces
+        }));
+        assert!(
+            outcome.is_err(),
+            "one -dir with two minFreeSpace entries must abort"
+        );
+    }
+
+    /// Negative control at the startup layer: resolving the config with an
+    /// invalid --minFreeSpace must abort, as Go's MustParseMinFreeSpace does.
+    #[test]
+    fn test_resolve_config_rejects_invalid_min_free_space() {
+        // The security-config search reads the working directory.
+        let _guard = process_state_lock();
+        for (flag, value) in [
+            ("--minFreeSpace", "10GiBx"),
+            ("--minFreeSpace", "150"),
+            ("--minFreeSpace", "50B"),
+            ("--minFreeSpacePercent", "150"),
+            ("--minFreeSpacePercent", "abc"),
+        ] {
+            let cli = Cli::parse_from(["bin", flag, value]);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resolve_config_with_env(cli, &|_| None).min_free_spaces
+            }));
+            let payload = match outcome {
+                Ok(spaces) => panic!("{}={} was accepted as {:?}", flag, value, spaces),
+                Err(payload) => payload,
+            };
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            assert!(
+                message.contains("-minFreeSpace") && message.contains(value),
+                "{}={}: unexpected panic message {:?}",
+                flag,
+                value,
+                message
+            );
+        }
+        let cfg =
+            resolve_config_with_env(Cli::parse_from(["bin", "--minFreeSpace", "100"]), &|_| None);
+        assert!(matches!(cfg.min_free_spaces[0], MinFreeSpace::Percent(v) if v == 100.0));
+    }
+
+    #[test]
+    fn test_parse_volume_tags_single() {
+        let tags = parse_volume_tags("fast:ssd", 3);
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0], vec!["fast", "ssd"]);
+        assert_eq!(tags[1], vec!["fast", "ssd"]);
+        assert_eq!(tags[2], vec!["fast", "ssd"]);
+    }
+
+    #[test]
+    fn test_parse_volume_tags_multi() {
+        let tags = parse_volume_tags("fast:ssd,archive", 3);
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0], vec!["fast", "ssd"]);
+        assert_eq!(tags[1], vec!["archive"]);
+        assert_eq!(tags[2], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_volume_tags_empty() {
+        let tags = parse_volume_tags("", 2);
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0], Vec::<String>::new());
+        assert_eq!(tags[1], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_normalize_args_single_dash_to_double() {
+        let args = vec![
+            "bin".into(),
+            "-port".into(),
+            "8080".into(),
+            "-ip.bind".into(),
+            "127.0.0.1".into(),
+            "-dir".into(),
+            "/data".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(
+            norm,
+            vec![
+                "bin",
+                "--port",
+                "8080",
+                "--ip.bind",
+                "127.0.0.1",
+                "--dir",
+                "/data",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_normalize_args_double_dash_unchanged() {
+        let args = vec![
+            "bin".into(),
+            "--port".into(),
+            "8080".into(),
+            "--master".into(),
+            "localhost:9333".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(
+            norm,
+            vec!["bin", "--port", "8080", "--master", "localhost:9333",]
+        );
+    }
+
+    #[test]
+    fn test_normalize_args_single_char_flags_unchanged() {
+        let args = vec!["bin".into(), "-h".into(), "-V".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "-h", "-V"]);
+    }
+
+    #[test]
+    fn test_normalize_args_equals_format() {
+        let args = vec!["bin".into(), "-port=8080".into(), "-ip.bind=0.0.0.0".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port=8080", "--ip.bind=0.0.0.0"]);
+    }
+
+    #[test]
+    fn test_normalize_args_stop_at_double_dash() {
+        let args = vec![
+            "bin".into(),
+            "-port".into(),
+            "8080".into(),
+            "--".into(),
+            "-notaflag".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port", "8080", "--", "-notaflag"]);
+    }
+
+    #[test]
+    fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
+        // With no --securityFile, the security-config search reads the process
+        // working directory, so this has to hold the lock against
+        // `with_temp_current_dir`. The environment is injected, not shared.
+        let _guard = process_state_lock();
+        let cfg = resolve_config_with_env(Cli::parse_from(["bin"]), &|_| None);
+        assert_eq!(cfg.folders, vec![default_volume_dir()]);
+    }
+
+    #[test]
+    fn test_resolve_config_index_accepts_redb_and_leveldb_aliases() {
+        // As above: the security-config search reads the working directory.
+        let _guard = process_state_lock();
+        let pairs = [
+            ("memory", NeedleMapKind::InMemory),
+            ("redb", NeedleMapKind::Redb),
+            ("leveldb", NeedleMapKind::Redb),
+            ("redbMedium", NeedleMapKind::RedbMedium),
+            ("leveldbMedium", NeedleMapKind::RedbMedium),
+            ("redbLarge", NeedleMapKind::RedbLarge),
+            ("leveldbLarge", NeedleMapKind::RedbLarge),
+        ];
+        for (input, expected) in pairs {
+            let cfg =
+                resolve_config_with_env(Cli::parse_from(["bin", "--index", input]), &|_| None);
+            assert_eq!(cfg.index_type, expected, "input={}", input);
+        }
+    }
+
+    #[test]
+    fn test_parse_security_config_access_ui() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "secret"
+
+[access]
+ui = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.jwt_signing_key, b"secret");
+        assert!(cfg.access_ui);
+    }
+
+    #[test]
+    fn test_parse_security_config_discovers_current_directory_default() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(SECURITY_CONFIG_FILE_NAME),
+            r#"
+[jwt.signing]
+key = "cwd-secret"
+"#,
+        )
+        .unwrap();
+
+        with_temp_current_dir(tmp.path(), || {
+            let cfg = parse_security_config_with_env("", &|_| None);
+            assert_eq!(cfg.jwt_signing_key, b"cwd-secret");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_discovers_home_default() {
+        let _guard = process_state_lock();
+        let current_dir = tempfile::TempDir::new().unwrap();
+        let home_dir = tempfile::TempDir::new().unwrap();
+        let seaweed_home = home_dir.path().join(".seaweedfs");
+        std::fs::create_dir_all(&seaweed_home).unwrap();
+        std::fs::write(
+            seaweed_home.join(SECURITY_CONFIG_FILE_NAME),
+            r#"
+[jwt.signing]
+key = "home-secret"
+"#,
+        )
+        .unwrap();
+
+        let env = fake_env(&[("HOME", home_dir.path().to_str().unwrap())]);
+        with_temp_current_dir(current_dir.path(), || {
+            let cfg = parse_security_config_with_env("", &env);
+            assert_eq!(cfg.jwt_signing_key, b"home-secret");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_root_ca() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+ca = "/etc/seaweedfs/grpc-ca.pem"
+
+[grpc.volume]
+cert = "/etc/seaweedfs/volume-cert.pem"
+key = "/etc/seaweedfs/volume-key.pem"
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
+        assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
+        assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_volume_client_cert() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc.volume]
+cert = "/etc/seaweedfs/volume-cert.pem"
+key = "/etc/seaweedfs/volume-key.pem"
+client_cert = "/etc/seaweedfs/volume-client-cert.pem"
+client_key = "/etc/seaweedfs/volume-client-key.pem"
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(
+            cfg.grpc_client_cert_file,
+            "/etc/seaweedfs/volume-client-cert.pem"
+        );
+        assert_eq!(
+            cfg.grpc_client_key_file,
+            "/etc/seaweedfs/volume-client-key.pem"
+        );
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_peer_name_policy() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+allowed_wildcard_domain = ".example.com"
+
+[grpc.volume]
+allowed_commonNames = "volume-a.internal,volume-b.internal"
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.grpc_allowed_wildcard_domain, ".example.com");
+        assert_eq!(
+            cfg.grpc_volume_allowed_common_names,
+            vec![
+                String::from("volume-a.internal"),
+                String::from("volume-b.internal")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_https_client_settings() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[https.client]
+enabled = true
+cert = "/etc/seaweedfs/client-cert.pem"
+key = "/etc/seaweedfs/client-key.pem"
+ca = "/etc/seaweedfs/client-ca.pem"
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert!(cfg.https_client_enabled);
+        assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
+        assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
+        assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_tls_policy_settings() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[tls]
+min_version = "TLS 1.2"
+max_version = "TLS 1.3"
+cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+        assert_eq!(cfg.tls_policy.min_version, "TLS 1.2");
+        assert_eq!(cfg.tls_policy.max_version, "TLS 1.3");
+        assert_eq!(
+            cfg.tls_policy.cipher_suites,
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+        );
+    }
+
+    #[test]
+    fn test_merge_options_file_basic() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "port=9999\ndir=/data\nmaster=localhost:9333\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // Should contain the original args plus the file-based ones
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"9999".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"/data".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_cli_precedence() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "port=9999\ndir=/data\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--port".into(),
+            "8080".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // port should NOT be duplicated from file since CLI already set it
+        let port_count = merged.iter().filter(|a| *a == "--port").count();
+        assert_eq!(
+            port_count, 1,
+            "CLI port should take precedence, file port skipped"
+        );
+        // dir should be added from file
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_comments_and_blanks() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "# this is a comment\n\nport=9999\n# another comment\ndir=/data\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_with_dashes_in_key() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "-port=9999\n--dir=/data\nip.bind=0.0.0.0\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"--ip.bind".to_string()));
+    }
+
+    #[test]
+    fn test_find_options_arg() {
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "-options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options=/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--port".into(), "8080".into()]),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_env_override_jwt_signing_key() {
+        // No file path, so the search reads the working directory.
+        let _guard = process_state_lock();
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
+    }
+
+    #[test]
+    fn test_env_override_takes_precedence_over_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "file-secret"
+"#,
+        )
+        .unwrap();
+
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &env);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
+    }
+
+    #[test]
+    fn test_env_override_guard_white_list() {
+        // No file path, so the search reads the working directory.
+        let _guard = process_state_lock();
+        let env = fake_env(&[("WEED_GUARD_WHITE_LIST", "10.0.0.0/8, 192.168.1.0/24")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert_eq!(cfg.guard_white_list, vec!["10.0.0.0/8", "192.168.1.0/24"]);
+    }
+
+    #[test]
+    fn test_env_override_access_ui() {
+        // No file path, so the search reads the working directory.
+        let _guard = process_state_lock();
+        let env = fake_env(&[("WEED_ACCESS_UI", "true")]);
+        let cfg = parse_security_config_with_env("", &env);
+        assert!(cfg.access_ui);
+    }
+}

@@ -3,21 +3,8 @@ package app
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
-
-// getStatusColor returns Bootstrap color class for status
-func getStatusColor(status string) string {
-	switch status {
-	case "active", "healthy":
-		return "success"
-	case "warning":
-		return "warning"
-	case "critical", "unreachable":
-		return "danger"
-	default:
-		return "secondary"
-	}
-}
 
 // formatBytes converts bytes to human readable format
 func formatBytes(bytes int64) string {
@@ -65,4 +52,40 @@ func calculatePercent(current, max int) int {
 		return 0
 	}
 	return (current * 100) / max
+}
+
+func pluginLaneDisplayName(lane string) string {
+	normalized := strings.TrimSpace(strings.ToLower(lane))
+	if normalized == "" || normalized == "default" {
+		return "Default"
+	}
+
+	parts := strings.Fields(strings.ReplaceAll(normalized, "_", " "))
+	if len(parts) == 0 {
+		return "Default"
+	}
+
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func pluginLaneTitle(lane string) string {
+	return pluginLaneDisplayName(lane) + " Workers"
+}
+
+func pluginLaneDescription(lane string) string {
+	switch strings.TrimSpace(strings.ToLower(lane)) {
+	case "iceberg":
+		return "Iceberg maintenance workers, scheduler state, queue, and execution flows."
+	case "lifecycle":
+		return "Lifecycle workers, scheduler state, queue, and execution flows."
+	default:
+		return "Default workers, scheduler state, queue, and execution flows."
+	}
 }

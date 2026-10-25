@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -39,21 +39,32 @@ func (vg *VolumeGrowRequest) Equals(req *VolumeGrowRequest) bool {
 	return reflect.DeepEqual(vg.Option, req.Option) && vg.Count == req.Count && vg.Force == req.Force
 }
 
+const DefaultReservationTimeout = 5 * time.Minute
+
 type volumeGrowthStrategy struct {
-	Copy1Count     uint32
-	Copy2Count     uint32
-	Copy3Count     uint32
-	CopyOtherCount uint32
-	Threshold      float64
+	Copy1Count         uint32
+	Copy2Count         uint32
+	Copy3Count         uint32
+	CopyOtherCount     uint32
+	Threshold          float64
+	ReservationTimeout time.Duration
+}
+
+func (s *volumeGrowthStrategy) GetReservationTimeout() time.Duration {
+	if s != nil && s.ReservationTimeout > 0 {
+		return s.ReservationTimeout
+	}
+	return DefaultReservationTimeout
 }
 
 var (
 	VolumeGrowStrategy = volumeGrowthStrategy{
-		Copy1Count:     7,
-		Copy2Count:     6,
-		Copy3Count:     3,
-		CopyOtherCount: 1,
-		Threshold:      0.9,
+		Copy1Count:         7,
+		Copy2Count:         6,
+		Copy3Count:         3,
+		CopyOtherCount:     1,
+		Threshold:          0.9,
+		ReservationTimeout: DefaultReservationTimeout,
 	}
 )
 
@@ -99,20 +110,25 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
 
+// VolumeGrowthCountForCopies returns the configured number of logical volumes
+// to create at once for a given replica copy count (master.volume_growth.copy_N).
+func VolumeGrowthCountForCopies(copyCount int) uint32 {
+	switch copyCount {
+	case 1:
+		return VolumeGrowStrategy.Copy1Count
+	case 2:
+		return VolumeGrowStrategy.Copy2Count
+	case 3:
+		return VolumeGrowStrategy.Copy3Count
+	default:
+		return VolumeGrowStrategy.CopyOtherCount
+	}
+}
+
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count uint32) {
-	switch copyCount {
-	case 1:
-		count = VolumeGrowStrategy.Copy1Count
-	case 2:
-		count = VolumeGrowStrategy.Copy2Count
-	case 3:
-		count = VolumeGrowStrategy.Copy3Count
-	default:
-		count = VolumeGrowStrategy.CopyOtherCount
-	}
-	return
+	return VolumeGrowthCountForCopies(copyCount)
 }
 
 func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount uint32) (result []*master_pb.VolumeLocation, err error) {
@@ -132,8 +148,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
+			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
 		} else {
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
 			return result, e
 		}
 	}
@@ -141,6 +159,13 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 }
 
 func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
+	// Wait for warmup to complete before searching for slots so the
+	// topology has all volume servers registered.
+	for topo.IsWarmingUp() {
+		glog.V(0).Infof("wait for volume servers to join back")
+		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
+	}
+
 	servers, reservation, e := vg.findEmptySlotsForOneVolume(topo, option, true) // use reservations
 	if e != nil {
 		return nil, e
@@ -151,11 +176,6 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 			reservation.releaseAllReservations()
 		}
 	}()
-
-	for !topo.LastLeaderChangeTime.Add(constants.VolumePulsePeriod * 2).Before(time.Now()) {
-		glog.V(0).Infof("wait for volume servers to join back")
-		time.Sleep(constants.VolumePulsePeriod / 2)
-	}
 	vid, raftErr := topo.NextVolumeId()
 	if raftErr != nil {
 		return nil, raftErr
@@ -383,7 +403,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 	if growErr == nil {
 		for i, vi := range createdVolumes {
 			server := servers[i]
-			server.AddOrUpdateVolume(vi)
+			server.AddProvisionalVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
 			glog.V(0).Infof("Registered Volume %d on %s", vid, server.NodeImpl.String())
 		}

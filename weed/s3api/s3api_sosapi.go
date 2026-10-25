@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -36,9 +35,6 @@ const (
 
 	// sosAPICapacityXML is the path to the capacity information XML file.
 	sosAPICapacityXML = sosAPISystemFolder + "/capacity.xml"
-
-	// sosAPIClientUserAgent is a substring to detect SOSAPI-compatible backup clients.
-	sosAPIClientUserAgent = "APN/1.0 Veeam/1.0"
 
 	// sosAPIProtocolVersion is the SOSAPI protocol version supported.
 	sosAPIProtocolVersion = `"1.0"`
@@ -95,13 +91,6 @@ func isSOSAPIObject(object string) bool {
 	default:
 		return false
 	}
-}
-
-// isSOSAPIClient checks if the request comes from a SOSAPI-compatible client
-// by examining the User-Agent header.
-func isSOSAPIClient(r *http.Request) bool {
-	userAgent := r.Header.Get("User-Agent")
-	return strings.Contains(userAgent, sosAPIClientUserAgent)
 }
 
 // generateSystemXML creates the system.xml response containing storage system
@@ -167,9 +156,13 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 		masterMap[string(master)] = master
 	}
 
+	// Cluster capacity below is read from disk counters, which a filtered
+	// listing still reports in full.
+	collectionName := s3a.getCollectionName(bucket)
+
 	// Connect to any available master and get volume list (topology)
 	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{Collection: collectionName})
 		if vErr != nil {
 			return vErr
 		}
@@ -179,7 +172,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 		}
 
 		// Calculate used size for the bucket by summing up volumes in the collection
-		used = collectBucketUsageFromTopology(resp.TopologyInfo, s3a.getCollectionName(bucket))
+		used = collectBucketUsageFromTopology(resp.TopologyInfo, collectionName)
 
 		// Calculate cluster capacity if no quota
 		if quota > 0 {

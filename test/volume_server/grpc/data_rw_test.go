@@ -17,7 +17,7 @@ func TestReadNeedleBlobAndMetaMissingVolume(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -55,7 +55,7 @@ func TestWriteNeedleBlobMaintenanceAndMissingVolume(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -105,7 +105,7 @@ func TestReadNeedleBlobAndMetaInvalidOffsets(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

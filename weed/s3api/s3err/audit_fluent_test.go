@@ -1,0 +1,162 @@
+package s3err
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestGetAccessLogUsesAmzRequestID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+	req = req.WithContext(request_id.Set(req.Context(), "req-123"))
+
+	log := GetAccessLog(req, http.StatusOK, ErrNone)
+
+	assert.Equal(t, "req-123", log.RequestID)
+}
+
+func TestGetAccessLogRemoteIP(t *testing.T) {
+	tests := []struct {
+		name           string
+		remoteAddr     string
+		xRealIP        string
+		xForwardedFor  string
+		expectedRemote string
+	}{
+		{
+			name:           "falls back to RemoteAddr (port stripped) when no headers set",
+			remoteAddr:     "10.89.0.1:35832",
+			expectedRemote: "10.89.0.1",
+		},
+		{
+			name:           "preserves IPv6 host from RemoteAddr",
+			remoteAddr:     "[2001:db8::1]:35832",
+			expectedRemote: "2001:db8::1",
+		},
+		{
+			name:           "returns RemoteAddr unchanged when no port present",
+			remoteAddr:     "@",
+			expectedRemote: "@",
+		},
+		{
+			name:           "uses X-Real-IP when X-Forwarded-For is absent",
+			remoteAddr:     "10.89.0.1:35832",
+			xRealIP:        "203.0.113.7",
+			expectedRemote: "203.0.113.7",
+		},
+		{
+			name:           "prefers X-Forwarded-For over X-Real-IP",
+			remoteAddr:     "10.89.0.1:35832",
+			xRealIP:        "203.0.113.7",
+			xForwardedFor:  "198.51.100.42",
+			expectedRemote: "198.51.100.42",
+		},
+		{
+			name:           "uses first hop in X-Forwarded-For chain",
+			remoteAddr:     "10.89.0.1:35832",
+			xForwardedFor:  "198.51.100.42, 10.0.0.5, 10.89.0.1",
+			expectedRemote: "198.51.100.42",
+		},
+		{
+			name:           "skips empty leading entries in X-Forwarded-For",
+			remoteAddr:     "10.89.0.1:35832",
+			xForwardedFor:  ", 198.51.100.42",
+			expectedRemote: "198.51.100.42",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if tc.xRealIP != "" {
+				req.Header.Set("X-Real-IP", tc.xRealIP)
+			}
+			if tc.xForwardedFor != "" {
+				req.Header.Set("X-Forwarded-For", tc.xForwardedFor)
+			}
+
+			log := GetAccessLog(req, http.StatusOK, ErrNone)
+
+			assert.Equal(t, tc.expectedRemote, log.RemoteIP)
+		})
+	}
+}
+
+// TestGetAccessLogRequesterFromFallback reproduces the fallback audit path for
+// GET/HEAD/IAM operations: authentication records the requester on a request
+// copy the track() middleware never sees, yet the fallback audit entry (built
+// from the original request) must still report the authenticated user.
+func TestGetAccessLogRequesterFromFallback(t *testing.T) {
+	// track() installs the holder before authentication runs.
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+
+	// auth records the identity on a copy and hands that copy to the handler;
+	// the copy itself is discarded once the handler returns.
+	_ = outer.WithContext(s3_constants.SetIdentityNameInContext(outer.Context(), "admin"))
+
+	// The handler returned without logging, so track() builds the fallback entry
+	// from the original request.
+	log := GetAccessLog(outer, http.StatusOK, ErrNone)
+
+	assert.Equal(t, "admin", log.Requester, "fallback audit entry must report the authenticated requester")
+}
+
+func TestGetAccessLogRequesterAnonymous(t *testing.T) {
+	req := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+
+	log := GetAccessLog(req, http.StatusOK, ErrNone)
+
+	assert.Empty(t, log.Requester, "anonymous request must not report a requester")
+	assert.Empty(t, log.RequesterArn, "anonymous request must not report a principal ARN")
+}
+
+// An STS session's identity name is an opaque session subject, so the audit
+// entry must also carry the principal ARN — that is where the assumed role and
+// the role session name are recoverable from.
+func TestGetAccessLogRequesterArnForAssumedRole(t *testing.T) {
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+
+	// Auth writes into the holder from a request copy the audit path never sees.
+	ctx := s3_constants.SetIdentityNameInContext(outer.Context(), "47ad4828c45b3f337bc3146081ba8f0f")
+	s3_constants.SetPrincipalArnInContext(ctx, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session")
+
+	log := GetAccessLog(outer, http.StatusOK, ErrNone)
+
+	assert.Equal(t, "47ad4828c45b3f337bc3146081ba8f0f", log.Requester)
+	assert.Equal(t, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session", log.RequesterArn)
+}
+
+// An OIDC-federated session's opaque requester is useless for compliance
+// auditing, so the audit entry must also carry the authoritative identity claim
+// written by auth into the shared identity holder. See issue #11264.
+func TestGetAccessLogRequesterIdentityFromFallback(t *testing.T) {
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+
+	ctx := s3_constants.SetIdentityNameInContext(outer.Context(), "2a19e647c5d43a62a91ecf664d07dbe1")
+	s3_constants.SetIdentityClaimInContext(ctx, "grant.west")
+
+	log := GetAccessLog(outer, http.StatusOK, ErrNone)
+
+	assert.Equal(t, "2a19e647c5d43a62a91ecf664d07dbe1", log.Requester)
+	assert.Equal(t, "grant.west", log.RequesterIdentity)
+}
+
+func TestAuditTrackingFlag(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+	assert.False(t, AuditAlreadyLogged(req), "untracked request reports not logged")
+
+	tracked := EnsureAuditTracking(req)
+	assert.NotSame(t, req, tracked, "EnsureAuditTracking returns a new request when no flag is present")
+	assert.False(t, AuditAlreadyLogged(tracked), "tracked request starts unlogged")
+
+	again := EnsureAuditTracking(tracked)
+	assert.Same(t, tracked, again, "EnsureAuditTracking is idempotent when flag already present")
+
+	MarkAuditLogged(tracked)
+	assert.True(t, AuditAlreadyLogged(tracked), "flag flips after MarkAuditLogged")
+}

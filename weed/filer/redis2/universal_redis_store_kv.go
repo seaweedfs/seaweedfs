@@ -10,7 +10,7 @@ import (
 
 func (store *UniversalRedis2Store) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 
-	_, err = store.Client.Set(ctx, string(key), value, 0).Result()
+	_, err = store.Client.Set(ctx, store.getKey(string(key)), value, 0).Result()
 
 	if err != nil {
 		return fmt.Errorf("kv put: %w", err)
@@ -21,7 +21,7 @@ func (store *UniversalRedis2Store) KvPut(ctx context.Context, key []byte, value 
 
 func (store *UniversalRedis2Store) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
-	data, err := store.Client.Get(ctx, string(key)).Result()
+	data, err := store.Client.Get(ctx, store.getKey(string(key))).Result()
 
 	if err == redis.Nil {
 		return nil, filer.ErrKvNotFound
@@ -32,7 +32,7 @@ func (store *UniversalRedis2Store) KvGet(ctx context.Context, key []byte) (value
 
 func (store *UniversalRedis2Store) KvDelete(ctx context.Context, key []byte) (err error) {
 
-	_, err = store.Client.Del(ctx, string(key)).Result()
+	_, err = store.Client.Del(ctx, store.getKey(string(key))).Result()
 
 	if err != nil {
 		return fmt.Errorf("kv delete: %w", err)

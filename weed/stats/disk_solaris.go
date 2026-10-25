@@ -1,5 +1,4 @@
 //go:build solaris
-// +build solaris
 
 package stats
 
@@ -9,16 +8,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-func fillInDiskStatus(disk *volume_server_pb.DiskStatus) {
+func fillInDiskStatus(disk *volume_server_pb.DiskStatus) error {
 	var stat unix.Statvfs_t
-	err := unix.Statvfs(disk.Dir, &stat)
-	if err != nil {
-		return
+	if err := unix.Statvfs(disk.Dir, &stat); err != nil {
+		return err
 	}
 
 	disk.All = stat.Blocks * uint64(stat.Bsize)
 	disk.Free = stat.Bfree * uint64(stat.Bsize)
-	calculateDiskRemaining(disk)
+	disk.Used = disk.All - disk.Free
+	disk.PercentFree = float32((float64(disk.Free) / float64(disk.All)) * 100)
+	disk.PercentUsed = float32((float64(disk.Used) / float64(disk.All)) * 100)
 
-	return
+	return nil
 }

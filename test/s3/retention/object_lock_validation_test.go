@@ -22,6 +22,8 @@ func TestObjectLockValidation(t *testing.T) {
 	t.Logf("=== Validating S3 Object Lock Functionality ===")
 	t.Logf("Bucket: %s", bucketName)
 
+	cleanupLeftoverTestBuckets(t, client)
+
 	// Step 1: Create bucket with Object Lock header
 	t.Log("\n1. Creating bucket with x-amz-bucket-object-lock-enabled: true")
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{

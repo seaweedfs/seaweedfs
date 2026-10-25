@@ -16,13 +16,15 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
-        <spark.version>3.5.0</spark.version>
+        <spark.version>3.5.8</spark.version>
         <hadoop.version>3.3.6</hadoop.version>
         <scala.binary.version>2.12</scala.binary.version>
         <junit.version>4.13.2</junit.version>
         <seaweedfs.hadoop3.client.version>4.00</seaweedfs.hadoop3.client.version>
-        <jackson.version>2.18.2</jackson.version> <!-- Upgraded from 2.15.3 -->
-        <netty.version>4.1.129.Final</netty.version> <!-- Upgraded to 4.1.125.Final for security fixes (CVE in netty-codec < 4.1.125.Final, netty-codec-http2 <= 4.1.123.Final) -->
+        <jackson.version>2.22.3</jackson.version> <!-- Upgraded from 2.15.3 -->
+        <!-- jackson-annotations dropped the patch digit in 2.20; matches jackson.version's major.minor -->
+        <jackson.annotations.version>2.22</jackson.annotations.version>
+        <netty.version>4.2.16.Final</netty.version> <!-- Upgraded to 4.1.125.Final for security fixes (CVE in netty-codec < 4.1.125.Final, netty-codec-http2 <= 4.1.123.Final) -->
         <parquet.version>1.15.2</parquet.version> <!-- Upgraded to 1.15.2 for security fix -->
         <parquet.format.version>2.12.0</parquet.format.version>
         <surefire.jvm.args>
@@ -62,7 +64,7 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-annotations</artifactId>
-                <version>${jackson.version}</version>
+                <version>${jackson.annotations.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.dataformat</groupId>
@@ -116,14 +118,14 @@
             <dependency>
                 <groupId>org.apache.avro</groupId>
                 <artifactId>avro</artifactId>
-                <version>1.11.4</version>
+                <version>1.11.5</version>
             </dependency>
 
             <!-- Apache ZooKeeper - Fix CVEs -->
             <dependency>
                 <groupId>org.apache.zookeeper</groupId>
                 <artifactId>zookeeper</artifactId>
-                <version>3.9.4</version>
+                <version>3.9.5</version>
             </dependency>
 
             <!-- Apache Commons - Fix CVEs -->

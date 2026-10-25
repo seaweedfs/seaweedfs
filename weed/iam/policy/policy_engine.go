@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Effect represents the policy evaluation result
@@ -21,12 +21,13 @@ const (
 	EffectDeny  Effect = "Deny"
 )
 
-// Package-level regex cache for performance optimization
 var (
-	regexCache            = make(map[string]*regexp.Regexp)
-	regexCacheMu          sync.RWMutex
 	policyVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
-	safePolicyVariables   = map[string]bool{
+	// safePolicyVariables is the explicit allowlist of fixed-name variables.
+	// Identity claims published under jwt:/saml:/oidc: are additionally accepted
+	// as dynamic variables (see isSafePolicyVariable) so that any claim from a
+	// cryptographically verified federated token can be used in policies.
+	safePolicyVariables = map[string]bool{
 		// AWS standard identity variables
 		"aws:username":             true,
 		"aws:userid":               true,
@@ -35,20 +36,6 @@ var (
 		"aws:principaltype":        true,
 		"aws:FederatedProvider":    true,
 		"aws:PrincipalServiceName": true,
-		// SAML identity variables
-		"saml:username": true,
-		"saml:sub":      true,
-		"saml:aud":      true,
-		"saml:iss":      true,
-		// OIDC/JWT identity variables
-		"oidc:sub": true,
-		"oidc:aud": true,
-		"oidc:iss": true,
-		// JWT identity variables
-		"jwt:preferred_username": true,
-		"jwt:sub":                true,
-		"jwt:iss":                true,
-		"jwt:aud":                true,
 		// AWS request context (not from headers)
 		"aws:SourceIp":        true,
 		"aws:SecureTransport": true,
@@ -58,6 +45,23 @@ var (
 		"s3:max-keys":         true,
 	}
 )
+
+// isSafePolicyVariable reports whether a policy variable may be substituted
+// with a value from RequestContext. The fixed allowlist covers AWS-defined
+// variables; any jwt:/saml:/oidc:/aws:PrincipalTag/ claim is also allowed
+// because those come from a validated identity token (the STS session JWT
+// or federated assertion) and the claim set is controlled by the trusted
+// identity provider.
+func isSafePolicyVariable(variable string) bool {
+	if safePolicyVariables[variable] {
+		return true
+	}
+	return strings.HasPrefix(variable, "jwt:") ||
+		strings.HasPrefix(variable, "saml:") ||
+		strings.HasPrefix(variable, "oidc:") ||
+		strings.HasPrefix(variable, "aws:PrincipalTag/") ||
+		strings.HasPrefix(variable, "aws:RequestTag/")
+}
 
 // PolicyEngine evaluates policies against requests
 type PolicyEngine struct {
@@ -324,6 +328,14 @@ func (e *PolicyEngine) IsInitialized() bool {
 	return e.initialized
 }
 
+// DefaultAllow returns whether the default effect is Allow
+func (e *PolicyEngine) DefaultAllow() bool {
+	if e.config == nil {
+		return true // Default to Allow if not configured
+	}
+	return e.config.DefaultEffect == string(EffectAllow)
+}
+
 // AddPolicy adds a policy to the engine (filerAddress ignored for memory stores)
 func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *PolicyDocument) error {
 	if !e.initialized {
@@ -343,6 +355,41 @@ func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *Polic
 	}
 
 	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
+}
+
+// GetPolicy returns a stored policy document, or an error when it does not
+// exist in the configured store.
+func (e *PolicyEngine) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if name == "" {
+		return nil, fmt.Errorf("policy name cannot be empty")
+	}
+
+	return e.store.GetPolicy(ctx, filerAddress, name)
+}
+
+// DeletePolicy removes a policy from the configured store.
+func (e *PolicyEngine) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
+	if !e.initialized {
+		return fmt.Errorf("policy engine not initialized")
+	}
+
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+
+	return e.store.DeletePolicy(ctx, filerAddress, name)
+}
+
+// StoreType returns the configured backend type for the policy store.
+func (e *PolicyEngine) StoreType() string {
+	if e.config == nil {
+		return ""
+	}
+	return e.config.StoreType
 }
 
 // Evaluate evaluates policies against a request context (filerAddress ignored for memory stores)
@@ -426,8 +473,11 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 		return nil, fmt.Errorf("trust policy cannot be nil")
 	}
 
+	// A trust policy is deny-by-default, whatever the engine's DefaultEffect:
+	// a role may be assumed only by a principal a trust statement explicitly
+	// allows.
 	result := &EvaluationResult{
-		Effect: Effect(e.config.DefaultEffect),
+		Effect: EffectDeny,
 		EvaluationDetails: &EvaluationDetails{
 			Principal:         evalCtx.Principal,
 			Action:            evalCtx.Action,
@@ -464,7 +514,7 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 	// AWS IAM evaluation logic:
 	// 1. If there's an explicit Deny, the result is Deny
 	// 2. If there's an Allow and no Deny, the result is Allow
-	// 3. Otherwise, use the default effect
+	// 3. Otherwise, the implicit deny stands
 	if explicitDeny {
 		result.Effect = EffectDeny
 	} else if hasAllow {
@@ -571,10 +621,29 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	return true
 }
 
-// matchesActions checks if any action in the list matches the requested action
+// multipartActionSet contains lowercased S3 multipart upload actions that are
+// implicitly granted when s3:PutObject is allowed, since multipart upload is an
+// implementation detail of putting objects. Keys are lowercased for
+// case-insensitive lookup (AWS IAM actions are case-insensitive).
+var multipartActionSet = map[string]bool{
+	"s3:createmultipartupload":      true,
+	"s3:uploadpart":                 true,
+	"s3:completemultipartupload":    true,
+	"s3:abortmultipartupload":       true,
+	"s3:listmultipartuploadparts":   true,
+	"s3:listbucketmultipartuploads": true,
+}
+
+// matchesActions checks if any action in the list matches the requested action.
+// It also implicitly grants multipart upload actions when s3:PutObject is allowed,
+// mirroring the behavior in the S3 API policy engine (see PR #8445).
 func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, evalCtx *EvaluationContext) bool {
+	isMultipart := multipartActionSet[strings.ToLower(requestedAction)]
 	for _, action := range actions {
 		if awsIAMMatch(action, requestedAction, evalCtx) {
+			return true
+		}
+		if isMultipart && awsIAMMatch(action, "s3:PutObject", evalCtx) {
 			return true
 		}
 	}
@@ -1016,8 +1085,7 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
@@ -1058,13 +1126,11 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
 					} else {
-						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
 						if expandedExpected == contextValue {
 							contextValueMatchedSet = true
 							break
@@ -1126,11 +1192,6 @@ func ValidatePolicyDocumentWithType(policy *PolicyDocument, policyType string) e
 	return nil
 }
 
-// validateStatement validates a single statement (for backward compatibility)
-func validateStatement(statement *Statement) error {
-	return validateStatementWithType(statement, "resource")
-}
-
 // validateStatementWithType validates a single statement based on policy type
 func validateStatementWithType(statement *Statement, policyType string) error {
 	if statement.Effect != "Allow" && statement.Effect != "Deny" {
@@ -1169,29 +1230,6 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 	return nil
 }
 
-// matchResource checks if a resource pattern matches a requested resource
-// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
-func matchResource(pattern, resource string) bool {
-	if pattern == resource {
-		return true
-	}
-
-	// Handle simple suffix wildcard (backward compatibility)
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(resource, prefix)
-	}
-
-	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
-	matched, err := filepath.Match(pattern, resource)
-	if err != nil {
-		// Fallback to exact match if pattern is malformed
-		return pattern == resource
-	}
-
-	return matched
-}
-
 // awsIAMMatch performs AWS IAM-compliant pattern matching with case-insensitivity and policy variable support
 func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 	// Step 1: Substitute policy variables (e.g., ${aws:username}, ${saml:username})
@@ -1202,6 +1240,18 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 		return true // Universal wildcard
 	}
 
+	// IAM identity ARNs match case-sensitively: identity lookup is
+	// case-sensitive, so a case-variant names a different identity.
+	if strings.HasPrefix(value, "arn:aws:iam::") {
+		if expandedPattern == value {
+			return true
+		}
+		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+			return wildcard.MatchesWildcard(expandedPattern, value)
+		}
+		return false
+	}
+
 	// Step 3: Case-insensitive exact match
 	if strings.EqualFold(expandedPattern, value) {
 		return true
@@ -1209,7 +1259,7 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 
 	// Step 4: Handle AWS-style wildcards (case-insensitive)
 	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-		return AwsWildcardMatch(expandedPattern, value)
+		return wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(value))
 	}
 
 	return false
@@ -1226,94 +1276,75 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		// Extract variable name from ${variable}
 		variable := match[2 : len(match)-1]
 
-		// Only substitute if variable is in the safe allowlist
-		if !safePolicyVariables[variable] {
-			return match // Leave unsafe variables as-is
+		// Only substitute if the variable is in the allowlist or is a dynamic
+		// identity-claim variable (jwt:/saml:/oidc:)
+		if !isSafePolicyVariable(variable) {
+			return match // Leave unrecognised variables as-is
 		}
 
 		// Get value from request context
-		if value, exists := evalCtx.RequestContext[variable]; exists {
-			if str, ok := value.(string); ok {
-				return str
-			}
+		value, exists := evalCtx.RequestContext[variable]
+		if !exists {
+			return match // Variable not supplied: leave placeholder so statement won't match
 		}
 
-		// Variable not found or not a string, leave as-is
+		if str, ok := stringifyClaimValue(value); ok {
+			return str
+		}
+
+		// Value is a non-scalar (array/object) we can't meaningfully substitute
 		return match
 	})
 
 	return result
 }
 
-// getContextValue safely gets a value from the evaluation context
-func getContextValue(evalCtx *EvaluationContext, key, defaultValue string) string {
-	if value, exists := evalCtx.RequestContext[key]; exists {
-		if str, ok := value.(string); ok {
-			return str
+// stringifyClaimValue converts a claim value to its string form for policy
+// variable substitution. Returns (value, true) for scalar types that a JWT
+// claim can produce after JSON decoding, and ("", false) for slices/maps/nil.
+// JSON's generic decoder only produces float64 / json.Number for numbers, but
+// RequestContext can also be populated from typed sources (e.g., custom
+// providers or internal code), so all common integer widths — signed and
+// unsigned — are handled explicitly.
+func stringifyClaimValue(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case bool:
+		return strconv.FormatBool(v), true
+	case float64:
+		// JSON-decoded numbers are float64; render integers without a decimal point
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10), true
 		}
+		return strconv.FormatFloat(v, 'g', -1, 64), true
+	case float32:
+		return strconv.FormatFloat(float64(v), 'g', -1, 32), true
+	case int:
+		return strconv.FormatInt(int64(v), 10), true
+	case int8:
+		return strconv.FormatInt(int64(v), 10), true
+	case int16:
+		return strconv.FormatInt(int64(v), 10), true
+	case int32:
+		return strconv.FormatInt(int64(v), 10), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint64:
+		return strconv.FormatUint(v, 10), true
+	case json.Number:
+		return v.String(), true
+	default:
+		return "", false
 	}
-	return defaultValue
-}
-
-// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
-func AwsWildcardMatch(pattern, value string) bool {
-	// Create regex pattern key for caching
-	// First escape all regex metacharacters, then replace wildcards
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
-	regexPattern = "^" + regexPattern + "$"
-	regexKey := "(?i)" + regexPattern
-
-	// Try to get compiled regex from cache
-	regexCacheMu.RLock()
-	regex, found := regexCache[regexKey]
-	regexCacheMu.RUnlock()
-
-	if !found {
-		// Compile and cache the regex
-		compiledRegex, err := regexp.Compile(regexKey)
-		if err != nil {
-			// Fallback to simple case-insensitive comparison if regex fails
-			return strings.EqualFold(pattern, value)
-		}
-
-		// Store in cache with write lock
-		regexCacheMu.Lock()
-		// Double-check in case another goroutine added it
-		if existingRegex, exists := regexCache[regexKey]; exists {
-			regex = existingRegex
-		} else {
-			regexCache[regexKey] = compiledRegex
-			regex = compiledRegex
-		}
-		regexCacheMu.Unlock()
-	}
-
-	return regex.MatchString(value)
-}
-
-// matchAction checks if an action pattern matches a requested action
-// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
-func matchAction(pattern, action string) bool {
-	if pattern == action {
-		return true
-	}
-
-	// Handle simple suffix wildcard (backward compatibility)
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(action, prefix)
-	}
-
-	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
-	matched, err := filepath.Match(pattern, action)
-	if err != nil {
-		// Fallback to exact match if pattern is malformed
-		return pattern == action
-	}
-
-	return matched
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
@@ -1360,7 +1391,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1382,7 +1413,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}
@@ -1422,7 +1453,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1444,7 +1475,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}

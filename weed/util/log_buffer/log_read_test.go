@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 	defer logBuffer.ShutdownLogBuffer()
 
 	callCount := 0
-	maxCalls := 10
+	maxCalls := 4
 	mu := sync.Mutex{}
 
 	waitForDataFn := func() bool {
@@ -87,14 +88,12 @@ func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 		t.Errorf("Expected isDone=true when waitForDataFn returns false, got false")
 	}
 
-	// With 10ms sleep per iteration, 10 iterations should take ~100ms minimum
-	minExpectedTime := time.Duration(maxCalls-1) * 10 * time.Millisecond
+	minExpectedTime := time.Duration(maxCalls-1) * notificationHealthCheckInterval
 	if elapsed < minExpectedTime {
 		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests busy-waiting)", elapsed, minExpectedTime)
 	}
 
-	// But shouldn't take more than 2x expected (allows for some overhead)
-	maxExpectedTime := time.Duration(maxCalls) * 30 * time.Millisecond
+	maxExpectedTime := time.Duration(maxCalls+1) * notificationHealthCheckInterval
 	if elapsed > maxExpectedTime {
 		t.Errorf("Loop took too long: %v (expected < %v)", elapsed, maxExpectedTime)
 	}
@@ -122,7 +121,7 @@ func TestLoopProcessLogDataWithOffset_NoDataResumeFromDisk(t *testing.T) {
 	defer logBuffer.ShutdownLogBuffer()
 
 	callCount := 0
-	maxCalls := 5
+	maxCalls := 3
 	mu := sync.Mutex{}
 
 	waitForDataFn := func() bool {
@@ -148,13 +147,196 @@ func TestLoopProcessLogDataWithOffset_NoDataResumeFromDisk(t *testing.T) {
 		t.Errorf("Expected isDone=true when waitForDataFn returns false, got false")
 	}
 
-	// Should take at least (maxCalls-1) * 10ms due to sleep in ResumeFromDiskError path
-	minExpectedTime := time.Duration(maxCalls-1) * 10 * time.Millisecond
+	minExpectedTime := time.Duration(maxCalls-1) * notificationHealthCheckInterval
 	if elapsed < minExpectedTime {
-		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests missing sleep)", elapsed, minExpectedTime)
+		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests missing wait)", elapsed, minExpectedTime)
 	}
 
 	t.Logf("Loop exited cleanly in %v after %d iterations (proper sleep detected)", elapsed, callCount)
+}
+
+// TestLoopFlush_NotifiesSubscribersAfterFlush is a regression test for the
+// issue #9007 fix: loopFlush must call notifySubscribers() after processing a
+// flush so that readers parked on notifyChan wake up when a flush lands. The
+// classic bug scenario is a reader that got ResumeFromDiskError, did a disk
+// read that raced the flush and found nothing, and is now blocked on
+// notifyChan waiting for the data that just hit disk.
+//
+// We drain the AddToBuffer notification first, then ForceFlush, and assert a
+// new notification is delivered on notifyChan well before the fallback
+// timeout. If the loopFlush notification is removed, this test fails by
+// hitting the fallback.
+func TestLoopFlush_NotifiesSubscribersAfterFlush(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	notifyChan := logBuffer.RegisterSubscriber("flush-notify-test")
+	defer logBuffer.UnregisterSubscriber("flush-notify-test")
+
+	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("k"),
+		Value: []byte("v"),
+		TsNs:  time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("AddToBuffer: %v", err)
+	}
+
+	// Consume the AddToBuffer notification so the channel starts empty.
+	select {
+	case <-notifyChan:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected a notification from AddToBuffer")
+	}
+
+	// ForceFlush waits for loopFlush to process the flush. After it returns,
+	// loopFlush must have called notifySubscribers() again.
+	start := time.Now()
+	logBuffer.ForceFlush()
+
+	select {
+	case <-notifyChan:
+		elapsed := time.Since(start)
+		// The fallback timeout is notificationHealthCheckInterval; the flush
+		// notification should arrive well before that.
+		if elapsed >= notificationHealthCheckInterval {
+			t.Errorf("flush notification too slow: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+		}
+		t.Logf("flush notification delivered in %v", elapsed)
+	case <-time.After(notificationHealthCheckInterval):
+		t.Fatalf("loopFlush did not notify subscribers within %v", notificationHealthCheckInterval)
+	}
+}
+
+// TestLoopProcessLogDataWithOffset_WakesOnDataArrival drives a real
+// LoopProcessLogDataWithOffset reader from an empty buffer (readFromDiskFn
+// returns nothing, forcing the reader to park on notifyChan after the
+// ResumeFromDiskError branch), then adds data from another goroutine and
+// asserts the reader completes well before the fallback timeout would fire.
+// This protects the end-to-end wake-up path; the loopFlush-specific
+// notification is covered by TestLoopFlush_NotifiesSubscribersAfterFlush.
+func TestLoopProcessLogDataWithOffset_WakesOnDataArrival(t *testing.T) {
+	readFromDiskFn := func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (MessagePosition, bool, error) {
+		// No data on disk; return unchanged so the reader parks on notifyChan.
+		return startPosition, false, nil
+	}
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, readFromDiskFn, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	received := make(chan struct{})
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+		close(received)
+		return true, nil // isDone
+	}
+
+	waitForDataFn := func() bool { return true }
+
+	startPosition := NewMessagePositionFromOffset(0)
+
+	readerDone := make(chan struct{})
+	go func() {
+		_, _, _ = logBuffer.LoopProcessLogDataWithOffset(
+			"wake-test", startPosition, 0, waitForDataFn, eachLogEntryFn)
+		close(readerDone)
+	}()
+
+	// Give the reader time to reach awaitNotificationOrTimeout. Both wake
+	// paths under test (notifyChan via AddToBuffer and shutdownCh via
+	// ShutdownLogBuffer) are race-free even if the reader hasn't parked yet
+	// — the notification stays buffered / shutdownCh stays closed — but a
+	// generous head start makes it likelier we exercise the actual park-then-
+	// wake path rather than the already-pending fast path. 50ms is well below
+	// notificationHealthCheckInterval (250ms) and tolerates slow CI.
+	time.Sleep(50 * time.Millisecond)
+
+	start := time.Now()
+	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("k"),
+		Value: []byte("v"),
+		TsNs:  time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("AddToBuffer: %v", err)
+	}
+
+	select {
+	case <-received:
+	case <-time.After(notificationHealthCheckInterval):
+		t.Fatalf("reader did not process the entry within %v (fallback timeout)", notificationHealthCheckInterval)
+	}
+	<-readerDone
+	elapsed := time.Since(start)
+
+	if elapsed >= notificationHealthCheckInterval {
+		t.Errorf("reader wake too slow: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+	}
+	t.Logf("reader processed the entry in %v after AddToBuffer", elapsed)
+}
+
+// TestLoopProcessLogDataWithOffset_WakesOnShutdown verifies that a reader
+// parked inside awaitNotificationOrTimeout via the ResumeFromDiskError branch
+// exits promptly when ShutdownLogBuffer is called, without waiting for the
+// 250ms health-check fallback. Regression guard for the IsStopping() shutdown
+// path: if awaitNotificationOrTimeout returns true via shutdownCh and the
+// caller does not check IsStopping(), the reader either spins against the
+// closed shutdownCh or returns ResumeFromDiskError instead of exiting.
+func TestLoopProcessLogDataWithOffset_WakesOnShutdown(t *testing.T) {
+	readFromDiskFn := func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (MessagePosition, bool, error) {
+		// No data on disk; return unchanged so the reader parks on notifyChan.
+		return startPosition, false, nil
+	}
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, readFromDiskFn, nil)
+	// Note: not deferring ShutdownLogBuffer; we trigger it explicitly below.
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+		return false, nil
+	}
+	waitForDataFn := func() bool { return true }
+	startPosition := NewMessagePositionFromOffset(0)
+
+	type result struct {
+		isDone bool
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		_, isDone, err := logBuffer.LoopProcessLogDataWithOffset(
+			"shutdown-test", startPosition, 0, waitForDataFn, eachLogEntryFn)
+		resultCh <- result{isDone: isDone, err: err}
+	}()
+
+	// Give the reader time to reach awaitNotificationOrTimeout. Both wake
+	// paths under test (notifyChan via AddToBuffer and shutdownCh via
+	// ShutdownLogBuffer) are race-free even if the reader hasn't parked yet
+	// — the notification stays buffered / shutdownCh stays closed — but a
+	// generous head start makes it likelier we exercise the actual park-then-
+	// wake path rather than the already-pending fast path. 50ms is well below
+	// notificationHealthCheckInterval (250ms) and tolerates slow CI.
+	time.Sleep(50 * time.Millisecond)
+
+	start := time.Now()
+	logBuffer.ShutdownLogBuffer()
+
+	select {
+	case r := <-resultCh:
+		elapsed := time.Since(start)
+		if elapsed >= notificationHealthCheckInterval {
+			t.Errorf("reader did not wake on shutdown: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+		}
+		if !r.isDone {
+			t.Errorf("expected isDone=true on shutdown, got false")
+		}
+		if r.err != nil {
+			t.Errorf("expected err=nil on shutdown, got %v", r.err)
+		}
+		t.Logf("reader exited in %v after ShutdownLogBuffer", elapsed)
+	case <-time.After(2 * notificationHealthCheckInterval):
+		t.Fatalf("reader did not exit within %v after ShutdownLogBuffer", 2*notificationHealthCheckInterval)
+	}
 }
 
 // TestLoopProcessLogDataWithOffset_WithData tests normal operation with data
@@ -305,6 +487,157 @@ func TestLoopProcessLogDataWithOffset_StopTime(t *testing.T) {
 	}
 
 	t.Logf("Loop correctly exited for past stopTsNs in %v (waitForDataFn called %d times)", elapsed, callCount)
+}
+
+// TestLoopProcessLogData_BoundedEmptyBufferTerminates: a bounded subscription
+// (stopTsNs != 0) against a buffer that has never received a write - so
+// ReadFromBuffer returns ResumeFromDiskError - with no ReadFromDiskFn must
+// terminate like the caught-up path does, not park on the notification loop
+// forever. This is the filer SubscribeMetadata configuration: both meta log
+// buffers are built with ReadFromDiskFn == nil, and a freshly restarted filer
+// that has serviced zero metadata writes wedges every UntilNs-bounded
+// subscriber while heartbeats keep the stream looking alive.
+func TestLoopProcessLogData_BoundedEmptyBufferTerminates(t *testing.T) {
+	logBuffer := NewLogBuffer("test", time.Minute, nil, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	// Client stays connected, like the filer's heartbeat-sending closure.
+	waitForDataFn := func() bool { return true }
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		t.Error("no entries should be delivered from an empty buffer")
+		return false, nil
+	}
+
+	startPosition := NewMessagePosition(time.Now().Add(-time.Hour).UnixNano(), EvictionGatedOffset)
+	stopTsNs := time.Now().UnixNano()
+
+	done := make(chan struct{})
+	var isDone bool
+	var err error
+	go func() {
+		_, isDone, err = logBuffer.LoopProcessLogData("bounded-empty", startPosition, stopTsNs, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if !isDone {
+			t.Errorf("expected isDone=true for a bounded read of an empty buffer, got false")
+		}
+		// A leaked ResumeFromDiskError would send the filer's outer loop into
+		// its gap machinery, which parks the bounded subscriber all over again.
+		if err != nil {
+			t.Errorf("expected err=nil for a bounded read of an empty buffer, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded LoopProcessLogData wedged on an empty buffer instead of terminating")
+	}
+}
+
+func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	baseTime := time.Now()
+	for i := 0; i < 1000; i++ {
+		ts := baseTime.Add(time.Duration(i) * time.Millisecond)
+		if err := logBuffer.AddDataToBuffer([]byte("key"), []byte("value"), ts.UnixNano()); err != nil {
+			t.Fatalf("AddDataToBuffer(%d): %v", i, err)
+		}
+	}
+
+	oldPosition := NewMessagePosition(baseTime.Add(-10*time.Second).UnixNano(), 1)
+
+	waitForDataFn := func() bool {
+		t.Errorf("waitForDataFn should not be called for a slow consumer that has fallen behind")
+		return false
+	}
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		return false, nil
+	}
+
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, _, err = logBuffer.LoopProcessLogData("slow-consumer", oldPosition, 0, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if err != ResumeFromDiskError {
+			t.Fatalf("expected ResumeFromDiskError, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LoopProcessLogData blocked instead of returning ResumeFromDiskError")
+	}
+}
+
+// TestLoopProcessLogData_DuplicateReaderLeaving is a regression test for issue
+// #10810: an idle metadata subscriber pinning a full core inside
+// awaitNotificationOrTimeoutFor. Two readers registered under the same name
+// share one notification channel, which happens whenever a client reconnects
+// before its previous stream noticed the disconnect. When the departing one
+// closed that channel, the surviving reader's select won on it instantly on
+// every pass, so the loop ran flat out - allocating a timer per iteration -
+// until the client went away.
+func TestLoopProcessLogData_DuplicateReaderLeaving(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	const readerName = "localMeta:s3@"
+	startPosition := NewMessagePosition(time.Now().UnixNano(), -2)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
+
+	// startReader runs a reader and reports how many times it went round the
+	// loop; the loop calls waitForDataFn exactly once per pass.
+	startReader := func(iterations *atomic.Int64, stop *atomic.Bool) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			logBuffer.LoopProcessLogData(readerName, startPosition, 0, func() bool {
+				iterations.Add(1)
+				return !stop.Load()
+			}, eachLogEntryFn)
+		}()
+		for iterations.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		return done
+	}
+
+	var leavingIterations, survivorIterations atomic.Int64
+	var stopLeaving, stopSurvivor atomic.Bool
+	leavingDone := startReader(&leavingIterations, &stopLeaving)
+	survivorDone := startReader(&survivorIterations, &stopSurvivor)
+
+	stopLeaving.Store(true)
+	<-leavingDone
+
+	const observeFor = 500 * time.Millisecond
+	before := survivorIterations.Load()
+	time.Sleep(observeFor)
+	spun := survivorIterations.Load() - before
+
+	// A low iteration count only means "not spinning" if the reader was still
+	// there to spin. Had LoopProcessLogData returned when its duplicate left,
+	// spun would be 0 and the count below would pass while proving nothing.
+	select {
+	case <-survivorDone:
+		t.Fatal("surviving reader returned while its duplicate unregistered; it must keep reading")
+	default:
+	}
+
+	stopSurvivor.Store(true)
+	<-survivorDone
+
+	maxIterations := int64(observeFor/notificationHealthCheckInterval) + 1
+	if spun > maxIterations {
+		t.Errorf("surviving reader looped %d times in %v, expected at most %d (suggests busy-waiting)", spun, observeFor, maxIterations)
+	}
 }
 
 // BenchmarkLoopProcessLogDataWithOffset_EmptyBuffer benchmarks the performance

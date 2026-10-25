@@ -19,9 +19,6 @@ services:
       start_period: 10s
 
   seaweedfs-volume:
-    build:
-      context: ../../../docker
-      dockerfile: Dockerfile.local
     image: seaweedfs:local
     container_name: seaweedfs-spark-volume
     ports:
@@ -43,9 +40,6 @@ services:
       start_period: 10s
 
   seaweedfs-filer:
-    build:
-      context: ../../../docker
-      dockerfile: Dockerfile.local
     image: seaweedfs:local
     container_name: seaweedfs-spark-filer
     ports:

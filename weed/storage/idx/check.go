@@ -56,7 +56,18 @@ func CheckIndexFile(r io.ReaderAt, indexFileSize int64, version needle.Version) 
 		return entries[i].Compare(entries[j]) < 0
 	})
 
-	for i, e := range entries {
+	// Offset-0 logical tombstones (remote-tier deletes) occupy no physical .dat
+	// extent, so they cannot overlap anything — exclude them from the overlap
+	// check. They are still counted below for the index-size check.
+	physical := make([]*indexEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.offset == 0 && e.size.IsDeleted() {
+			continue
+		}
+		physical = append(physical, e)
+	}
+
+	for i, e := range physical {
 		if i == 0 {
 			// nothing to check for the first entry
 			continue
@@ -67,7 +78,7 @@ func CheckIndexFile(r io.ReaderAt, indexFileSize int64, version needle.Version) 
 			end += size - 1
 		}
 
-		last := entries[i-1]
+		last := physical[i-1]
 		lastStart, lastEnd := last.offset, last.offset
 		if lastSize := needle.GetActualSize(last.size, version); lastSize != 0 {
 			lastEnd += lastSize - 1

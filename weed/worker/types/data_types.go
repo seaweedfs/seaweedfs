@@ -4,15 +4,34 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
+	"google.golang.org/grpc"
 )
+
+// ReplicaLocation identifies where a volume replica lives.
+type ReplicaLocation struct {
+	DataCenter string
+	Rack       string
+	NodeID     string
+	Host       string // physical machine (host/IP); servers sharing a host are one fault domain
+}
 
 // ClusterInfo contains cluster information for task detection
 type ClusterInfo struct {
-	Servers        []*VolumeServerInfo
-	TotalVolumes   int
-	TotalServers   int
-	LastUpdated    time.Time
-	ActiveTopology *topology.ActiveTopology // Added for destination planning in detection
+	Servers          []*VolumeServerInfo
+	TotalVolumes     int
+	TotalServers     int
+	LastUpdated      time.Time
+	ActiveTopology   *topology.ActiveTopology // Added for destination planning in detection
+	VolumeReplicaMap map[uint32][]ReplicaLocation
+	// DefaultReplicaPlacement is the master's configured default replication
+	// (GetMasterConfiguration). Detectors use it as the fallback when no explicit
+	// replica placement is set, matching the shell's behavior. Empty = none.
+	DefaultReplicaPlacement string
+	// GrpcDialOption is set when a detector needs to make targeted gRPC calls
+	// during detection (e.g., the EC detector auto-cleans up an orphaned
+	// regular replica that survived a previous encode; see #9448). Optional:
+	// detectors that don't need RPC access ignore this.
+	GrpcDialOption grpc.DialOption `json:"-"`
 }
 
 // VolumeHealthMetrics contains health information about a volume (simplified)

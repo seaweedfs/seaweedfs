@@ -1,6 +1,8 @@
 package kafka
 
 import (
+	"fmt"
+
 	"github.com/Shopify/sarama"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
@@ -13,8 +15,9 @@ func init() {
 }
 
 type KafkaQueue struct {
-	topic    string
-	producer sarama.AsyncProducer
+	topic      string
+	producer   sarama.AsyncProducer
+	eventTypes map[string]struct{}
 }
 
 func (k *KafkaQueue) GetName() string {
@@ -24,18 +27,35 @@ func (k *KafkaQueue) GetName() string {
 func (k *KafkaQueue) Initialize(configuration util.Configuration, prefix string) (err error) {
 	glog.V(0).Infof("filer.notification.kafka.hosts: %v\n", configuration.GetStringSlice(prefix+"hosts"))
 	glog.V(0).Infof("filer.notification.kafka.topic: %v\n", configuration.GetString(prefix+"topic"))
+	eventTypes := configuration.GetStringSlice(prefix + "event_types")
+	glog.V(0).Infof("filer.notification.kafka.event_types: %v\n", eventTypes)
+	k.setEventTypes(eventTypes)
 	return k.initialize(
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"topic"),
+		SASLTLSConfig{
+			SASLEnabled:           configuration.GetBool(prefix + "sasl_enabled"),
+			SASLMechanism:         configuration.GetString(prefix + "sasl_mechanism"),
+			SASLUsername:          configuration.GetString(prefix + "sasl_username"),
+			SASLPassword:          configuration.GetString(prefix + "sasl_password"),
+			TLSEnabled:            configuration.GetBool(prefix + "tls_enabled"),
+			TLSCACert:             configuration.GetString(prefix + "tls_ca_cert"),
+			TLSClientCert:         configuration.GetString(prefix + "tls_client_cert"),
+			TLSClientKey:          configuration.GetString(prefix + "tls_client_key"),
+			TLSInsecureSkipVerify: configuration.GetBool(prefix + "tls_insecure_skip_verify"),
+		},
 	)
 }
 
-func (k *KafkaQueue) initialize(hosts []string, topic string) (err error) {
+func (k *KafkaQueue) initialize(hosts []string, topic string, saslTLS SASLTLSConfig) (err error) {
 	config := sarama.NewConfig()
 	config.Producer.RequiredAcks = sarama.WaitForLocal
 	config.Producer.Partitioner = sarama.NewHashPartitioner
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
+	if err = ConfigureSASLTLS(config, saslTLS); err != nil {
+		return fmt.Errorf("kafka producer security configuration: %w", err)
+	}
 	k.producer, err = sarama.NewAsyncProducer(hosts, config)
 	if err != nil {
 		return err
@@ -47,6 +67,10 @@ func (k *KafkaQueue) initialize(hosts []string, topic string) (err error) {
 }
 
 func (k *KafkaQueue) SendMessage(key string, message proto.Message) (err error) {
+	if !k.allowsEvent(key, message) {
+		return nil
+	}
+
 	bytes, err := proto.Marshal(message)
 	if err != nil {
 		return

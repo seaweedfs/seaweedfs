@@ -2,6 +2,11 @@
  * Shared S3 Tables functionality for the SeaweedFS Admin Dashboard.
  */
 
+// URL prefix helper for subdirectory deployment
+function s3tBasePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
 // Shared Modals
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
@@ -10,12 +15,73 @@ let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
 
+// True only once a bucket/table policy GET has actually completed
+// successfully (a genuinely empty policy counts). Guards the Save handlers
+// below: a failed GET must not let a Save serialize the editor's cleared-out
+// placeholder state as a real "Statement: []" document and overwrite
+// whatever is actually stored.
+let s3tablesBucketPolicyLoaded = false;
+let s3tablesTablePolicyLoaded = false;
+
+// Bumped on every bucket/table policy load; a response only gets applied if
+// its captured sequence number still matches. Without this, opening one
+// resource's policy dialog and then another's before the first GET resolves
+// lets the late response overwrite the second resource's textarea/editor
+// state and mark it loaded, so a subsequent Save would push the first
+// resource's policy onto the second resource.
+let s3tablesBucketPolicyRequestSeq = 0;
+let s3tablesTablePolicyRequestSeq = 0;
+
+// True while a policy PUT/DELETE is in flight, so a double-click - or Save
+// and Delete fired in quick succession - can't send overlapping mutations.
+// Same pattern as the classic bucket modal in s3_buckets.templ.
+let s3tablesBucketPolicyMutationInFlight = false;
+let s3tablesTablePolicyMutationInFlight = false;
+
+function setS3TablesBucketPolicyMutationInFlight(inFlight) {
+    s3tablesBucketPolicyMutationInFlight = inFlight;
+    const save = document.getElementById('s3tablesBucketPolicySaveBtn');
+    const del = document.getElementById('s3tablesBucketPolicyDeleteBtn');
+    if (save) save.disabled = inFlight;
+    if (del) del.disabled = inFlight;
+}
+
+function setS3TablesTablePolicyMutationInFlight(inFlight) {
+    s3tablesTablePolicyMutationInFlight = inFlight;
+    const save = document.getElementById('s3tablesTablePolicySaveBtn');
+    const del = document.getElementById('s3tablesTablePolicyDeleteBtn');
+    if (save) save.disabled = inFlight;
+    if (del) del.disabled = inFlight;
+}
+
+// The dialog identity captured when a mutation started, so a completion
+// that lands after the shared modal moved on to a different resource can't
+// alert against, hide, or reload over that other resource's state.
+function currentS3TablesBucketPolicyTarget() {
+    return document.getElementById('s3tablesBucketPolicyArn').value;
+}
+
+function currentS3TablesTablePolicyTarget() {
+    return document.getElementById('s3tablesTablePolicyBucketArn').value + '\n' +
+        document.getElementById('s3tablesTablePolicyNamespace').value + '\n' +
+        document.getElementById('s3tablesTablePolicyName').value;
+}
+
 function getCSRFToken() {
     const tokenMeta = document.querySelector('meta[name="csrf-token"]');
     if (!tokenMeta) {
         return '';
     }
     return tokenMeta.getAttribute('content') || '';
+}
+
+function s3tWriteHeaders(extra) {
+    const headers = Object.assign({}, extra || {});
+    const csrfToken = getCSRFToken();
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+    }
+    return headers;
 }
 
 /**
@@ -26,12 +92,15 @@ function initS3TablesBuckets() {
     s3tablesBucketPolicyModal = new bootstrap.Modal(document.getElementById('s3tablesBucketPolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
 
+    registerS3TablesBucketPolicyEditor('');
+    setupPolicyEditor('s3tablesBucket');
+
     const ownerSelect = document.getElementById('s3tablesBucketOwner');
     if (ownerSelect) {
         document.getElementById('createS3TablesBucketModal').addEventListener('show.bs.modal', async function () {
             if (ownerSelect.options.length <= 1) {
                 try {
-                    const response = await fetch('/api/users');
+                    const response = await fetch(s3tBasePath('/api/users'));
                     const data = await response.json();
                     const users = data.users || [];
                     users.forEach(user => {
@@ -67,6 +136,7 @@ function initS3TablesBuckets() {
         button.addEventListener('click', function () {
             const bucketArn = this.dataset.bucketArn || '';
             document.getElementById('s3tablesBucketPolicyArn').value = bucketArn;
+            registerS3TablesBucketPolicyEditor(bucketArn);
             loadS3TablesBucketPolicy(bucketArn);
             s3tablesBucketPolicyModal.show();
         });
@@ -94,12 +164,13 @@ function initS3TablesBuckets() {
             const tagsInput = document.getElementById('s3tablesBucketTags').value.trim();
             const tags = parseTagsInput(tagsInput);
             if (tags === null) return;
-            const payload = { name: name, tags: tags, owner: owner };
+            const formatInput = document.querySelector('#s3tablesBucketFormatPicker input[name="format"]:checked');
+            const payload = { name: name, tags: tags, owner: owner, format: formatInput ? formatInput.value : 'ICEBERG' };
 
             try {
-                const response = await fetch('/api/s3tables/buckets', {
+                const response = await fetch(s3tBasePath('/api/s3tables/buckets'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -115,33 +186,58 @@ function initS3TablesBuckets() {
         });
     }
 
-    const policyForm = document.getElementById('s3tablesBucketPolicyForm');
-    if (policyForm) {
-        policyForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
-            const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
-            if (!policy) {
-                alert('Policy JSON is required');
+    // The endpoint is the whole reason the format matters, so show it changing
+    // rather than making the operator work it out after the fact.
+    const formatPicker = document.getElementById('s3tablesBucketFormatPicker');
+    const formatHint = document.getElementById('s3tablesBucketFormatHint');
+    if (formatPicker && formatHint) {
+        const icebergPort = formatHint.dataset.icebergPort;
+        const lancePort = formatHint.dataset.lancePort;
+        const origin = window.location.protocol + '//' + window.location.hostname;
+        const describeEndpoint = function () {
+            const chosen = formatPicker.querySelector('input[name="format"]:checked');
+            const isLance = chosen && chosen.value === 'LANCE';
+            const port = isLance ? lancePort : icebergPort;
+            const name = (document.getElementById('s3tablesBucketName').value || '').trim();
+            // The bucket name is whatever the operator is typing, so it goes in
+            // as text. Building this with innerHTML would run their input.
+            formatHint.textContent = '';
+            if (!port || port === '0') {
+                formatHint.appendChild(document.createTextNode('A bucket holds one format. Tables of the other are refused. '));
+                const warning = document.createElement('span');
+                warning.className = 'text-warning';
+                warning.textContent = 'No server is running for this format.';
+                formatHint.appendChild(warning);
                 return;
             }
-            try {
-                const response = await fetch('/api/s3tables/bucket-policy', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    alert(data.error || 'Failed to update policy');
-                    return;
-                }
-                alert('Policy updated');
-                s3tablesBucketPolicyModal.hide();
-            } catch (error) {
-                alert('Failed to update policy: ' + error.message);
-            }
-        });
+            const path = isLance
+                ? '/v1/namespace/' + (name || '<bucket>') + '/list'
+                : '/v1/' + (name || '<bucket>') + '/namespaces';
+            formatHint.appendChild(document.createTextNode('Clients reach this bucket at '));
+            const endpoint = document.createElement('code');
+            endpoint.textContent = origin + ':' + port + path;
+            formatHint.appendChild(endpoint);
+        };
+        formatPicker.addEventListener('change', describeEndpoint);
+        const bucketNameField = document.getElementById('s3tablesBucketName');
+        if (bucketNameField) {
+            bucketNameField.addEventListener('input', describeEndpoint);
+        }
+        describeEndpoint();
+    }
+
+    // The banner prints localhost server-side; the browser knows the real host.
+    document.querySelectorAll('.s3tables-origin').forEach(function (el) {
+        el.textContent = window.location.protocol + '//' + window.location.hostname + ':' + el.dataset.port;
+    });
+
+    const policyForm = document.getElementById('s3tablesBucketPolicyForm');
+    if (policyForm) {
+        // Saves go through the Save button only; implicit form submission
+        // (Enter in a single-line editor input) must never PUT half-built
+        // state, which the backend would store verbatim.
+        policyForm.addEventListener('submit', function (e) { e.preventDefault(); });
+        document.getElementById('s3tablesBucketPolicySaveBtn').addEventListener('click', saveS3TablesBucketPolicy);
     }
 
     const tagsForm = document.getElementById('s3tablesTagsForm');
@@ -167,6 +263,9 @@ function initS3TablesTables() {
     s3tablesTablePolicyModal = new bootstrap.Modal(document.getElementById('s3tablesTablePolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
 
+    registerS3TablesTablePolicyEditor('', '', '');
+    setupPolicyEditor('s3tablesTable');
+
     const dataContainer = document.getElementById('s3tables-tables-content');
     const dataBucketArn = dataContainer.dataset.bucketArn || '';
     const dataNamespace = dataContainer.dataset.namespace || '';
@@ -184,6 +283,7 @@ function initS3TablesTables() {
             document.getElementById('s3tablesTablePolicyBucketArn').value = dataBucketArn;
             document.getElementById('s3tablesTablePolicyNamespace').value = dataNamespace;
             document.getElementById('s3tablesTablePolicyName').value = this.dataset.tableName || '';
+            registerS3TablesTablePolicyEditor(dataBucketArn, dataNamespace, this.dataset.tableName || '');
             loadS3TablesTablePolicy(dataBucketArn, dataNamespace, this.dataset.tableName || '');
             s3tablesTablePolicyModal.show();
         });
@@ -232,9 +332,9 @@ function initS3TablesTables() {
                 payload.metadata = metadata;
             }
             try {
-                const response = await fetch('/api/s3tables/tables', {
+                const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -252,30 +352,9 @@ function initS3TablesTables() {
 
     const policyForm = document.getElementById('s3tablesTablePolicyForm');
     if (policyForm) {
-        policyForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
-            if (!policy) {
-                alert('Policy JSON is required');
-                return;
-            }
-            try {
-                const response = await fetch('/api/s3tables/table-policy', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bucket_arn: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value, policy: policy })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    alert(data.error || 'Failed to update policy');
-                    return;
-                }
-                alert('Policy updated');
-                s3tablesTablePolicyModal.hide();
-            } catch (error) {
-                alert('Failed to update policy: ' + error.message);
-            }
-        });
+        // Same Enter-must-not-submit rule as the bucket policy form.
+        policyForm.addEventListener('submit', function (e) { e.preventDefault(); });
+        document.getElementById('s3tablesTablePolicySaveBtn').addEventListener('click', saveS3TablesTablePolicy);
     }
 
     const tagsForm = document.getElementById('s3tablesTagsForm');
@@ -301,10 +380,6 @@ function initIcebergNamespaces() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const catalogName = container.dataset.catalogName || '';
-    const csrfTokenInput = document.getElementById('icebergNamespaceCsrfToken');
-    if (csrfTokenInput) {
-        csrfTokenInput.value = getCSRFToken();
-    }
 
     const namespaceInput = document.getElementById('icebergNamespaceName');
     if (namespaceInput) {
@@ -325,14 +400,9 @@ function initIcebergNamespaces() {
                 return;
             }
             try {
-                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
-                const headers = { 'Content-Type': 'application/json' };
-                if (csrfToken) {
-                    headers['X-CSRF-Token'] = csrfToken;
-                }
-                const response = await fetch('/api/s3tables/namespaces', {
+                const response = await fetch(s3tBasePath('/api/s3tables/namespaces'), {
                     method: 'POST',
-                    headers: headers,
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ bucket_arn: bucketArn, name: name })
                 });
                 const data = await response.json();
@@ -379,7 +449,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
     }
     try {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace });
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`));
         const data = await response.json();
         if (!response.ok) {
             node.textContent = data.error || 'Failed to load tables';
@@ -400,9 +470,9 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             item.className = 'list-group-item py-1';
             const link = document.createElement('a');
             link.className = 'text-decoration-none';
-            link.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
+            link.href = s3tBasePath(`/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`);
             const icon = document.createElement('i');
-            icon.className = 'fas fa-table text-primary me-2';
+            icon.className = 'bi bi-table text-primary me-2';
             link.appendChild(icon);
             const nameSpan = document.createElement('span');
             nameSpan.textContent = table.name;
@@ -428,10 +498,6 @@ function initIcebergTables() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const namespace = container.dataset.namespace || '';
-    const csrfTokenInput = document.getElementById('icebergTableCsrfToken');
-    if (csrfTokenInput) {
-        csrfTokenInput.value = getCSRFToken();
-    }
 
     initIcebergDeleteModal();
 
@@ -471,14 +537,9 @@ function initIcebergTables() {
                 payload.metadata = metadata;
             }
             try {
-                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
-                const headers = { 'Content-Type': 'application/json' };
-                if (csrfToken) {
-                    headers['X-CSRF-Token'] = csrfToken;
-                }
-                const response = await fetch('/api/s3tables/tables', {
+                const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
-                    headers: headers,
+                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -525,7 +586,7 @@ async function deleteS3TablesBucket() {
     const bucketArn = document.getElementById('deleteS3TablesBucketModal').dataset.bucketArn;
     if (!bucketArn) return;
     try {
-        const response = await fetch(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete bucket');
@@ -538,34 +599,196 @@ async function deleteS3TablesBucket() {
     }
 }
 
+// Shared visual policy editor (weed/admin/static/js/policy_editor.js),
+// configured for the S3 Tables policy engine: only s3tables: action
+// suggestions, resource suggestions pinned to the open resource's ARN, and
+// no NotResource/NotPrincipal modes - the s3tables evaluator has no such
+// fields and would silently drop them (see s3tables/permissions.go).
+// Re-registered on every dialog open so the suggestions track the resource.
+function registerS3TablesBucketPolicyEditor(bucketArn) {
+    registerPolicyEditor('s3tablesBucket', {
+        textareaId: 's3tablesBucketPolicyText',
+        actionDatalistId: 's3tablesPolicyActionSuggestions',
+        allowNegation: false,
+        resourceSuggestions: bucketArn ? [bucketArn, bucketArn + '/table/*'] : null
+    });
+}
+
+function registerS3TablesTablePolicyEditor(bucketArn, namespace, name) {
+    registerPolicyEditor('s3tablesTable', {
+        textareaId: 's3tablesTablePolicyText',
+        actionDatalistId: 's3tablesPolicyActionSuggestions',
+        allowNegation: false,
+        resourceSuggestions: bucketArn && namespace && name ? [bucketArn + '/table/' + namespace + '/' + name] : null
+    });
+}
+
 async function loadS3TablesBucketPolicy(bucketArn) {
+    const requestSeq = ++s3tablesBucketPolicyRequestSeq;
     document.getElementById('s3tablesBucketPolicyText').value = '';
-    if (!bucketArn) return;
-    try {
-        const response = await fetch(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`);
-        const data = await response.json();
-        if (response.ok && data.policy) {
-            document.getElementById('s3tablesBucketPolicyText').value = data.policy;
+    s3tablesBucketPolicyLoaded = false;
+    // Reset the structured editor immediately too, so a still-open Editor
+    // tab doesn't keep showing the previously loaded resource's statements
+    // while this fetch is in flight.
+    loadPolicyTextareaIntoEditor('s3tablesBucket');
+    if (bucketArn) {
+        let policyText = '';
+        let loadError = null;
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`));
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || ('HTTP ' + response.status));
+            }
+            if (data.policy) {
+                policyText = data.policy;
+            }
+        } catch (error) {
+            loadError = error;
         }
+        // A newer load (a different bucket, or this one reopened) has since
+        // superseded this response - don't let it touch the shared textarea,
+        // the editor state, or the loaded flag.
+        if (requestSeq !== s3tablesBucketPolicyRequestSeq) return;
+        if (loadError) {
+            console.error('Failed to load bucket policy', loadError);
+            alert('Failed to load bucket policy: ' + loadError.message + '. Close and reopen this dialog to try again.');
+            return;
+        }
+        document.getElementById('s3tablesBucketPolicyText').value = policyText;
+    }
+    if (requestSeq !== s3tablesBucketPolicyRequestSeq) return;
+    s3tablesBucketPolicyLoaded = true;
+    loadPolicyTextareaIntoEditor('s3tablesBucket');
+}
+
+async function saveS3TablesBucketPolicy() {
+    if (s3tablesBucketPolicyMutationInFlight) return;
+    if (!s3tablesBucketPolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
+        return;
+    }
+    if (!commitPolicyActiveTab('s3tablesBucket')) return;
+    const bucketArn = currentS3TablesBucketPolicyTarget();
+    const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
+    if (!policy || !policyTextHasStatements(policy)) {
+        alert('Add at least one statement, or use Delete Policy to remove the policy.');
+        return;
+    }
+    setS3TablesBucketPolicyMutationInFlight(true);
+    try {
+        const response = await fetch(s3tBasePath('/api/s3tables/bucket-policy'), {
+            method: 'PUT',
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
+        });
+        const data = await response.json();
+        setS3TablesBucketPolicyMutationInFlight(false);
+        const stillCurrent = bucketArn === currentS3TablesBucketPolicyTarget();
+        if (!response.ok) {
+            if (stillCurrent) {
+                alert(data.error || 'Failed to update policy');
+            } else {
+                console.error('Error saving policy for ' + bucketArn + ' (no longer the open resource): ' + (data.error || 'unknown error'));
+            }
+            return;
+        }
+        if (!stillCurrent) return;
+        s3tablesBucketPolicyModal.hide();
+        // Reload so the Policy column reflects the change.
+        setTimeout(() => location.reload(), 500);
     } catch (error) {
-        console.error('Failed to load bucket policy', error);
+        setS3TablesBucketPolicyMutationInFlight(false);
+        if (bucketArn === currentS3TablesBucketPolicyTarget()) {
+            alert('Failed to update policy: ' + error.message);
+        } else {
+            console.error('Error saving policy for ' + bucketArn + ': ' + error.message);
+        }
+    }
+}
+
+async function saveS3TablesTablePolicy() {
+    if (s3tablesTablePolicyMutationInFlight) return;
+    if (!s3tablesTablePolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
+        return;
+    }
+    if (!commitPolicyActiveTab('s3tablesTable')) return;
+    const target = currentS3TablesTablePolicyTarget();
+    const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
+    if (!policy || !policyTextHasStatements(policy)) {
+        alert('Add at least one statement, or use Delete Policy to remove the policy.');
+        return;
+    }
+    setS3TablesTablePolicyMutationInFlight(true);
+    try {
+        const response = await fetch(s3tBasePath('/api/s3tables/table-policy'), {
+            method: 'PUT',
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+                bucket_arn: document.getElementById('s3tablesTablePolicyBucketArn').value,
+                namespace: document.getElementById('s3tablesTablePolicyNamespace').value,
+                name: document.getElementById('s3tablesTablePolicyName').value,
+                policy: policy
+            })
+        });
+        const data = await response.json();
+        setS3TablesTablePolicyMutationInFlight(false);
+        const stillCurrent = target === currentS3TablesTablePolicyTarget();
+        if (!response.ok) {
+            if (stillCurrent) {
+                alert(data.error || 'Failed to update policy');
+            } else {
+                console.error('Error saving table policy (no longer the open resource): ' + (data.error || 'unknown error'));
+            }
+            return;
+        }
+        if (!stillCurrent) return;
+        s3tablesTablePolicyModal.hide();
+        setTimeout(() => location.reload(), 500);
+    } catch (error) {
+        setS3TablesTablePolicyMutationInFlight(false);
+        if (target === currentS3TablesTablePolicyTarget()) {
+            alert('Failed to update policy: ' + error.message);
+        } else {
+            console.error('Error saving table policy: ' + error.message);
+        }
     }
 }
 
 async function deleteS3TablesBucketPolicy() {
-    const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
+    const bucketArn = currentS3TablesBucketPolicyTarget();
     if (!bucketArn) return;
+    if (s3tablesBucketPolicyMutationInFlight) return;
+    if (!s3tablesBucketPolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
+        return;
+    }
+    if (!confirm('Delete this table bucket policy? This cannot be undone.')) return;
+    setS3TablesBucketPolicyMutationInFlight(true);
     try {
-        const response = await fetch(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
+        setS3TablesBucketPolicyMutationInFlight(false);
+        const stillCurrent = bucketArn === currentS3TablesBucketPolicyTarget();
         if (!response.ok) {
-            alert(data.error || 'Failed to delete policy');
+            if (stillCurrent) {
+                alert(data.error || 'Failed to delete policy');
+            } else {
+                console.error('Error deleting policy for ' + bucketArn + ' (no longer the open resource): ' + (data.error || 'unknown error'));
+            }
             return;
         }
-        alert('Policy deleted');
-        document.getElementById('s3tablesBucketPolicyText').value = '';
+        if (!stillCurrent) return;
+        s3tablesBucketPolicyModal.hide();
+        setTimeout(() => location.reload(), 500);
     } catch (error) {
-        alert('Failed to delete policy: ' + error.message);
+        setS3TablesBucketPolicyMutationInFlight(false);
+        if (bucketArn === currentS3TablesBucketPolicyTarget()) {
+            alert('Failed to delete policy: ' + error.message);
+        } else {
+            console.error('Error deleting policy for ' + bucketArn + ': ' + error.message);
+        }
     }
 }
 
@@ -585,7 +808,7 @@ async function deleteS3TablesTable() {
         query.set('version', versionToken);
     }
     try {
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete table');
@@ -616,12 +839,7 @@ async function deleteIcebergTable() {
         query.set('version', versionToken);
     }
     try {
-        const csrfToken = getCSRFToken();
-        const requestOptions = { method: 'DELETE' };
-        if (csrfToken) {
-            requestOptions.headers = { 'X-CSRF-Token': csrfToken };
-        }
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, requestOptions);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to drop table');
@@ -630,7 +848,7 @@ async function deleteIcebergTable() {
         alert('Table dropped');
         const isDetailsPage = window.location.pathname.includes('/tables/') && window.location.pathname.includes('/namespaces/');
         if (isDetailsPage && catalogName && namespace) {
-            window.location.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
+            window.location.href = s3tBasePath(`/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`);
         } else {
             location.reload();
         }
@@ -640,36 +858,82 @@ async function deleteIcebergTable() {
 }
 
 async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
+    const requestSeq = ++s3tablesTablePolicyRequestSeq;
     document.getElementById('s3tablesTablePolicyText').value = '';
-    if (!bucketArn || !namespace || !name) return;
-    const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
-    try {
-        const response = await fetch(`/api/s3tables/table-policy?${query.toString()}`);
-        const data = await response.json();
-        if (response.ok && data.policy) {
-            document.getElementById('s3tablesTablePolicyText').value = data.policy;
+    s3tablesTablePolicyLoaded = false;
+    // Reset the structured editor immediately too, so a still-open Editor
+    // tab doesn't keep showing the previously loaded resource's statements
+    // while this fetch is in flight.
+    loadPolicyTextareaIntoEditor('s3tablesTable');
+    if (bucketArn && namespace && name) {
+        const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
+        let policyText = '';
+        let loadError = null;
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`));
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || ('HTTP ' + response.status));
+            }
+            if (data.policy) {
+                policyText = data.policy;
+            }
+        } catch (error) {
+            loadError = error;
         }
-    } catch (error) {
-        console.error('Failed to load table policy', error);
+        // A newer load (a different table, or this one reopened) has since
+        // superseded this response - don't let it touch the shared textarea,
+        // the editor state, or the loaded flag.
+        if (requestSeq !== s3tablesTablePolicyRequestSeq) return;
+        if (loadError) {
+            console.error('Failed to load table policy', loadError);
+            alert('Failed to load table policy: ' + loadError.message + '. Close and reopen this dialog to try again.');
+            return;
+        }
+        document.getElementById('s3tablesTablePolicyText').value = policyText;
     }
+    if (requestSeq !== s3tablesTablePolicyRequestSeq) return;
+    s3tablesTablePolicyLoaded = true;
+    loadPolicyTextareaIntoEditor('s3tablesTable');
 }
 
 async function deleteS3TablesTablePolicy() {
-    const dataContainer = document.getElementById('s3tables-tables-content');
-    const dataBucketArn = dataContainer.dataset.bucketArn || '';
-    const dataNamespace = dataContainer.dataset.namespace || '';
-    const query = new URLSearchParams({ bucket: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value });
+    if (s3tablesTablePolicyMutationInFlight) return;
+    if (!s3tablesTablePolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
+        return;
+    }
+    const target = currentS3TablesTablePolicyTarget();
+    const query = new URLSearchParams({
+        bucket: document.getElementById('s3tablesTablePolicyBucketArn').value,
+        namespace: document.getElementById('s3tablesTablePolicyNamespace').value,
+        name: document.getElementById('s3tablesTablePolicyName').value
+    });
+    if (!confirm('Delete the policy for table ' + document.getElementById('s3tablesTablePolicyName').value + '? This cannot be undone.')) return;
+    setS3TablesTablePolicyMutationInFlight(true);
     try {
-        const response = await fetch(`/api/s3tables/table-policy?${query.toString()}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
+        setS3TablesTablePolicyMutationInFlight(false);
+        const stillCurrent = target === currentS3TablesTablePolicyTarget();
         if (!response.ok) {
-            alert(data.error || 'Failed to delete policy');
+            if (stillCurrent) {
+                alert(data.error || 'Failed to delete policy');
+            } else {
+                console.error('Error deleting table policy (no longer the open resource): ' + (data.error || 'unknown error'));
+            }
             return;
         }
-        alert('Policy deleted');
-        document.getElementById('s3tablesTablePolicyText').value = '';
+        if (!stillCurrent) return;
+        s3tablesTablePolicyModal.hide();
+        setTimeout(() => location.reload(), 500);
     } catch (error) {
-        alert('Failed to delete policy: ' + error.message);
+        setS3TablesTablePolicyMutationInFlight(false);
+        if (target === currentS3TablesTablePolicyTarget()) {
+            alert('Failed to delete policy: ' + error.message);
+        } else {
+            console.error('Error deleting table policy: ' + error.message);
+        }
     }
 }
 
@@ -851,7 +1115,7 @@ async function openS3TablesTags(resourceArn) {
     document.getElementById('s3tablesTagsList').textContent = 'Loading...';
     s3tablesTagsModal.show();
     try {
-        const response = await fetch(`/api/s3tables/tags?arn=${encodeURIComponent(resourceArn)}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tags?arn=${encodeURIComponent(resourceArn)}`));
         const data = await response.json();
         if (response.ok) {
             document.getElementById('s3tablesTagsList').textContent = JSON.stringify(data.tags || {}, null, 2);
@@ -865,9 +1129,9 @@ async function openS3TablesTags(resourceArn) {
 
 async function updateS3TablesTags(resourceArn, tags) {
     try {
-        const response = await fetch('/api/s3tables/tags', {
+        const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ resource_arn: resourceArn, tags: tags })
         });
         const data = await response.json();
@@ -892,9 +1156,9 @@ async function deleteS3TablesTags() {
         return;
     }
     try {
-        const response = await fetch('/api/s3tables/tags', {
+        const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ resource_arn: resourceArn, tag_keys: tagKeys })
         });
         const data = await response.json();

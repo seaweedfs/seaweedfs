@@ -25,6 +25,11 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
 
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.ACTION_PUT_OBJECT_RETENTION, "PutObjectRetentionHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Evaluate governance bypass request (header + permission validation)
 	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 
@@ -89,6 +94,11 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
+
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, versionId, s3_constants.ACTION_GET_OBJECT_RETENTION, "GetObjectRetentionHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Get retention configuration for the object
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)

@@ -1,12 +1,15 @@
 package iceberg
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/apache/iceberg-go"
@@ -68,7 +71,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: ListTables error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -86,6 +89,46 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 		Identifiers:   identifiers,
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// tablePathOccupied reports whether a filer entry already exists at the catalog
+// name path. A leftover directory there (e.g. data kept when another table was
+// renamed to this name) means a table created at the default location would
+// overwrite it, so the caller routes the new table to a unique location. A
+// lookup failure other than not-found is returned so the caller can fail the
+// create rather than fall back to the default path on a transient filer error.
+func (s *Server) tablePathOccupied(ctx context.Context, bucketName, tablePath string) (bool, error) {
+	full := path.Join(s3tables.TablesPath, bucketName, tablePath)
+	dir, name := path.Split(full)
+	dir = strings.TrimSuffix(dir, "/")
+	occupied := false
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		occupied = true
+		return nil
+	})
+	return occupied, err
+}
+
+// authorizeCreateTable checks the caller may create the table, for the create
+// paths that write to the bucket before the catalog registers it.
+func (s *Server) authorizeCreateTable(ctx context.Context, bucketARN string, namespace []string, tableName, identityName string) error {
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeCreateTable(ctx, s3tables.NewManagerClient(client), &s3tables.CreateTableRequest{
+			TableBucketARN: bucketARN,
+			Namespace:      namespace,
+			Name:           tableName,
+		}, identityName)
+	})
 }
 
 // handleCreateTable creates a new table.
@@ -120,9 +163,20 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	tablePath := path.Join(encodeNamespace(namespace), req.Name)
+	tablePath := path.Join(flattenNamespacePath(namespace), req.Name)
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
+		// If a leftover directory already occupies the default location (data
+		// kept when another table was renamed to this name), route this table
+		// to a unique location so it cannot overwrite that table's files.
+		occupied, err := s.tablePathOccupied(r.Context(), bucketName, tablePath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to check table location: "+err.Error())
+			return
+		}
+		if occupied {
+			tablePath = path.Join(flattenNamespacePath(namespace), req.Name+"-"+tableUUID.String())
+		}
 		if req.Properties != nil {
 			if warehouse := strings.TrimSuffix(req.Properties["warehouse"], "/"); warehouse != "" {
 				location = fmt.Sprintf("%s/%s", warehouse, tablePath)
@@ -148,9 +202,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build proper Iceberg table metadata using iceberg-go types
-	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
-	if metadata == nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+	metadata, err := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: CreateTable %s metadata error: %v", req.Name, err)
+		writeManagerError(w, err)
 		return
 	}
 
@@ -160,6 +215,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
 		return
 	}
+	// Backfill Iceberg spec-required fields that iceberg-go v0.5.0 omits when
+	// empty (e.g. current-snapshot-id), so the persisted v*.metadata.json is
+	// readable by strict clients (Java/Spark/Trino) that go directly to S3.
+	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
@@ -170,26 +229,85 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// location/name are client-supplied; confine the metadata write to the
+	// authorized catalog bucket and reject traversal segments so path.Join in
+	// saveMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "table location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(metadataPath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid table location path")
+		return
+	}
+
+	// Authoritative existence check: ask the catalog whether a table is registered
+	// at this name. If it is, short-circuit with the existing table (idempotent
+	// CreateTable). Any leftover objects at the target path from a previous
+	// lifecycle of the same name are purged by handleDropTable on the way out —
+	// we deliberately do not clean storage here to keep CreateTable free of
+	// destructive side effects. See issue #9074.
+	existsReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var existsResp s3tables.GetTableResponse
+	existsErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", existsReq, &existsResp, identityName)
+	})
+	if existsErr == nil {
+		// Table already registered. Return the existing definition so CTAS/IF NOT
+		// EXISTS flows see a stable response instead of a 409.
+		result, buildErr := s.buildLoadTableResult(r, existsResp, bucketName, namespace, tableName)
+		if buildErr != nil {
+			glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+			return
+		}
+		writeLoadResult(w, http.StatusOK, result)
+		return
+	}
+	if !isNoSuchTableError(existsErr) {
+		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
+		writeManagerError(w, existsErr)
+		return
+	}
+
+	// Both branches below write into the table bucket, and stage-create never
+	// reaches the registration that carries the authorization, so the caller has
+	// to pass the CreateTable gate here.
+	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+		writeManagerError(w, authErr)
+		return
+	}
+
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
 		stagedTablePath := stageCreateStagedTablePath(namespace, tableName, tableUUID)
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes); err != nil {
+		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes, false); err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save staged metadata file: "+err.Error())
 			return
 		}
 		stagedMetadataLocation := fmt.Sprintf("s3://%s/%s/metadata/%s", metadataBucket, stagedTablePath, metadataFileName)
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
-			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", encodeNamespace(namespace), tableName, markerErr)
+			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
+		// The staged table is not registered yet, so there is nothing to
+		// authorize an update against; the create gate above is the write
+		// authority for the prefix the staged table will occupy.
+		config, storageCredentials := s.buildFileIOConfig(r, location, func() bool { return true })
 		result := LoadTableResult{
-			MetadataLocation: metadataLocation,
-			Metadata:         metadata,
-			Config:           make(iceberg.Properties),
+			MetadataLocation:   metadataLocation,
+			Metadata:           metadata,
+			Config:             config,
+			StorageCredentials: storageCredentials,
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
@@ -217,7 +335,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		if tableErr, ok := err.(*s3tables.S3TablesError); ok && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
 			getReq := &s3tables.GetTableRequest{
 				TableBucketARN: bucketARN,
 				Namespace:      namespace,
@@ -232,8 +351,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
-			writeJSON(w, http.StatusOK, result)
+			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		if strings.Contains(err.Error(), "already exists") {
@@ -251,12 +375,17 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
-			writeJSON(w, http.StatusOK, result)
+			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
@@ -266,15 +395,114 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		finalLocation = metadataLocation
 	}
 	if markerErr := s.deleteStageCreateMarkers(r.Context(), bucketName, namespace, tableName); markerErr != nil {
-		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", encodeNamespace(namespace), tableName, markerErr)
+		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, req.Name)
+	})
 	result := LoadTableResult{
-		MetadataLocation: finalLocation,
-		Metadata:         metadata,
-		Config:           make(iceberg.Properties),
+		MetadataLocation:   finalLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
+}
+
+// handleRegisterTable registers an existing metadata.json under a new catalog
+// entry without generating new metadata.
+func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	namespace := parseNamespace(vars["namespace"])
+	if len(namespace) == 0 {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
+		return
+	}
+
+	var req RegisterTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", errTableNameRequired.Error())
+		return
+	}
+	if req.MetadataLocation == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "metadata-location is required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	// Read the existing metadata object before registering, so a bad location
+	// is rejected (400) without leaving a dangling catalog entry.
+	metadataBucket, tablePath, err := parseS3Location(tableLocationFromMetadataLocation(req.MetadataLocation))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid metadata-location: "+err.Error())
+		return
+	}
+	// metadata-location is client-supplied; confine the read to the authorized
+	// catalog bucket and reject traversal segments so path.Join in
+	// loadMetadataFile cannot escape into another bucket.
+	if metadataBucket != bucketName {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "metadata-location must be within bucket "+bucketName)
+		return
+	}
+	if !isValidTablePath(tablePath) {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid metadata-location path")
+		return
+	}
+	metadataFileName := path.Base(req.MetadataLocation)
+	metadataBytes, err := s.loadMetadataFile(r.Context(), metadataBucket, tablePath, metadataFileName)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: RegisterTable load metadata at %s: %v", req.MetadataLocation, err)
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Cannot read metadata at "+req.MetadataLocation)
+		return
+	}
+
+	registerReq := &s3tables.RegisterTableRequest{
+		TableBucketARN:   bucketARN,
+		Namespace:        namespace,
+		Name:             req.Name,
+		MetadataLocation: req.MetadataLocation,
+	}
+	var registerResp s3tables.RegisterTableResponse
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RegisterTable", registerReq, &registerResp, identityName)
+	})
+	if err != nil {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
+			switch tableErr.Type {
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
+				return
+			case s3tables.ErrCodeTableAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s", req.Name))
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RegisterTable error: %v", err)
+		writeManagerError(w, err)
+		return
+	}
+
+	getResp := s3tables.GetTableResponse{
+		MetadataLocation: req.MetadataLocation,
+		Metadata:         &s3tables.TableMetadata{FullMetadata: json.RawMessage(metadataBytes)},
+	}
+	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, req.Name)
+	if buildErr != nil {
+		glog.Errorf("Iceberg: RegisterTable %s: %v", req.Name, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleLoadTable loads table metadata.
@@ -313,18 +541,28 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: LoadTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
 		return
 	}
 
-	result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
-	writeJSON(w, http.StatusOK, result)
+	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+	if buildErr == nil {
+		// Only LoadTable defines ?snapshots=; a create response always carries
+		// the metadata it just wrote.
+		result.Metadata, buildErr = applySnapshotsParam(r, result.Metadata)
+	}
+	if buildErr != nil {
+		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
+	writeLoadResult(w, http.StatusOK, result)
 }
 
-func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
+func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) (LoadTableResult, error) {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
-		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
@@ -336,27 +574,192 @@ func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, 
 	// Stability is guaranteed by not generating random UUIDs on read
 
 	var metadata table.Metadata
+	var err error
 	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		var err error
 		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
 		if err != nil {
 			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
 			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
 			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
 			// For now, fallback to empty metadata
-			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+			metadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 		}
 	} else {
 		// No full metadata, create synthetic
 		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
-		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		metadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	}
+	// A nil metadata would serialize as "metadata":null under HTTP 200, which no
+	// Iceberg client can parse. Fail the request instead.
+	if err != nil {
+		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
+	config, storageCredentials := s.buildFileIOConfig(r, location, func() bool {
+		return s.mayUpdateTable(r, bucketName, namespace, tableName)
+	})
 	return LoadTableResult{
-		MetadataLocation: getResp.MetadataLocation,
-		Metadata:         metadata,
-		Config:           make(iceberg.Properties),
+		MetadataLocation:   getResp.MetadataLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
+	}, nil
+}
+
+// applySnapshotsParam honours ?snapshots=refs, which asks for only the
+// snapshots that branches and tags point at. Clients use it to avoid pulling a
+// long snapshot history they will not read. Anything else, including the
+// default, returns the metadata untouched.
+func applySnapshotsParam(r *http.Request, metadata table.Metadata) (table.Metadata, error) {
+	if !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("snapshots")), "refs") {
+		return metadata, nil
 	}
+	if metadata == nil {
+		return metadata, nil
+	}
+
+	referenced := make(map[int64]struct{})
+	for _, ref := range metadata.Refs() {
+		referenced[ref.SnapshotID] = struct{}{}
+	}
+	if current := metadata.CurrentSnapshot(); current != nil {
+		referenced[current.SnapshotID] = struct{}{}
+	}
+
+	var unreferenced []int64
+	for _, snapshot := range metadata.Snapshots() {
+		if _, keep := referenced[snapshot.SnapshotID]; !keep {
+			unreferenced = append(unreferenced, snapshot.SnapshotID)
+		}
+	}
+	if len(unreferenced) == 0 {
+		return metadata, nil
+	}
+
+	builder, err := table.MetadataBuilderFromBase(metadata, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := builder.RemoveSnapshots(unreferenced, false); err != nil {
+		return nil, err
+	}
+	return builder.Build()
+}
+
+// buildFileIOConfig returns the FileIO properties to advertise to catalog
+// clients so they can read the table's data files directly from S3 without
+// separately discovering the endpoint. The region defaults to the same
+// value baked into table bucket ARNs so clients like DuckDB that require
+// a region on attach don't need to be told it out-of-band. See issue #9103.
+// It also returns, for a client that asked for credential vending, the
+// credentials scoped to this table.
+func (s *Server) buildFileIOConfig(r *http.Request, location string, canWrite func() bool) (iceberg.Properties, []StorageCredential) {
+	config := make(iceberg.Properties)
+	if s.s3Endpoint == "" {
+		return config, nil
+	}
+
+	vended := iceberg.Properties(nil)
+	if wantsVendedCredentials(r) {
+		vended = s.vendCredentials(r, location, canWrite)
+		// A client asking for vended credentials builds its storage credential
+		// out of whatever comes back here and stops using the one it was
+		// configured with. With nothing to vend, an endpoint on its own leaves
+		// it sending unsigned requests; say nothing instead and let it keep its
+		// own credentials.
+		if vended == nil {
+			return config, nil
+		}
+	}
+
+	config["s3.endpoint"] = s.s3Endpoint
+	config["s3.path-style-access"] = "true"
+	config["s3.region"] = s3tables.DefaultRegion
+	if vended == nil {
+		return config, nil
+	}
+
+	credentialConfig := make(iceberg.Properties, len(config)+len(vended))
+	for key, value := range config {
+		credentialConfig[key] = value
+	}
+	for key, value := range vended {
+		config[key] = value
+		credentialConfig[key] = value
+	}
+	return config, []StorageCredential{{Prefix: location, Config: credentialConfig}}
+}
+
+// vendCredentials mints credentials limited to this table's prefix. It returns
+// nil when the deployment has no vending configured or the mint failed, which
+// leaves the caller withholding the endpoint so the client keeps its own
+// credentials rather than falling back to unsigned requests.
+func (s *Server) vendCredentials(r *http.Request, location string, canWrite func() bool) iceberg.Properties {
+	if s.credentialVendor == nil || location == "" {
+		return nil
+	}
+
+	bucket, prefix, err := parseS3Location(location)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: cannot vend credentials for %s: %v", location, err)
+		return nil
+	}
+
+	principal := s3_constants.GetIdentityNameFromContext(r)
+	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, prefix, canWrite == nil || !canWrite())
+	if err != nil {
+		glog.Warningf("Iceberg: failed to vend credentials for %s: %v", location, err)
+		return nil
+	}
+	if credentials == nil {
+		return nil
+	}
+
+	vended := iceberg.Properties{
+		"s3.access-key-id":     credentials.AccessKeyID,
+		"s3.secret-access-key": credentials.SecretAccessKey,
+		"s3.session-token":     credentials.SessionToken,
+	}
+	if !credentials.Expiration.IsZero() {
+		vended["s3.session-token-expires-at-ms"] = strconv.FormatInt(credentials.Expiration.UnixMilli(), 10)
+	}
+	return vended
+}
+
+// mayUpdateTable reports whether the caller may commit to the table the
+// credentials would cover. The session stays read-only when it may not, so
+// the vend carries no more authority than the caller holds at the catalog.
+func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []string, tableName string) bool {
+	updateReq := &s3tables.UpdateTableRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
+	}
+	return err == nil
+}
+
+// mayUpdateView is mayUpdateTable for a view, whose commit path is UpdateView.
+func (s *Server) mayUpdateView(r *http.Request, bucketName string, namespace []string, viewName string) bool {
+	updateReq := &s3tables.UpdateViewRequest{
+		TableBucketARN: buildTableBucketARN(bucketName),
+		Namespace:      namespace,
+		Name:           viewName,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeUpdateView(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
+	})
+	if err != nil {
+		glog.V(1).Infof("Iceberg: UpdateView check for %s/%s failed, vending read-only: %v", bucketName, viewName, err)
+	}
+	return err == nil
 }
 
 // handleTableExists checks if a table exists.
@@ -412,6 +815,25 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	// Extract identity from context
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
+	// Resolve the table's storage location from the catalog before the
+	// delete, so we can purge data files afterwards. The catalog is the
+	// authoritative owner of this mapping — if the table is not registered,
+	// there is nothing to clean up and DeleteTable will return NoSuchTable.
+	var storedMetadataLocation string
+	lookupReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var lookupResp s3tables.GetTableResponse
+	lookupErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", lookupReq, &lookupResp, identityName)
+	})
+	if lookupErr == nil {
+		storedMetadataLocation = lookupResp.MetadataLocation
+	}
+
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -429,11 +851,136 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		glog.V(1).Infof("Iceberg: DropTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeManagerError(w, err)
+		return
+	}
+
+	// Purge data files that lived under the dropped table's location, so a
+	// subsequent CREATE TABLE at the same name (issue #9074) does not trip
+	// Trino's "non-empty location" pre-check. We only purge when the catalog
+	// told us a location: if GetTable above failed, there is no mapping to
+	// trust and we leave storage alone.
+	if storedMetadataLocation != "" {
+		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
+			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {
+					glog.V(1).Infof("Iceberg: failed to purge dropped table location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
+				}
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRenameTable moves a table's catalog pointer to a new namespace/name.
+func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	source := parseNamespace(encodeNamespace(req.Source.Namespace))
+	dest := parseNamespace(encodeNamespace(req.Destination.Namespace))
+	if len(source) == 0 || req.Source.Name == "" || len(dest) == 0 || req.Destination.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "source and destination namespace and name are required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	bucketARN := buildTableBucketARN(bucketName)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	renameReq := &s3tables.RenameTableRequest{
+		TableBucketARN:  bucketARN,
+		SourceNamespace: source,
+		SourceName:      req.Source.Name,
+		DestNamespace:   dest,
+		DestName:        req.Destination.Name,
+	}
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RenameTable", renameReq, nil, identityName)
+	})
+
+	if err != nil {
+		var tableErr *s3tables.S3TablesError
+		if errors.As(err, &tableErr) {
+			switch tableErr.Type {
+			case s3tables.ErrCodeNoSuchTable:
+				writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", req.Source.Name))
+				return
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", dest))
+				return
+			case s3tables.ErrCodeTableAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s", req.Destination.Name))
+				return
+			case s3tables.ErrCodeInvalidRequest:
+				writeError(w, http.StatusBadRequest, "BadRequestException", tableErr.Message)
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RenameTable error: %v", err)
+		writeManagerError(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// isNoSuchTableError reports whether an error from the S3 Tables manager
+// indicates the target table is not registered in the catalog.
+func isNoSuchTableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) {
+		return tableErr.Type == s3tables.ErrCodeNoSuchTable || tableErr.Type == s3tables.ErrCodeNoSuchNamespace
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such table")
+}
+
+// cleanupStaleTableLocation purges any existing filer entry at the target
+// table path inside the regular S3 bucket so that engines which verify an
+// empty location (e.g. Trino CTAS) can proceed after a DROP. Callers must
+// have confirmed via the catalog that no table is registered at this name —
+// live tables must never be touched by this helper. Missing paths are not
+// an error.
+//
+// The tablePath is validated to contain only safe, relative segments before
+// being joined with the bucket prefix, so a maliciously crafted location
+// (e.g. containing "..") cannot escape the bucket subtree and delete data
+// outside of it.
+func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string) error {
+	tablePath = strings.Trim(tablePath, "/")
+	if bucketName == "" || tablePath == "" {
+		return nil
+	}
+	// Reject absolute paths and any traversal segments. path.Clean would
+	// silently collapse "foo/../bar" into "bar", masking an attempted
+	// escape, so we check each raw segment explicitly.
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" || segment == "." || segment == ".." || strings.ContainsAny(segment, `\`) {
+			return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
+		}
+	}
+	parentDir := path.Join(s3_constants.DefaultBucketsPath, bucketName, path.Dir(tablePath))
+	name := path.Base(tablePath)
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
+	}
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	})
 }
 
 // newTableMetadata creates a new table.Metadata object with the given parameters.
@@ -445,7 +992,7 @@ func newTableMetadata(
 	partitionSpec *iceberg.PartitionSpec,
 	sortOrder *table.SortOrder,
 	props iceberg.Properties,
-) table.Metadata {
+) (table.Metadata, error) {
 	// Add schema - use provided or create empty schema
 	var s *iceberg.Schema
 	if schema != nil {
@@ -479,9 +1026,18 @@ func newTableMetadata(
 	// Create metadata directly using the constructor which ensures spec compliance for V2
 	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
 	if err != nil {
-		glog.Errorf("Failed to create metadata: %v", err)
-		return nil
+		return nil, err
 	}
-
-	return metadata
+	// The constructor reassigns field ids, so the default name mapping must be
+	// derived from the final schema rather than the request's.
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	if patched := refreshDefaultNameMapping(raw, metadata); !bytes.Equal(patched, raw) {
+		if withMapping, err := table.ParseMetadataBytes(patched); err == nil {
+			return withMapping, nil
+		}
+	}
+	return metadata, nil
 }

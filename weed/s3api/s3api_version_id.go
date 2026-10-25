@@ -3,6 +3,7 @@ package s3api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -23,6 +24,13 @@ const (
 	// We use 0x4000000000000000 (~4.6×10¹⁸) as threshold
 	versionIdFormatThreshold = 0x4000000000000000
 )
+
+var errInvalidVersionID = errors.New("invalid version ID")
+
+// Version IDs are opaque to clients but become filenames under .versions.
+func isValidVersionID(versionId string) bool {
+	return versionId == "" || s3_constants.IsValidPathSegment(versionId)
+}
 
 // generateVersionId creates a unique version ID
 // If useInvertedFormat is true, uses inverted timestamps so newer versions sort first

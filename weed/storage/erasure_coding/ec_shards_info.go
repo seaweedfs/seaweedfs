@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"iter"
 	"math/bits"
 	"sort"
 	"strings"
@@ -40,6 +41,20 @@ func (sb ShardBits) Count() int {
 	return bits.OnesCount32(uint32(sb))
 }
 
+// All iterates the shard ids present in the bitmap, in ascending order. It walks
+// only the set bits (trailing-zero scan), so cost scales with the number of
+// shards present rather than the full id range. Prefer this over scanning
+// 0..MaxShardCount and calling Has on each id.
+func (sb ShardBits) All() iter.Seq[ShardId] {
+	return func(yield func(ShardId) bool) {
+		for b := uint32(sb); b != 0; b &= b - 1 {
+			if !yield(ShardId(bits.TrailingZeros32(b))) {
+				return
+			}
+		}
+	}
+}
+
 // ShardsInfo encapsulates information for EC shards with memory-efficient storage
 type ShardsInfo struct {
 	mu        sync.RWMutex
@@ -51,19 +66,6 @@ func NewShardsInfo() *ShardsInfo {
 	return &ShardsInfo{
 		shards: make([]ShardInfo, 0, TotalShardsCount),
 	}
-}
-
-// Initializes a ShardsInfo from a ECVolume.
-func ShardsInfoFromVolume(ev *EcVolume) *ShardsInfo {
-	res := &ShardsInfo{
-		shards: make([]ShardInfo, len(ev.Shards)),
-	}
-	// Build shards directly to avoid locking in Set() since res is not yet shared
-	for i, s := range ev.Shards {
-		res.shards[i] = NewShardInfo(s.ShardId, ShardSize(s.Size()))
-		res.shardBits = res.shardBits.Set(s.ShardId)
-	}
-	return res
 }
 
 // Initializes a ShardsInfo from a VolumeEcShardInformationMessage proto.
@@ -100,6 +102,75 @@ func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 		return 0
 	}
 	return ShardBits(vi.EcIndexBits).Count()
+}
+
+// VolumeSlots converts an EC shard count to the number of volume slots those
+// shards occupy: every DataShardsCount shards hold one volume's worth of data,
+// rounded up.
+func VolumeSlots(ecShardCount int64) int64 {
+	return (ecShardCount + DataShardsCount - 1) / DataShardsCount
+}
+
+// EcShardsTotalSize returns the sum of all shard sizes (data + parity) in
+// the message. Walks vi.ShardSizes directly rather than materializing a
+// ShardsInfo, which is significantly cheaper for callers that only need the
+// aggregate size.
+func EcShardsTotalSize(vi *master_pb.VolumeEcShardInformationMessage) int64 {
+	if vi == nil {
+		return 0
+	}
+	var total int64
+	for _, s := range vi.ShardSizes {
+		total += s
+	}
+	return total
+}
+
+// EcShardsVolumeDataShards returns the number of data shards for the EC volume
+// described by vi. Open-source SeaweedFS always uses the fixed 10+4 layout, so
+// this returns DataShardsCount. It is defined as a per-volume accessor (rather
+// than referencing DataShardsCount directly at every call site) so callers such
+// as ec.check.replication stay correct when a build derives the ratio per volume instead
+// of from the global constant.
+func EcShardsVolumeDataShards(vi *master_pb.VolumeEcShardInformationMessage) int {
+	return DataShardsCount
+}
+
+// EcShardsVolumeParityShards returns the number of parity shards for the EC
+// volume described by vi. As with EcShardsVolumeDataShards, open-source
+// SeaweedFS uses the fixed 10+4 layout, so this returns ParityShardsCount.
+func EcShardsVolumeParityShards(vi *master_pb.VolumeEcShardInformationMessage) int {
+	return ParityShardsCount
+}
+
+// EcShardsDataSize returns the sum of sizes for data shards only (parity
+// shards excluded). Data shards are those with id < dataShards; all higher
+// shard ids are treated as parity. Passing dataShards <= 0 falls back to
+// the upstream default of DataShardsCount (10), which is correct for the
+// fixed 10+4 layout. Forks with per-volume ratio metadata (e.g. the
+// data_shards field carried on an extended VolumeEcShardInformationMessage)
+// should pass the per-volume value so logical sizes remain accurate under
+// custom EC policies like 6+3 or 16+6.
+func EcShardsDataSize(vi *master_pb.VolumeEcShardInformationMessage, dataShards int) int64 {
+	if vi == nil {
+		return 0
+	}
+	if dataShards <= 0 {
+		dataShards = DataShardsCount
+	}
+	var total int64
+	var id ShardId
+	var j int
+	for bitmap := vi.EcIndexBits; bitmap != 0; bitmap >>= 1 {
+		if bitmap&1 != 0 {
+			if int(id) < dataShards && j < len(vi.ShardSizes) {
+				total += vi.ShardSizes[j]
+			}
+			j++
+		}
+		id++
+	}
+	return total
 }
 
 // Returns a string representation for a ShardsInfo.
@@ -291,17 +362,37 @@ func (si *ShardsInfo) Copy() *ShardsInfo {
 	}
 }
 
-// DeleteParityShards removes parity shards from a ShardInfo.
-func (si *ShardsInfo) DeleteParityShards() {
-	for id := DataShardsCount; id < TotalShardsCount; id++ {
-		si.Delete(ShardId(id))
+// DeleteParityShards removes parity shards (those with id >= dataShards) from
+// a ShardInfo. dataShards is the volume's data-shard count; passing <= 0 falls
+// back to DataShardsCount (the fixed 10+4 layout). The upper bound is
+// MaxShardCount, not TotalShardsCount, so a custom ratio's high parity ids
+// (e.g. 16+6 reaches id 21) are cleared too; Delete no-ops on absent ids.
+func (si *ShardsInfo) DeleteParityShards(dataShards int) {
+	if dataShards <= 0 {
+		dataShards = DataShardsCount
 	}
+	if dataShards >= MaxShardCount {
+		return // every id is a data shard; nothing to remove
+	}
+	si.mu.Lock()
+	defer si.mu.Unlock()
+
+	// Parity ids are >= dataShards. shards stays sorted by Id and shardBits is
+	// a bitmap, so clear them in one locked pass instead of a per-id Delete:
+	// mask off the high bits, then truncate the sorted slice at the first
+	// parity id via binary search.
+	si.shardBits &= ShardBits((uint32(1) << uint(dataShards)) - 1)
+	idx := sort.Search(len(si.shards), func(i int) bool {
+		return si.shards[i].Id >= ShardId(dataShards)
+	})
+	si.shards = si.shards[:idx]
 }
 
-// MinusParityShards creates a ShardInfo copy, but with parity shards removed.
-func (si *ShardsInfo) MinusParityShards() *ShardsInfo {
+// MinusParityShards creates a ShardInfo copy with parity shards removed for the
+// given data-shard count (<= 0 falls back to DataShardsCount).
+func (si *ShardsInfo) MinusParityShards(dataShards int) *ShardsInfo {
 	result := si.Copy()
-	result.DeleteParityShards()
+	result.DeleteParityShards(dataShards)
 	return result
 }
 

@@ -18,6 +18,7 @@ func printpath(parts ...string) string {
 var funcMap = template.FuncMap{
 	"humanizeBytes": humanize.Bytes,
 	"printpath":     printpath,
+	"queryEscape":   url.QueryEscape,
 }
 
 //go:embed filer.html

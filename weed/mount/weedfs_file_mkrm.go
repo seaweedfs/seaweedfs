@@ -7,9 +7,14 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /**
@@ -23,10 +28,137 @@ import (
  * will be called instead.
  */
 func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, out *fuse.CreateOut) (code fuse.Status) {
-	// if implemented, need to use
-	// 	inode := wfs.inodeToPath.Lookup(entryFullPath)
-	// to ensure nlookup counter
-	return fuse.ENOSYS
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
+		return s
+	}
+
+	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return code
+	}
+
+	entryFullPath := dirFullPath.Child(name)
+	var inode uint64
+
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	newEntry, _, code := wfs.maybeLoadEntry(ctx, entryFullPath)
+	if code == fuse.OK {
+		if newEntry == nil || newEntry.Attributes == nil {
+			return fuse.EIO
+		}
+		if in.Flags&syscall.O_EXCL != 0 {
+			glog.V(0).Infof("Create O_EXCL %s: already exists (uid=%d gid=%d mode=%o)",
+				entryFullPath, newEntry.Attributes.Uid, newEntry.Attributes.Gid, newEntry.Attributes.FileMode)
+			return fuse.Status(syscall.EEXIST)
+		}
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
+		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
+		if status != fuse.OK {
+			return status
+		}
+		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
+			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
+				wfs.ReleaseHandle(fileHandle.fh)
+				return code
+			}
+			newEntry = fileHandle.GetEntry().GetEntry()
+		}
+
+		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
+		out.Fh = uint64(fileHandle.fh)
+		out.OpenFlags = 0
+		return fuse.OK
+	}
+	if code != fuse.ENOENT {
+		return code
+	}
+
+	// Acquire the DLM lock before the filer create: a lock failure after an
+	// eager create would return EAGAIN while the file stays persisted.
+	var dlmLock *cluster.LiveLock
+	if wfs.lockClient != nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+		dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+			string(entryFullPath), owner, lock_manager.LiveLockTTL,
+		)
+		if dlmLock == nil {
+			return fuse.Status(syscall.EAGAIN)
+		}
+	}
+
+	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
+	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
+		// Race: another process created the file between our check and create.
+		// Reopen the winner's entry; AcquireHandle takes its own lock.
+		if dlmLock != nil {
+			dlmLock.Stop()
+		}
+		newEntry, _, code = wfs.maybeLoadEntry(ctx, entryFullPath)
+		if code != fuse.OK {
+			return code
+		}
+		if newEntry == nil || newEntry.Attributes == nil {
+			return fuse.EIO
+		}
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
+		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
+		if status != fuse.OK {
+			return status
+		}
+		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
+			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
+				wfs.ReleaseHandle(fileHandle.fh)
+				return code
+			}
+			newEntry = fileHandle.GetEntry().GetEntry()
+		}
+		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
+		out.Fh = uint64(fileHandle.fh)
+		out.OpenFlags = 0
+		return fuse.OK
+	} else if code != fuse.OK {
+		if dlmLock != nil {
+			dlmLock.Stop()
+		}
+		return code
+	} else {
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
+	}
+
+	wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
+
+	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
+	// and would fail since the entry is not yet on the filer or in the meta cache).
+	// We already have the entry from createRegularFile, so create the handle directly.
+	fileHandle, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+	if existed {
+		// A create is authoritative for the entry it just made, so it takes
+		// effect even on a handle that outlived a previous incarnation.
+		fileHandle.SetEntry(newEntry)
+	}
+	fileHandle.RememberPath(entryFullPath)
+	// Mark dirty so the deferred filer create happens on Flush, even if the
+	// file is closed without any writes. An eager create has already
+	// persisted the entry, so its handle starts clean.
+	fileHandle.dirtyMetadata = !wfs.option.EagerFilerCreate
+
+	// Create bypasses AcquireHandle, so attach the lock acquired above.
+	// A surviving handle may already hold one; ours is redundant then.
+	if dlmLock != nil {
+		if fileHandle.dlmLock == nil {
+			fileHandle.dlmLock = dlmLock
+			glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+		} else {
+			dlmLock.Stop()
+		}
+	}
+
+	out.Fh = uint64(fileHandle.fh)
+	out.OpenFlags = 0
+
+	return fuse.OK
 }
 
 /** Create a file node
@@ -37,11 +169,8 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
  */
 func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if wfs.IsOverQuotaWithUncommitted() {
-		return fuse.Status(syscall.ENOSPC)
-	}
-
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -50,63 +179,15 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return
 	}
 
-	entryFullPath := dirFullPath.Child(name)
-	fileMode := toOsFileMode(in.Mode)
-	now := time.Now().Unix()
-	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
-
-	newEntry := &filer_pb.Entry{
-		Name:        name,
-		IsDirectory: false,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    now,
-			Crtime:   now,
-			FileMode: uint32(fileMode),
-			Uid:      in.Uid,
-			Gid:      in.Gid,
-			TtlSec:   wfs.option.TtlSec,
-			Rdev:     in.Rdev,
-			Inode:    inode,
-		},
-	}
-
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		wfs.mapPbIdFromLocalToFiler(newEntry)
-		defer wfs.mapPbIdFromFilerToLocal(newEntry)
-
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dirFullPath),
-			Entry:                    newEntry,
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
-		}
-
-		glog.V(1).Infof("mknod: %v", request)
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
-			return err
-		}
-
-		// Only cache the entry if the parent directory is already cached.
-		// This avoids polluting the cache with partial directory data.
-		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
-			wfs.inodeToPath.TouchDirectory(dirFullPath)
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("local mknod %s: %w", entryFullPath, err)
-			}
-		}
-
-		return nil
-	})
-
-	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
-
-	if err != nil {
-		return fuse.EIO
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	inode, newEntry, code := wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false, false)
+	if code != fuse.OK {
+		return code
 	}
 
 	// this is to increase nlookup counter
+	entryFullPath := dirFullPath.Child(name)
 	inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
@@ -118,6 +199,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
+	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
+	name = sanitizeFuseName(name)
+
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
 		if code == fuse.ENOENT {
@@ -127,7 +211,9 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	entry, code := wfs.maybeLoadEntry(entryFullPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	entry, _, code := wfs.maybeLoadEntry(ctx, entryFullPath)
 	if code != fuse.OK {
 		if code == fuse.ENOENT {
 			return fuse.OK
@@ -139,25 +225,357 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.EPERM
 	}
 
+	// For hard-linked files, serialize all concurrent mutations on the
+	// same HardLinkId so the filer-side blob decrement and the mount-side
+	// sibling cache sync are observed atomically by other unlinkers.
+	// Without this, two concurrent unlinks on different links of the same
+	// file both read the same pre-decrement counter and both stamp their
+	// siblings to counter-1, leaving the cache one higher than the blob.
+	// Re-load the entry under the lock so we see any sibling update a
+	// prior holder just applied.
+	if entry != nil && len(entry.HardLinkId) > 0 {
+		hlKey := string(entry.HardLinkId)
+		lock := wfs.hardLinkLockTable.AcquireLock("unlink", hlKey, util.ExclusiveLock)
+		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
+		// If another thread unlinked the entry while we waited for the
+		// lock, the file is already gone — return OK like the initial
+		// maybeLoadEntry path above. Do not fall back to the stale
+		// pre-lock snapshot: proceeding with its HardLinkCounter would
+		// reintroduce the stale-base update the lock is meant to prevent.
+		fresh, _, freshCode := wfs.maybeLoadEntry(ctx, entryFullPath)
+		if freshCode == fuse.ENOENT {
+			return fuse.OK
+		}
+		if freshCode != fuse.OK {
+			return freshCode
+		}
+		entry = fresh
+	}
+
+	// POSIX: enforce sticky bit on the parent directory.
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode != fuse.OK {
+		return dirCode
+	} else if dirEntry != nil && dirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if entry != nil && entry.Attributes != nil {
+			targetUid = entry.Attributes.Uid
+		}
+		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
+	// Before deleting from the filer, mark any draining async-flush handle
+	// as deleted and wait for it to complete.  Without this, the async flush
+	// can race with the filer delete and recreate the just-unlinked entry
+	// (the worker checks isDeleted, but it may have already passed that check
+	// before Unlink sets the flag).  By waiting here, any in-flight flush
+	// finishes first; even if it recreated the entry, the filer delete below
+	// will remove it again.
+	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		wfs.markHandleDeleted(inode)
+		wfs.waitForPendingAsyncFlush(context.Background(), inode)
+	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
+		inodeFromEntry := entry.Attributes.Inode
+		wfs.markHandleDeleted(inodeFromEntry)
+		wfs.waitForPendingAsyncFlush(context.Background(), inodeFromEntry)
+	}
+
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", entryFullPath)
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
 	// The filer has the correct hard link count and will only delete chunks when appropriate.
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{wfs.signature})
+	deleteReq := &filer_pb.DeleteEntryRequest{
+		// See weedfs_dir_mkrm.go Mkdir for why Directory is sanitized.
+		Directory:    dirFullPath.Sanitized(),
+		Name:         name,
+		IsDeleteData: true,
+		Signatures:   []int32{wfs.signature},
+	}
+	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		return fuse.OK
 	}
 
-	// then, delete meta cache
-	if err = wfs.metaCache.DeleteEntry(context.Background(), entryFullPath); err != nil {
-		glog.V(3).Infof("local DeleteEntry %s: %v", entryFullPath, err)
-		return fuse.EIO
+	var event *filer_pb.SubscribeMetadataResponse
+	if resp != nil && resp.MetadataEvent != nil {
+		event = resp.MetadataEvent
+	} else {
+		event = metadataDeleteEvent(string(dirFullPath), name, false)
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("unlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
+	wfs.touchDirMtimeCtimeBest(dirFullPath)
 
-	wfs.inodeToPath.RemovePath(entryFullPath)
+	// For hard-linked files, the filer's DeleteHardLink decremented the
+	// shared blob, but the sibling link entries in the local metacache
+	// still carry the pre-unlink HardLinkCounter, and the kernel has
+	// cached attrs on the shared inode. Resolve the shared inode before
+	// removing the path from inodeToPath, then propagate the decrement
+	// to every sibling cache entry and invalidate the kernel attr cache
+	// so subsequent lstats on other links see the new nlink — pjdfstest
+	// link/00.t asserts this after `unlink n0` leaves n1/n2 behind.
+	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
+	var sharedInode uint64
+	if isHardLink {
+		sharedInode = entry.Attributes.Inode
+		if sharedInode == 0 {
+			if resolved, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+				sharedInode = resolved
+			}
+		}
+	}
+
+	wfs.inodeToPath.RemovePath(entryFullPath, nil)
+
+	if isHardLink && sharedInode != 0 {
+		decremented := proto.Clone(entry).(*filer_pb.Entry)
+		decremented.HardLinkCounter = entry.HardLinkCounter - 1
+		now := time.Now()
+		decremented.Attributes.Ctime = now.Unix()
+		decremented.Attributes.CtimeNs = int32(now.Nanosecond())
+		wfs.syncHardLinkSiblings(sharedInode, decremented, entryFullPath)
+	}
 
 	return fuse.OK
 
+}
+
+func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool, skipExistenceCheck bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
+	if wfs.IsOverQuotaWithUncommitted() {
+		return 0, nil, fuse.Status(syscall.ENOSPC)
+	}
+
+	// Load the parent directory to validate it exists (the create RPC sets
+	// SkipCheckParentDirectory, so this is the only parent check). With
+	// default_permissions the kernel already verified write+search on it before
+	// Create/Mknod, so skip only the mode-bit check and its group lookup.
+	parentEntry, _, parentStatus := wfs.maybeLoadEntry(ctx, dirFullPath)
+	if parentStatus != fuse.OK {
+		return 0, nil, parentStatus
+	}
+	if parentEntry == nil || parentEntry.Attributes == nil {
+		return 0, nil, fuse.EIO
+	}
+	if !wfs.option.DefaultPermissions {
+		// Map parent dir uid/gid from filer-space to local-space so the
+		// permission check compares like with like (caller uid/gid are local).
+		parentUid, parentGid := parentEntry.Attributes.Uid, parentEntry.Attributes.Gid
+		if wfs.option.UidGidMapper != nil {
+			parentUid, parentGid = wfs.option.UidGidMapper.FilerToLocal(parentUid, parentGid)
+		}
+		if !hasAccess(uid, gid, parentUid, parentGid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
+			return 0, nil, fuse.Status(syscall.EACCES)
+		}
+	}
+
+	entryFullPath := dirFullPath.Child(name)
+	if !skipExistenceCheck {
+		if _, _, status := wfs.maybeLoadEntry(ctx, entryFullPath); status == fuse.OK {
+			return 0, nil, fuse.Status(syscall.EEXIST)
+		} else if status != fuse.ENOENT {
+			return 0, nil, status
+		}
+	}
+	fileMode := toOsFileMode(mode)
+	now := time.Now().Unix()
+	inode = wfs.inodeToPath.AllocateInode(entryFullPath, now)
+
+	newEntry = &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: false,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			Ctime:    now,
+			FileMode: uint32(fileMode),
+			Uid:      uid,
+			Gid:      gid,
+			TtlSec:   wfs.option.TtlSec,
+			Rdev:     rdev,
+			Inode:    inode,
+		},
+	}
+
+	if deferFilerCreate || wfs.option.WritebackCache {
+		// Insert a local placeholder into the metadata cache so that
+		// maybeLoadEntry() can find the file immediately (e.g., duplicate-
+		// create checks, stat, readdir).
+		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
+		// triggering directory hot-threshold eviction that would wipe the entry.
+		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry), 0); insertErr != nil {
+			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
+		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
+
+		if deferFilerCreate {
+			// Fully deferred: the caller (Create) will build a file handle
+			// directly from newEntry. The actual filer entry is created by
+			// flushMetadataToFiler on close.
+			glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
+		} else {
+			// Async create: Mknod with writeback caching. The node is
+			// visible locally; fire the filer RPC in the background.
+			wfs.asyncCreateEntry(dirFullPath, newEntry)
+			glog.V(3).Infof("createFile %s: async create", entryFullPath)
+		}
+		return inode, newEntry, fuse.OK
+	}
+
+	wfs.mapPbIdFromLocalToFiler(newEntry)
+	defer wfs.mapPbIdFromFilerToLocal(newEntry)
+
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dirFullPath),
+		Entry:                    newEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
+
+	glog.V(1).Infof("createFile: %v", request)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(0).Infof("createFile %s: %v", entryFullPath, err)
+	} else {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirFullPath), newEntry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("createFile %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
+	}
+
+	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
+
+	if err != nil {
+		return 0, nil, grpcErrorToFuseStatus(err)
+	}
+
+	return inode, newEntry, fuse.OK
+}
+
+// markHandleDeleted flags the inode's open handle so its flushes stop writing
+// the entry back, and reports which mark this was. Taken and released under
+// the handle's flush lock: a flush already holding it finishes before the
+// caller's delete runs, and any later flush sees the flag; setting the flag
+// bare raced the flush's own check and resurrected the entry right after the
+// delete.
+func (wfs *WFS) markHandleDeleted(inode uint64) uint64 {
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return 0
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("markHandleDeleted", fh.fh, util.ExclusiveLock)
+	fh.isDeleted = true
+	fh.deleteEpoch++
+	epoch := fh.deleteEpoch
+	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	return epoch
+}
+
+// clearHandleDeleted lifts a mark whose delete did not go through. Only the
+// mark epoch names: an unlink that raised the flag after it owns the entry's
+// fate and keeps it.
+func (wfs *WFS) clearHandleDeleted(inode uint64, epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("clearHandleDeleted", fh.fh, util.ExclusiveLock)
+	if fh.deleteEpoch == epoch {
+		fh.isDeleted = false
+	}
+	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+}
+
+// asyncCreateEntry sends a CreateEntry RPC to the filer in the background.
+// The entry is already in the local meta cache; this persists it to the filer.
+// Used by Mknod with writeback caching — the node is visible locally right away.
+//
+// If the filer RPC fails after retries, the local cache entry is removed so the
+// phantom file does not persist across cache invalidation or mount restart.
+func (wfs *WFS) asyncCreateEntry(dirFullPath util.FullPath, entry *filer_pb.Entry) {
+	// Clone so the goroutine has its own copy for uid/gid mapping.
+	requestEntry := proto.Clone(entry).(*filer_pb.Entry)
+	dir := string(dirFullPath)
+	entryPath := dirFullPath.Child(entry.Name)
+	go func() {
+		wfs.mapPbIdFromLocalToFiler(requestEntry)
+		request := &filer_pb.CreateEntryRequest{
+			Directory:                dir,
+			Entry:                    requestEntry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
+		}
+		err := retryMetadataFlush(context.Background(), func() error {
+			resp, createErr := wfs.streamCreateEntry(context.Background(), request)
+			if createErr != nil {
+				return createErr
+			}
+			event := resp.GetMetadataEvent()
+			if event == nil {
+				event = metadataCreateEvent(dir, requestEntry)
+			}
+			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+				glog.Warningf("async createFile %s: metadata apply: %v", entryPath, applyErr)
+				wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			}
+			return nil
+		}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+			glog.Warningf("async createFile %s: retrying (attempt %d/%d) after %v: %v",
+				entryPath, nextAttempt, totalAttempts, backoff, err)
+		})
+		if err != nil {
+			glog.Errorf("async createFile %s: failed after retries: %v — removing local entry", entryPath, err)
+			wfs.metaCache.DeleteEntry(context.Background(), entryPath)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+		}
+	}()
+}
+
+func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry) fuse.Status {
+	if entry == nil {
+		return fuse.EIO
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+
+	entry.Content = nil
+	entry.Chunks = nil
+	entry.Attributes.FileSize = 0
+	truncNow := time.Now()
+	entry.Attributes.Mtime = truncNow.Unix()
+	entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
+	entry.Attributes.Ctime = truncNow.Unix()
+	entry.Attributes.CtimeNs = int32(truncNow.Nanosecond())
+
+	if code := wfs.saveEntry(entryFullPath, entry); code != fuse.OK {
+		return code
+	}
+
+	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		wfs.invalidateOpenMtimeCache(inode)
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fhActiveLock := fh.wfs.fhLockTable.AcquireLock("truncateEntry", fh.fh, util.ExclusiveLock)
+			fh.ResetDirtyPages()
+			fh.SetEntry(entry)
+			fh.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
+			fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		}
+	}
+
+	return fuse.OK
 }

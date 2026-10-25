@@ -59,8 +59,9 @@ func runDownload(cmd *Command, args []string) bool {
 		masterServer = *d.server
 	}
 
+	*d.dir = util.ResolvePath(*d.dir)
 	for _, fid := range args {
-		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, fid, *d.dir); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
@@ -131,17 +132,4 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 	defer util_http.CloseResponse(rc)
 	content, e = io.ReadAll(rc.Body)
 	return
-}
-
-func WriteFile(filename string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	n, err := f.Write(data)
-	f.Close()
-	if err == nil && n < len(data) {
-		err = io.ErrShortWrite
-	}
-	return err
 }

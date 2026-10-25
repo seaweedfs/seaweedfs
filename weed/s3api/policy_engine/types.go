@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Policy Engine Types
@@ -35,6 +37,27 @@ const (
 var (
 	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
 	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	// multipartActionSet contains all S3 multipart upload actions
+	// These are treated as equivalent to s3:PutObject for authorization purposes
+	multipartActionSet = map[string]bool{
+		s3const.S3_ACTION_CREATE_MULTIPART:       true,
+		s3const.S3_ACTION_UPLOAD_PART:            true,
+		s3const.S3_ACTION_UPLOAD_PART_COPY:       true,
+		s3const.S3_ACTION_COMPLETE_MULTIPART:     true,
+		s3const.S3_ACTION_ABORT_MULTIPART:        true,
+		s3const.S3_ACTION_LIST_PARTS:             true,
+		s3const.S3_ACTION_LIST_MULTIPART_UPLOADS: true,
+	}
+
+	// lowerMultipartActionSet keys the same actions for case-insensitive lookup.
+	lowerMultipartActionSet = func() map[string]bool {
+		lowered := make(map[string]bool, len(multipartActionSet))
+		for action := range multipartActionSet {
+			lowered[strings.ToLower(action)] = true
+		}
+		return lowered
+	}()
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -69,14 +92,150 @@ func (s StringOrStringSlice) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.values)
 }
 
-// Strings returns the slice of strings
-func (s StringOrStringSlice) Strings() []string {
+// Strings returns the slice of strings. Nil-safe for pointer receivers.
+func (s *StringOrStringSlice) Strings() []string {
+	if s == nil {
+		return nil
+	}
 	return s.values
 }
 
 // NewStringOrStringSlice creates a new StringOrStringSlice from strings
 func NewStringOrStringSlice(values ...string) StringOrStringSlice {
 	return StringOrStringSlice{values: values}
+}
+
+// NewStringOrStringSlicePtr creates a new *StringOrStringSlice from strings
+func NewStringOrStringSlicePtr(values ...string) *StringOrStringSlice {
+	return &StringOrStringSlice{values: values}
+}
+
+// CloneStringOrStringSlice returns a copy with its own backing slice.
+func CloneStringOrStringSlice(value StringOrStringSlice) StringOrStringSlice {
+	return StringOrStringSlice{values: append([]string(nil), value.values...)}
+}
+
+// allowedPrincipalKeys is the set of principal-type keys AWS allows inside the
+// Principal/NotPrincipal object form.
+var allowedPrincipalKeys = map[string]struct{}{
+	"AWS":           {},
+	"Service":       {},
+	"Federated":     {},
+	"CanonicalUser": {},
+}
+
+// PolicyPrincipal represents the Principal element of a policy statement.
+//
+// AWS accepts three shapes (see the IAM "Principal" element reference):
+//
+//	"Principal": "*"                                    // all principals (anonymous)
+//	"Principal": { "AWS": "arn:aws:iam::123:user/x" }   // single, keyed by type
+//	"Principal": { "AWS": ["arn:...", "999999999999"] } // array of values
+//
+// The object may key on "AWS", "Service", "Federated" or "CanonicalUser", and
+// each value is itself a string or an array of strings. For backward
+// compatibility SeaweedFS also accepts a bare string or array of strings.
+//
+// Authorization matches the request principal ARN against the flat set of
+// principal values, so every keyed value is flattened into one list. The
+// original JSON is preserved so GetBucketPolicy returns the exact shape the
+// caller submitted; this keeps PutBucketPolicy/GetBucketPolicy idempotent for
+// infrastructure-as-code tools (Terraform, Ansible) that diff the returned
+// policy against the submitted one.
+type PolicyPrincipal struct {
+	values []string
+	raw    json.RawMessage
+}
+
+// UnmarshalJSON implements json.Unmarshaler for PolicyPrincipal.
+func (p *PolicyPrincipal) UnmarshalJSON(data []byte) error {
+	// Preserve the original encoding for a faithful round-trip on marshal.
+	p.raw = append(json.RawMessage(nil), data...)
+
+	// Bare string, e.g. "*"
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		p.values = []string{str}
+		return nil
+	}
+
+	// Bare array of strings (SeaweedFS extension; not standard AWS).
+	var strs []string
+	if err := json.Unmarshal(data, &strs); err == nil {
+		p.values = strs
+		return nil
+	}
+
+	// AWS object form: {"AWS": <string|[]string>, "Service": ..., "Federated": ...,
+	// "CanonicalUser": ...}. Each value reuses StringOrStringSlice so it accepts a
+	// single string or an array. All keyed values are flattened for matching.
+	var obj map[string]StringOrStringSlice
+	if err := json.Unmarshal(data, &obj); err == nil && len(obj) > 0 {
+		// Sort keys so the flattened order is deterministic.
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			if _, ok := allowedPrincipalKeys[k]; !ok {
+				return fmt.Errorf("unsupported Principal type %q (expected AWS, Service, Federated or CanonicalUser)", k)
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		values := make([]string, 0, len(obj))
+		for _, k := range keys {
+			v := obj[k]
+			items := v.Strings()
+			if len(items) == 0 {
+				return fmt.Errorf("Principal %q must list at least one value", k)
+			}
+			for _, item := range items {
+				if item == "" {
+					return fmt.Errorf("Principal %q must not contain empty values", k)
+				}
+			}
+			values = append(values, items...)
+		}
+		p.values = values
+		return nil
+	}
+
+	return fmt.Errorf(`Principal must be a string, an array of strings, or an object such as {"AWS": ["arn:..."]}`)
+}
+
+// MarshalJSON implements json.Marshaler for PolicyPrincipal.
+func (p PolicyPrincipal) MarshalJSON() ([]byte, error) {
+	// Echo the original JSON when we parsed it, so the shape is preserved.
+	if len(p.raw) > 0 {
+		return p.raw, nil
+	}
+	// Programmatically-constructed principals marshal as a bare string/array.
+	if len(p.values) == 1 {
+		return json.Marshal(p.values[0])
+	}
+	return json.Marshal(p.values)
+}
+
+// Strings returns the flattened principal values. Nil-safe for pointer receivers.
+func (p *PolicyPrincipal) Strings() []string {
+	if p == nil {
+		return nil
+	}
+	return p.values
+}
+
+// NewPolicyPrincipalPtr builds a *PolicyPrincipal from flat values (no object wrapping).
+func NewPolicyPrincipalPtr(values ...string) *PolicyPrincipal {
+	return &PolicyPrincipal{values: values}
+}
+
+// ClonePolicyPrincipal deep-copies a *PolicyPrincipal (nil-safe).
+func ClonePolicyPrincipal(p *PolicyPrincipal) *PolicyPrincipal {
+	if p == nil {
+		return nil
+	}
+	return &PolicyPrincipal{
+		values: append([]string(nil), p.values...),
+		raw:    append(json.RawMessage(nil), p.raw...),
+	}
 }
 
 // PolicyConditions represents policy conditions with proper typing
@@ -121,13 +280,14 @@ func (p *PolicyDocument) UnmarshalJSON(data []byte) error {
 
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
-	Sid         string               `json:"Sid,omitempty"`
-	Effect      PolicyEffect         `json:"Effect"`
-	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
-	Action      StringOrStringSlice  `json:"Action"`
-	Resource    StringOrStringSlice  `json:"Resource,omitempty"`
-	NotResource StringOrStringSlice  `json:"NotResource,omitempty"`
-	Condition   PolicyConditions     `json:"Condition,omitempty"`
+	Sid          string               `json:"Sid,omitempty"`
+	Effect       PolicyEffect         `json:"Effect"`
+	Principal    *PolicyPrincipal     `json:"Principal,omitempty"`
+	NotPrincipal *PolicyPrincipal     `json:"NotPrincipal,omitempty"`
+	Action       StringOrStringSlice  `json:"Action"`
+	Resource     *StringOrStringSlice `json:"Resource,omitempty"`
+	NotResource  *StringOrStringSlice `json:"NotResource,omitempty"`
+	Condition    PolicyConditions     `json:"Condition,omitempty"`
 }
 
 // PolicyEffect represents Allow or Deny
@@ -151,12 +311,18 @@ type PolicyEvaluationArgs struct {
 	ObjectEntry map[string][]byte
 	// Claims are JWT claims for jwt:* policy variables (can be nil)
 	Claims map[string]interface{}
+	// InheritedSSEAlgorithm is the canonical SSE algorithm ("AES256" or "aws:kms")
+	// inherited from the CreateMultipartUpload request for UploadPart and
+	// UploadPartCopy actions. The empty string means no SSE was used.
+	InheritedSSEAlgorithm string
+
+	// Original complete grant values supplement only positive string conditions in explicit denies, never allows or negative conditions.
+	OriginalGrantConditions map[string][]string
 }
 
 // PolicyCache for caching compiled policies
 type PolicyCache struct {
-	policies   map[string]*CompiledPolicy
-	lastUpdate time.Time
+	policies map[string]*CompiledPolicy
 }
 
 // CompiledPolicy represents a policy that has been compiled for efficient evaluation
@@ -168,9 +334,9 @@ type CompiledPolicy struct {
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
-	ActionMatchers    []*WildcardMatcher
-	ResourceMatchers  []*WildcardMatcher
-	PrincipalMatchers []*WildcardMatcher
+	ActionMatchers    []*wildcard.WildcardMatcher
+	ResourceMatchers  []*wildcard.WildcardMatcher
+	PrincipalMatchers []*wildcard.WildcardMatcher
 	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
@@ -181,9 +347,14 @@ type CompiledStatement struct {
 	DynamicResourcePatterns  []string
 	DynamicPrincipalPatterns []string
 
+	// NotPrincipal patterns (principal should NOT match these)
+	NotPrincipalMatchers        []*wildcard.WildcardMatcher
+	NotPrincipalPatterns        []*regexp.Regexp
+	DynamicNotPrincipalPatterns []string
+
 	// NotResource patterns (resource should NOT match these)
 	NotResourcePatterns        []*regexp.Regexp
-	NotResourceMatchers        []*WildcardMatcher
+	NotResourceMatchers        []*wildcard.WildcardMatcher
 	DynamicNotResourcePatterns []string
 }
 
@@ -225,6 +396,11 @@ func validateStatement(stmt *PolicyStatement) error {
 
 	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
 		return fmt.Errorf("statement must specify Resource or NotResource")
+	}
+
+	// AWS does not allow both Principal and NotPrincipal in the same statement.
+	if stmt.Principal != nil && stmt.NotPrincipal != nil {
+		return fmt.Errorf("statement cannot specify both Principal and NotPrincipal")
 	}
 
 	return nil
@@ -275,16 +451,25 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		},
 	}
 
-	// Deep clone Principal if present
+	// Deep clone Principal / NotPrincipal if present
 	if stmt.Principal != nil {
-		principalClone := *stmt.Principal
-		principalClone.values = slices.Clone(stmt.Principal.values)
-		compiled.Statement.Principal = &principalClone
+		compiled.Statement.Principal = ClonePolicyPrincipal(stmt.Principal)
+	}
+	if stmt.NotPrincipal != nil {
+		compiled.Statement.NotPrincipal = ClonePolicyPrincipal(stmt.NotPrincipal)
 	}
 
 	// Deep clone Resource/NotResource into the internal statement as well for completeness
-	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
-	compiled.Statement.NotResource.values = slices.Clone(stmt.NotResource.values)
+	if stmt.Resource != nil {
+		resourceClone := *stmt.Resource
+		resourceClone.values = slices.Clone(stmt.Resource.values)
+		compiled.Statement.Resource = &resourceClone
+	}
+	if stmt.NotResource != nil {
+		notResourceClone := *stmt.NotResource
+		notResourceClone.values = slices.Clone(stmt.NotResource.values)
+		compiled.Statement.NotResource = &notResourceClone
+	}
 	compiled.Statement.Action.values = slices.Clone(stmt.Action.values)
 
 	// Deep clone Condition map
@@ -316,7 +501,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ActionPatterns = append(compiled.ActionPatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(action)
+		matcher, err := wildcard.NewWildcardMatcher(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create action matcher %s: %v", action, err)
 		}
@@ -340,7 +525,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ResourcePatterns = append(compiled.ResourcePatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(resource)
+		matcher, err := wildcard.NewWildcardMatcher(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource matcher %s: %v", resource, err)
 		}
@@ -365,11 +550,37 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.PrincipalPatterns = append(compiled.PrincipalPatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(principal)
+			matcher, err := wildcard.NewWildcardMatcher(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
 			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
+		}
+	}
+
+	// Compile NotPrincipal patterns and matchers (principal should NOT match these)
+	if stmt.NotPrincipal != nil && len(stmt.NotPrincipal.Strings()) > 0 {
+		for _, notPrincipal := range stmt.NotPrincipal.Strings() {
+			if notPrincipal == "" {
+				continue
+			}
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(notPrincipal) {
+				compiled.DynamicNotPrincipalPatterns = append(compiled.DynamicNotPrincipalPatterns, notPrincipal)
+				continue
+			}
+
+			pattern, err := compilePattern(notPrincipal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile NotPrincipal pattern %s: %v", notPrincipal, err)
+			}
+			compiled.NotPrincipalPatterns = append(compiled.NotPrincipalPatterns, pattern)
+
+			matcher, err := wildcard.NewWildcardMatcher(notPrincipal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create NotPrincipal matcher %s: %v", notPrincipal, err)
+			}
+			compiled.NotPrincipalMatchers = append(compiled.NotPrincipalMatchers, matcher)
 		}
 	}
 
@@ -391,7 +602,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(notResource)
+			matcher, err := wildcard.NewWildcardMatcher(notResource)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
 			}
@@ -407,7 +618,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 // compilePattern compiles a wildcard pattern to regex
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	return CompileWildcardPattern(pattern)
+	return wildcard.CompileWildcardPattern(pattern)
 }
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
@@ -435,6 +646,8 @@ func normalizeToStringSliceWithError(value interface{}) ([]string, error) {
 		return result, nil
 	case StringOrStringSlice:
 		return v.Strings(), nil
+	case *StringOrStringSlice:
+		return v.Strings(), nil
 	default:
 		return nil, fmt.Errorf("unexpected type for policy value: %T", v)
 	}
@@ -450,61 +663,66 @@ func GetBucketFromResource(resource string) string {
 	return ""
 }
 
-// IsObjectResource checks if resource refers to objects
-func IsObjectResource(resource string) bool {
-	return strings.Contains(resource, "/")
-}
-
-// S3Actions contains common S3 actions
-var S3Actions = map[string]string{
-	"GetObject":                        "s3:GetObject",
-	"PutObject":                        "s3:PutObject",
-	"DeleteObject":                     "s3:DeleteObject",
-	"GetObjectVersion":                 "s3:GetObjectVersion",
-	"DeleteObjectVersion":              "s3:DeleteObjectVersion",
-	"ListBucket":                       "s3:ListBucket",
-	"ListBucketVersions":               "s3:ListBucketVersions",
-	"GetBucketLocation":                "s3:GetBucketLocation",
-	"GetBucketVersioning":              "s3:GetBucketVersioning",
-	"PutBucketVersioning":              "s3:PutBucketVersioning",
-	"GetBucketAcl":                     "s3:GetBucketAcl",
-	"PutBucketAcl":                     "s3:PutBucketAcl",
-	"GetObjectAcl":                     "s3:GetObjectAcl",
-	"PutObjectAcl":                     "s3:PutObjectAcl",
-	"GetBucketPolicy":                  "s3:GetBucketPolicy",
-	"PutBucketPolicy":                  "s3:PutBucketPolicy",
-	"DeleteBucketPolicy":               "s3:DeleteBucketPolicy",
-	"GetBucketCors":                    "s3:GetBucketCors",
-	"PutBucketCors":                    "s3:PutBucketCors",
-	"DeleteBucketCors":                 "s3:DeleteBucketCors",
-	"GetBucketNotification":            "s3:GetBucketNotification",
-	"PutBucketNotification":            "s3:PutBucketNotification",
-	"GetBucketTagging":                 "s3:GetBucketTagging",
-	"PutBucketTagging":                 "s3:PutBucketTagging",
-	"DeleteBucketTagging":              "s3:DeleteBucketTagging",
-	"GetObjectTagging":                 "s3:GetObjectTagging",
-	"PutObjectTagging":                 "s3:PutObjectTagging",
-	"DeleteObjectTagging":              "s3:DeleteObjectTagging",
-	"ListMultipartUploads":             "s3:ListMultipartUploads",
-	"AbortMultipartUpload":             "s3:AbortMultipartUpload",
-	"ListParts":                        "s3:ListParts",
-	"GetObjectRetention":               "s3:GetObjectRetention",
-	"PutObjectRetention":               "s3:PutObjectRetention",
-	"GetObjectLegalHold":               "s3:GetObjectLegalHold",
-	"PutObjectLegalHold":               "s3:PutObjectLegalHold",
-	"GetBucketObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
-	"PutBucketObjectLockConfiguration": "s3:PutBucketObjectLockConfiguration",
-	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
-}
-
-// MatchesAction checks if an action matches any of the compiled action matchers
+// MatchesAction checks if an action matches any of the compiled action matchers.
+// It also implicitly grants multipart upload actions if s3:PutObject is allowed,
+// since multipart upload is an implementation detail of putting objects.
 func (cs *CompiledStatement) MatchesAction(action string) bool {
+	var matchedAction, hasPutObjectPermission bool
+
+	// Scan all matchers to check for both direct action match and s3:PutObject grant
 	for _, matcher := range cs.ActionMatchers {
 		if matcher.Match(action) {
+			matchedAction = true
+		}
+		if !hasPutObjectPermission && matcher.Match("s3:PutObject") {
+			hasPutObjectPermission = true
+		}
+	}
+
+	// Return true if action matched directly or if multipart action with PutObject permission
+	if matchedAction {
+		return true
+	}
+
+	// Multipart upload operations are part of s3:PutObject permission
+	// If s3:PutObject is allowed, implicitly allow multipart operations
+	if hasPutObjectPermission && multipartActionSet[action] {
+		return true
+	}
+
+	return false
+}
+
+// statementMayAllowAction reports whether a statement's actions can match the
+// action, including the multipart operations that ride on s3:PutObject. It is
+// looser than either evaluator on purpose: the IAM authorizer matches action
+// names case-insensitively and a policy variable resolves per request, so a
+// classifier that reads them strictly would miss a grant that is really there.
+func statementMayAllowAction(actions []string, action string) bool {
+	for _, pattern := range actions {
+		if actionPatternMayMatch(pattern, action) {
+			return true
+		}
+	}
+	if !lowerMultipartActionSet[strings.ToLower(action)] {
+		return false
+	}
+	for _, pattern := range actions {
+		if actionPatternMayMatch(pattern, s3const.S3_ACTION_PUT_OBJECT) {
 			return true
 		}
 	}
 	return false
+}
+
+func actionPatternMayMatch(pattern, action string) bool {
+	if PolicyVariableRegex.MatchString(pattern) {
+		return true
+	}
+	if strings.EqualFold(pattern, action) {
+		return true
+	}
+	return wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(action))
 }
 
 // MatchesResource checks if a resource matches any of the compiled resource matchers
@@ -532,6 +750,23 @@ func (cs *CompiledStatement) MatchesPrincipal(principal string) bool {
 	return false
 }
 
+// matchesPrincipalSet reports whether the request principal matches any static
+// matcher or dynamic (policy-variable) pattern in the given set.
+func (cs *CompiledStatement) matchesPrincipalSet(args *PolicyEvaluationArgs, matchers []*wildcard.WildcardMatcher, dynamic []string) bool {
+	for _, matcher := range matchers {
+		if matcher.Match(args.Principal) {
+			return true
+		}
+	}
+	for _, pattern := range dynamic {
+		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+		if FastMatchesWildcard(substituted, args.Principal) {
+			return true
+		}
+	}
+	return false
+}
+
 // EvaluateStatement evaluates a compiled statement against the given arguments
 func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool {
 	// Check if action matches
@@ -544,9 +779,18 @@ func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool 
 		return false
 	}
 
-	// Check if principal matches
-	if !cs.MatchesPrincipal(args.Principal) {
-		return false
+	// Principal / NotPrincipal (mutually exclusive per AWS): NotPrincipal makes
+	// the statement apply to everyone EXCEPT the named principals; a plain
+	// Principal requires a match. Both static matchers and dynamic
+	// (policy-variable) patterns are honored.
+	if len(cs.NotPrincipalMatchers) > 0 || len(cs.DynamicNotPrincipalPatterns) > 0 {
+		if cs.matchesPrincipalSet(args, cs.NotPrincipalMatchers, cs.DynamicNotPrincipalPatterns) {
+			return false
+		}
+	} else if len(cs.PrincipalMatchers) > 0 || len(cs.DynamicPrincipalPatterns) > 0 {
+		if !cs.matchesPrincipalSet(args, cs.PrincipalMatchers, cs.DynamicPrincipalPatterns) {
+			return false
+		}
 	}
 
 	return true
@@ -581,11 +825,11 @@ func (cp *CompiledPolicy) EvaluatePolicy(args *PolicyEvaluationArgs) (bool, Poli
 
 // FastMatchesWildcard uses cached WildcardMatcher for performance
 func FastMatchesWildcard(pattern, str string) bool {
-	matcher, err := GetCachedWildcardMatcher(pattern)
+	matcher, err := wildcard.GetCachedWildcardMatcher(pattern)
 	if err != nil {
 		glog.Errorf("Error getting cached WildcardMatcher for pattern %s: %v", pattern, err)
 		// Fall back to the original implementation
-		return MatchesWildcard(pattern, str)
+		return wildcard.MatchesWildcard(pattern, str)
 	}
 	return matcher.Match(str)
 }

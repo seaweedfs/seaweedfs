@@ -13,7 +13,7 @@ func TestShardsInfoDeleteParityShards(t *testing.T) {
 	for _, id := range erasure_coding.AllShardIds() {
 		si.Set(erasure_coding.ShardInfo{Id: id, Size: 123})
 	}
-	si.DeleteParityShards()
+	si.DeleteParityShards(erasure_coding.DataShardsCount)
 
 	if got, want := si.String(), "0:123 B 1:123 B 2:123 B 3:123 B 4:123 B 5:123 B 6:123 B 7:123 B 8:123 B 9:123 B"; got != want {
 		t.Errorf("expected %q, got %q", want, got)

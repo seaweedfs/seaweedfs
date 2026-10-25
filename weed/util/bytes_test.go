@@ -1,6 +1,45 @@
 package util
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+func TestRandomUint64ReturnsFullRandomValue(t *testing.T) {
+	useRandomRead(t, func(p []byte) (int, error) {
+		copy(p, []byte{0x80, 0, 0, 0, 0, 0, 0, 1})
+		return len(p), nil
+	})
+
+	const want uint64 = 0x8000000000000001
+	if got := RandomUint64(); got != want {
+		t.Fatalf("RandomUint64() = %d, want %d", got, want)
+	}
+}
+
+func TestRandomUint64PanicsOnRandomReadError(t *testing.T) {
+	useRandomRead(t, func([]byte) (int, error) {
+		return 0, errors.New("random read failed")
+	})
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("RandomUint64() did not panic on random read error")
+		}
+	}()
+
+	RandomUint64()
+}
+
+func useRandomRead(t *testing.T, read func([]byte) (int, error)) {
+	t.Helper()
+
+	original := randomRead
+	randomRead = read
+	t.Cleanup(func() {
+		randomRead = original
+	})
+}
 
 func TestByteParsing(t *testing.T) {
 	tests := []struct {

@@ -8,7 +8,7 @@ A privacy-respecting telemetry system for SeaweedFS that collects cluster-level 
 - **Prometheus Integration**: Native Prometheus metrics for monitoring and alerting
 - **Grafana Dashboards**: Pre-built dashboards for data visualization
 - **Protocol Buffers**: Efficient binary data transmission for optimal performance
-- **Opt-in Only**: Disabled by default, requires explicit configuration
+- **Opt-out**: On by default, turned off with a single flag
 - **Docker Compose**: Complete monitoring stack deployment
 - **Automatic Cleanup**: Configurable data retention policies
 
@@ -51,7 +51,7 @@ message TelemetryData {
 - **No Personal Data**: No hostnames, IP addresses, or user information
 - **In-Memory IDs**: Cluster IDs are generated in-memory and change on restart
 - **Aggregated Data**: Only cluster-level statistics, no individual file/user data
-- **Opt-in Only**: Telemetry is disabled by default
+- **Opt-out Anytime**: `-telemetry=false` on the master stops all reporting
 - **Transparent**: Open source implementation, clear data collection policy
 
 ## Collected Data
@@ -67,6 +67,8 @@ message TelemetryData {
 | `filer_count` | Number of filer servers | `2` |
 | `broker_count` | Number of broker servers | `1` |
 | `timestamp` | When data was collected | `1640995200` |
+
+A master starts reporting once its cluster stores at least 10 GiB, and the server drops reports under that floor. Every fresh `weed server`, CI job and throwaway container mints its own cluster id, and at tens of thousands a day they were nearly all of the counted clusters and almost none of the bytes.
 
 ## Quick Start
 
@@ -86,14 +88,15 @@ go run . -port=8080 -dashboard=true
 ### 2. Configure SeaweedFS
 
 ```bash
-# Enable telemetry in SeaweedFS master (uses default telemetry.seaweedfs.com)
-weed master -telemetry=true
+# Reporting to telemetry.seaweedfs.com is on by default
+weed master
 
-# Or in server mode
-weed server -telemetry=true
+# Send to your own telemetry server instead
+weed master -telemetry.url=http://localhost:8080/api/collect
 
-# Or specify custom telemetry server
-weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
+# Turn reporting off
+weed master -telemetry=false
+weed server -master.telemetry=false
 ```
 
 ### 3. Access Dashboards
@@ -107,12 +110,14 @@ weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
 ### SeaweedFS Master/Server
 
 ```bash
-# Enable telemetry
--telemetry=true
+# Disable telemetry (enabled by default)
+-telemetry=false
 
 # Set custom telemetry server URL (optional, defaults to telemetry.seaweedfs.com)
 -telemetry.url=http://your-telemetry-server:8080/api/collect
 ```
+
+In `weed server` and `weed mini` the flags are prefixed: `-master.telemetry=false` and `-master.telemetry.url=...`.
 
 ### Telemetry Server
 
@@ -121,10 +126,12 @@ weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
 -port=8080                    # Server port
 -dashboard=true               # Enable built-in dashboard
 -cleanup=24h                  # Cleanup interval
--max-age=720h                 # Maximum data retention (30 days)
+-max-age=2160h                # Maximum data retention (90 days)
+-state-file=data/telemetry-state.json  # Persist state across restarts (empty to disable)
+-state-save=1h                # How often to save changed state
 
 # Example
-./telemetry-server -port=8080 -dashboard=true -cleanup=24h -max-age=720h
+./telemetry-server -port=8080 -dashboard=true -cleanup=24h -max-age=2160h
 ```
 
 ## Prometheus Metrics
@@ -134,17 +141,24 @@ The telemetry server exposes these Prometheus metrics:
 ### Cluster Metrics
 - `seaweedfs_telemetry_total_clusters`: Total unique clusters (30 days)
 - `seaweedfs_telemetry_active_clusters`: Active clusters (7 days)
+- `seaweedfs_telemetry_confirmed_clusters`: Active clusters seen on 7+ distinct days — one-shot reports don't count, and the version/OS distributions in `/api/stats` are computed over these
 
 ### Per-Cluster Metrics
-- `seaweedfs_telemetry_volume_servers{cluster_id, version, os}`: Volume servers per cluster
-- `seaweedfs_telemetry_disk_bytes{cluster_id, version, os}`: Disk usage per cluster  
-- `seaweedfs_telemetry_volume_count{cluster_id, version, os}`: Volume count per cluster
-- `seaweedfs_telemetry_filer_count{cluster_id, version, os}`: Filer servers per cluster
-- `seaweedfs_telemetry_broker_count{cluster_id, version, os}`: Broker servers per cluster
+- `seaweedfs_telemetry_volume_servers{cluster_id}`: Volume servers per cluster
+- `seaweedfs_telemetry_disk_bytes{cluster_id}`: Disk usage per cluster
+- `seaweedfs_telemetry_volume_count{cluster_id}`: Volume count per cluster
+- `seaweedfs_telemetry_filer_count{cluster_id}`: Filer servers per cluster
+- `seaweedfs_telemetry_broker_count{cluster_id}`: Broker servers per cluster
 - `seaweedfs_telemetry_cluster_info{cluster_id, version, os}`: Cluster metadata
+
+Value gauges are keyed by `cluster_id` only, so a cluster keeps one continuous
+series across upgrades. To slice values by version or OS, join with
+`cluster_info`, e.g.
+`seaweedfs_telemetry_disk_bytes * on(cluster_id) group_left(version, os) seaweedfs_telemetry_cluster_info`.
 
 ### Server Metrics
 - `seaweedfs_telemetry_reports_received_total`: Total telemetry reports received
+- `seaweedfs_telemetry_reports_skipped_total`: Reports dropped because the cluster stores less than 10 GiB
 
 ## API Endpoints
 
@@ -166,6 +180,17 @@ GET /api/instances?limit=100
 
 # Get metrics over time
 GET /api/metrics?days=30
+
+# Get one cluster's daily usage history (disk bytes, volumes, volume servers)
+GET /api/history?cluster_id=<uuid>&days=90
+
+# Get per-cluster disk usage and volume servers over time, largest first,
+# the rest summed as "other"
+GET /api/cluster-sizes?days=30&limit=20
+
+# Get how many clusters ran each version over time, oldest version first,
+# the rest summed as "other"
+GET /api/versions?days=30&limit=8
 ```
 
 ### Monitoring
@@ -274,14 +299,14 @@ The included Grafana dashboard provides:
 # Total active clusters
 seaweedfs_telemetry_active_clusters
 
-# Disk usage by version
-sum by (version) (seaweedfs_telemetry_disk_bytes)
+# Disk usage per cluster
+seaweedfs_telemetry_disk_bytes{cluster_id="<uuid>"}
+
+# Disk usage by version (join with cluster_info for version/os)
+sum by (version) (seaweedfs_telemetry_disk_bytes * on(cluster_id) group_left(version) seaweedfs_telemetry_cluster_info)
 
 # Volume servers by operating system
-sum by (os) (seaweedfs_telemetry_volume_servers)
-
-# Filer servers by version
-sum by (version) (seaweedfs_telemetry_filer_count)
+sum by (os) (seaweedfs_telemetry_volume_servers * on(cluster_id) group_left(os) seaweedfs_telemetry_cluster_info)
 
 # Broker servers across all clusters
 sum(seaweedfs_telemetry_broker_count)

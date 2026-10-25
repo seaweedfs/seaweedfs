@@ -3,20 +3,16 @@ name: "TUS Protocol Tests"
 on:
   pull_request:
     paths:
-      - 'weed/server/filer_server_tus*.go'
-      - 'weed/server/filer_server.go'
+      - 'weed/server/**'
+      - 'weed/filer/**'
       - 'test/tus/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/tus-tests.yml'
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'weed/server/filer_server_tus*.go'
-      - 'weed/server/filer_server.go'
-      - 'test/tus/**'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/tus-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -33,12 +29,16 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -53,7 +53,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting TUS Tests ==="
           
           # Run tests with automatic server management
@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: tus-test-logs
           path: |

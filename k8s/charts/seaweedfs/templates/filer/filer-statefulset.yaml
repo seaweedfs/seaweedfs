@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.filer.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -42,21 +43,17 @@ spec:
       {{- with .Values.filer.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
-      annotations:
-      {{- with .Values.podAnnotations }}
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.filer.podAnnotations }}
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.filer.podAnnotations | default dict) }}
       {{- if .Values.filer.s3.existingConfigSecret }}
-        {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
-        checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
+      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
+      {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
       {{- else }}
-        checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
+      {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
       {{- end }}
+      annotations:
+        {{- toYaml $podAnnotations | nindent 8 }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
       affinity:
         {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
@@ -75,6 +72,9 @@ spec:
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.filer.schedulerName }}
+      schedulerName: {{ .Values.filer.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.filer.initContainers }}
       initContainers:
@@ -85,9 +85,10 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "filer.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          image: {{ template "seaweedfs.filer.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- $mysqlEnabled := include "seaweedfs.filer.mysqlEnabled" . }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -100,6 +101,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if $mysqlEnabled }}
             - name: WEED_MYSQL_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -112,10 +114,23 @@ spec:
                   name: {{ include "seaweedfs.fullname" . }}-db-secret
                   key: password
                   optional: true
+            {{- end }}
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- if .Values.filer.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
+            {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
+            {{- if not $mysqlEnabled }}
+            {{- range $key := keys $mergedExtraEnvironmentVars }}
+            {{- if hasPrefix "WEED_MYSQL_" $key }}
+            {{- $_ := unset $mergedExtraEnvironmentVars $key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -123,23 +138,13 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
+            {{- if or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key)) }}
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
             {{- end }}
             {{- end }}
           command:
@@ -155,7 +160,7 @@ spec:
               {{- if .Values.filer.loggingOverrideLevel }}
               -v={{ .Values.filer.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               filer \
               -port={{ .Values.filer.port }} \
@@ -165,9 +170,6 @@ spec:
               {{- if .Values.filer.metricsIp }}
               -metricsIp={{ .Values.filer.metricsIp }} \
               {{- end }}
-              {{- if .Values.filer.redirectOnRead }}
-              -redirectOnRead \
-              {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \
               {{- end }}
@@ -175,8 +177,8 @@ spec:
               -disableDirListing \
               {{- end }}
               -dirListLimit={{ .Values.filer.dirListLimit }} \
-              {{- if .Values.global.enableReplication }}
-              -defaultReplicaPlacement={{ .Values.global.replicationPlacement }} \
+              {{- if .Values.global.seaweedfs.enableReplication }}
+              -defaultReplicaPlacement={{ .Values.global.seaweedfs.replicationPlacement }} \
               {{- else }}
               -defaultReplicaPlacement={{ .Values.filer.defaultReplicaPlacement }} \
               {{- end }}
@@ -206,12 +208,11 @@ spec:
               {{- if .Values.filer.s3.domainName }}
               -s3.domainName={{ .Values.filer.s3.domainName }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- if .Values.filer.s3.httpsPort }}
               -s3.port.https={{ .Values.filer.s3.httpsPort }} \
+              {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "s3.") | nindent 14 }}
               {{- end }}
-              -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
-              -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
               {{- if .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/seaweedfs_s3_config \
@@ -225,6 +226,7 @@ spec:
               {{ . }} \
               {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.filer.containerSecurityContext (tpl (.Values.filer.extraVolumeMounts | default "") .) (tpl (.Values.filer.extraVolumes | default "") .)) | nindent 12 }}
             {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
@@ -244,11 +246,13 @@ spec:
               mountPath: /etc/seaweedfs/notification.toml
               subPath: notification.toml
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
               subPath: security.toml
+            {{- end }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
@@ -264,6 +268,9 @@ spec:
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client
+            {{- if .Values.filer.s3.enabled }}
+            {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
+            {{- end }}
             {{- end }}
             {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -281,7 +288,8 @@ spec:
               name: swfs-s3-tls
             {{- end }}
             {{- end }}
-          {{- $isJwtEnabled := or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+          {{- $jwt := (.Values.global.seaweedfs.securityConfig).jwtSigning | default dict }}
+          {{- $isJwtEnabled := or $jwt.filerWrite $jwt.filerRead }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
           {{- if or $isJwtEnabled .Values.filer.readinessProbe.tcpSocket }}
@@ -324,9 +332,10 @@ spec:
           securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
         {{- if .Values.filer.sidecars }}
-        {{- include "common.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
+        {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.filer.containerSecurityContext (tpl (.Values.filer.extraVolumeMounts | default "") .) (tpl (.Values.filer.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:
@@ -360,6 +369,7 @@ spec:
         - name: db-schema-config-volume
           configMap:
             name: {{ default (printf "%s-db-init-config" (include "seaweedfs.fullname" .)) .Values.filer.dbInitConfigName }}
+            optional: true
         {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
         - name: config-users
           secret:
@@ -375,10 +385,12 @@ spec:
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-notification-config
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: ca-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
@@ -394,6 +406,9 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- if .Values.filer.s3.enabled }}
+        {{- include "seaweedfs.s3.tlsVolume" . | nindent 8 }}
+        {{- end }}
         {{- end }}
         {{ tpl .Values.filer.extraVolumes . | indent 8 | trim }}
       {{- if .Values.filer.nodeSelector }}
@@ -417,7 +432,7 @@ spec:
       storageClassName: {{ .Values.filer.storageClass }}
       {{- end }}
   {{- end }}
-  {{- $pvc_exists := include "filer.pvc_exists" . -}}
+  {{- $pvc_exists := include "seaweedfs.filer.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
     {{- if eq .Values.filer.data.type "persistentVolumeClaim" }}

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,12 +23,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// Compiled regex patterns for KMS key validation
-var (
-	uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
-	arnRegex  = regexp.MustCompile(`^arn:aws:kms:[a-z0-9-]+:\d{12}:(key|alias)/.+$`)
-)
-
 // SSEKMSKey contains the metadata for an SSE-KMS encrypted object
 type SSEKMSKey struct {
 	KeyID             string            // The KMS key ID used
@@ -38,17 +31,19 @@ type SSEKMSKey struct {
 	BucketKeyEnabled  bool              // Whether S3 Bucket Keys are enabled
 	IV                []byte            // The initialization vector for encryption
 	ChunkOffset       int64             // Offset of this chunk within the original part (for IV calculation)
+	KeyCommitment     []byte            // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
 type SSEKMSMetadata struct {
-	Algorithm         string            `json:"algorithm"`         // "aws:kms"
-	KeyID             string            `json:"keyId"`             // KMS key identifier
-	EncryptedDataKey  string            `json:"encryptedDataKey"`  // Base64-encoded encrypted data key
-	EncryptionContext map[string]string `json:"encryptionContext"` // Encryption context
-	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
-	IV                string            `json:"iv"`                // Base64-encoded initialization vector
-	PartOffset        int64             `json:"partOffset"`        // Offset within original multipart part (for IV calculation)
+	Algorithm         string            `json:"algorithm"`               // "aws:kms"
+	KeyID             string            `json:"keyId"`                   // KMS key identifier
+	EncryptedDataKey  string            `json:"encryptedDataKey"`        // Base64-encoded encrypted data key
+	EncryptionContext map[string]string `json:"encryptionContext"`       // Encryption context
+	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`        // S3 Bucket Key optimization
+	IV                string            `json:"iv"`                      // Base64-encoded initialization vector
+	PartOffset        int64             `json:"partOffset"`              // Offset within original multipart part (for IV calculation)
+	KeyCommitment     string            `json:"keyCommitment,omitempty"` // Base64-encoded HMAC key commitment
 }
 
 const (
@@ -58,11 +53,6 @@ const (
 
 // Bucket key cache TTL (moved to be used with per-bucket cache)
 const BucketKeyCacheTTL = time.Hour
-
-// CreateSSEKMSEncryptedReader creates an encrypted reader using KMS envelope encryption
-func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext map[string]string) (io.Reader, *SSEKMSKey, error) {
-	return CreateSSEKMSEncryptedReaderWithBucketKey(r, keyID, encryptionContext, false)
-}
 
 // CreateSSEKMSEncryptedReaderWithBucketKey creates an encrypted reader with optional S3 Bucket Keys optimization
 func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool) (io.Reader, *SSEKMSKey, error) {
@@ -98,51 +88,14 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
+	// Create the SSE-KMS metadata using utility function. createSSEKMSKey
+	// computes the key commitment too, so all encryption paths produce
+	// commitment-bound metadata uniformly.
 	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Store IV in the SSE key for metadata storage
-	sseKey.IV = iv
-
-	return encryptedReader, sseKey, nil
-}
-
-// CreateSSEKMSEncryptedReaderWithBaseIV creates an SSE-KMS encrypted reader using a provided base IV
-// This is used for multipart uploads where all chunks need to use the same base IV
-func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte) (io.Reader, *SSEKMSKey, error) {
-	if err := ValidateIV(baseIV, "base IV"); err != nil {
-		return nil, nil, err
-	}
-
-	// Generate data key using common utility
-	dataKeyResult, err := generateKMSDataKey(keyID, encryptionContext)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Ensure we clear the plaintext data key from memory when done
-	defer clearKMSDataKey(dataKeyResult)
-
-	// Use the provided base IV instead of generating a new one
-	iv := make([]byte, s3_constants.AESBlockSize)
-	copy(iv, baseIV)
-
-	// Create CTR mode cipher stream
-	stream := cipher.NewCTR(dataKeyResult.Block, iv)
-
-	// Create the SSE-KMS metadata using utility function
-	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
-
-	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
-	// This ensures correct Content-Length for clients
-	encryptedReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Store the base IV in the SSE key for metadata storage
-	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
 }
@@ -163,15 +116,20 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
-	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
-	// Skip is not used here because we're encrypting from the start (not reading a range)
+	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads.
+	// Skip is not used here because we're encrypting from the start (not reading a range).
 	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata using utility function
-	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, offset)
+	// Store the BASE IV (not the offset-derived IV) in metadata. The decrypt
+	// path applies calculateIVWithOffset to sseKey.IV when ChunkOffset > 0;
+	// storing the derived IV here would cause it to offset twice and produce
+	// the wrong CTR keystream. The key commitment, computed inside
+	// createSSEKMSKey, therefore binds the base IV — exactly the value the
+	// verify call at decrypt time hashes.
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, baseIV, offset)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
@@ -315,13 +273,19 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(block, iv)
 
-	// Create the encrypting reader
+	// Create the encrypting reader. Compute the HMAC commitment alongside
+	// every other field so this bucket-scoped path is on the same downgrade-
+	// resistant footing as the helper-driven paths above. Store the KMS
+	// response's KeyID rather than the request's; CreateSSEKMSDecryptedReader
+	// compares against decryptResp.KeyID, and a request alias would mismatch
+	// the resolved ARN the response carries.
 	sseKey := &SSEKMSKey{
-		KeyID:             keyID,
+		KeyID:             dataKeyResp.KeyID,
 		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
 		EncryptionContext: encryptionContext,
 		BucketKeyEnabled:  bucketKeyEnabled,
 		IV:                iv,
+		KeyCommitment:     ComputeKeyCommitment(dataKeyResp.Plaintext, iv, s3_constants.SSEAlgorithmKMS),
 	}
 
 	return &cipher.StreamReader{S: stream, R: r}, sseKey, nil
@@ -366,24 +330,16 @@ func (s3a *S3ApiServer) CleanupBucketKMSCache(bucketName string) int {
 func (s3a *S3ApiServer) CleanupAllBucketKMSCaches() int {
 	totalCleaned := 0
 
-	// Access the bucket config cache safely
 	if s3a.bucketConfigCache != nil {
-		s3a.bucketConfigCache.mutex.RLock()
-		bucketNames := make([]string, 0, len(s3a.bucketConfigCache.cache))
-		for bucketName := range s3a.bucketConfigCache.cache {
-			bucketNames = append(bucketNames, bucketName)
-		}
-		s3a.bucketConfigCache.mutex.RUnlock()
-
-		// Clean up each bucket's KMS cache
-		for _, bucketName := range bucketNames {
+		// Clean up each cached bucket's KMS cache
+		for _, bucketName := range s3a.bucketConfigCache.cache.Keys() {
 			cleaned := s3a.CleanupBucketKMSCache(bucketName)
 			totalCleaned += cleaned
 		}
 	}
 
 	if totalCleaned > 0 {
-		glog.V(2).Infof("Cleaned up %d expired KMS keys across %d bucket caches", totalCleaned, len(s3a.bucketConfigCache.cache))
+		glog.V(2).Infof("Cleaned up %d expired KMS keys across %d bucket caches", totalCleaned, s3a.bucketConfigCache.cache.Len())
 	}
 	return totalCleaned
 }
@@ -413,6 +369,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	// Verify the key ID matches (security check)
 	if decryptResp.KeyID != sseKey.KeyID {
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
+	}
+
+	// Verify key commitment before decryption if one exists in metadata
+	if err := VerifyKeyCommitment(decryptResp.Plaintext, sseKey.IV, s3_constants.SSEAlgorithmKMS, sseKey.KeyCommitment); err != nil {
+		return nil, err
 	}
 
 	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
@@ -451,67 +412,6 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 
 	// Return the decrypted reader
 	return decryptReader, nil
-}
-
-// ParseSSEKMSHeaders parses SSE-KMS headers from an HTTP request
-func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
-	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
-
-	// Check if SSE-KMS is requested
-	if sseAlgorithm == "" {
-		return nil, nil // No SSE headers present
-	}
-	if sseAlgorithm != s3_constants.SSEAlgorithmKMS {
-		return nil, fmt.Errorf("invalid SSE algorithm: %s", sseAlgorithm)
-	}
-
-	keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
-	encryptionContextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext)
-	bucketKeyEnabledHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)
-
-	// Parse encryption context if provided
-	var encryptionContext map[string]string
-	if encryptionContextHeader != "" {
-		// Decode base64-encoded JSON encryption context
-		contextBytes, err := base64.StdEncoding.DecodeString(encryptionContextHeader)
-		if err != nil {
-			return nil, fmt.Errorf("invalid encryption context format: %v", err)
-		}
-
-		if err := json.Unmarshal(contextBytes, &encryptionContext); err != nil {
-			return nil, fmt.Errorf("invalid encryption context JSON: %v", err)
-		}
-	}
-
-	// Parse bucket key enabled flag
-	bucketKeyEnabled := strings.ToLower(bucketKeyEnabledHeader) == "true"
-
-	sseKey := &SSEKMSKey{
-		KeyID:             keyID,
-		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  bucketKeyEnabled,
-	}
-
-	// Validate the parsed key including key ID format
-	if err := ValidateSSEKMSKeyInternal(sseKey); err != nil {
-		return nil, err
-	}
-
-	return sseKey, nil
-}
-
-// ValidateSSEKMSKey validates an SSE-KMS key configuration
-func ValidateSSEKMSKeyInternal(sseKey *SSEKMSKey) error {
-	if err := ValidateSSEKMSKey(sseKey); err != nil {
-		return err
-	}
-
-	// An empty key ID is valid and means the default KMS key should be used.
-	if sseKey.KeyID != "" && !isValidKMSKeyID(sseKey.KeyID) {
-		return fmt.Errorf("invalid KMS key ID format: %s", sseKey.KeyID)
-	}
-
-	return nil
 }
 
 // BuildEncryptionContext creates the encryption context for S3 objects
@@ -567,6 +467,11 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		PartOffset:        sseKey.ChunkOffset,                           // Store within-part offset
 	}
 
+	// Include key commitment if present
+	if len(sseKey.KeyCommitment) > 0 {
+		metadata.KeyCommitment = base64.StdEncoding.EncodeToString(sseKey.KeyCommitment)
+	}
+
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal SSE-KMS metadata: %w", err)
@@ -612,6 +517,15 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		}
 	}
 
+	// Decode key commitment if present
+	var keyCommitment []byte
+	if metadata.KeyCommitment != "" {
+		keyCommitment, err = base64.StdEncoding.DecodeString(metadata.KeyCommitment)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode key commitment: %w", err)
+		}
+	}
+
 	sseKey := &SSEKMSKey{
 		KeyID:             metadata.KeyID,
 		EncryptedDataKey:  encryptedDataKey,
@@ -619,6 +533,7 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
 		IV:                iv,                  // Restore IV for decryption
 		ChunkOffset:       metadata.PartOffset, // Use stored within-part offset
+		KeyCommitment:     keyCommitment,
 	}
 
 	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
@@ -727,28 +642,6 @@ func IsSSEKMSEncrypted(metadata map[string][]byte) bool {
 	// The canonical way to identify an SSE-KMS encrypted object is by this header.
 	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
 		return string(sseAlgorithm) == s3_constants.SSEAlgorithmKMS
-	}
-
-	return false
-}
-
-// IsAnySSEEncrypted checks if metadata indicates any type of SSE encryption
-func IsAnySSEEncrypted(metadata map[string][]byte) bool {
-	if metadata == nil {
-		return false
-	}
-
-	// Check for any SSE type
-	if IsSSECEncrypted(metadata) {
-		return true
-	}
-	if IsSSEKMSEncrypted(metadata) {
-		return true
-	}
-
-	// Check for SSE-S3
-	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == s3_constants.SSEAlgorithmAES256
 	}
 
 	return false
@@ -972,6 +865,10 @@ func DetermineUnifiedCopyStrategy(state *EncryptionState, srcMetadata map[string
 		return CopyStrategyReencrypt, nil
 	}
 
+	if state.SrcSSES3 && state.DstSSES3 {
+		return CopyStrategyDirect, nil
+	}
+
 	// Encrypt: plain → encrypted
 	if !state.IsSourceEncrypted() && state.IsTargetEncrypted() {
 		return CopyStrategyEncrypt, nil
@@ -988,21 +885,6 @@ func DetermineUnifiedCopyStrategy(state *EncryptionState, srcMetadata map[string
 	}
 
 	return CopyStrategyDirect, nil
-}
-
-// DetectEncryptionState analyzes the source metadata and request headers to determine encryption state
-func DetectEncryptionState(srcMetadata map[string][]byte, r *http.Request, srcPath, dstPath string) *EncryptionState {
-	state := &EncryptionState{
-		SrcSSEC:    IsSSECEncrypted(srcMetadata),
-		SrcSSEKMS:  IsSSEKMSEncrypted(srcMetadata),
-		SrcSSES3:   IsSSES3EncryptedInternal(srcMetadata),
-		DstSSEC:    IsSSECRequest(r),
-		DstSSEKMS:  IsSSEKMSRequest(r),
-		DstSSES3:   IsSSES3RequestInternal(r),
-		SameObject: srcPath == dstPath,
-	}
-
-	return state
 }
 
 // DetectEncryptionStateWithEntry analyzes the source entry and request headers to determine encryption state

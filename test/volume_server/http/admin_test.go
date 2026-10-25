@@ -16,15 +16,13 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	statusReq, err := http.NewRequest(http.MethodGet, cluster.VolumeAdminURL()+"/status", nil)
 	if err != nil {
 		t.Fatalf("create status request: %v", err)
 	}
-	statusReq.Header.Set(request_id.AmzRequestIDHeader, "test-request-id-1")
-
 	statusResp := framework.DoRequest(t, client, statusReq)
 	statusBody := framework.ReadAllAndClose(t, statusResp)
 
@@ -34,8 +32,8 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if got := statusResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
 		t.Fatalf("expected /status Server header to contain SeaweedFS Volume, got %q", got)
 	}
-	if got := statusResp.Header.Get(request_id.AmzRequestIDHeader); got != "test-request-id-1" {
-		t.Fatalf("expected echoed request id, got %q", got)
+	if got := statusResp.Header.Get(request_id.AmzRequestIDHeader); got == "" {
+		t.Fatal("expected server-generated request id in response header")
 	}
 
 	var payload map[string]interface{}
@@ -47,9 +45,21 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 			t.Fatalf("status payload missing field %q", field)
 		}
 	}
+	diskStatuses, ok := payload["DiskStatuses"].([]interface{})
+	if !ok || len(diskStatuses) == 0 {
+		t.Fatalf("status payload expected non-empty DiskStatuses, got %#v", payload["DiskStatuses"])
+	}
+	firstDisk, ok := diskStatuses[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("status payload disk status has unexpected shape: %#v", diskStatuses[0])
+	}
+	for _, field := range []string{"dir", "all", "used", "free"} {
+		if _, found := firstDisk[field]; !found {
+			t.Fatalf("status disk payload missing field %q: %#v", field, firstDisk)
+		}
+	}
 
 	healthReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/healthz")
-	healthReq.Header.Set(request_id.AmzRequestIDHeader, "test-request-id-2")
 	healthResp := framework.DoRequest(t, client, healthReq)
 	_ = framework.ReadAllAndClose(t, healthResp)
 	if healthResp.StatusCode != http.StatusOK {
@@ -58,8 +68,8 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if got := healthResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
 		t.Fatalf("expected /healthz Server header to contain SeaweedFS Volume, got %q", got)
 	}
-	if got := healthResp.Header.Get(request_id.AmzRequestIDHeader); got != "test-request-id-2" {
-		t.Fatalf("expected /healthz echoed request id, got %q", got)
+	if got := healthResp.Header.Get(request_id.AmzRequestIDHeader); got == "" {
+		t.Fatal("expected /healthz server-generated request id in response header")
 	}
 
 	uiResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
@@ -77,7 +87,7 @@ func TestOptionsMethodsByPort(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/"))
@@ -117,7 +127,7 @@ func TestOptionsWithOriginIncludesCorsHeaders(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminReq := mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/")
@@ -154,7 +164,7 @@ func TestUiIndexNotExposedWhenJwtSigningEnabled(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P3())
+	cluster := framework.StartVolumeCluster(t, matrix.P3())
 	client := framework.NewHTTPClient()
 
 	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
@@ -170,7 +180,7 @@ func TestUiIndexExposedWhenJwtSigningEnabledAndAccessUITrue(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	profile.AccessUI = true
+	profile.EnableUIAccess = true
 	cluster := framework.StartSingleVolumeCluster(t, profile)
 	client := framework.NewHTTPClient()
 

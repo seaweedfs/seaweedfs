@@ -99,8 +99,11 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 				}
 				return fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
 			}
-			entriesReceived = true
 			entry := entryResp.Entry
+			if entry == nil {
+				continue
+			}
+			entriesReceived = true
 			lastFileName = entry.Name
 
 			// Skip invalid entry names to prevent path traversal
@@ -150,6 +153,13 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 					return false, err
 				}
 			} else {
+				// A directory-marker object (key ending in "/") is stored as a
+				// directory entry and can carry a lock, so check it before recursing.
+				if EntryHasActiveLock(entry, currentTime) {
+					*hasLocks = true
+					glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
+					return true, nil
+				}
 				// Recursively check subdirectories
 				if err := recursivelyCheckLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
 					return false, err

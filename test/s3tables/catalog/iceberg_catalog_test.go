@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,7 +16,43 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
+
+// sharedEnv is the single TestEnvironment shared across all tests in this package.
+var sharedEnv *TestEnvironment
+
+// TestMain starts one weed mini instance for the whole package and tears it down
+// after all tests have run.
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if os.Getenv("SHORT") != "" || testing.Short() {
+		// Let tests self-skip when run with -short.
+		os.Exit(m.Run())
+	}
+
+	env, err := newTestEnvironmentForMain()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: setup failed: %v\n", err)
+		os.Exit(0) // Skip all tests rather than fail
+	}
+	sharedEnv = env
+
+	if startErr := sharedEnv.startSeaweedFSForMain(); startErr != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: weed mini failed to start: %v\n", startErr)
+		sharedEnv.cleanupForMain()
+		os.Exit(0)
+	}
+
+	code := m.Run()
+
+	sharedEnv.cleanupForMain()
+	os.Exit(code)
+}
 
 // TestEnvironment contains the test environment configuration
 type TestEnvironment struct {
@@ -26,6 +62,8 @@ type TestEnvironment struct {
 	s3Port          int
 	s3GrpcPort      int
 	icebergPort     int
+	lancePort       int
+	adminPort       int
 	masterPort      int
 	masterGrpcPort  int
 	filerPort       int
@@ -37,34 +75,15 @@ type TestEnvironment struct {
 	dockerAvailable bool
 }
 
-// hasDocker checks if Docker is available
-func hasDocker() bool {
-	cmd := exec.Command("docker", "version")
-	return cmd.Run() == nil
-}
-
-// getFreePort returns an available ephemeral port and its listener
-func getFreePort() (int, net.Listener, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, nil, err
-	}
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, listener, nil
-}
-
-// NewTestEnvironment creates a new test environment
-func NewTestEnvironment(t *testing.T) *TestEnvironment {
-	t.Helper()
-
+// newTestEnvironmentForMain creates a TestEnvironment without calling t.Fatalf so it
+// can be used from TestMain (which has no *testing.T).
+func newTestEnvironmentForMain() (*TestEnvironment, error) {
 	// Find the SeaweedFS root directory
 	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
-	// Navigate up to find the SeaweedFS root (contains go.mod)
 	seaweedDir := wd
 	for i := 0; i < 5; i++ {
 		if _, err := os.Stat(filepath.Join(seaweedDir, "go.mod")); err == nil {
@@ -75,104 +94,56 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 	// Check for weed binary
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
-	if _, err := os.Stat(weedBinary); os.IsNotExist(err) {
-		// Try system PATH
+	if info, statErr := os.Stat(weedBinary); statErr == nil {
+		// Name the binary and its age. `make test` rebuilds first, but a plain
+		// `go test` will happily drive a weeks-old binary and report a pass for
+		// code it never ran.
+		fmt.Fprintf(os.Stderr, "using %s, built %s\n", weedBinary, info.ModTime().Format(time.RFC3339))
+	} else if os.IsNotExist(statErr) {
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
-			t.Skip("weed binary not found, skipping integration test")
+			return nil, fmt.Errorf("weed binary not found")
 		}
 	}
 
 	// Create temporary data directory
 	dataDir, err := os.MkdirTemp("", "seaweed-iceberg-test-*")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	// Allocate free ephemeral ports for each service
-	var listeners []net.Listener
-	defer func() {
-		for _, l := range listeners {
-			l.Close()
-		}
-	}()
-
-	var l net.Listener
-	s3Port, l, err := getFreePort()
+	// Allocate 10 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
+	// filer, filerGrpc, volume, volumeGrpc, lance
+	ports, err := testutil.AllocatePorts(10)
 	if err != nil {
-		t.Fatalf("Failed to get free port for S3: %v", err)
+		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
-	listeners = append(listeners, l)
-
-	icebergPort, l, err := getFreePort()
+	adminPorts, err := testutil.AllocateMiniPorts(1)
 	if err != nil {
-		t.Fatalf("Failed to get free port for Iceberg: %v", err)
+		return nil, fmt.Errorf("allocate admin port: %w", err)
 	}
-	listeners = append(listeners, l)
-
-	s3GrpcPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for S3 gRPC: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	masterPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Master: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	masterGrpcPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Master gRPC: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	filerPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Filer: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	filerGrpcPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Filer gRPC: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	volumePort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Volume: %v", err)
-	}
-	listeners = append(listeners, l)
-
-	volumeGrpcPort, l, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for Volume gRPC: %v", err)
-	}
-	listeners = append(listeners, l)
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
 		weedBinary:      weedBinary,
 		dataDir:         dataDir,
-		s3Port:          s3Port,
-		s3GrpcPort:      s3GrpcPort,
-		icebergPort:     icebergPort,
-		masterPort:      masterPort,
-		masterGrpcPort:  masterGrpcPort,
-		filerPort:       filerPort,
-		filerGrpcPort:   filerGrpcPort,
-		volumePort:      volumePort,
-		volumeGrpcPort:  volumeGrpcPort,
-		dockerAvailable: hasDocker(),
-	}
+		s3Port:          ports[0],
+		s3GrpcPort:      ports[1],
+		icebergPort:     ports[2],
+		masterPort:      ports[3],
+		masterGrpcPort:  ports[4],
+		filerPort:       ports[5],
+		filerGrpcPort:   ports[6],
+		volumePort:      ports[7],
+		volumeGrpcPort:  ports[8],
+		lancePort:       ports[9],
+		adminPort:       adminPorts[0],
+		dockerAvailable: testutil.HasDocker(),
+	}, nil
 }
 
-// StartSeaweedFS starts a SeaweedFS mini cluster
-func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
-	t.Helper()
-
+// startSeaweedFSForMain starts weed mini without a *testing.T (for use in TestMain).
+func (env *TestEnvironment) startSeaweedFSForMain() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
@@ -182,11 +153,12 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	for _, dir := range []string{masterDir, filerDir, volumeDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatalf("Failed to create directory %s: %v", dir, err)
+			cancel()
+			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	miniArgs := append([]string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -196,20 +168,40 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
+		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}, testutil.MiniAdminArgs(env.adminPort)...)
+	miniArgs = append(miniArgs, "-webdav=false")
+	cmd := exec.CommandContext(ctx, env.weedBinary, miniArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start SeaweedFS: %v", err)
+		cancel()
+		return fmt.Errorf("start SeaweedFS: %w", err)
 	}
 	env.weedProcess = cmd
 
-	// Wait for services to be ready
 	if !env.waitForService(fmt.Sprintf("http://127.0.0.1:%d/v1/config", env.icebergPort), 30*time.Second) {
-		t.Fatalf("Iceberg REST API did not become ready")
+		cancel()
+		cmd.Wait()
+		return fmt.Errorf("Iceberg REST API did not become ready")
+	}
+	return nil
+}
+
+// cleanupForMain stops SeaweedFS and cleans up resources (no *testing.T needed).
+func (env *TestEnvironment) cleanupForMain() {
+	if env.weedCancel != nil {
+		env.weedCancel()
+	}
+	if env.weedProcess != nil {
+		time.Sleep(2 * time.Second)
+		env.weedProcess.Wait()
+	}
+	if env.dataDir != "" {
+		os.RemoveAll(env.dataDir)
 	}
 }
 
@@ -230,28 +222,14 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 	return false
 }
 
-// Cleanup stops SeaweedFS and cleans up resources
-func (env *TestEnvironment) Cleanup(t *testing.T) {
-	t.Helper()
-
-	if env.weedCancel != nil {
-		env.weedCancel()
-	}
-
-	if env.weedProcess != nil {
-		// Give process time to shut down gracefully
-		time.Sleep(2 * time.Second)
-		env.weedProcess.Wait()
-	}
-
-	if env.dataDir != "" {
-		os.RemoveAll(env.dataDir)
-	}
-}
-
 // IcebergURL returns the Iceberg REST Catalog URL
 func (env *TestEnvironment) IcebergURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", env.icebergPort)
+}
+
+// LanceURL returns the Lance Namespace server URL
+func (env *TestEnvironment) LanceURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", env.lancePort)
 }
 
 // TestIcebergConfig tests the /v1/config endpoint
@@ -260,10 +238,7 @@ func TestIcebergConfig(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
-
-	env.StartSeaweedFS(t)
+	env := sharedEnv
 
 	// Test GET /v1/config
 	resp, err := http.Get(env.IcebergURL() + "/v1/config")
@@ -294,16 +269,14 @@ func TestIcebergNamespaces(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
-
-	env.StartSeaweedFS(t)
+	env := sharedEnv
 
 	// Create the default table bucket first via S3
-	createTableBucket(t, env, "warehouse")
+	bucketName := "warehouse-ns-" + randomSuffix()
+	createTableBucket(t, env, bucketName, "")
 
 	// Test GET /v1/namespaces (should return empty list initially)
-	resp, err := http.Get(env.IcebergURL() + "/v1/namespaces")
+	resp, err := http.Get(env.IcebergURL() + icebergPath(bucketName, "/v1/namespaces"))
 	if err != nil {
 		t.Fatalf("Failed to list namespaces: %v", err)
 	}
@@ -321,16 +294,14 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
+	bucketName := "warehouse-stage-" + randomSuffix()
+	createTableBucket(t, env, bucketName, "")
 
-	env.StartSeaweedFS(t)
-	createTableBucket(t, env, "warehouse")
-
-	namespace := "stage_ns"
+	namespace := "stage_ns_" + randomSuffix()
 	tableName := "orders"
 
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
+	status, _, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, "/v1/namespaces"), map[string]any{
 		"namespace": []string{namespace},
 	})
 	if err != nil {
@@ -340,7 +311,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
 	}
 
-	status, badReqResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
+	status, badReqResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)), map[string]any{
 		"stage-create": true,
 	})
 	if err != nil {
@@ -358,7 +329,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("error.message = %v, want it to include %q", errorObj["message"], "table name is required")
 	}
 
-	status, stageResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
+	status, stageResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)), map[string]any{
 		"name":         tableName,
 		"stage-create": true,
 	})
@@ -373,7 +344,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("stage metadata-location = %q, want suffix /metadata/v1.metadata.json", stageLocation)
 	}
 
-	status, _, err = doIcebergJSONRequest(env, http.MethodGet, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), nil)
+	status, _, err = doIcebergJSONRequest(env, http.MethodGet, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), nil)
 	if err != nil {
 		t.Fatalf("Load staged table request failed: %v", err)
 	}
@@ -381,7 +352,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("Load staged table status = %d, want 404", status)
 	}
 
-	status, commitResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), map[string]any{
+	status, commitResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), map[string]any{
 		"requirements": []map[string]any{
 			{"type": "assert-create"},
 		},
@@ -398,7 +369,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("final metadata-location = %q, want suffix /metadata/v1.metadata.json", commitLocation)
 	}
 
-	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), nil)
+	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), nil)
 	if err != nil {
 		t.Fatalf("Load finalized table request failed: %v", err)
 	}
@@ -417,16 +388,14 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
+	bucketName := "warehouse-missing-" + randomSuffix()
+	createTableBucket(t, env, bucketName, "")
 
-	env.StartSeaweedFS(t)
-	createTableBucket(t, env, "warehouse")
-
-	namespace := "stage_missing_assert_ns"
+	namespace := "stage_missing_assert_ns_" + randomSuffix()
 	tableName := "missing_table"
 
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
+	status, _, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, "/v1/namespaces"), map[string]any{
 		"namespace": []string{namespace},
 	})
 	if err != nil {
@@ -436,7 +405,7 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
 	}
 
-	status, _, err = doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), map[string]any{
+	status, _, err = doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), map[string]any{
 		"requirements": []any{},
 		"updates":      []any{},
 	})
@@ -491,19 +460,42 @@ func doIcebergJSONRequest(env *TestEnvironment, method, path string, payload any
 	return resp.StatusCode, decoded, nil
 }
 
-// createTableBucket creates a table bucket via the S3Tables REST API
-func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
+// icebergPath inserts the table bucket prefix into Iceberg REST API paths.
+// For example, "/v1/namespaces" with prefix "my-bucket" becomes
+// "/v1/my-bucket/namespaces".
+func icebergPath(prefix, path string) string {
+	if prefix == "" {
+		return path
+	}
+	const base = "/v1/"
+	if !strings.HasPrefix(path, base) {
+		return path
+	}
+	withPrefix := base + prefix + "/" + strings.TrimPrefix(path, base)
+	return withPrefix
+}
+
+// createTableBucket creates a table bucket via the S3Tables REST API.
+// The request is AWS V4 signed for SERVICE=s3tables so the S3 Tables
+// route matcher accepts it; signing with regular SERVICE=s3 would let
+// the request fall through to the S3 CreateBucket handler.
+// createTableBucket makes a table bucket of the given format. An empty format
+// leaves it to the server, which means ICEBERG.
+func createTableBucket(t *testing.T, env *TestEnvironment, bucketName, format string) {
 	t.Helper()
 
-	// Use S3Tables REST API to create the bucket
 	endpoint := fmt.Sprintf("http://localhost:%d/buckets", env.s3Port)
-
 	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+	if format != "" {
+		reqBody = fmt.Sprintf(`{"name":"%s","format":"%s"}`, bucketName, format)
+	}
+
 	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	signS3TablesRequest(t, req, reqBody)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -511,11 +503,32 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	t.Logf("Create table bucket %s response: status=%d, body=%s", bucketName, resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
 	}
 	t.Logf("Created table bucket %s", bucketName)
+}
+
+// signS3TablesRequest signs req with AWS V4 for SERVICE=s3tables. The
+// underlying weed mini instance runs in default-allow mode so the
+// signature itself is not verified; only the credential scope matters,
+// because the S3 Tables route matcher requires SERVICE=s3tables to
+// distinguish S3 Tables traffic from regular S3 calls on the same paths.
+func signS3TablesRequest(t *testing.T, req *http.Request, body string) {
+	t.Helper()
+	creds := credentials.NewStaticCredentials("test-ak", "test-sk", "")
+	signer := v4.NewSigner(creds)
+	if _, err := signer.Sign(req, strings.NewReader(body), "s3tables", "us-east-1", time.Now()); err != nil {
+		t.Fatalf("Failed to sign S3 Tables request: %v", err)
+	}
+}
+
+// randomSuffix returns a short random hex suffix for unique resource naming.
+func randomSuffix() string {
+	return fmt.Sprintf("%x", time.Now().UnixNano()&0xffffffff)
 }
 
 // TestDuckDBIntegration tests Iceberg catalog operations using DuckDB
@@ -525,14 +538,11 @@ func TestDuckDBIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping DuckDB integration test")
 	}
-
-	env.StartSeaweedFS(t)
 
 	// Create a temporary SQL file for DuckDB to execute
 	sqlFile := filepath.Join(env.dataDir, "test.sql")
@@ -564,6 +574,9 @@ SELECT 'Iceberg extension loaded successfully' as result;
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("DuckDB output: %s", output)
+		if testutil.IsIllegalInstruction(err) {
+			t.Skipf("DuckDB image cannot run on this CPU: %v", err)
+		}
 		// Check for expected errors in certain CI environments
 		outputStr := string(output)
 		if strings.Contains(outputStr, "iceberg extension is not available") ||

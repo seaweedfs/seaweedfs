@@ -21,6 +21,9 @@ func (scanner *VolumeFileScanner4ReadAll) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4ReadAll) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 
+	if err := scanner.V.UnavailableError(); err != nil {
+		return err
+	}
 	nv, ok := scanner.V.nm.Get(n.Id)
 	if !ok {
 		return nil

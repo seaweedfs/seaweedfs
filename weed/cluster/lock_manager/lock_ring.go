@@ -1,35 +1,36 @@
 package lock_manager
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type LockRingSnapshot struct {
 	servers []pb.ServerAddress
 	ts      time.Time
+	ring    *HashRing // prebuilt ring for servers, so PriorOwner need not rebuild per call
 }
 
 type LockRing struct {
 	sync.RWMutex
 	snapshots        []*LockRingSnapshot
-	candidateServers map[pb.ServerAddress]struct{}
-	lastUpdateTime   time.Time
 	lastCompactTime  time.Time
 	snapshotInterval time.Duration
 	onTakeSnapshot   func(snapshot []pb.ServerAddress)
 	cleanupWg        sync.WaitGroup
+	Ring             *HashRing // consistent hash ring
+	version          int64     // monotonic version from master, rejects stale updates
 }
 
 func NewLockRing(snapshotInterval time.Duration) *LockRing {
 	return &LockRing{
 		snapshotInterval: snapshotInterval,
-		candidateServers: make(map[pb.ServerAddress]struct{}),
+		Ring:             NewHashRing(DefaultVnodeCount),
 	}
 }
 
@@ -39,89 +40,79 @@ func (r *LockRing) SetTakeSnapshotCallback(onTakeSnapshot func(snapshot []pb.Ser
 	r.onTakeSnapshot = onTakeSnapshot
 }
 
-// AddServer adds a server to the ring
-// if the previous snapshot passed the snapshot interval, create a new snapshot
-func (r *LockRing) AddServer(server pb.ServerAddress) {
-	glog.V(0).Infof("add server %v", server)
-	r.Lock()
-
-	if _, found := r.candidateServers[server]; found {
-		glog.V(0).Infof("add server: already exists %v", server)
-		r.Unlock()
-		return
-	}
-	r.lastUpdateTime = time.Now()
-	r.candidateServers[server] = struct{}{}
-	r.Unlock()
-
-	r.takeSnapshotWithDelayedCompaction()
-}
-
-func (r *LockRing) RemoveServer(server pb.ServerAddress) {
-	glog.V(0).Infof("remove server %v", server)
-
-	r.Lock()
-
-	if _, found := r.candidateServers[server]; !found {
-		r.Unlock()
-		return
-	}
-	r.lastUpdateTime = time.Now()
-	delete(r.candidateServers, server)
-	r.Unlock()
-
-	r.takeSnapshotWithDelayedCompaction()
-}
-
-func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
+// SetSnapshot replaces the ring with a new server list from the master.
+// The version must be >= the current version, otherwise the update is rejected
+// (protects against reordered messages). Version 0 is always accepted (bootstrap).
+func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 
 	sort.Slice(servers, func(i, j int) bool {
 		return servers[i] < servers[j]
 	})
 
 	r.Lock()
-	r.lastUpdateTime = time.Now()
-	// init candidateServers
-	for _, server := range servers {
-		r.candidateServers[server] = struct{}{}
+	if version > 0 && version < r.version {
+		glog.V(0).Infof("LockRing: rejecting stale update v%d (current v%d)", version, r.version)
+		r.Unlock()
+		return false
 	}
+	// An unchanged member list is only a version refresh: installing it as a
+	// new snapshot would run the topology-change callback and restart the
+	// prior-owner window on every periodic rebroadcast.
+	if len(r.snapshots) > 0 && slices.Equal(servers, r.snapshots[0].servers) {
+		r.version = version
+		r.Unlock()
+		return true
+	}
+	r.version = version
+	// Update the ring while holding the lock so version and ring state
+	// are always consistent — prevents a concurrent SetSnapshot from
+	// seeing the new version but applying its servers to the old ring.
+	r.Ring.SetServers(servers)
+	// Append the snapshot under the same lock as the ring update so a concurrent
+	// PriorOwner always sees snapshots[0] matching r.Ring (and snapshots[1] as the
+	// true prior); otherwise it could pair a new ring with a stale prior snapshot.
+	r.addOneSnapshotLocked(servers)
 	r.Unlock()
 
-	r.addOneSnapshot(servers)
-
 	r.cleanupWg.Add(1)
 	go func() {
 		defer r.cleanupWg.Done()
 		<-time.After(r.snapshotInterval)
 		r.compactSnapshots()
 	}()
+	return true
 }
 
-func (r *LockRing) takeSnapshotWithDelayedCompaction() {
-	r.doTakeSnapshot()
-
-	r.cleanupWg.Add(1)
-	go func() {
-		defer r.cleanupWg.Done()
-		<-time.After(r.snapshotInterval)
-		r.compactSnapshots()
-	}()
-}
-
-func (r *LockRing) doTakeSnapshot() {
-	servers := r.getSortedServers()
-
-	r.addOneSnapshot(servers)
-}
-
-func (r *LockRing) addOneSnapshot(servers []pb.ServerAddress) {
+// Reset clears only the version gate so the first update from a different
+// master always applies: ring versions are per-master monotonic, and a high
+// version accepted from a former leader must not reject the new leader's
+// view. The ring itself stays installed — writes keep routing to the last
+// known owner during the gap instead of every filer treating itself as the
+// owner, and the arriving snapshot transitions off it with the usual
+// prior-owner window.
+func (r *LockRing) Reset() {
 	r.Lock()
 	defer r.Unlock()
+	r.version = 0
+}
 
+// Version returns the current ring version.
+func (r *LockRing) Version() int64 {
+	r.RLock()
+	defer r.RUnlock()
+	return r.version
+}
+
+// addOneSnapshotLocked appends a new snapshot (newest at index 0). The caller
+// must hold r.Lock(), so the ring update and snapshot append are one atomic step.
+func (r *LockRing) addOneSnapshotLocked(servers []pb.ServerAddress) {
 	ts := time.Now()
+	ring := NewHashRing(DefaultVnodeCount)
+	ring.SetServers(servers)
 	t := &LockRingSnapshot{
 		servers: servers,
 		ts:      ts,
+		ring:    ring,
 	}
 	r.snapshots = append(r.snapshots, t)
 	for i := len(r.snapshots) - 2; i >= 0; i-- {
@@ -138,33 +129,17 @@ func (r *LockRing) compactSnapshots() {
 	r.Lock()
 	defer r.Unlock()
 
-	// Always attempt compaction when called, regardless of lastCompactTime
-	// This ensures proper cleanup even with multiple concurrent compaction requests
-
 	ts := time.Now()
-	// remove old snapshots
 	recentSnapshotIndex := 1
 	for ; recentSnapshotIndex < len(r.snapshots); recentSnapshotIndex++ {
 		if ts.Sub(r.snapshots[recentSnapshotIndex].ts) > r.snapshotInterval {
 			break
 		}
 	}
-	// keep the one that has been running for a while
 	if recentSnapshotIndex+1 <= len(r.snapshots) {
 		r.snapshots = r.snapshots[:recentSnapshotIndex+1]
 	}
 	r.lastCompactTime = ts
-}
-
-func (r *LockRing) getSortedServers() []pb.ServerAddress {
-	sortedServers := make([]pb.ServerAddress, 0, len(r.candidateServers))
-	for server := range r.candidateServers {
-		sortedServers = append(sortedServers, server)
-	}
-	sort.Slice(sortedServers, func(i, j int) bool {
-		return sortedServers[i] < sortedServers[j]
-	})
-	return sortedServers
 }
 
 func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
@@ -177,8 +152,18 @@ func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
 	return r.snapshots[0].servers
 }
 
+// PriorOwnerWindowEnd is when the latest ring change stops routing moved keys
+// to their prior owner.
+func (r *LockRing) PriorOwnerWindowEnd() time.Time {
+	r.RLock()
+	defer r.RUnlock()
+	if len(r.snapshots) == 0 {
+		return time.Time{}
+	}
+	return r.snapshots[0].ts.Add(r.snapshotInterval)
+}
+
 // WaitForCleanup waits for all pending cleanup operations to complete
-// This is useful for testing to ensure deterministic behavior
 func (r *LockRing) WaitForCleanup() {
 	r.cleanupWg.Wait()
 }
@@ -190,14 +175,70 @@ func (r *LockRing) GetSnapshotCount() int {
 	return len(r.snapshots)
 }
 
+// GetPrimaryAndBackup returns the primary and backup servers for a key
+// using the consistent hash ring.
+func (r *LockRing) GetPrimaryAndBackup(key string) (primary, backup pb.ServerAddress) {
+	return r.Ring.GetPrimaryAndBackup(key)
+}
+
+// GetPrimary returns the primary server for a key using the consistent hash ring.
+func (r *LockRing) GetPrimary(key string) pb.ServerAddress {
+	return r.Ring.GetPrimary(key)
+}
+
+// PriorOwner returns the key's owner from the previous ring snapshot, but only
+// while the ring changed within the last snapshotInterval and that owner differs
+// from the current primary. This is the cooling-off window in which the previous
+// owner may still hold locks the new owner has not yet rebuilt — a caller can
+// consult it before granting so a fresh owner does not double-grant during a
+// rebalance. Returns "" outside the window or when ownership did not move. It
+// uses the snapshot's prebuilt ring, so it does not rebuild a hash ring per call.
+func (r *LockRing) PriorOwner(key string) pb.ServerAddress {
+	r.RLock()
+	defer r.RUnlock()
+	return r.priorOwnerLocked(key)
+}
+
+// WriteOwner returns the filer that should serialize writes to key: the prior
+// owner while a ring change is still within the cooling-off window, otherwise
+// the current primary. Both are read under one lock so the pair cannot come
+// from different rings, which could otherwise name the same filer twice.
+func (r *LockRing) WriteOwner(key string) pb.ServerAddress {
+	r.RLock()
+	defer r.RUnlock()
+	if prior := r.priorOwnerLocked(key); prior != "" {
+		return prior
+	}
+	return r.Ring.GetPrimary(key)
+}
+
+// priorOwnerLocked is PriorOwner's body; the caller holds at least RLock.
+func (r *LockRing) priorOwnerLocked(key string) pb.ServerAddress {
+	if len(r.snapshots) < 2 {
+		return ""
+	}
+	if time.Since(r.snapshots[0].ts) > r.snapshotInterval {
+		return ""
+	}
+	current := r.Ring.GetPrimary(key)
+	var prior pb.ServerAddress
+	if pr := r.snapshots[1].ring; pr != nil {
+		prior = pr.GetPrimary(key)
+	} else {
+		prior = hashKeyToServer(key, r.snapshots[1].servers)
+	}
+	if prior != "" && prior != current {
+		return prior
+	}
+	return ""
+}
+
+// hashKeyToServer uses a temporary consistent hash ring for the given server list.
 func hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
 	if len(servers) == 0 {
 		return ""
 	}
-	x := util.HashStringToLong(key)
-	if x < 0 {
-		x = -x
-	}
-	x = x % int64(len(servers))
-	return servers[x]
+	ring := NewHashRing(DefaultVnodeCount)
+	ring.SetServers(servers)
+	return ring.GetPrimary(key)
 }

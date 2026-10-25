@@ -12,9 +12,27 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+// metadataDirPath returns the filer directory holding a table's metadata files.
+func metadataDirPath(bucketName, tablePath string) string {
+	dir := path.Join(s3tables.TablesPath, bucketName)
+	if tablePath != "" {
+		dir = path.Join(dir, tablePath)
+	}
+	return path.Join(dir, "metadata")
+}
+
 // saveMetadataFile saves the Iceberg metadata JSON file to the filer.
-// It constructs the filer path from the S3 location components.
-func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte) error {
+// It constructs the filer path from the S3 location components. With exclusive
+// set the write fails with filer_pb.ErrEntryAlreadyExists rather than replacing
+// a file that is already there: two commits racing off the same base pick the
+// same v{N} name, and letting the second overwrite the first would leave the
+// winner's catalog pointer aimed at the loser's metadata.
+func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, exclusive bool) error {
+	return s.saveMetadataBlob(ctx, bucketName, tablePath, metadataFileName, content, "application/json", exclusive)
+}
+
+// saveMetadataBlob saves a file into the table's metadata directory.
+func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, mimeType string, exclusive bool) error {
 
 	// Create context with timeout for file operations
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -51,7 +69,7 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 			if createErr != nil {
 				return fmt.Errorf("failed to create %s: %w", errorContext, createErr)
 			}
-			if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			if resp.ErrorCode != filer_pb.FilerError_OK && resp.ErrorCode != filer_pb.FilerError_ENTRY_ALREADY_EXISTS {
 				return fmt.Errorf("failed to create %s: %s", errorContext, resp.Error)
 			}
 			return nil
@@ -87,6 +105,7 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 		// 4. Write the file
 		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 			Directory: metadataDir,
+			OExcl:     exclusive,
 			Entry: &filer_pb.Entry{
 				Name: metadataFileName,
 				Attributes: &filer_pb.FuseAttributes{
@@ -97,15 +116,18 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 				},
 				Content: content,
 				Extended: map[string][]byte{
-					"Mime-Type": []byte("application/json"),
+					"Mime-Type": []byte(mimeType),
 				},
 			},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to write metadata file: %w", err)
 		}
-		if resp.Error != "" {
-			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
+		if resp.ErrorCode != filer_pb.FilerError_OK {
+			if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+				return fmt.Errorf("failed to write metadata file: %w", sentinel)
+			}
+			return fmt.Errorf("failed to write metadata file: code=%v %s", resp.ErrorCode, resp.Error)
 		}
 		return nil
 	})
@@ -115,11 +137,7 @@ func (s *Server) deleteMetadataFile(ctx context.Context, bucketName, tablePath, 
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	metadataDir := path.Join(s3tables.TablesPath, bucketName)
-	if tablePath != "" {
-		metadataDir = path.Join(metadataDir, tablePath)
-	}
-	metadataDir = path.Join(metadataDir, "metadata")
+	metadataDir := metadataDirPath(bucketName, tablePath)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.DoRemove(opCtx, client, metadataDir, metadataFileName, true, false, true, false, nil)
 	})
@@ -129,11 +147,7 @@ func (s *Server) loadMetadataFile(ctx context.Context, bucketName, tablePath, me
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	metadataDir := path.Join(s3tables.TablesPath, bucketName)
-	if tablePath != "" {
-		metadataDir = path.Join(metadataDir, tablePath)
-	}
-	metadataDir = path.Join(metadataDir, "metadata")
+	metadataDir := metadataDirPath(bucketName, tablePath)
 
 	var content []byte
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {

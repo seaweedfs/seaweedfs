@@ -91,7 +91,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 		if hasExistingJob {
 			var existingJob *EachPartitionPublishJob
 			existingJob = p.jobs[i]
-			if existingJob.BrokerPartitionAssignment.LeaderBroker == assignment.LeaderBroker {
+			if pb.ServerAddress(existingJob.BrokerPartitionAssignment.LeaderBroker).Equals(pb.ServerAddress(assignment.LeaderBroker)) {
 				existingJob.generation = generation
 				jobs = append(jobs, existingJob)
 				continue
@@ -121,7 +121,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 		}(job)
 		jobs = append(jobs, job)
 		// TODO assuming this is not re-configured so the partitions are fixed.
-		// better just re-use the existing job
+		// better just reuse the existing job
 		p.partition2Buffer.Insert(assignment.Partition.RangeStart, assignment.Partition.RangeStop, job.inputQueue)
 	}
 	p.jobs = jobs

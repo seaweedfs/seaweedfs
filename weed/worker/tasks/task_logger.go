@@ -199,7 +199,10 @@ func (l *FileTaskLogger) LogProgress(progress float64, message string) {
 	}
 
 	l.writeLogEntry(entry)
-	l.saveMetadata() // Update metadata with new progress
+	// Update metadata with new progress
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to save initial task metadata: %v", err)
+	}
 }
 
 // LogStatus logs task status change
@@ -216,7 +219,10 @@ func (l *FileTaskLogger) LogStatus(status string, message string) {
 	}
 
 	l.writeLogEntry(entry)
-	l.saveMetadata() // Update metadata with new status
+	// Update metadata with new status
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to update metadata with new status: %v", err)
+	}
 }
 
 // LogWithFields logs a message with structured fields
@@ -263,7 +269,9 @@ func (l *FileTaskLogger) Close() error {
 	}
 
 	// Save final metadata
-	l.saveMetadata()
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to save final task metadata: %v", err)
+	}
 
 	// Close log file
 	if l.logFile != nil {
@@ -317,26 +325,15 @@ func (l *FileTaskLogger) writeLogEntry(entry TaskLogEntry) {
 		return
 	}
 
-	// Flush to disk
-	if err := l.logFile.Sync(); err != nil {
-		glog.Errorf("Failed to sync log file: %v", err)
-	}
-
-	// Also log to console and stderr if enabled
+	// Only forward errors and warnings to glog; routine task logs stay in the task log file.
 	if l.config.EnableConsole {
-		// Log to glog with proper call depth to show actual source location
-		// We need depth 3 to skip: writeLogEntry -> log -> Info/Warning/Error calls to reach the original caller
 		formattedMsg := fmt.Sprintf("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
 		switch entry.Level {
 		case "ERROR":
-			glog.ErrorDepth(3, formattedMsg)
+			glog.ErrorDepth(4, formattedMsg)
 		case "WARNING":
-			glog.WarningDepth(3, formattedMsg)
-		default: // INFO, DEBUG, etc.
-			glog.InfoDepth(3, formattedMsg)
+			glog.WarningDepth(4, formattedMsg)
 		}
-		// Also log to stderr for immediate visibility
-		fmt.Fprintf(os.Stderr, "[TASK-%s] %s: %s\n", l.taskID, entry.Level, entry.Message)
 	}
 }
 

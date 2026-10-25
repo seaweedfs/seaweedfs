@@ -13,10 +13,12 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.*;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 
 public abstract class FilerSecurityContext extends SslContext {
 //extends Netty SslContext to access its protected static utility methods in
@@ -36,6 +38,11 @@ public abstract class FilerSecurityContext extends SslContext {
     private static String httpClientCertChainFilePath;
     private static String httpClientPrivateKeyFilePath;
 
+    // Optional HTTP Basic Auth for reaching SeaweedFS through an Nginx reverse proxy
+    // that has auth_basic enabled. Applied to both the filer gRPC channel and the
+    // volume/proxy HTTP requests. Precomputed so per-chunk requests don't re-encode.
+    private static volatile String basicAuthHeaderValue;
+
 
     static {
         String securityFileName = "security.toml";
@@ -54,6 +61,9 @@ public abstract class FilerSecurityContext extends SslContext {
 
             Toml toml = new Toml().read(securityFile);
             logger.debug("reading ssl setup from {}", securityFile);
+
+            basicAuthHeaderValue = computeBasicAuthHeaderValue(
+                    toml.getString("basic_auth.username"), toml.getString("basic_auth.password"));
 
             grpcTrustCertCollectionFilePath = toml.getString("grpc.ca");
             logger.debug("loading gRPC ca from {}", grpcTrustCertCollectionFilePath);
@@ -118,6 +128,30 @@ public abstract class FilerSecurityContext extends SslContext {
 
     public static SSLContext getHttpSslContext() {
         return httpSslContext;
+    }
+
+    // Configure HTTP Basic Auth programmatically instead of via security.toml. Must be
+    // called before constructing a FilerClient so the credentials reach the gRPC channel.
+    public static void setBasicAuth(String username, String password) {
+        basicAuthHeaderValue = computeBasicAuthHeaderValue(username, password);
+    }
+
+    public static boolean isBasicAuthEnabled() {
+        return basicAuthHeaderValue != null;
+    }
+
+    // Returns the "Basic <base64(user:password)>" Authorization header value, or null
+    // when no Basic Auth credentials are configured.
+    public static String getBasicAuthHeaderValue() {
+        return basicAuthHeaderValue;
+    }
+
+    private static String computeBasicAuthHeaderValue(String username, String password) {
+        if (Strings.isNullOrEmpty(username)) {
+            return null;
+        }
+        String credentials = username + ":" + (password == null ? "" : password);
+        return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
     }
 
     private static SslContext buildGrpcSslContext() throws SSLException {

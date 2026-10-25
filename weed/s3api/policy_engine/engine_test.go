@@ -2,11 +2,13 @@ package policy_engine
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // tagsToEntry converts a map of tag key-value pairs to the entry.Extended format
@@ -225,47 +227,6 @@ func TestConditionEvaluators(t *testing.T) {
 	}
 }
 
-func TestConvertIdentityToPolicy(t *testing.T) {
-	identityActions := []string{
-		"Read:bucket1/*",
-		"Write:bucket1/*",
-		"Admin:bucket2",
-	}
-
-	policy, err := ConvertIdentityToPolicy(identityActions)
-	if err != nil {
-		t.Fatalf("Failed to convert identity to policy: %v", err)
-	}
-
-	if policy.Version != "2012-10-17" {
-		t.Errorf("Expected version 2012-10-17, got %s", policy.Version)
-	}
-
-	if len(policy.Statement) != 3 {
-		t.Errorf("Expected 3 statements, got %d", len(policy.Statement))
-	}
-
-	// Check first statement (Read)
-	stmt := policy.Statement[0]
-	if stmt.Effect != PolicyEffectAllow {
-		t.Errorf("Expected Allow effect, got %s", stmt.Effect)
-	}
-
-	actions := normalizeToStringSlice(stmt.Action)
-	// Read action now includes: GetObject, GetObjectVersion, ListBucket, ListBucketVersions,
-	// GetObjectAcl, GetObjectVersionAcl, GetObjectTagging, GetObjectVersionTagging,
-	// GetBucketLocation, GetBucketVersioning, GetBucketAcl, GetBucketCors, GetBucketTagging, GetBucketNotification
-	if len(actions) != 14 {
-		t.Errorf("Expected 14 read actions, got %d: %v", len(actions), actions)
-	}
-
-	resources := normalizeToStringSlice(stmt.Resource)
-	// Read action now includes both bucket ARN (for ListBucket*) and object ARN (for GetObject*)
-	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources (bucket and bucket/*), got %d: %v", len(resources), resources)
-	}
-}
-
 func TestPolicyValidation(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -420,7 +381,7 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		RemoteAddr: "192.168.1.100:12345",
 	}
 
-	values := ExtractConditionValuesFromRequest(req)
+	values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
 
 	// Check extracted values
 	if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != "192.168.1.100" {
@@ -443,8 +404,8 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		t.Errorf("Expected RequestMethod to be GET, got %v", values["s3:RequestMethod"])
 	}
 
-	if len(values["x-amz-copy-source"]) != 1 || values["x-amz-copy-source"][0] != "source-bucket/source-object" {
-		t.Errorf("Expected X-Amz-Copy-Source header to be extracted, got %v", values["x-amz-copy-source"])
+	if len(values["s3:x-amz-copy-source"]) != 1 || values["s3:x-amz-copy-source"][0] != "source-bucket/source-object" {
+		t.Errorf("Expected X-Amz-Copy-Source header to be extracted with s3: prefix, got %v", values["s3:x-amz-copy-source"])
 	}
 
 	// Check that aws:CurrentTime is properly set
@@ -466,21 +427,21 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 		expectedIP string
 	}{
 		{
-			name: "uses right-most public X-Forwarded-For entry",
+			name: "ignores X-Forwarded-For and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.5",
+			expectedIP: "192.168.1.100",
 		},
 		{
-			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
+			name: "ignores X-Real-Ip and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"bad-ip"},
 				"X-Real-Ip":       {"198.51.100.7"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.7",
+			expectedIP: "192.168.1.100",
 		},
 		{
 			name:       "uses RemoteAddr ip when no forwarding headers",
@@ -495,20 +456,20 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 			expectedIP: "@",
 		},
 		{
-			name: "uses IPv6 X-Forwarded-For entry",
+			name: "ignores IPv6 X-Forwarded-For entry and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.7",
+			expectedIP: "192.168.1.100",
 		},
 		{
-			name: "ignores spoofed IP when real client is public",
+			name: "ignores spoofed X-Forwarded-For behind private peer",
 			header: map[string][]string{
 				"X-Forwarded-For": {"8.8.8.8, 203.0.113.10, 10.0.0.1"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "203.0.113.10",
+			expectedIP: "192.168.1.100",
 		},
 		{
 			name:       "handles bracketed IPv6 remote address",
@@ -533,11 +494,73 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 				RemoteAddr: tt.remoteAddr,
 			}
 
-			values := ExtractConditionValuesFromRequest(req)
+			values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
 			if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != tt.expectedIP {
 				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
 			}
 		})
+	}
+}
+
+func TestExtractSourceIP_IgnoresForwardedHeaders(t *testing.T) {
+	req := &http.Request{
+		Method: "GET",
+		URL:    &url.URL{Path: "/"},
+		Header: map[string][]string{
+			"X-Forwarded-For": {"203.0.113.99"},
+			"X-Real-Ip":       {"198.51.100.1"},
+		},
+		RemoteAddr: "10.0.0.5:54321",
+	}
+
+	values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
+	if got := values["aws:SourceIp"]; len(got) != 1 || got[0] != "10.0.0.5" {
+		t.Errorf("Expected SourceIp to be the direct peer 10.0.0.5, got %v", got)
+	}
+}
+
+func TestExtractSourceIP_EnforcesIPRestrictionPolicy(t *testing.T) {
+	engine := NewPolicyEngine()
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{"Effect": "Allow", "Principal": "*", "Action": ["s3:GetObject"],
+			 "Resource": "arn:aws:s3:::secret-bucket/*"},
+			{"Effect": "Deny", "Principal": "*", "Action": ["s3:GetObject"],
+			 "Resource": "arn:aws:s3:::secret-bucket/*",
+			 "Condition": {"NotIpAddress": {"aws:SourceIp": ["10.0.0.0/24"]}}}
+		]
+	}`
+	if err := engine.SetBucketPolicy("secret-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/secret-bucket/secret-key", nil)
+	r.RemoteAddr = "10.0.50.5:54321"
+	r.Header.Set("X-Forwarded-For", "10.0.0.5")
+
+	result := engine.EvaluatePolicy("secret-bucket", &PolicyEvaluationArgs{
+		Action:     "s3:GetObject",
+		Resource:   "arn:aws:s3:::secret-bucket/secret-key",
+		Principal:  "*",
+		Conditions: engine.ExtractConditionValuesFromRequest(r),
+	})
+	if result != PolicyResultDeny {
+		t.Errorf("Expected Deny for peer outside 10.0.0.0/24 despite spoofed X-Forwarded-For, got %v", result)
+	}
+}
+
+func TestExtractSourceIP_TrustedProxyHonorsForwardedHeader(t *testing.T) {
+	engine := NewPolicyEngine()
+	engine.SetTrustedProxies(NewTrustedProxies([]string{"10.0.0.0/24"}))
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:54321"
+	r.Header.Set("X-Forwarded-For", "203.0.113.99")
+
+	values := engine.ExtractConditionValuesFromRequest(r)
+	if got := values["aws:SourceIp"]; len(got) != 1 || got[0] != "203.0.113.99" {
+		t.Errorf("Expected trusted proxy to honor X-Forwarded-For 203.0.113.99, got %v", got)
 	}
 }
 
@@ -749,7 +772,7 @@ func TestWildcardMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesWildcard(tt.pattern, tt.str)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.str)
 			if result != tt.expected {
 				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.str, tt.expected, result)
 			}
@@ -791,41 +814,6 @@ func TestCompilePolicy(t *testing.T) {
 	if len(stmt.ResourcePatterns) != 1 {
 		t.Errorf("Expected 1 resource pattern, got %d", len(stmt.ResourcePatterns))
 	}
-}
-
-// TestNewPolicyBackedIAMWithLegacy tests the constructor overload
-func TestNewPolicyBackedIAMWithLegacy(t *testing.T) {
-	// Mock legacy IAM
-	mockLegacyIAM := &MockLegacyIAM{}
-
-	// Test the new constructor
-	policyBackedIAM := NewPolicyBackedIAMWithLegacy(mockLegacyIAM)
-
-	// Verify that the legacy IAM is set
-	if policyBackedIAM.legacyIAM != mockLegacyIAM {
-		t.Errorf("Expected legacy IAM to be set, but it wasn't")
-	}
-
-	// Verify that the policy engine is initialized
-	if policyBackedIAM.policyEngine == nil {
-		t.Errorf("Expected policy engine to be initialized, but it wasn't")
-	}
-
-	// Compare with the traditional approach
-	traditionalIAM := NewPolicyBackedIAM()
-	traditionalIAM.SetLegacyIAM(mockLegacyIAM)
-
-	// Both should behave the same
-	if policyBackedIAM.legacyIAM != traditionalIAM.legacyIAM {
-		t.Errorf("Expected both approaches to result in the same legacy IAM")
-	}
-}
-
-// MockLegacyIAM implements the LegacyIAM interface for testing
-type MockLegacyIAM struct{}
-
-func (m *MockLegacyIAM) authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode) {
-	return nil, s3err.ErrNone
 }
 
 // TestExistingObjectTagCondition tests s3:ExistingObjectTag/<tag-key> condition support
@@ -903,6 +891,313 @@ func TestExistingObjectTagCondition(t *testing.T) {
 
 			result := engine.EvaluatePolicy("test-bucket", args)
 			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRequestObjectTagCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:RequestObjectTag/department": ["engineering"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	copyHeaders := map[string]string{"X-Amz-Copy-Source": "/src-bucket/src-object"}
+	replaceHeaders := map[string]string{
+		"X-Amz-Copy-Source":                    "/src-bucket/src-object",
+		s3_constants.AmzObjectTaggingDirective: "REPLACE",
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		headers  map[string]string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"matching tag allows", "", "", nil, "department=engineering", PolicyResultAllow},
+		{"matching tag among others allows", "", "", nil, "project=alpha&department=engineering", PolicyResultAllow},
+		{"url-encoded value is decoded", "", "", nil, "department=engin%65ering", PolicyResultAllow},
+		{"other value is not allowed", "", "", nil, "department=sales", PolicyResultIndeterminate},
+		{"missing tag is not allowed", "", "", nil, "project=alpha", PolicyResultIndeterminate},
+		{"no tagging header is not allowed", "", "", nil, "", PolicyResultIndeterminate},
+		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
+		{"last value of a repeated key counts", "", "", nil, "department=sales&department=engineering", PolicyResultAllow},
+		{"earlier value of a repeated key is ignored", "", "", nil, "department=engineering&department=sales", PolicyResultIndeterminate},
+		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header counts with an unrelated query parameter", "", "?foo=bar", nil, "department=engineering", PolicyResultAllow},
+		{"header counts on a Signature V2 presigned PUT", "", "?AWSAccessKeyId=k&Signature=s&Expires=1", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a renameObject subresource", "", "?renameObject", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy that replaces tags", "", "", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a multipart copy that replaces tags", "", "?partNumber=1&uploadId=x", replaceHeaders, "department=engineering", PolicyResultIndeterminate},
+		{"header counts on a copy with a lone partNumber", "", "?partNumber=1", replaceHeaders, "department=engineering", PolicyResultAllow},
+		{"header counts on a multipart create", "POST", "?uploads", nil, "department=engineering", PolicyResultAllow},
+		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on multipart completion", "POST", "?uploadId=x", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a directory marker", "", "/", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on an acl subresource", "", "?acl", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a GET", "GET", "", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a DELETE", "DELETE", "", nil, "department=engineering", PolicyResultIndeterminate},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			method := tt.method
+			if method == "" {
+				method = http.MethodPut
+			}
+			req := httptest.NewRequest(method, "/test-bucket/test-object"+tt.target, nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			if tt.tagging != "" {
+				req.Header.Set(s3_constants.AmzObjectTagging, tt.tagging)
+			}
+
+			args := &PolicyEvaluationArgs{
+				Action:     "s3:PutObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				Conditions: engine.ExtractConditionValuesFromRequest(req),
+			}
+
+			if result := engine.EvaluatePolicy("test-bucket", args); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRequestObjectTagConditionDeny(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringNotEquals": {
+						"s3:RequestObjectTag/department": ["engineering"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		target   string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"required tag passes", "", "department=engineering", PolicyResultAllow},
+		{"other value is denied", "", "department=sales", PolicyResultDeny},
+		{"missing tag is denied", "", "project=alpha", PolicyResultDeny},
+		{"repeated key ending in another value is denied", "", "department=engineering&department=sales", PolicyResultDeny},
+		{"malformed header is denied", "", "department=engineering&%zz", PolicyResultDeny},
+		{"unrelated query parameter does not hide the tag", "?foo=bar", "department=sales", PolicyResultDeny},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-object"+tt.target, nil)
+			req.Header.Set(s3_constants.AmzObjectTagging, tt.tagging)
+
+			args := &PolicyEvaluationArgs{
+				Action:     "s3:PutObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				Conditions: engine.ExtractConditionValuesFromRequest(req),
+			}
+
+			if result := engine.EvaluatePolicy("test-bucket", args); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func evaluateTaggedRequest(engine *PolicyEngine, method, target string, headers map[string]string, tagging string) PolicyEvaluationResult {
+	if method == "" {
+		method = http.MethodPut
+	}
+	req := httptest.NewRequest(method, "/test-bucket/test-object"+target, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if tagging != "" {
+		req.Header.Set(s3_constants.AmzObjectTagging, tagging)
+	}
+	return engine.EvaluatePolicy("test-bucket", &PolicyEvaluationArgs{
+		Action:     "s3:PutObject",
+		Resource:   "arn:aws:s3:::test-bucket/test-object",
+		Principal:  "*",
+		Conditions: engine.ExtractConditionValuesFromRequest(req),
+	})
+}
+
+func TestRequestObjectTagKeysCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAllValues:StringEquals": {
+						"s3:RequestObjectTagKeys": ["department", "project"]
+					},
+					"Null": {
+						"s3:RequestObjectTagKeys": "false"
+					}
+				}
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAnyValue:StringLike": {
+						"s3:RequestObjectTagKeys": ["secret*"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	copyHeaders := map[string]string{"X-Amz-Copy-Source": "/src-bucket/src-object"}
+	replaceHeaders := map[string]string{
+		"X-Amz-Copy-Source":                    "/src-bucket/src-object",
+		s3_constants.AmzObjectTaggingDirective: "REPLACE",
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		headers  map[string]string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"listed key allows", "", "", nil, "department=engineering", PolicyResultAllow},
+		{"all listed keys allow", "", "", nil, "department=engineering&project=alpha", PolicyResultAllow},
+		{"unlisted key is not allowed", "", "", nil, "department=engineering&owner=bob", PolicyResultIndeterminate},
+		{"no tagging header is not allowed", "", "", nil, "", PolicyResultIndeterminate},
+		{"repeated key counts once", "", "", nil, "department=a&department=b", PolicyResultAllow},
+		{"url-encoded key is decoded", "", "", nil, "depart%6Dent=engineering", PolicyResultAllow},
+		{"empty segments add no key", "", "", nil, "&department=engineering&", PolicyResultAllow},
+		{"empty key is not allowed", "", "", nil, "department=engineering&=x", PolicyResultIndeterminate},
+		{"key case is preserved", "", "", nil, "Department=engineering", PolicyResultIndeterminate},
+		{"malformed header is not allowed", "", "", nil, "department=engineering&%zz", PolicyResultIndeterminate},
+		{"secret key is denied", "", "", nil, "secret=1", PolicyResultDeny},
+		{"secret key behind a padded header is denied", "", "", nil, "secret=1" + strings.Repeat("&", 10001), PolicyResultDeny},
+		{"secret key among listed keys is denied", "", "", nil, "department=engineering&secret-level=2", PolicyResultDeny},
+		{"url-encoded secret key is denied", "", "", nil, "secr%65t=1", PolicyResultDeny},
+		{"secret key on a copy that replaces tags is denied", "", "", replaceHeaders, "secret=1", PolicyResultDeny},
+		{"secret key on a multipart create is denied", "POST", "?uploads", nil, "secret=1", PolicyResultDeny},
+		{"header is ignored on a copy that keeps source tags", "", "", copyHeaders, "secret=1", PolicyResultIndeterminate},
+		{"header is ignored on PutObjectTagging", "", "?tagging", nil, "department=engineering", PolicyResultIndeterminate},
+		{"header is ignored on a part upload", "", "?partNumber=1&uploadId=x", nil, "secret=1", PolicyResultIndeterminate},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if result := evaluateTaggedRequest(engine, tt.method, tt.target, tt.headers, tt.tagging); result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRequestObjectTagKeysRequiredTagDeny(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"ForAllValues:StringNotEquals": {
+						"s3:RequestObjectTagKeys": ["department", "project"]
+					}
+				}
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		tagging  string
+		expected PolicyEvaluationResult
+	}{
+		{"required key passes", "department=engineering", PolicyResultAllow},
+		{"required key with another key passes", "project=alpha&owner=bob", PolicyResultAllow},
+		{"only other keys are denied", "owner=bob", PolicyResultDeny},
+		{"no tagging header is denied", "", PolicyResultDeny},
+		{"malformed header is denied", "department=engineering&%zz", PolicyResultDeny},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if result := evaluateTaggedRequest(engine, "", "", nil, tt.tagging); result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -1056,4 +1351,81 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMultipartUploadInheritsPutObjectPermission verifies that granting s3:PutObject
+// in a bucket policy implicitly allows multipart upload operations.
+// See https://github.com/seaweedfs/seaweedfs/discussions/8751
+func TestMultipartUploadInheritsPutObjectPermission(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set policy: %v", err)
+	}
+
+	multipartActions := []string{
+		"s3:CreateMultipartUpload",
+		"s3:UploadPart",
+		"s3:UploadPartCopy",
+		"s3:CompleteMultipartUpload",
+		"s3:AbortMultipartUpload",
+		"s3:ListMultipartUploadParts",
+		"s3:ListBucketMultipartUploads",
+	}
+
+	for _, action := range multipartActions {
+		t.Run(action, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:    action,
+				Resource:  "arn:aws:s3:::test-bucket/myfile.dat",
+				Principal: "*",
+				Conditions: map[string][]string{
+					"aws:SourceIp": {"10.0.0.1"},
+				},
+			}
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != PolicyResultAllow {
+				t.Errorf("Expected s3:PutObject to implicitly allow %s, got %v", action, result)
+			}
+		})
+	}
+
+	// ListBucketMultipartUploads is a bucket-level action; the object-only
+	// resource "arn:aws:s3:::test-bucket/*" should NOT match the bucket ARN.
+	t.Run("s3:ListBucketMultipartUploads bucket ARN", func(t *testing.T) {
+		args := &PolicyEvaluationArgs{
+			Action:    "s3:ListBucketMultipartUploads",
+			Resource:  "arn:aws:s3:::test-bucket",
+			Principal: "*",
+		}
+		result := engine.EvaluatePolicy("test-bucket", args)
+		if result == PolicyResultAllow {
+			t.Error("Object-only resource should not match bucket ARN for ListBucketMultipartUploads")
+		}
+	})
+
+	// s3:PutObject must NOT implicitly grant unrelated actions
+	t.Run("s3:DeleteObject not inherited", func(t *testing.T) {
+		args := &PolicyEvaluationArgs{
+			Action:    "s3:DeleteObject",
+			Resource:  "arn:aws:s3:::test-bucket/myfile.dat",
+			Principal: "*",
+		}
+		result := engine.EvaluatePolicy("test-bucket", args)
+		if result == PolicyResultAllow {
+			t.Error("s3:PutObject should NOT implicitly allow s3:DeleteObject")
+		}
+	})
 }

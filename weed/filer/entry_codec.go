@@ -82,6 +82,11 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 	return &filer_pb.FuseAttributes{
 		Crtime:        entry.Attr.Crtime.Unix(),
 		Mtime:         entry.Attr.Mtime.Unix(),
+		MtimeNs:       int32(entry.Attr.Mtime.Nanosecond()),
+		Ctime:         entry.Attr.Ctime.Unix(),
+		CtimeNs:       int32(entry.Attr.Ctime.Nanosecond()),
+		Atime:         atimeSecondsForPb(entry.Attr),
+		AtimeNs:       atimeNanosForPb(entry.Attr),
 		FileMode:      uint32(entry.Attr.Mode),
 		Uid:           entry.Uid,
 		Gid:           entry.Gid,
@@ -97,6 +102,20 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 	}
 }
 
+func atimeSecondsForPb(attr Attr) int64 {
+	if attr.Atime.IsZero() {
+		return 0
+	}
+	return attr.Atime.Unix()
+}
+
+func atimeNanosForPb(attr Attr) int32 {
+	if attr.Atime.IsZero() {
+		return 0
+	}
+	return int32(attr.Atime.Nanosecond())
+}
+
 // EntryAttributeToExistingPb fills an existing FuseAttributes to avoid allocation.
 // Safe to call with nil attr (will return early without populating).
 func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
@@ -105,6 +124,11 @@ func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
 	}
 	attr.Crtime = entry.Attr.Crtime.Unix()
 	attr.Mtime = entry.Attr.Mtime.Unix()
+	attr.MtimeNs = int32(entry.Attr.Mtime.Nanosecond())
+	attr.Ctime = entry.Attr.Ctime.Unix()
+	attr.CtimeNs = int32(entry.Attr.Ctime.Nanosecond())
+	attr.Atime = atimeSecondsForPb(entry.Attr)
+	attr.AtimeNs = atimeNanosForPb(entry.Attr)
 	attr.FileMode = uint32(entry.Attr.Mode)
 	attr.Uid = entry.Uid
 	attr.Gid = entry.Gid
@@ -128,7 +152,17 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	}
 
 	t.Crtime = time.Unix(attr.Crtime, 0)
-	t.Mtime = time.Unix(attr.Mtime, 0)
+	t.Mtime = time.Unix(attr.Mtime, int64(attr.MtimeNs))
+	if attr.Ctime != 0 {
+		t.Ctime = time.Unix(attr.Ctime, int64(attr.CtimeNs))
+	} else {
+		t.Ctime = t.Mtime
+	}
+	if attr.Atime != 0 || attr.AtimeNs != 0 {
+		t.Atime = time.Unix(attr.Atime, int64(attr.AtimeNs))
+	} else {
+		t.Atime = t.Mtime
+	}
 	t.Mode = os.FileMode(attr.FileMode)
 	t.Uid = attr.Uid
 	t.Gid = attr.Gid

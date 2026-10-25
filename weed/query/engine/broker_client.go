@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -58,7 +56,7 @@ func (c *BrokerClient) discoverFiler() error {
 		return nil // already discovered
 	}
 
-	conn, err := grpc.NewClient(c.masterAddress, c.grpcDialOption)
+	conn, err := pb.GrpcDial(context.Background(), c.masterAddress, false, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to master at %s: %v", c.masterAddress, err)
 	}
@@ -99,14 +97,13 @@ func (c *BrokerClient) findBrokerBalancer() error {
 		return fmt.Errorf("failed to discover filer: %v", err)
 	}
 
-	conn, err := grpc.NewClient(c.filerAddress, c.grpcDialOption)
+	conn, err := pb.GrpcDial(context.Background(), c.filerAddress, false, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to filer at %s: %v", c.filerAddress, err)
 	}
 	defer conn.Close()
 
 	client := filer_pb.NewSeaweedFilerClient(conn)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -143,7 +140,7 @@ type filerClientImpl struct {
 
 // WithFilerClient executes a function with a connected filer client
 func (f *filerClientImpl) WithFilerClient(followRedirect bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	conn, err := grpc.NewClient(f.filerAddress, f.grpcDialOption)
+	conn, err := pb.GrpcDial(context.Background(), f.filerAddress, false, f.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to filer at %s: %v", f.filerAddress, err)
 	}
@@ -285,7 +282,7 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 		}
 
 		// Read the topic.conf file content
-		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		data, err := filer.ReadInsideFiler(ctx, client, topicDir, "topic.conf")
 		if err != nil {
 			return fmt.Errorf("failed to read topic.conf for %s.%s: %v", namespace, topicName, err)
 		}
@@ -317,7 +314,7 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 		return err
 	}
 
-	conn, err := grpc.NewClient(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := pb.GrpcDial(ctx, c.brokerAddress, false, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
 	}
@@ -429,7 +426,7 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	glog.V(2).Infof("Found broker at address: %s", c.brokerAddress)
 
 	// Step 2: Connect to broker
-	conn, err := grpc.NewClient(c.brokerAddress, c.grpcDialOption)
+	conn, err := pb.GrpcDial(ctx, c.brokerAddress, false, c.grpcDialOption)
 	if err != nil {
 		glog.V(2).Infof("Failed to connect to broker %s: %v", c.brokerAddress, err)
 		// Return empty slice if connection fails - prevents double-counting
@@ -509,78 +506,4 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	}
 
 	return logEntries, nil
-}
-
-// getEarliestBufferStart finds the earliest buffer_start index from disk files in the partition
-//
-// This method handles three scenarios for seamless broker querying:
-// 1. Live log files exist: Uses their buffer_start metadata (most recent boundaries)
-// 2. Only Parquet files exist: Uses Parquet buffer_start metadata (preserved from archived sources)
-// 3. Mixed files: Uses earliest buffer_start from all sources for comprehensive coverage
-//
-// This ensures continuous real-time querying capability even after log file compaction/archival
-func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath string) (int64, error) {
-	filerClient, err := c.GetFilerClient()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get filer client: %v", err)
-	}
-
-	var earliestBufferIndex int64 = -1 // -1 means no buffer_start found
-	var logFileCount, parquetFileCount int
-	var bufferStartSources []string // Track which files provide buffer_start
-
-	err = filer_pb.ReadDirAllEntries(ctx, filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		// Skip directories
-		if entry.IsDirectory {
-			return nil
-		}
-
-		// Count file types for scenario detection
-		if strings.HasSuffix(entry.Name, ".parquet") {
-			parquetFileCount++
-		} else {
-			logFileCount++
-		}
-
-		// Extract buffer_start from file extended attributes (both log files and parquet files)
-		bufferStart := c.getBufferStartFromEntry(entry)
-		if bufferStart != nil && bufferStart.StartIndex > 0 {
-			if earliestBufferIndex == -1 || bufferStart.StartIndex < earliestBufferIndex {
-				earliestBufferIndex = bufferStart.StartIndex
-			}
-			bufferStartSources = append(bufferStartSources, entry.Name)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to scan partition directory: %v", err)
-	}
-
-	if earliestBufferIndex == -1 {
-		return 0, fmt.Errorf("no buffer_start metadata found in partition")
-	}
-
-	return earliestBufferIndex, nil
-}
-
-// getBufferStartFromEntry extracts LogBufferStart from file entry metadata
-// Only supports binary format (used by both log files and Parquet files)
-func (c *BrokerClient) getBufferStartFromEntry(entry *filer_pb.Entry) *LogBufferStart {
-	if entry.Extended == nil {
-		return nil
-	}
-
-	if startData, exists := entry.Extended["buffer_start"]; exists {
-		// Only support binary format
-		if len(startData) == 8 {
-			startIndex := int64(binary.BigEndian.Uint64(startData))
-			if startIndex > 0 {
-				return &LogBufferStart{StartIndex: startIndex}
-			}
-		}
-	}
-
-	return nil
 }

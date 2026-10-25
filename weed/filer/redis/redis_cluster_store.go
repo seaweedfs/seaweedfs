@@ -3,6 +3,7 @@ package redis
 import (
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -28,15 +29,18 @@ func (store *RedisClusterStore) Initialize(configuration util.Configuration, pre
 		configuration.GetString(prefix+"password"),
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *RedisClusterStore) initialize(addresses []string, password string, readOnly, routeByLatency bool) (err error) {
-	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
+func (store *RedisClusterStore) initialize(addresses []string, password string, readOnly, routeByLatency bool, settings redis_conf.Settings) (err error) {
+	options := &redis.ClusterOptions{
 		Addrs:          addresses,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
-	})
+	}
+	settings.ApplyToCluster(options)
+	store.Client = redis.NewClusterClient(options)
 	return
 }

@@ -1,0 +1,10 @@
+# PyIceberg client for the Iceberg half of the lifecycle test.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "pyiceberg[s3fs]" pyarrow
+
+COPY iceberg_lifecycle.py /app/
+
+CMD ["python3", "/app/iceberg_lifecycle.py", "--help"]

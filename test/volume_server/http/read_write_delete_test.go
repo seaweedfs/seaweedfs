@@ -14,7 +14,7 @@ func TestUploadReadRangeHeadDeleteRoundTrip(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -112,7 +112,7 @@ func TestInvalidReadPathReturnsBadRequest(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/invalid,needle"))

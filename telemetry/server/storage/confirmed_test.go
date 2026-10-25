@@ -1,0 +1,87 @@
+package storage
+
+import (
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/seaweedfs/seaweedfs/telemetry/proto"
+)
+
+func report(id, version string) *proto.TelemetryData {
+	return &proto.TelemetryData{
+		TopologyId:        id,
+		Version:           version,
+		Os:                "linux/amd64",
+		VolumeServerCount: 1,
+		TotalDiskBytes:    proto.MinDiskBytes,
+		TotalVolumeCount:  1,
+	}
+}
+
+func statsOf(t *testing.T, s *PrometheusStorage) map[string]interface{} {
+	t.Helper()
+	stats, err := s.GetStats()
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	return stats
+}
+
+func TestConfirmedClusters(t *testing.T) {
+	s := newPrometheusStorage(prometheus.NewRegistry())
+
+	// A single-day cluster is active but not confirmed; with no confirmed
+	// clusters yet, distributions fall back to all active clusters.
+	if err := s.StoreTelemetry(report("aaaaaaaa-0000-0000-0000-000000000001", "4.40")); err != nil {
+		t.Fatal(err)
+	}
+	stats := statsOf(t, s)
+	if stats["active_instances"] != 1 || stats["confirmed_instances"] != 0 {
+		t.Fatalf("day one: active=%v confirmed=%v, want 1/0", stats["active_instances"], stats["confirmed_instances"])
+	}
+	if v := stats["versions"].(map[string]int); v["4.40"] != 1 {
+		t.Fatalf("fallback distribution missing active cluster: %v", v)
+	}
+
+	// Give cluster A samples from the six previous days: now seen on 7
+	// distinct days.
+	s.mu.Lock()
+	id := "aaaaaaaa-0000-0000-0000-000000000001"
+	var older []HistorySample
+	for offset := -6; offset < 0; offset++ {
+		older = append(older, HistorySample{
+			Ts:             time.Now().AddDate(0, 0, offset).Unix(),
+			TotalDiskBytes: 50,
+		})
+	}
+	s.histories[id] = append(older, s.histories[id]...)
+	s.mu.Unlock()
+
+	// A one-shot cluster B arrives (like an injected report): it counts as
+	// active, but the distributions now only reflect confirmed clusters.
+	if err := s.StoreTelemetry(report("bbbbbbbb-0000-0000-0000-000000000002", "9.99")); err != nil {
+		t.Fatal(err)
+	}
+	stats = statsOf(t, s)
+	if stats["active_instances"] != 2 || stats["confirmed_instances"] != 1 {
+		t.Fatalf("day seven: active=%v confirmed=%v, want 2/1", stats["active_instances"], stats["confirmed_instances"])
+	}
+	v := stats["versions"].(map[string]int)
+	if v["4.40"] != 1 {
+		t.Errorf("confirmed cluster missing from distribution: %v", v)
+	}
+	if _, ok := v["9.99"]; ok {
+		t.Errorf("one-shot cluster polluted the distribution: %v", v)
+	}
+
+	// Cluster A meets the 1/3/7-day thresholds, B only the 1-day one, and
+	// unmet thresholds are present as zero so the dashboard can show them.
+	byDays := stats["confirmed_by_days"].(map[int]int)
+	want := map[int]int{1: 2, 3: 1, 7: 1, 14: 0, 30: 0}
+	for threshold, expected := range want {
+		if got, ok := byDays[threshold]; !ok || got != expected {
+			t.Errorf("confirmed_by_days[%d] = %v (present=%v), want %d", threshold, got, ok, expected)
+		}
+	}
+}

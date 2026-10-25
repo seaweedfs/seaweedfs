@@ -130,14 +130,14 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	ver := needle.Version(stats.Version)
 
 	// Create or load the volume
-	v, err := storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+	v, err := storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 	if err != nil {
 		return fmt.Errorf("creating or reading volume: %w", err), false
 	}
 
 	// Handle compaction if needed
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact2(0, 0, nil); err != nil {
+		if err = v.CompactByIndex(nil); err != nil {
 			v.Close()
 			return fmt.Errorf("compacting volume: %w", err), false
 		}
@@ -156,13 +156,13 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 
 	// If local volume is larger than remote, recreate it
 	if datSize > stats.TailOffset {
-		if err := v.Destroy(false); err != nil {
+		if err := v.Destroy(false, false, false); err != nil {
 			v.Close()
 			return fmt.Errorf("destroying volume: %w", err), false
 		}
 		v.Close() // Close the destroyed volume
 		// recreate an empty volume
-		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+		v, err = storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 		if err != nil {
 			return fmt.Errorf("recreating volume: %w", err), false
 		}
@@ -180,6 +180,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 
 func runBackup(cmd *Command, args []string) bool {
 
+	*s.dir = util.ResolvePath(*s.dir)
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

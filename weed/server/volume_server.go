@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -34,31 +35,44 @@ type VolumeServer struct {
 	readBufferSizeMB              int
 
 	SeedMasterNodes []pb.ServerAddress
-	whiteList       []string
-	currentMaster   pb.ServerAddress
-	pulsePeriod     time.Duration
-	dataCenter      string
-	rack            string
-	store           *storage.Store
-	guard           *security.Guard
-	grpcDialOption  grpc.DialOption
+	// seedMasterSet mirrors SeedMasterNodes keyed by the canonical http
+	// form. It is computed once in NewVolumeServer so admission paths can
+	// answer is-this-a-seed-master in O(1).
+	seedMasterSet     map[string]struct{}
+	whiteList         []string
+	currentMaster     pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	pulsePeriod       time.Duration
+	dataCenter        string
+	rack              string
+	store             *storage.Store
+	guard             *security.Guard
+	grpcDialOption    grpc.DialOption
 
-	needleMapKind            storage.NeedleMapKind
-	ldbTimout                int64
-	FixJpgOrientation        bool
-	ReadMode                 string
-	compactionBytePerSecond  int64
-	maintenanceBytePerSecond int64
-	metricsAddress           string
-	metricsIntervalSec       int
-	fileSizeLimitBytes       int64
-	isHeartbeating           bool
-	stopChan                 chan bool
+	needleMapKind                 storage.NeedleMapKind
+	ldbTimout                     int64
+	FixJpgOrientation             bool
+	ReadMode                      string
+	AllowUntrustedRemoteEndpoints bool
+	compactionBytePerSecond       int64
+	maintenanceBytePerSecond      int64
+	vacuumCommitSlots             chan struct{}
+	vacuumCommitsWaiting          atomic.Int32
+	metricsAddress                string
+	metricsIntervalSec            int
+	fileSizeLimitBytes            int64
+	isHeartbeating                bool
+	stopChan                      chan bool
+
+	// Volumes with an EC decode in flight. A cancelled request does not
+	// stop the handler; this keeps a retry from racing it on the same
+	// volume files.
+	ecDecodesInFlight sync.Map
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, grpcPort int, publicUrl string, id string,
-	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
+	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType, diskTags [][]string,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
 	masterNodes []pb.ServerAddress, pulsePeriod time.Duration,
@@ -68,6 +82,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readMode string,
 	compactionMBPerSecond int,
 	maintenanceMBPerSecond int,
+	maxParallelVacuumCommits int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
@@ -76,6 +91,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	hasSlowRead bool,
 	readBufferSizeMB int,
 	ldbTimeout int64,
+	allowUntrustedRemoteEndpoints bool,
+	diskProbeConfig stats.DiskIOProbeConfig,
+	syncBatch storage.SyncBatchOption,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -111,19 +129,34 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		readBufferSizeMB:              readBufferSizeMB,
 		ldbTimout:                     ldbTimeout,
 		whiteList:                     whiteList,
+		AllowUntrustedRemoteEndpoints: allowUntrustedRemoteEndpoints,
+	}
+	if maxParallelVacuumCommits > 0 {
+		vs.vacuumCommitSlots = make(chan struct{}, maxParallelVacuumCommits)
 	}
 
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
-	vs.SeedMasterNodes = masterNodes
+	// Copy the caller's slice so subsequent external mutation cannot desync
+	// SeedMasterNodes from the frozen lookup set built below.
+	seedMasters := make([]pb.ServerAddress, len(masterNodes))
+	copy(seedMasters, masterNodes)
+	vs.SeedMasterNodes = seedMasters
+	vs.seedMasterSet = make(map[string]struct{}, len(seedMasters))
+	for _, m := range seedMasters {
+		vs.seedMasterSet[m.ToHttpAddress()] = struct{}{}
+	}
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, ldbTimeout)
+	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout, diskProbeConfig)
+	vs.store.MasterFn = vs.getCurrentMaster
+	vs.store.SetSyncBatchOption(syncBatch)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
 	adminMux.HandleFunc("/healthz", requestIDMiddleware(vs.healthzHandler))
+	adminMux.HandleFunc("/readyz", requestIDMiddleware(vs.healthzHandler))
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", requestIDMiddleware(vs.uiStatusHandler))
@@ -142,6 +175,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	stats.VolumeServerConcurrentDownloadLimit.Set(float64(vs.concurrentDownloadLimit))
 	stats.VolumeServerConcurrentUploadLimit.Set(float64(vs.concurrentUploadLimit))
+	stats.VolumeServerStartTimeSeconds.Set(float64(time.Now().Unix()))
 
 	go vs.heartbeat()
 	go stats.LoopPushingMetric("volumeServer", util.JoinHostPort(ip, port), vs.metricsAddress, vs.metricsIntervalSec)
@@ -171,6 +205,12 @@ func (vs *VolumeServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
+	vs.guard.UpdateSigningKeys(
+		v.GetString("jwt.signing.key"),
+		v.GetInt("jwt.signing.expires_after_seconds"),
+		v.GetString("jwt.signing.read.key"),
+		v.GetInt("jwt.signing.read.expires_after_seconds"),
+	)
 }
 
 // Returns whether a volume server is in maintenance (i.e. read-only) mode.

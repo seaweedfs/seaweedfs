@@ -41,6 +41,30 @@ func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]policy_
 	return policies, nil
 }
 
+// ListPolicyNames returns all managed policy names from PostgreSQL.
+func (store *PostgresStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	if !store.configured {
+		return nil, fmt.Errorf("store not configured")
+	}
+
+	var names []string
+	rows, err := store.db.QueryContext(ctx, "SELECT name FROM policies")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query policy names: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan policy name: %w", err)
+		}
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
 // CreatePolicy creates a new IAM policy in PostgreSQL
 func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if !store.configured {
@@ -54,7 +78,7 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 
 	_, err = store.db.ExecContext(ctx,
 		"INSERT INTO policies (name, document) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET document = $2, updated_at = CURRENT_TIMESTAMP",
-		name, documentJSON)
+		name, jsonbParam(documentJSON))
 	if err != nil {
 		return fmt.Errorf("failed to insert policy: %w", err)
 	}
@@ -80,7 +104,7 @@ func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, docum
 
 	result, err := store.db.ExecContext(ctx,
 		"UPDATE policies SET document = $2, updated_at = CURRENT_TIMESTAMP WHERE name = $1",
-		name, documentJSON)
+		name, jsonbParam(documentJSON))
 	if err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}

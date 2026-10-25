@@ -6,7 +6,38 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
+
+// isEmptyDiskTypeEntry reports a DiskInfo with no capacity and nothing on it.
+func isEmptyDiskTypeEntry(diskInfo *master_pb.DiskInfo) bool {
+	return diskInfo != nil &&
+		diskInfo.MaxVolumeCount <= 0 &&
+		diskInfo.VolumeCount == 0 &&
+		diskInfo.RemoteVolumeCount == 0 &&
+		len(diskInfo.VolumeInfos) == 0 &&
+		len(diskInfo.EcShardInfos) == 0 &&
+		len(diskInfo.MaxVolumeCountByDisk) == 0
+}
+
+// IsPhantomDiskTypeEntry reports whether node's DiskInfo of diskType is an
+// empty entry on a node that has a disk of another type with capacity or
+// data. Masters used to publish such an entry for every disk type a capacity
+// check had asked about; keyed by node and disk id it can replace or pose as
+// a real disk and be offered to planners as an empty destination of a type
+// the node lacks. A node whose entries are all empty keeps them, as disks of
+// unknown capacity.
+func IsPhantomDiskTypeEntry(node *master_pb.DataNodeInfo, diskType string) bool {
+	if node == nil || !isEmptyDiskTypeEntry(node.DiskInfos[diskType]) {
+		return false
+	}
+	for otherType, other := range node.DiskInfos {
+		if otherType != diskType && other != nil && !isEmptyDiskTypeEntry(other) {
+			return true
+		}
+	}
+	return false
+}
 
 // CountTopologyResources counts datacenters, nodes, and disks in topology info
 func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, nodeCount, diskCount int) {
@@ -18,7 +49,15 @@ func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, node
 		for _, rack := range dc.RackInfos {
 			nodeCount += len(rack.DataNodeInfos)
 			for _, node := range rack.DataNodeInfos {
-				diskCount += len(node.DiskInfos)
+				// DiskInfos is keyed by disk type, so same-type physical disks
+				// collapse into one entry. Count physical disks so the number
+				// matches the per-disk activeDisk map.
+				for diskType, diskInfo := range node.DiskInfos {
+					if IsPhantomDiskTypeEntry(node, diskType) {
+						continue
+					}
+					diskCount += len(diskInfo.SplitByPhysicalDisk())
+				}
 			}
 		}
 	}
@@ -73,22 +112,32 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 					disks:      make(map[uint32]*activeDisk),
 				}
 
-				// Add disks for this node
+				// One activeDisk per physical disk_id: the master keys
+				// DiskInfos by disk type, so same-type disks must be split out.
 				for diskType, diskInfo := range nodeInfo.DiskInfos {
-					disk := &activeDisk{
-						DiskInfo: &DiskInfo{
-							NodeID:     nodeInfo.Id,
-							DiskID:     diskInfo.DiskId,
-							DiskType:   diskType,
-							DataCenter: dc.Id,
-							Rack:       rack.Id,
-							DiskInfo:   diskInfo,
-						},
+					if IsPhantomDiskTypeEntry(nodeInfo, diskType) {
+						continue
 					}
+					perDiskInfos := diskInfo.SplitByPhysicalDisk()
+					for _, perDisk := range perDiskInfos {
+						disk := &activeDisk{
+							DiskInfo: &DiskInfo{
+								NodeID:     nodeInfo.Id,
+								Address:    nodeInfo.Address,
+								DiskID:     perDisk.DiskId,
+								DiskType:   diskType,
+								DataCenter: dc.Id,
+								Rack:       rack.Id,
+								DiskInfo:   perDisk,
+							},
+						}
 
-					diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskInfo.DiskId)
-					node.disks[diskInfo.DiskId] = disk
-					at.disks[diskKey] = disk
+						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, perDisk.DiskId)
+						glog.V(3).Infof("UpdateTopology: adding disk key=%q nodeId=%q diskId=%d diskType=%q address=%q grpcPort=%d volumes=%d maxVolumes=%d",
+							diskKey, nodeInfo.Id, perDisk.DiskId, diskType, nodeInfo.Address, nodeInfo.GrpcPort, perDisk.VolumeCount, perDisk.MaxVolumeCount)
+						node.disks[perDisk.DiskId] = disk
+						at.disks[diskKey] = disk
+					}
 				}
 
 				at.nodes[nodeInfo.Id] = node
@@ -203,23 +252,22 @@ func (at *ActiveTopology) rebuildIndexes() {
 	at.volumeIndex = make(map[uint32][]string)
 	at.ecShardIndex = make(map[uint32][]string)
 
-	// Rebuild indexes from current topology
+	// Derive index keys from the same SplitByPhysicalDisk reconstruction that
+	// builds at.disks, so every volume/EC lookup resolves to a real activeDisk
+	// entry. Re-deriving the per-record disk id here would diverge on physical
+	// disk 0, which the raw DiskId cannot tell apart from the "unset" default.
 	for _, dc := range at.topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, nodeInfo := range rack.DataNodeInfos {
 				for _, diskInfo := range nodeInfo.DiskInfos {
-					diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskInfo.DiskId)
-
-					// Index volumes
-					for _, volumeInfo := range diskInfo.VolumeInfos {
-						volumeID := volumeInfo.Id
-						at.volumeIndex[volumeID] = append(at.volumeIndex[volumeID], diskKey)
-					}
-
-					// Index EC shards
-					for _, ecShardInfo := range diskInfo.EcShardInfos {
-						volumeID := ecShardInfo.Id
-						at.ecShardIndex[volumeID] = append(at.ecShardIndex[volumeID], diskKey)
+					for _, perDisk := range diskInfo.SplitByPhysicalDisk() {
+						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, perDisk.DiskId)
+						for _, volumeInfo := range perDisk.VolumeInfos {
+							at.volumeIndex[volumeInfo.Id] = append(at.volumeIndex[volumeInfo.Id], diskKey)
+						}
+						for _, ecShardInfo := range perDisk.EcShardInfos {
+							at.ecShardIndex[ecShardInfo.Id] = append(at.ecShardIndex[ecShardInfo.Id], diskKey)
+						}
 					}
 				}
 			}
@@ -255,7 +303,8 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 	return replicas
 }
 
-// GetECShardLocations returns the disk locations for EC shards using O(1) lookup
+// GetECShardLocations returns the disk locations for EC shards using O(1) lookup.
+// Each VolumeReplica.ShardIds lists the shard ids on that disk.
 func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
 	at.mutex.RLock()
 	defer at.mutex.RUnlock()
@@ -267,20 +316,57 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 
 	var ecShards []VolumeReplica
 	for _, diskKey := range diskKeys {
-		if disk, diskExists := at.disks[diskKey]; diskExists {
-			// Verify collection matches (since index doesn't include collection)
-			if at.ecShardMatchesCollection(disk, volumeID, collection) {
-				ecShards = append(ecShards, VolumeReplica{
-					ServerID:   disk.NodeID,
-					DiskID:     disk.DiskID,
-					DataCenter: disk.DataCenter,
-					Rack:       disk.Rack,
-				})
-			}
+		disk, diskExists := at.disks[diskKey]
+		if !diskExists {
+			continue
 		}
+		if !at.ecShardMatchesCollection(disk, volumeID, collection) {
+			continue
+		}
+		shardIds := collectShardIdsForDisk(disk, volumeID, collection)
+		if len(shardIds) == 0 {
+			// ecShardMatchesCollection saw an info entry but every
+			// EcIndexBits is zero — phantom shard record; emitting it
+			// would feed an EC-cleanup source with no shard ids and
+			// confuse the len(ShardIds) discriminator downstream.
+			continue
+		}
+		ecShards = append(ecShards, VolumeReplica{
+			ServerID:   disk.NodeID,
+			DiskID:     disk.DiskID,
+			DataCenter: disk.DataCenter,
+			Rack:       disk.Rack,
+			ShardIds:   shardIds,
+		})
 	}
 
 	return ecShards
+}
+
+// collectShardIdsForDisk unions every matching EcIndexBits on the disk and
+// expands the bitmap into shard ids, so multiple info entries for the same
+// volume don't produce duplicates.
+func collectShardIdsForDisk(disk *activeDisk, volumeID uint32, collection string) []uint32 {
+	if disk == nil || disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return nil
+	}
+	var bits erasure_coding.ShardBits
+	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
+		if ecShardInfo.Id != volumeID || ecShardInfo.Collection != collection {
+			continue
+		}
+		bits |= erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+	}
+	if bits == 0 {
+		return nil
+	}
+	ids := make([]uint32, 0, bits.Count())
+	for id := uint32(0); id < erasure_coding.MaxShardCount; id++ {
+		if uint32(bits)&(1<<id) != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // volumeMatchesCollection checks if a volume on a disk matches the given collection

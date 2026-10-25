@@ -153,6 +153,27 @@ func (q *CleanupQueue) Pop() (string, string, bool) {
 	return item.folder, item.triggeredBy, true
 }
 
+// PopOlderThan removes and returns the oldest folder only if it has been in the queue
+// for longer than the specified duration. Returns empty string and false if no item qualifies.
+func (q *CleanupQueue) PopOlderThan(minAge time.Duration) (string, string, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	front := q.items.Front()
+	if front == nil {
+		return "", "", false
+	}
+
+	item := front.Value.(*queueItem)
+	if time.Since(item.queueTime) <= minAge {
+		return "", "", false
+	}
+
+	q.items.Remove(front)
+	delete(q.itemsMap, item.folder)
+	return item.folder, item.triggeredBy, true
+}
+
 // Peek returns the oldest folder without removing it.
 // Returns the folder and queue time if available, or empty values if queue is empty.
 func (q *CleanupQueue) Peek() (folder string, triggeredBy string, queueTime time.Time, ok bool) {

@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -24,28 +26,124 @@ var (
 	}
 )
 
+// DeleteNeedleFromEcx marks the given needle as deleted. .ecx is treated
+// as an immutable sealed sorted index; runtime deletes are recorded by
+// appending the needle id to the .ecj deletion journal and inserting it
+// into the in-memory deletedNeedles set. A subsequent FindNeedleFromEcx
+// masks the id out by returning TombstoneFileSize.
+//
+// The .ecj append is the durable commit point — only after it syncs do
+// we publish the id into the in-memory set. A partial write is truncated
+// back to the known-good size so the on-disk journal and the set cannot
+// drift.
 func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
-	_, _, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
-
+	// Look the needle up read-only. A missing needle is not an error
+	// (already gone, e.g. from a race against encode); a pre-existing
+	// .ecx tombstone means a prior decode/rebuild folded it in, in
+	// which case there is nothing to journal but we still mirror it
+	// into the in-memory set so delete_count stays consistent.
+	_, oldSize, err := SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
 	if err != nil {
 		if err == NotFoundError {
 			return nil
 		}
 		return err
 	}
+	if oldSize.IsDeleted() {
+		ev.markNeedleDeletedInMemory(needleId)
+		return nil
+	}
+
+	// Serialise runtime deletes on ecjFileAccessLock so the idempotence
+	// check, the journal append and the set insertion happen atomically
+	// with respect to one another.
+	ev.ecjFileAccessLock.Lock()
+	defer ev.ecjFileAccessLock.Unlock()
+
+	if ev.IsNeedleDeleted(needleId) {
+		return nil
+	}
+
+	// Close nils ecjFile under this same lock, so a delete that resolved its
+	// .ecx lookup before an eviction (e.g. the generate-time UnloadEcVolume)
+	// can reach here with no journal fd. Bail with a clear error rather than
+	// operating on the closed/nil handle.
+	if ev.ecjFile == nil {
+		return fmt.Errorf("ec volume %d closed", ev.VolumeId)
+	}
 
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
+	if err := ev.appendJournalLocked(b); err != nil {
+		return err
+	}
 
+	// Publish into the in-memory set only after the journal is durable.
+	ev.markNeedleDeletedInMemory(needleId)
+
+	return nil
+}
+
+// appendJournalLocked appends whole records to .ecj and syncs them. A partial
+// write is truncated back to the known-good size so the on-disk journal and
+// deletedNeedles cannot drift. Callers hold ecjFileAccessLock and have checked
+// that ecjFile is open.
+func (ev *EcVolume) appendJournalLocked(b []byte) error {
+	prevEcjSize := ev.ecjFileSize
+	if _, seekErr := ev.ecjFile.Seek(0, io.SeekEnd); seekErr != nil {
+		return fmt.Errorf("seek ecj: %w", seekErr)
+	}
+	n, writeErr := ev.ecjFile.Write(b)
+	if writeErr != nil {
+		if truncErr := ev.ecjFile.Truncate(prevEcjSize); truncErr != nil {
+			glog.Errorf("ec volume %d: failed to truncate ecj after write error: %v", ev.VolumeId, truncErr)
+		}
+		return fmt.Errorf("write ecj: %w", writeErr)
+	}
+	if syncErr := ev.ecjFile.Sync(); syncErr != nil {
+		if truncErr := ev.ecjFile.Truncate(prevEcjSize); truncErr != nil {
+			glog.Errorf("ec volume %d: failed to truncate ecj after sync error: %v", ev.VolumeId, truncErr)
+		}
+		return fmt.Errorf("sync ecj: %w", syncErr)
+	}
+	ev.ecjFileSize += int64(n)
+	return nil
+}
+
+// LockDeletionJournal serializes the caller against runtime .ecj appends
+// (DeleteNeedleFromEcx) until the returned func is called. Decode holds it
+// while consuming the journal into the rebuilt index so a committed delete
+// cannot slip past the publish.
+func (ev *EcVolume) LockDeletionJournal() func() {
 	ev.ecjFileAccessLock.Lock()
+	return ev.ecjFileAccessLock.Unlock
+}
 
-	ev.ecjFile.Seek(0, io.SeekEnd)
-	ev.ecjFile.Write(b)
-
-	ev.ecjFileAccessLock.Unlock()
-
-	return
+// ReopenDeletionJournal repoints ecjFile at the live .ecj path after
+// RebuildEcxFile unlinked it. Without this, later DeleteNeedleFromEcx
+// appends keep landing on the detached inode — synced, successful, and
+// invisible to every path-based reader. Caller must hold the journal lock
+// (see LockDeletionJournal).
+func (ev *EcVolume) ReopenDeletionJournal() error {
+	if ev.ecjFile != nil {
+		_ = ev.ecjFile.Close()
+		ev.ecjFile = nil
+	}
+	ecjFile, err := backend.OpenVolumeFile(ev.FileName(".ecj"), os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		return fmt.Errorf("reopen ec volume journal %s: %w", ev.FileName(".ecj"), err)
+	}
+	ev.ecjFile = ecjFile
+	// A successful RebuildEcxFile leaves the path unlinked, so this is a
+	// fresh empty file — but track whatever is actually there so the
+	// rollback truncate in DeleteNeedleFromEcx can never wipe real records.
+	if fi, statErr := ecjFile.Stat(); statErr == nil {
+		ev.ecjFileSize = fi.Size()
+	} else {
+		ev.ecjFileSize = 0
+	}
+	return nil
 }
 
 func RebuildEcxFile(baseFileName string) error {
@@ -71,12 +169,21 @@ func RebuildEcxFile(baseFileName string) error {
 	if err != nil {
 		return fmt.Errorf("rebuild: failed to open ecj file: %w", err)
 	}
+	defer ecjFile.Close()
 
 	buf := make([]byte, types.NeedleIdSize)
 	for {
-		n, _ := ecjFile.Read(buf)
-		if n != types.NeedleIdSize {
+		// io.ReadFull distinguishes a clean end (io.EOF) from a torn tail
+		// (io.ErrUnexpectedEOF) and a transient short read; a bare n!=size
+		// break would silently drop the rest of the journal and then unlink it.
+		_, readErr := io.ReadFull(ecjFile, buf)
+		if readErr == io.EOF {
 			break
+		}
+		if readErr != nil {
+			// Torn or unreadable journal: abort and leave .ecj in place so a
+			// retry can re-apply the deletions rather than resurrect them.
+			return fmt.Errorf("rebuild: read ecj: %w", readErr)
 		}
 
 		needleId := types.BytesToNeedleId(buf)
@@ -84,14 +191,21 @@ func RebuildEcxFile(baseFileName string) error {
 		_, _, err = SearchNeedleFromSortedIndex(ecxFile, ecxFileSize, needleId, MarkNeedleDeleted)
 
 		if err != nil && err != NotFoundError {
-			ecxFile.Close()
 			return err
 		}
 
 	}
 
-	ecxFile.Close()
+	// Flush the in-place tombstones before removing the journal; otherwise a
+	// crash can persist the .ecj unlink ahead of the .ecx writes and resurrect
+	// the deleted needles on the next load.
+	if err = ecxFile.Sync(); err != nil {
+		return fmt.Errorf("rebuild: sync ecx: %w", err)
+	}
 
+	// Close the journal before unlinking it (Windows cannot delete an open
+	// file); the deferred Close becomes a harmless no-op.
+	ecjFile.Close()
 	os.Remove(baseFileName + ".ecj")
 
 	return nil

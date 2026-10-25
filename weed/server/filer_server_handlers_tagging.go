@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -35,14 +36,14 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	for header, values := range r.Header {
-		if strings.HasPrefix(header, needle.PairNamePrefix) {
+		if strings.HasPrefix(header, needle.PairNamePrefix) && header != filer.ExtRemoteRenameSourceKey {
 			for _, value := range values {
 				existingEntry.Extended[header] = []byte(value)
 			}
 		}
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
 		glog.V(0).InfofCtx(ctx, "failing to update %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		return
@@ -89,7 +90,7 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 	// delete all tags or specific tags
 	hasDeletion := false
 	for header, _ := range existingEntry.Extended {
-		if strings.HasPrefix(header, needle.PairNamePrefix) {
+		if strings.HasPrefix(header, needle.PairNamePrefix) && header != filer.ExtRemoteRenameSourceKey {
 			if len(deletions) == 0 {
 				delete(existingEntry.Extended, header)
 				hasDeletion = true
@@ -108,7 +109,7 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
 		glog.V(0).InfofCtx(ctx, "failing to delete %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		return

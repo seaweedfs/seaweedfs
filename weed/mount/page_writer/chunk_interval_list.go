@@ -55,14 +55,53 @@ func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset, tsNs 
 	list.addInterval(interval)
 }
 
+// IsComplete reports whether every byte of [0, chunkSize) has been
+// written, possibly via multiple adjacent or overlapping intervals.
+// addInterval does not merge adjacent intervals — a chunk filled by
+// two 1 MiB writes ends up as {[0,1M], [1M,2M]}, not one [0,2M] —
+// so checking list.size()==1 misses the "filled by adjacent writes"
+// case, leaving the chunk pinned in writableChunks even though all
+// its bytes are present. That latent bug became a hard deadlock once
+// -writeBufferSizeMB started reserving a global slot per writable
+// chunk: the chunks never got sealed, no uploader ran, no slot was
+// ever released, and the FUSE writer blocked in Reserve forever
+// (seaweedfs issue #8777 / PR #9066). Walking the list and tracking
+// the furthest covered offset detects adjacency correctly.
 func (list *ChunkWrittenIntervalList) IsComplete(chunkSize int64) bool {
-	return list.size() == 1 && list.head.next.isComplete(chunkSize)
+	var covered int64
+	for t := list.head.next; t != list.tail; t = t.next {
+		if t.StartOffset > covered {
+			return false // gap before this interval
+		}
+		if t.stopOffset > covered {
+			covered = t.stopOffset
+		}
+	}
+	return covered >= chunkSize
 }
 func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
 	for t := list.head; t != nil; t = t.next {
 		writtenByteCount += t.Size()
 	}
 	return
+}
+
+// IsContiguouslyWritten reports whether the written bytes form one
+// unbroken run starting at offset 0. Pressure-driven sealing uses this
+// to avoid racing in-flight FUSE writeback on a gap range — sealing a
+// gappy chunk would emit volume chunks with no coverage for the gap and
+// reads would silently zero-fill it (issue #9330).
+func (list *ChunkWrittenIntervalList) IsContiguouslyWritten() bool {
+	first := list.head.next
+	if first == list.tail || first.StartOffset != 0 {
+		return false
+	}
+	for t := first; t.next != list.tail; t = t.next {
+		if t.stopOffset != t.next.StartOffset {
+			return false
+		}
+	}
+	return true
 }
 
 func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {

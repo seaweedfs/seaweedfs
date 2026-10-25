@@ -6,6 +6,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -27,6 +29,9 @@ func RegisterVacuumTask() {
 	// Create configuration instance
 	config := NewDefaultConfig()
 
+	// Create shared gRPC dial option using TLS configuration
+	dialOpt := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
 		Type:         types.TaskTypeVacuum,
@@ -45,11 +50,18 @@ func RegisterVacuumTask() {
 			if len(params.Sources) == 0 {
 				return nil, fmt.Errorf("at least one source is required for vacuum task")
 			}
+			servers := make([]string, 0, len(params.Sources))
+			for _, src := range params.Sources {
+				if src != nil && src.Node != "" {
+					servers = append(servers, src.Node)
+				}
+			}
 			return NewVacuumTask(
 				fmt.Sprintf("vacuum-%d", params.VolumeId),
-				params.Sources[0].Node, // Use first source node
+				servers,
 				params.VolumeId,
 				params.Collection,
+				dialOpt,
 			), nil
 		},
 		DetectionFunc:  Detection,

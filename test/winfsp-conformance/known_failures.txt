@@ -1,0 +1,92 @@
+# Known winfsp-tests failures for the SeaweedFS Windows mount.
+#
+# One test name per line, as winfsp-tests reports it. A trailing * matches a
+# prefix, so "stream_*" covers a whole group. Listed tests are excluded from
+# the run; a failure in anything NOT listed fails CI, which is what catches a
+# regression.
+#
+# Every test runs on its own in a clean directory, so an entry here is a real
+# defect rather than the wreckage of the test before it. The rdwr and flush
+# group is gone from this list for exactly that reason: it passes in isolation
+# and only failed as collateral. Every entry below is a
+# gap in the mount rather than a quirk of the suite, and the list is meant to
+# shrink. Keep a reason on each group — an entry with no reason cannot be told
+# apart from one nobody has looked at.
+
+# Cannot pass by construction
+# ---------------------------
+# Alternate data streams: the filer stores one byte range per entry, and the
+# mount exposes no second stream.
+stream_*
+# Reparse points: Symlink is refused, so there is nothing to resolve.
+reparse_*
+# Byte-range locks live in the WinFsp driver, so they never reach the mount.
+lock_*
+
+# Security descriptors
+# --------------------
+# The mount carries unix mode bits and no ACL, and Chown accepts and discards,
+# so a descriptor written here does not read back.
+create_sd_test
+getsecurity_test
+
+# Memory-mapped IO
+# ----------------
+# rdwr-test.c:645 compares the mapped bytes against the pattern that was
+# written and finds them different. A real data mismatch, not a cascade: it
+# only surfaced once each test ran on its own and this one got far enough to
+# check. Worth its own investigation.
+rdwr_mmap_test
+
+# Delete semantics
+# ----------------
+# WinFsp advertises POSIX unlink, so a file can be deleted while handles are
+# still open; the mount does not implement the delete-pending state.
+delete_access_test
+delete_ex_test
+delete_mmap_test
+delete_pending_test
+
+# Rename semantics
+# ----------------
+# Rename over an open file, and rename of a directory holding open handles,
+# which WinFsp is stricter about than POSIX.
+rename_ex_test
+rename_mmap_test
+rename_open_test
+exec_rename_dir_test
+
+# File information
+# ----------------
+# A regular file reports as archived now, but hidden, system and readonly are
+# still not round-tripped: create_fileattr gets past the archive check and then
+# asks for READONLY as well, which needs Chflags. Creation time is reported as
+# ctime because the raw protocol's Attr carries no field for it outside darwin.
+create_fileattr_test
+# getfileinfo asserts a file created a moment ago has an access time within ten
+# seconds of now, and it does not. Two causes have been fixed and neither was
+# it: Utimens no longer stores a zero timestamp, and the in-memory overlays are
+# dropped when an inode is released so a recycled number cannot inherit an old
+# time. Still unexplained, so it stays listed rather than pretended about.
+getfileinfo_test
+create_readonlydir_test
+setfileinfo_test
+
+# Directory enumeration
+# ---------------------
+# querydir_namelen only: checkName caps at 255 bytes while WinFsp counts 255
+# characters. The other two are expected to pass now that "." and ".." are
+# reported for non-root directories, which is what WinFsp enumerates.
+querydir_namelen_test
+
+# Name length
+# -----------
+# checkName caps at 255 bytes while WinFsp allows 255 characters, so a CJK
+# name that is legal to Windows is rejected here.
+create_namelen_test
+
+# Sharing modes
+# -------------
+# Windows share-access checking on create, which the mount does not enforce.
+create_share_test
+create_test

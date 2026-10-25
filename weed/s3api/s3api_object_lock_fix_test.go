@@ -18,18 +18,15 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 		// The old code would immediately return NoSuchObjectLockConfiguration
 		// The new code correctly checks if Object Lock is enabled before returning an error
 
-		bucketConfig := &BucketConfig{
-			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name:     "test-bucket",
-				Extended: nil, // This is the key - no extended attributes
-			},
+		entry := &filer_pb.Entry{
+			Name:     "test-bucket",
+			Extended: nil, // This is the key - no extended attributes
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}
@@ -41,20 +38,17 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 	t.Run("Fix verification: bucket with Object Lock enabled via boolean flag", func(t *testing.T) {
 		// This verifies the fix works when Object Lock is enabled via boolean flag
 
-		bucketConfig := &BucketConfig{
+		entry := &filer_pb.Entry{
 			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name: "test-bucket",
-				Extended: map[string][]byte{
-					s3_constants.ExtObjectLockEnabledKey: []byte("true"),
-				},
+			Extended: map[string][]byte{
+				s3_constants.ExtObjectLockEnabledKey: []byte("true"),
 			},
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}
@@ -66,20 +60,17 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 	t.Run("Fix verification: bucket with Object Lock enabled via Enabled constant", func(t *testing.T) {
 		// Test using the s3_constants.ObjectLockEnabled constant
 
-		bucketConfig := &BucketConfig{
+		entry := &filer_pb.Entry{
 			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name: "test-bucket",
-				Extended: map[string][]byte{
-					s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled),
-				},
+			Extended: map[string][]byte{
+				s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled),
 			},
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}
@@ -87,4 +78,21 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 		// Should correctly return true (enabled)
 		assert.True(t, enabled, "Object Lock should be enabled when constant is used")
 	})
+}
+
+// Copied objects get their own retention from the request or the destination
+// bucket's default; the source's lock keys never carry into the destination
+// entry.
+func TestCopyDoesNotInheritLockKeys(t *testing.T) {
+	// The destination-Extended copy loop filters on isCopyLockKey, so
+	// retention and legal hold never carry over from the source entry.
+	for _, key := range []string{
+		s3_constants.ExtObjectLockModeKey,
+		s3_constants.ExtRetentionUntilDateKey,
+		s3_constants.ExtLegalHoldKey,
+	} {
+		assert.True(t, isCopyLockKey(key), "%s must be filtered from a copy destination", key)
+	}
+	assert.False(t, isCopyLockKey(s3_constants.ExtAmzOwnerKey))
+	assert.False(t, isCopyLockKey("custom-key"))
 }

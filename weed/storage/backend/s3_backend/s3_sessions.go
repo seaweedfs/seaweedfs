@@ -1,8 +1,11 @@
 package s3_backend
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -15,23 +18,52 @@ import (
 
 var (
 	s3Sessions   = make(map[string]s3iface.S3API)
-	sessionsLock sync.RWMutex
+	sessionsLock sync.Mutex
 )
 
-func getSession(region string) (s3iface.S3API, bool) {
-	sessionsLock.RLock()
-	defer sessionsLock.RUnlock()
-
-	sess, found := s3Sessions[region]
-	return sess, found
+// httpOptions tunes the HTTP transport of the tier backend's S3 client. The
+// zero value keeps the SDK's default client.
+type httpOptions struct {
+	// disableHTTP2 keeps the client on HTTP/1.1. Over HTTP/2 every upload and
+	// range read to the endpoint shares one connection and its flow-control
+	// window, which some S3-compatible services keep small.
+	disableHTTP2 bool
+	// maxConnsPerHost caps the connections to the endpoint (0 = no cap), for
+	// services that limit parallel connections per client address.
+	maxConnsPerHost int
+	// idleConnTimeout closes idle connections sooner than Go's default 90s,
+	// for services that drop idle connections earlier (0 = default).
+	idleConnTimeout time.Duration
 }
 
-func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, forcePathStyle bool) (s3iface.S3API, error) {
+// newTransport returns the transport for the options, or nil for the default.
+func (o httpOptions) newTransport() *http.Transport {
+	if o == (httpOptions{}) {
+		return nil
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	if o.disableHTTP2 {
+		t.ForceAttemptHTTP2 = false
+		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	}
+	if o.maxConnsPerHost > 0 {
+		t.MaxConnsPerHost = o.maxConnsPerHost
+	}
+	if o.idleConnTimeout > 0 {
+		t.IdleConnTimeout = o.idleConnTimeout
+	}
+	return t
+}
+
+func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, forcePathStyle bool, httpOpts httpOptions) (s3iface.S3API, error) {
 
 	sessionsLock.Lock()
 	defer sessionsLock.Unlock()
 
 	cacheKey := fmt.Sprintf("%s|%s", region, endpoint)
+	if httpOpts != (httpOptions{}) {
+		cacheKey = fmt.Sprintf("%s|%+v", cacheKey, httpOpts)
+	}
 	if t, found := s3Sessions[cacheKey]; found {
 		return t, nil
 	}
@@ -41,6 +73,9 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, 
 		Endpoint:                      aws.String(endpoint),
 		S3ForcePathStyle:              aws.Bool(forcePathStyle),
 		S3DisableContentMD5Validation: aws.Bool(true),
+	}
+	if t := httpOpts.newTransport(); t != nil {
+		config.HTTPClient = &http.Client{Transport: t}
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
@@ -56,7 +91,7 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, 
 
 	t := s3.New(sess)
 
-	s3Sessions[region] = t
+	s3Sessions[cacheKey] = t
 
 	return t, nil
 

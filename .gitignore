@@ -2,6 +2,7 @@
 vendor
 tags
 *.swp
+.claude/
 ### OSX template
 .DS_Store
 .AppleDouble
@@ -115,7 +116,6 @@ test/s3/versioning/weed-test.log
 /docker/admin_integration/data
 docker/agent_pub_record
 docker/admin_integration/weed-local
-/seaweedfs-rdma-sidecar/bin
 /test/s3/encryption/filerldb2
 /test/s3/sse/filerldb2
 test/s3/sse/weed-test.log
@@ -141,4 +141,7 @@ test/s3/iam/.test_env
 /test/erasure_coding/admin_dockertest/tmp
 /test/erasure_coding/admin_dockertest/task_logs
 weed_bin
+telemetry/server/telemetry-server
 .aider*
+/seaweed-volume/docs
+__pycache__/

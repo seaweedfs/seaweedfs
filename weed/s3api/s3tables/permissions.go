@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Permission represents a specific action permission
@@ -86,17 +88,17 @@ type PolicyContext struct {
 	SSEAlgorithm    string
 	KMSKeyArn       string
 	StorageClass    string
-}
-
-// CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
-func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, resourceARN string) bool {
-	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, resourceARN, nil)
-}
-
-// CheckPermission checks if a principal has permission to perform an operation
-// (without resource-specific validation - for backward compatibility)
-func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
-	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, "", nil)
+	DefaultAllow    bool
+	// TrustedIssuers lists the OIDC issuers the deployment is configured to
+	// trust, used to re-anchor owners/principals written before issuer-scoped
+	// account IDs. A bare subject is only resolvable when exactly one issuer
+	// is configured; more than one leaves it ambiguous, so it must not match.
+	TrustedIssuers []string
+	// IsLocalAccountID reports whether an account ID belongs to a configured
+	// local identity. Such owner strings were never OIDC subjects and must not
+	// be re-anchored; a nil predicate exempts nothing beyond the built-in
+	// reserved, ARN, and scoped-id checks.
+	IsLocalAccountID func(string) bool
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -116,9 +118,74 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
 }
 
+// CheckTableOrBucketPermission combines a table or namespace policy with its
+// table bucket's policy into one decision: a matching Deny on either policy
+// vetoes the request even when the other policy would allow it.
+func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, bucketOwner, bucketPolicy, bucketARN string, ctx *PolicyContext) bool {
+	if principal == "" {
+		return false
+	}
+	if principal == s3_constants.AccountAdminId {
+		return true
+	}
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
+		matchesDenyStatement(operation, principal, bucketPolicy, bucketARN, ctx) {
+		return false
+	}
+	// Each side fails closed when its owner is unknown, matching
+	// CheckPermissionWithContext; an ownerless side contributes nothing.
+	resourceOK := resourceOwner != "" &&
+		checkPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx)
+	bucketOK := bucketOwner != "" &&
+		checkPermission(operation, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
+	return resourceOK || bucketOK
+}
+
+// deniedByPolicy reports whether another applicable resource policy vetoes the
+// request. The admin account is exempt, matching CheckPermissionWithContext.
+func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	return principal != s3_constants.AccountAdminId &&
+		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
+}
+
+// matchesDenyStatement reports whether the JSON policy carries a statement
+// matching this request with Effect Deny. Malformed policies return false;
+// the caller's normal evaluation still denies them.
+func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	if resourcePolicy == "" {
+		return false
+	}
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+	var policy PolicyDocument
+	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
+		return false
+	}
+	for _, stmt := range policy.Statement {
+		if stmt.Effect != "Deny" ||
+			!matchesCaller(stmt.Principal, principal, ctx) ||
+			!matchesAction(stmt.Action, fullAction) ||
+			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
+			!matchesConditions(stmt.Condition, ctx) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
-	// Owner always has permission
-	if principal == owner {
+
+	// An explicit Deny in the resource policy vetoes owner and identity
+	// grants as well as allows within the same document.
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) {
+		return false
+	}
+
+	// Owner always has permission.
+	if principal == owner || matchesLegacySubject(owner, principal, ctx) {
 		return true
 	}
 
@@ -126,8 +193,11 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		return true
 	}
 
-	// If no policy is provided, deny access (default deny)
+	// If no policy is provided, use default allow if enabled
 	if resourcePolicy == "" {
+		if ctx != nil && ctx.DefaultAllow {
+			return true
+		}
 		return false
 	}
 
@@ -150,7 +220,7 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 
 	for _, stmt := range policy.Statement {
 		// Check if principal matches
-		if !matchesPrincipal(stmt.Principal, principal) {
+		if !matchesCaller(stmt.Principal, principal, ctx) {
 			continue
 		}
 
@@ -169,15 +239,25 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		}
 
 		// Statement matches - check effect
-		if stmt.Effect == "Allow" {
+		switch stmt.Effect {
+		case "Allow":
 			hasAllow = true
-		} else if stmt.Effect == "Deny" {
+		case "Deny":
 			// Explicit deny always wins
 			return false
 		}
 	}
 
-	return hasAllow
+	if hasAllow {
+		return true
+	}
+
+	// If no statement matched, use default allow if enabled
+	if ctx != nil && ctx.DefaultAllow {
+		return true
+	}
+
+	return false
 }
 
 func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
@@ -188,6 +268,9 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 	if !strings.Contains(operation, ":") {
 		fullAction = "s3tables:" + operation
 	}
+	if hasAdminAction(ctx.IdentityActions) {
+		return true
+	}
 	candidates := []string{operation, fullAction}
 	if ctx.TableBucketName != "" {
 		candidates = append(candidates, operation+":"+ctx.TableBucketName, fullAction+":"+ctx.TableBucketName)
@@ -197,12 +280,72 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 			if action == candidate {
 				return true
 			}
-			if strings.ContainsAny(action, "*?") && policy_engine.MatchesWildcard(action, candidate) {
+			if strings.ContainsAny(action, "*?") && wildcard.MatchesWildcard(action, candidate) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// hasAdminAction reports whether the action list grants blanket admin access.
+// Legacy static identities may use broad markers or s3 wildcards; s3:* is treated
+// as s3tables:* so shared admin policies still permit table access.
+func hasAdminAction(actions []string) bool {
+	for _, action := range actions {
+		if action == "*" || action == s3_constants.ACTION_ADMIN || action == "s3:*" || action == "s3tables:*" {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesCaller matches a statement's Principal against the caller's scoped
+// principal or, for policies written before issuer scoping, a bare subject
+// that resolves to it under the deployment's single trusted issuer.
+func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	if matchesPrincipal(principalSpec, principal) {
+		return true
+	}
+	switch p := principalSpec.(type) {
+	case string:
+		return matchesLegacySubject(p, principal, ctx)
+	case []interface{}:
+		for _, item := range p {
+			if str, ok := item.(string); ok && matchesLegacySubject(str, principal, ctx) {
+				return true
+			}
+		}
+	case map[string]interface{}:
+		if aws, ok := p["AWS"]; ok {
+			return matchesCaller(aws, principal, ctx)
+		}
+	}
+	return false
+}
+
+// matchesLegacySubject reports whether a bare subject stored before issuer
+// scoping belongs to the caller. Re-anchoring is only sound when exactly one
+// OIDC issuer is configured: the stored subject is hashed under that issuer
+// and compared to the caller's scoped principal. With multiple issuers a bare
+// subject is ambiguous — matching it under the caller's own issuer would let
+// a same-sub identity from any configured issuer claim it.
+func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
+		return false
+	}
+	// The reserved accounts, ARN values, and already issuer-scoped ids are never
+	// OIDC subjects — or, for strings that could be either a legacy subject or a
+	// scoped id, resolving to scoped fails closed. A configured local account
+	// id is excluded the same way once the caller supplies the predicate. Any
+	// of them could otherwise be claimed by a token asserting that string as
+	// sub — including the admin account or a victim's scoped id.
+	if legacy == s3_constants.AccountAdminId || legacy == s3_constants.AccountAnonymousId ||
+		strings.HasPrefix(legacy, "arn:") || sts.IsParentUserID(legacy) ||
+		(ctx.IsLocalAccountID != nil && ctx.IsLocalAccountID(legacy)) {
+		return false
+	}
+	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal
@@ -218,7 +361,7 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 			return true
 		}
 		// Support wildcard matching for principals (e.g., "arn:aws:iam::*:user/admin")
-		return policy_engine.MatchesWildcard(p, principal)
+		return wildcard.MatchesWildcard(p, principal)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
@@ -227,7 +370,7 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 					return true
 				}
 				// Support wildcard matching
-				if policy_engine.MatchesWildcard(str, principal) {
+				if wildcard.MatchesWildcard(str, principal) {
 					return true
 				}
 			}
@@ -282,7 +425,7 @@ func matchesActionPattern(pattern, action string) bool {
 
 	// Wildcard match using policy engine's wildcard matcher
 	// Supports both * (any sequence) and ? (single character) anywhere in the pattern
-	return policy_engine.MatchesWildcard(pattern, action)
+	return wildcard.MatchesWildcard(pattern, action)
 }
 
 func matchesConditions(conditions map[string]map[string]interface{}, ctx *PolicyContext) bool {
@@ -391,114 +534,7 @@ func matchesResourcePattern(pattern, resourceARN string) bool {
 	}
 
 	// Wildcard match using policy engine's wildcard matcher
-	return policy_engine.MatchesWildcard(pattern, resourceARN)
-}
-
-// Helper functions for specific permissions
-
-// CanCreateTableBucket checks if principal can create table buckets
-func CanCreateTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanGetTableBucket checks if principal can get table bucket details
-func CanGetTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanListTableBuckets checks if principal can list table buckets
-func CanListTableBuckets(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListTableBuckets", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTableBucket checks if principal can delete table buckets
-func CanDeleteTableBucket(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTableBucket", principal, owner, resourcePolicy)
-}
-
-// CanPutTableBucketPolicy checks if principal can put table bucket policies
-func CanPutTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("PutTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanGetTableBucketPolicy checks if principal can get table bucket policies
-func CanGetTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTableBucketPolicy checks if principal can delete table bucket policies
-func CanDeleteTableBucketPolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTableBucketPolicy", principal, owner, resourcePolicy)
-}
-
-// CanCreateNamespace checks if principal can create namespaces
-func CanCreateNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateNamespace", principal, owner, resourcePolicy)
-}
-
-// CanGetNamespace checks if principal can get namespace details
-func CanGetNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetNamespace", principal, owner, resourcePolicy)
-}
-
-// CanListNamespaces checks if principal can list namespaces
-func CanListNamespaces(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListNamespaces", principal, owner, resourcePolicy)
-}
-
-// CanDeleteNamespace checks if principal can delete namespaces
-func CanDeleteNamespace(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteNamespace", principal, owner, resourcePolicy)
-}
-
-// CanCreateTable checks if principal can create tables
-func CanCreateTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("CreateTable", principal, owner, resourcePolicy)
-}
-
-// CanGetTable checks if principal can get table details
-func CanGetTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTable", principal, owner, resourcePolicy)
-}
-
-// CanListTables checks if principal can list tables
-func CanListTables(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ListTables", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTable checks if principal can delete tables
-func CanDeleteTable(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTable", principal, owner, resourcePolicy)
-}
-
-// CanPutTablePolicy checks if principal can put table policies
-func CanPutTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("PutTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanGetTablePolicy checks if principal can get table policies
-func CanGetTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("GetTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanDeleteTablePolicy checks if principal can delete table policies
-func CanDeleteTablePolicy(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("DeleteTablePolicy", principal, owner, resourcePolicy)
-}
-
-// CanTagResource checks if principal can tag a resource
-func CanTagResource(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("TagResource", principal, owner, resourcePolicy)
-}
-
-// CanUntagResource checks if principal can untag a resource
-func CanUntagResource(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("UntagResource", principal, owner, resourcePolicy)
-}
-
-// CanManageTags checks if principal can manage tags (tag or untag)
-func CanManageTags(principal, owner, resourcePolicy string) bool {
-	return CanTagResource(principal, owner, resourcePolicy) || CanUntagResource(principal, owner, resourcePolicy)
+	return wildcard.MatchesWildcard(pattern, resourceARN)
 }
 
 // AuthError represents an authorization error

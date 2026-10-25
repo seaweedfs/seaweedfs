@@ -2,11 +2,14 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -41,6 +45,9 @@ Steps to apply erasure coding to .dat .idx files
 
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -84,31 +91,62 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 			os.Remove(baseFileName + ecCtx.ToExt(i))
 		}
 		os.Remove(v.IndexFileName() + ".ecx")
+		os.Remove(erasure_coding.BitrotSidecarPath(baseFileName, 0))
 	}()
 
-	// write .ec00 ~ .ec[TotalShards-1] files using context
-	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx); err != nil {
-		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
+	// Wipe any EC artifacts from a prior encode so a retry never mixes two runs.
+	// Evict the in-memory EcVolume first so the unlink frees the inodes instead
+	// of leaving open fds serving the old bytes. Sweep every disk: stale shards
+	// can sit on a sibling disk and would otherwise survive and be mounted
+	// against the new index at reconcile. Scans the cap for custom ratios.
+	vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+	for _, loc := range vs.store.Locations {
+		dataBase := storage.VolumeFileName(loc.Directory, req.Collection, int(req.VolumeId))
+		idxBase := storage.VolumeFileName(loc.IdxDirectory, req.Collection, int(req.VolumeId))
+		if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+			return nil, fmt.Errorf("wipe stale EC artifacts for volume %d on %s: %w", req.VolumeId, loc.Directory, err)
+		}
 	}
 
-	// write .ecx file
+	// IMPORTANT: Generate .ecx BEFORE EC shards to prevent a race condition.
+	// If .ecx were generated after EC shards, any write (e.g. from WriteNeedleBlob
+	// during replica sync) between the two steps would add entries to .idx that
+	// end up in .ecx but whose data is NOT in the EC shards — causing "shard too
+	// short" and "size mismatch" errors on reads.
+	//
+	// By generating .ecx first, it reflects the .idx state at or before the .dat
+	// is read for EC encoding. If a write sneaks in after .ecx but before/during
+	// EC encoding, the shards contain MORE data than .ecx references, which is
+	// harmless (the extra data is simply not indexed).
+
+	// write .ecx file from the current .idx
 	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
 		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
 	}
 
-	// write .vif files
-	var expireAtSec uint64
-	if v.Ttl != nil {
-		ttlSecond := v.Ttl.ToSeconds()
-		if ttlSecond > 0 {
-			expireAtSec = uint64(time.Now().Unix()) + ttlSecond //calculated expiration time
+	// write .ec00 ~ .ec[TotalShards-1] files using context
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseFileName, ecCtx)
+	if err != nil {
+		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+	}
+	// Persist the generation-0 bitrot checksum sidecar (<base>.ecsum) alongside
+	// the shards so it travels with them during distribution (copy_ecsum_file).
+	// The source loading its own canonical sidecar is correct — it holds all
+	// shards and a complete manifest. Best-effort: a failed sidecar write leaves
+	// the generation unprotected rather than failing the encode.
+	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseFileName, 0), ecBitrot); serr != nil {
+			glog.Warningf("failed to write EC bitrot sidecar for volume %d: %v", req.VolumeId, serr)
 		}
 	}
-	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
-	volumeInfo.ExpireAtSec = expireAtSec
 
-	datSize, _, _ := v.FileStat()
-	volumeInfo.DatFileSize = int64(datSize)
+	// write .vif files
+	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
+	volumeInfo.ExpireAtSec = v.ExpireAtSec()
+	// The size the encode actually read, not a separate stat: a replica-sync
+	// write can land between two stats of a live .dat, and the .vif would then
+	// record a DatFileSize and a BlockSize describing different files.
+	volumeInfo.DatFileSize = ecCtx.DatFileSize
 
 	// Validate EC configuration before saving to .vif
 	if ecCtx.DataShards <= 0 || ecCtx.ParityShards <= 0 || ecCtx.Total() > erasure_coding.MaxShardCount {
@@ -116,16 +154,26 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 			ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total(), erasure_coding.MaxShardCount)
 	}
 
-	// Save EC configuration to VolumeInfo
+	// EncodeTsNs stamps this run's identity into the .vif (copied with the
+	// shards), so a read served from a different run's shard is rejected.
 	volumeInfo.EcShardConfig = &volume_server_pb.EcShardConfig{
 		DataShards:   uint32(ecCtx.DataShards),
 		ParityShards: uint32(ecCtx.ParityShards),
+		EncodeTsNs:   time.Now().UnixNano(),
+		BlockSize:    ecCtx.BlockSize,
 	}
 	glog.V(1).Infof("Saving EC config to .vif for volume %d: %d+%d (total: %d)",
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
-		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		}
+		// The .vif is committed but may not be crash-durable. The EC
+		// config is already on disk, so do not clean up the generated
+		// shard files; a restart will find them and the matching metadata.
+		glog.Warningf("SaveVolumeInfo %s saved but not crash-durable: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
@@ -133,8 +181,16 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
 
+func recordEcRebuild(result string, d time.Duration) {
+	stats.VolumeServerECRebuildHistogram.WithLabelValues(result).Observe(d.Seconds())
+	stats.VolumeServerECRebuildCounter.WithLabelValues(result).Inc()
+}
+
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -144,31 +200,123 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 	var rebuiltShardIds []uint32
 
+	// Find the rebuild location: the location with the most shards and an .ecx file.
+	// With multi-disk servers, shards may be spread across different locations.
+	var rebuildLocation *storage.DiskLocation
+	var rebuildShardCount int
+	var otherLocationsWithShards []*storage.DiskLocation
+
 	for _, location := range vs.store.Locations {
 		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
 		if err != nil {
 			return nil, err
 		}
 
-		if existingShardCount == 0 {
+		indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
+		if !util.FileExists(indexBaseFileName+".ecx") && location.IdxDirectory != location.Directory {
+			indexBaseFileName = path.Join(location.Directory, baseFileName)
+		}
+		hasEcx := util.FileExists(indexBaseFileName + ".ecx")
+
+		// Skip locations that have neither shard files nor an .ecx file.
+		if existingShardCount == 0 && !hasEcx {
 			continue
 		}
 
-		if util.FileExists(path.Join(location.IdxDirectory, baseFileName+".ecx")) {
-			// write .ec00 ~ .ec13 files
-			dataBaseFileName := path.Join(location.Directory, baseFileName)
-			if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName); err != nil {
-				return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
+		if hasEcx && (rebuildLocation == nil || existingShardCount > rebuildShardCount) {
+			if rebuildLocation != nil {
+				otherLocationsWithShards = append(otherLocationsWithShards, rebuildLocation)
+			}
+			rebuildLocation = location
+			rebuildShardCount = existingShardCount
+		} else {
+			otherLocationsWithShards = append(otherLocationsWithShards, location)
+		}
+	}
+
+	if rebuildLocation == nil {
+		return &volume_server_pb.VolumeEcShardsRebuildResponse{}, nil
+	}
+
+	// Collect additional directories where shard files may exist.
+	// On multi-disk servers, existing local shards may be on a different disk
+	// than where copied shards were placed during ec.rebuild.
+	rebuildDataDir := rebuildLocation.Directory
+	additionalDirs := rebuildSearchDirs(rebuildLocation, otherLocationsWithShards)
+
+	// Rebuild missing EC files, searching all disk locations for input shards.
+	// Present input shards are verified against the bitrot sidecar (when present)
+	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
+	start := time.Now()
+	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
+	// Resolve the layout ONCE and use that same answer for the rebuild and for
+	// the backfill below: a manifest describing these shards has to record the
+	// geometry they were actually reconstructed with.
+	rebuildCtx, resolveErr := erasure_coding.ResolveRebuildECContext(dataBaseFileName, erasure_coding.BackgroundECContext(), additionalDirs)
+	if resolveErr != nil {
+		recordEcRebuild("failure", time.Since(start))
+		return nil, fmt.Errorf("resolve rebuild layout for %s: %v", dataBaseFileName, resolveErr)
+	}
+	generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, rebuildCtx, req.UnsafeIgnoreSidecar, additionalDirs...)
+	if err != nil {
+		recordEcRebuild("failure", time.Since(start))
+		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
+	}
+	rebuiltShardIds = generatedShardIds
+
+	indexBaseFileName := path.Join(rebuildLocation.IdxDirectory, baseFileName)
+	if !util.FileExists(indexBaseFileName+".ecx") && rebuildLocation.IdxDirectory != rebuildLocation.Directory {
+		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
+	}
+	if ev, found := rebuildLocation.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+		// A mounted volume appends runtime deletes through ev.ecjFile, so the
+		// fold runs under its journal lock on the journal's own base, and the
+		// handle is repointed: otherwise RebuildEcxFile's unlink strands later
+		// appends on the detached inode.
+		indexBaseFileName = ev.EcIndexBaseFileName()
+		unlockJournal := ev.LockDeletionJournal()
+		err := erasure_coding.RebuildEcxFile(indexBaseFileName)
+		if err == nil {
+			err = ev.ReopenDeletionJournal()
+		}
+		unlockJournal()
+		if err != nil {
+			recordEcRebuild("failure", time.Since(start))
+			return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+		}
+	} else if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		recordEcRebuild("failure", time.Since(start))
+		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+	}
+
+	recordEcRebuild("success", time.Since(start))
+
+	// Opportunistic bitrot backfill: if protection is enabled, no sidecar exists
+	// yet (a volume encoded before this feature), and this rebuilder can reach
+	// every shard, compute and write a generation-0 sidecar. The TOFU baseline
+	// blesses current bytes; ComputeProtectionFromShards refuses a partial
+	// manifest, so a multi-server rebuild that cannot reach all shards just skips.
+	if erasure_coding.BitrotProtectionEnabled {
+		// "No sidecar yet" has to be asked of every place one could be, not
+		// just this directory. A split -dir/-dir.idx layout keeps it with the
+		// index and a sibling disk may hold it, and answering from the data
+		// base alone would write a fresh TOFU baseline over a volume that
+		// already has a manifest — blessing whatever the shards currently say
+		// and shadowing the real record, since the data base is searched first.
+		if erasure_coding.FindBitrotSidecar(0, dataBaseFileName, indexBaseFileName, additionalDirs...) == "" {
+			sidecarPath := erasure_coding.BitrotSidecarPath(dataBaseFileName, 0)
+			// The manifest must describe the shards as rebuilt, so it takes the
+			// context the rebuild resolved — not a narrower re-derivation that
+			// reads only this directory's .vif and drops the block size, which
+			// records the legacy layout for shards written with a uniform one.
+			ctx := rebuildCtx
+			if prot, berr := erasure_coding.ComputeProtectionFromShards(dataBaseFileName, ctx, 0, additionalDirs); berr != nil {
+				glog.V(2).Infof("bitrot backfill skipped for %s: %v", dataBaseFileName, berr)
+			} else if werr := erasure_coding.SaveBitrotSidecar(sidecarPath, prot); werr != nil {
+				glog.Warningf("bitrot backfill: write sidecar for %s: %v", dataBaseFileName, werr)
 			} else {
-				rebuiltShardIds = generatedShardIds
+				glog.V(0).Infof("bitrot backfill: wrote sidecar for %s after rebuild", dataBaseFileName)
 			}
-
-			indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
-			if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
-				return nil, fmt.Errorf("RebuildEcxFile %s: %v", dataBaseFileName, err)
-			}
-
-			break
 		}
 	}
 
@@ -179,16 +327,36 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
 func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
+	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(ctx, req.SourceDataNode); err != nil {
+			return nil, fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
 	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
 	var location *storage.DiskLocation
 
-	// Use disk_id if provided (disk-aware storage)
-	if req.DiskId > 0 || (req.DiskId == 0 && len(vs.store.Locations) > 0) {
+	// Select the target location for storing EC shard files.
+	//
+	// When req.DiskId > 0 the caller is explicitly choosing a disk:
+	//   location = vs.store.Locations[req.DiskId]
+	//   (DiskId=1 → Locations[1], DiskId=2 → Locations[2], etc.)
+	//
+	// When req.DiskId == 0 (the protobuf default, meaning "not specified")
+	// we auto-select location by preferring the disk that already holds EC
+	// shards for this volume, then falling back to any HDD, then any disk.
+	//
+	// Note: Locations[0] cannot be targeted explicitly via DiskId because 0
+	// is indistinguishable from "unset". It can still be chosen by the
+	// auto-select logic.
+	if req.DiskId > 0 {
 		// Validate disk ID is within bounds
 		if int(req.DiskId) >= len(vs.store.Locations) {
 			return nil, fmt.Errorf("invalid disk_id %d: only have %d disks", req.DiskId, len(vs.store.Locations))
@@ -198,29 +366,54 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		location = vs.store.Locations[req.DiskId]
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
-		// Fallback to old behavior for backward compatibility
-		if req.CopyEcxFile {
-			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-				return location.DiskType == types.HardDriveType
-			})
-		} else {
-			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-				return true
-			})
+		// Auto-select the target disk: prefer a disk that already owns one
+		// of the shards being copied (a retried move must overwrite in
+		// place, not leave two disks of this server claiming the same
+		// shard), then a disk that already has the EC volume mounted, then
+		// a disk that owns the .ecx on disk (the volume hasn't been mounted
+		// yet — relevant for ec.rebuild, where only the first shard carries
+		// .ecx and subsequent shards must land on the same disk; see
+		// #9212), then any HDD, then any disk. Pass the build's default
+		// data-shard count for free-slot maths; the helper takes it as a
+		// parameter so custom-ratio builds (e.g. enterprise) can swap it
+		// without touching this file.
+		shardIds := make([]erasure_coding.ShardId, 0, len(req.ShardIds))
+		for _, shardId := range req.ShardIds {
+			shardIds = append(shardIds, erasure_coding.ShardId(shardId))
 		}
+		// A batch whose requested shards are already owned by different local
+		// disks has no single correct destination: writing them all to one
+		// disk would duplicate the other disks' claims. Refuse so the caller
+		// splits the batch per shard (or chooses explicitly via disk_id).
+		if owners := vs.store.EcShardOwnerDisks(needle.VolumeId(req.VolumeId), shardIds); len(owners) > 1 {
+			dirs := make([]string, 0, len(owners))
+			for _, owner := range owners {
+				dirs = append(dirs, owner.Directory)
+			}
+			return nil, fmt.Errorf("volume %d shards %v are already owned by multiple local disks %v: no single destination; copy per shard or pass disk_id", req.VolumeId, req.ShardIds, dirs)
+		}
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
 		if location == nil {
-			return nil, fmt.Errorf("no space left")
+			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}
 	}
 
 	dataBaseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
 	indexBaseFileName := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
 
-	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	// One throttler for the whole request, so the limit caps the transfer as a
+	// whole rather than each file separately — same shape as VolumeCopy.
+	ioBytePerSecond := vs.maintenanceBytePerSecond
+	if req.IoBytePerSecond > 0 {
+		ioBytePerSecond = req.IoBytePerSecond
+	}
+	throttler := util.NewWriteThrottler(ioBytePerSecond)
+
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy ec data slices
 		for _, shardId := range req.ShardIds {
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.ToExt(int(shardId)), false, false, nil); err != nil {
+			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.ToExt(int(shardId)), false, false, nil, throttler); err != nil {
 				return err
 			}
 		}
@@ -228,26 +421,64 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		if req.CopyEcxFile {
 
 			// copy ecx file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
+			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil, throttler); err != nil {
 				return err
+			}
+			// Defense in depth: writeToFile now removes partial files on
+			// stream error, but a source that genuinely held a 0-byte
+			// .ecx (e.g. a corrupted upstream replica) would otherwise
+			// leave a 0-byte file here and the mount path would reject
+			// it later. Catch that at distribute time so the orchestrator
+			// can pick a different source rather than learning about it
+			// at mount.
+			// Stat failure must not silently pass. doCopyFile reported
+			// success, but if the file is gone, unreadable, or a directory
+			// somehow, the orchestrator should learn now — at mount time
+			// the operator only sees "no .ecx found" with no useful context
+			// about which step actually failed.
+			ecxPath := indexBaseFileName + ".ecx"
+			info, statErr := os.Stat(ecxPath)
+			if statErr != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", req.VolumeId, ecxPath, statErr)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", req.VolumeId, ecxPath)
+			}
+			if info.Size() == 0 {
+				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
+					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
+				}
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", req.VolumeId)
 			}
 		}
 
 		if req.CopyEcjFile {
-			// copy ecj file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil); err != nil {
+			// The journal is a *set* of ids: merge the source's into the
+			// local one as a union, never append it whole.
+			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
 			}
 		}
 
 		if req.CopyVifFile {
 			// copy vif file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil); err != nil {
+			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil, throttler); err != nil {
 				return err
 			}
 		}
+
+		if req.CopyEcsumFile {
+			// Propagate the generation-0 bitrot checksum sidecar when the source
+			// has one. This non-2PC copy path (balance / fresh-encode / rebuild
+			// distribution) has no Prepare backstop, and fresh-encode sidecar
+			// writes are best-effort, so a missing source sidecar is a no-op
+			// (ignore-not-found): the holder is simply unprotected.
+			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.BitrotSidecarExt, false, true, nil, throttler); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: copy %s sidecar: %w", req.VolumeId, erasure_coding.BitrotSidecarExt, err)
+			}
+		}
 		return nil
-	})
+	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
 		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
 	}
@@ -255,66 +486,418 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
 }
 
+// copyEcjAndMerge folds the source peer's .ecj into the local journal of vid
+// as a set union: only ids the local journal lacks are appended, so a
+// shard bounced between servers cannot grow it. The source journal streams
+// straight into memory — no staging file — and a source without one is not an
+// error. destDir is the receiving disk's data directory and destBase its index
+// base name.
+func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClient, collection string, vid uint32, destDir, destBase string, throttler *util.WriteThrottler) error {
+	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		VolumeId:                 vid,
+		Ext:                      ".ecj",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               math.MaxInt64,
+		Collection:               collection,
+		IsEcVolume:               true,
+		IgnoreSourceFileNotFound: true,
+	})
+	if err != nil {
+		return fmt.Errorf("volume %d: start copying .ecj: %w", vid, err)
+	}
+	ids, found, err := receiveEcjIds(stream, throttler)
+	if err != nil {
+		return fmt.Errorf("volume %d: copy .ecj: %w", vid, err)
+	}
+	if !found {
+		return nil
+	}
+	if _, err := vs.store.MergeEcJournal(needle.VolumeId(vid), destDir, destBase+".ecj", ids); err != nil {
+		return fmt.Errorf("volume %d: merge .ecj: %w", vid, err)
+	}
+	return nil
+}
+
+// receiveEcjIds decodes a CopyFile stream of an .ecj into its distinct ids.
+// found is false only when the source has no journal, which the source
+// signals with neither a modified time nor any bytes; an empty journal still
+// carries its modified time.
+func receiveEcjIds(stream volume_server_pb.VolumeServer_CopyFileClient, throttler *util.WriteThrottler) (ids map[types.NeedleId]struct{}, found bool, err error) {
+	decoder := erasure_coding.NewEcjIdDecoder()
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return nil, false, recvErr
+		}
+		if resp.ModifiedTsNs != 0 || len(resp.FileContent) > 0 {
+			found = true
+		}
+		decoder.Write(resp.FileContent)
+		throttler.MaybeSlowdown(int64(len(resp.FileContent)))
+	}
+	return decoder.Ids(), found, nil
+}
+
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed
 // the shard should not be mounted before calling this.
+// Allowed in maintenance mode: like VolumeDelete it only removes data, and
+// evacuating EC shards off a server in maintenance mode ends here (issue #11066).
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
-	if err := vs.CheckMaintenanceMode(); err != nil {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
 	}
 
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
+	if req.FullTeardown {
+		if req.EncodeTsNs == 0 {
+			// Blanket teardown (shell pre-encode cleanup / pre-upgrade caller): evict the
+			// volume and wipe every EC artifact for it on every disk, not just the listed
+			// shards, so a remote node retains no stale generation a fresh copy collides with.
+			glog.V(0).Infof("ec volume %s full teardown", bName)
+			vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+			for _, location := range vs.store.Locations {
+				dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+				idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+				if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+					return nil, fmt.Errorf("full teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
+				}
+			}
+			return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
+		}
+		// Generation-fenced teardown (stale-worker pre-distribute cleanup): wipe only a
+		// disk whose .vif generation is strictly OLDER than the request; preserve
+		// same-or-newer, generation 0 (recovered/pre-upgrade live volume), and an
+		// unreadable .vif, so a stale run can never wipe a newer run's live shards.
+		// Unload and remove only the strictly-older disks, never node-wide.
+		glog.V(0).Infof("ec volume %s full teardown fenced at generation %d", bName, req.EncodeTsNs)
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			diskGen, readable := readEcGenerationTsNs(dataBase, idxBase)
+			if !readable || diskGen == 0 || diskGen >= req.EncodeTsNs {
+				glog.V(1).Infof("ec volume %d on %s preserved: disk generation %d (readable=%v) not older than request %d", req.VolumeId, location.Directory, diskGen, readable, req.EncodeTsNs)
+				continue
+			}
+			location.UnloadEcVolume(needle.VolumeId(req.VolumeId))
+			if err := removeStaleEcArtifacts(dataBase, idxBase, erasure_coding.MaxShardCount); err != nil {
+				return nil, fmt.Errorf("fenced teardown of ec volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
+	}
+
+	if req.DeleteGenerationsOlderThan > 0 {
+		// Post-commit cleanup of a 2PC generation switch: the committed
+		// generation has been promoted to the canonical names, so only the
+		// staged <base>.*.v<N> files strictly older than the threshold are
+		// superseded and safe to remove. Versioned files are never mounted,
+		// so nothing needs to be unloaded first.
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			if err := erasure_coding.RemoveEcGenerationFiles(dataBase, req.DeleteGenerationsOlderThan); err != nil {
+				return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+			if dataBase != idxBase {
+				if err := erasure_coding.RemoveEcGenerationFiles(idxBase, req.DeleteGenerationsOlderThan); err != nil {
+					return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.IdxDirectory, err)
+				}
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	}
+
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
-	for _, location := range vs.store.Locations {
-		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
-			glog.Errorf("deleteEcShards from %s %s.%v: %v", location.Directory, bName, req.ShardIds, err)
+	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
+	// sidecars) on every disk.
+	for diskId, location := range vs.store.Locations {
+		if err := deleteEcShardIdsForEachLocation(bName, location, vs.store.Locations, req.ShardIds); err != nil {
+			glog.Errorf("deleteEcShards from disk_id:%d %s %s.%v: %v", diskId, location.Directory, bName, req.ShardIds, err)
 			return nil, err
+		}
+	}
+
+	// Pass 2: the shared .ecx/.ecj index (and the .vif) is removed only when NO shard
+	// of this volume remains on ANY disk of this node. A per-disk check would orphan a
+	// sibling disk's shards (split-disk reconciled volumes) by deleting their index.
+	nodeWideShards := 0
+	type ecLocationStatus struct {
+		location   *storage.DiskLocation
+		hasEcxFile bool
+		hasIdxFile bool
+	}
+	statuses := make([]ecLocationStatus, 0, len(vs.store.Locations))
+	for _, location := range vs.store.Locations {
+		hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
+		if err != nil {
+			return nil, err
+		}
+		nodeWideShards += existingShardCount
+		statuses = append(statuses, ecLocationStatus{location, hasEcxFile, hasIdxFile})
+	}
+	if nodeWideShards == 0 {
+		// Reuse the status from the count pass above so the directory listing is not
+		// repeated per location.
+		for _, st := range statuses {
+			if err := removeEcSharedIndexFiles(bName, st.location, st.hasEcxFile, st.hasIdxFile); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
 }
 
-func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocation, shardIds []uint32) error {
+func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocation, locations []*storage.DiskLocation, shardIds []uint32) error {
 
 	found := false
 
 	indexBaseFilename := path.Join(location.IdxDirectory, bName)
 	dataBaseFilename := path.Join(location.Directory, bName)
 
-	if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
-		for _, shardId := range shardIds {
-			shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-			if util.FileExists(shardFileName) {
-				found = true
-				os.Remove(shardFileName)
+	// Delete the requested shard files unconditionally. Gating on a local .ecx
+	// (still used for index-file routing below) would leak an orphan shard left
+	// by a failed copy that reconciliation later mounts under a foreign index.
+	shardFileNames := make([]string, 0, len(shardIds))
+	for _, shardId := range shardIds {
+		shardFileNames = append(shardFileNames, dataBaseFilename+erasure_coding.ToExt(int(shardId)))
+	}
+	// The shard and every 2PC generation of it (<name>.v<N>) are removed:
+	// the shard must not live on this disk at all. Names match literally —
+	// a glob would let glob metacharacters in the collection part of bName
+	// leak into another volume's files.
+	entries, readErr := os.ReadDir(location.Directory)
+	switch {
+	case readErr == nil:
+		for _, entry := range entries {
+			for _, shardFileName := range shardFileNames {
+				name := filepath.Join(location.Directory, entry.Name())
+				if name != shardFileName && erasure_coding.EcFileGeneration(entry.Name(), filepath.Base(shardFileName)) < 0 {
+					continue
+				}
+				if util.FileExists(name) {
+					found = true
+					if err := removeFileIfExists(name); err != nil {
+						return fmt.Errorf("remove ec shard %s: %w", name, err)
+					}
+				}
 			}
 		}
+	case errors.Is(readErr, fs.ErrNotExist):
+		// No such directory means no shard files on this disk.
+	default:
+		// A listing failure must not fall back to canonical names only:
+		// staged .v<N> files would survive while the RPC reports success.
+		return fmt.Errorf("list %s for ec shards of %s: %w", location.Directory, bName, readErr)
 	}
 
 	if !found {
 		return nil
 	}
 
-	hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
+	_, _, existingShardCount, err := checkEcVolumeStatus(bName, location)
 	if err != nil {
 		return err
 	}
 
-	if hasEcxFile && existingShardCount == 0 {
-		if err := os.Remove(indexBaseFilename + ".ecx"); err != nil {
+	if existingShardCount == 0 {
+		// This disk's shards for the volume are gone. Remove the bitrot checksum
+		// sidecar(s) (.ecsum and any .ecsum.v<N>) here, since they protect this
+		// disk's shards and are now orphaned. The shared .ecx/.ecj/.vif index is
+		// NOT removed here: a sibling disk may still hold shards that need it; the
+		// caller removes the shared index only once no shard remains node-wide.
+		if err := removeBitrotSidecars(dataBaseFilename); err != nil {
 			return err
 		}
-		os.Remove(indexBaseFilename + ".ecj")
-
-		if !hasIdxFile {
-			// .vif is used for ec volumes and normal volumes
-			os.Remove(dataBaseFilename + ".vif")
+		if location.IdxDirectory != location.Directory && !idxSidecarInUse(bName, location.IdxDirectory, locations) {
+			if err := removeBitrotSidecars(indexBaseFilename); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+// One -dir.idx serves every disk, so the idx-base sidecar is shared: it stays
+// while any disk using that idx directory still holds shards of this volume.
+// A status error counts as in-use so a transient failure never strips it early.
+func idxSidecarInUse(bName string, idxDirectory string, locations []*storage.DiskLocation) bool {
+	for _, other := range locations {
+		if other.IdxDirectory != idxDirectory {
+			continue
+		}
+		if _, _, count, err := checkEcVolumeStatus(bName, other); err != nil || count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// removeEcSharedIndexFiles removes the shared .ecx/.ecj index (and the .vif when no
+// .idx is present) for an EC volume on one disk. The caller invokes it only after
+// the whole node's shards for the volume are gone, so a sibling disk's shards are
+// never orphaned by deleting their index. A surviving stale .ecx is the orphan-index
+// condition this prevents, so a real removal failure is surfaced. hasEcxFile and
+// hasIdxFile come from the caller's checkEcVolumeStatus so the directory is not
+// re-listed here.
+func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasEcxFile, hasIdxFile bool) error {
+	indexBaseFilename := path.Join(location.IdxDirectory, bName)
+	dataBaseFilename := path.Join(location.Directory, bName)
+	if hasEcxFile {
+		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj", indexBaseFilename + erasure_coding.EcjCompactTmpExt} {
+			if err := removeFileIfExists(p); err != nil {
+				return err
+			}
+		}
+		if location.IdxDirectory != location.Directory {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj", dataBaseFilename + erasure_coding.EcjCompactTmpExt} {
+				if err := removeFileIfExists(p); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// Remove the .vif when no .idx is present (so this is not a live normal/tiered
+	// volume), independent of .ecx presence: the caller only reaches here once no
+	// shard remains node-wide, so an EC .vif left without its .ecx is stale
+	// generation metadata that would otherwise leak.
+	if !hasIdxFile {
+		if err := removeFileIfExists(dataBaseFilename + ".vif"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeFileIfExists removes path, treating "already gone" as success and
+// returning only a real failure (so a stale shard left behind is not silently
+// reported as cleaned).
+func removeFileIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// readEcGenerationTsNs returns the EC encode generation recorded in a disk's .vif
+// (data dir first, then idx dir for the split-disk layout) and whether a .vif file
+// was present. A present .vif with no EcShardConfig — or one that failed to parse —
+// yields (0, true): generation 0, which the fenced teardown preserves anyway (a
+// recovered or pre-upgrade live volume). (0, false) means no .vif file was found.
+// Both 0 and a missing .vif are preserved, so the read is fail-safe in every case.
+func readEcGenerationTsNs(dataBaseFileName, indexBaseFileName string) (int64, bool) {
+	for _, base := range []string{dataBaseFileName, indexBaseFileName} {
+		if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(base + ".vif"); found {
+			return vi.GetEcShardConfig().GetEncodeTsNs(), true
+		}
+		if dataBaseFileName == indexBaseFileName {
+			break
+		}
+	}
+	return 0, false
+}
+
+// removeStaleEcArtifacts deletes the shard, index, journal, and bitrot sidecar
+// files of a prior encode so a fresh encode never mixes runs. total is the
+// shard-id range to scan (pass the cap for custom ratios). Returns the first
+// real removal failure; does not touch the source .dat/.idx/.vif.
+func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total int) error {
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	for i := 0; i < total; i++ {
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.ToExt(i)))
+	}
+	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
+	record(removeFileIfExists(indexBaseFileName + ".ecx"))
+	record(removeFileIfExists(indexBaseFileName + ".ecj"))
+	record(removeFileIfExists(indexBaseFileName + erasure_coding.EcjCompactTmpExt))
+	record(removeBitrotSidecars(indexBaseFileName))
+	if dataBaseFileName != indexBaseFileName {
+		record(removeFileIfExists(dataBaseFileName + ".ecx"))
+		record(removeFileIfExists(dataBaseFileName + ".ecj"))
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.EcjCompactTmpExt))
+		record(removeBitrotSidecars(dataBaseFileName))
+	}
+
+	// Generations staged by the 2PC switch are <base>.ecNN.v<N> plus the
+	// versioned .ecx/.ecj/.vif/.ecsum: a teardown of this disk leaves none.
+	record(erasure_coding.RemoveEcGenerationFiles(dataBaseFileName, 0))
+	if dataBaseFileName != indexBaseFileName {
+		record(erasure_coding.RemoveEcGenerationFiles(indexBaseFileName, 0))
+	}
+
+	// Canonical <base>.vif. A shard copy installs shards + .ecx before .vif, so an
+	// interrupted copy can leave a stale .vif whose run identity / shard ratio /
+	// dat_file_size a fresh generation would inherit. Remove it only on a shard-only
+	// EC node: where a normal <base>.idx exists this is the source volume holder and
+	// the .vif belongs to that live volume — keep it. This mirrors the !hasIdxFile
+	// gate in the per-shard delete path.
+	if _, statErr := os.Stat(indexBaseFileName + ".idx"); os.IsNotExist(statErr) {
+		record(removeFileIfExists(indexBaseFileName + ".vif"))
+		if dataBaseFileName != indexBaseFileName {
+			if _, dStatErr := os.Stat(dataBaseFileName + ".idx"); os.IsNotExist(dStatErr) {
+				record(removeFileIfExists(dataBaseFileName + ".vif"))
+			}
+		}
+	}
+	return firstErr
+}
+
+// removeBitrotSidecars removes the legacy <base>.ecsum and any versioned
+// <base>.ecsum.v<N> sidecars, returning the first real removal failure.
+func removeBitrotSidecars(baseFilename string) error {
+	var firstErr error
+	if err := removeFileIfExists(baseFilename + erasure_coding.BitrotSidecarExt); err != nil {
+		firstErr = err
+	}
+	matches, _ := filepath.Glob(baseFilename + erasure_coding.BitrotSidecarExt + ".v*")
+	for _, m := range matches {
+		if err := removeFileIfExists(m); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// rebuildSearchDirs lists every directory besides the rebuild's own data
+// directory that a rebuild may have to read from. Shards are only half of it:
+// a split -dir/-dir.idx layout keeps .ecx/.ecj/.vif with the index, and on a
+// multi-disk server the chosen disk may hold nothing but shards while the
+// volume's .vif or generation-0 .ecsum sits on a sibling. Miss those and the
+// layout resolution falls back to the default ratio and the legacy block
+// size, reconstructing through the wrong matrix. The rebuild's own INDEX
+// directory belongs here too — callers pass the data-directory base name, so
+// it is not otherwise searched. Empty and duplicate entries are dropped.
+func rebuildSearchDirs(rebuildLocation *storage.DiskLocation, otherLocations []*storage.DiskLocation) []string {
+	var dirs []string
+	appendDir := func(dir string) {
+		if dir == "" || dir == rebuildLocation.Directory {
+			return
+		}
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	appendDir(rebuildLocation.IdxDirectory)
+	for _, otherLocation := range otherLocations {
+		appendDir(otherLocation.Directory)
+		appendDir(otherLocation.IdxDirectory)
+	}
+	return dirs
 }
 
 func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFile bool, hasIdxFile bool, existingShardCount int, err error) {
@@ -367,8 +950,16 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 
 	glog.V(0).Infof("VolumeEcShardsMount: %v", req)
 
+	// Fetch a missing .ecx from a peer first so on-disk shards that never had a
+	// local index can be mounted (issue #10104). Driven on demand by ec.rebuild.
+	// volume_id 0 recovers every orphan on this server, including volumes the
+	// master never learned about.
+	if req.RecoverMissingIndex {
+		vs.recoverMissingEcIndexes(req.VolumeId)
+	}
+
 	for _, shardId := range req.ShardIds {
-		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.SourceDiskType)
 
 		if err != nil {
 			glog.Errorf("ec shard mount %v: %v", req, err)
@@ -381,15 +972,39 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		}
 	}
 
+	// A shard delivery can bring the checksum manifest with it, but the receive
+	// path only writes the file. When this server already had the volume
+	// mounted, the EcVolume in memory keeps whatever protection state it
+	// resolved at mount — off, for a volume whose sidecar arrives now — until a
+	// remount. Re-resolve it here, where the shards it describes were added.
+	// Every per-disk runtime, not just the first: a vid mounts as one EcVolume
+	// per disk, the delivery lands the .ecsum on one of them, and the
+	// first-match FindEcVolume would leave the siblings reporting no protection
+	// until a remount. Each re-resolves against its own data and index base, so
+	// a shared -dir.idx reaches all of them.
+	//
+	// Resolving across every EC metadata directory is what makes that reload
+	// mean something. Startup mirroring gives each shard-bearing disk its own
+	// .ecx/.ecj/.vif but deliberately not the sidecar, so a runtime restricted
+	// to its own two directories would find nothing however often it reloaded.
+	// One delivered copy, reachable from all of them.
+	ecMetadataDirs := vs.store.EcMetadataDirs()
+	for _, v := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
+		v.ReloadBitrotSidecar(ecMetadataDirs...)
+	}
+
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
 }
 
 func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsUnmount: %v", req)
 
 	for _, shardId := range req.ShardIds {
-		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.EncodeTsNs)
 
 		if err != nil {
 			glog.Errorf("ec shard unmount %v: %v", req, err)
@@ -407,20 +1022,28 @@ func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_s
 
 func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
 
-	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
-	if !found {
-		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
-	}
-	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
+	// Resolve the shard together with the EcVolume on the disk that owns it,
+	// rather than a first-match volume on a sibling disk: on a multi-disk server
+	// those can belong to different encode generations, and the guard must
+	// validate the identity of the volume whose bytes we serve.
+	ecVolume, ecShard, found := vs.store.FindEcVolumeWithShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
+	}
+	// Reject a shard whose identity doesn't match the caller's index; the caller
+	// then recovers from parity. Lenient only when the caller has no identity
+	// (pre-upgrade reader): a known caller must not accept an unstamped holder,
+	// which would serve a stale pre-upgrade shard.
+	if req.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
+		return fmt.Errorf("ec shard %d.%d belongs to a different encode run", req.VolumeId, req.ShardId)
 	}
 
 	if req.FileKey != 0 {
 		_, size, _ := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
 		if size.IsDeleted() {
 			return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
-				IsDeleted: true,
+				IsDeleted:  true,
+				EncodeTsNs: ecVolume.EncodeTsNs,
 			})
 		}
 	}
@@ -441,6 +1064,12 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		}
 		bytesread, err := ecShard.ReadAt(buffer[0:bufferSize], startOffset)
 
+		if err != nil && err != io.EOF {
+			ecVolume.CheckReadWriteError(err)
+		} else {
+			ecVolume.CheckReadWriteError(nil)
+		}
+
 		// println("read", ecShard.FileName(), "startOffset", startOffset, bytesread, "bytes, with target", bufferSize)
 		if bytesread > 0 {
 
@@ -448,7 +1077,8 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 				bytesread = int(bytesToRead)
 			}
 			err = stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
-				Data: buffer[:bytesread],
+				Data:       buffer[:bytesread],
+				EncodeTsNs: ecVolume.EncodeTsNs,
 			})
 			if err != nil {
 				// println("sending", bytesread, "bytes err", err.Error())
@@ -507,11 +1137,27 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
 func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
+
+	// Staged mode: the caller decoded the shards off-box and streamed the normal
+	// volume here as <base><ext>.copying (ReceiveFile staged-new-volume). Adopt
+	// those files as a normal volume; this server holds no EC shards for the vid,
+	// so there is no local EC decode to run.
+	if req.FromStaged {
+		return vs.adoptStagedVolume(req)
+	}
+
+	if _, loaded := vs.ecDecodesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+		return nil, status.Errorf(codes.Unavailable, "ec volume %d is already being decoded", req.VolumeId)
+	}
+	defer vs.ecDecodesInFlight.Delete(req.VolumeId)
 
 	// Collect all EC shards (NewEcVolume will load EC config from .vif into v.ECContext)
 	// Use MaxShardCount (32) to support custom EC ratios up to 32 total shards
@@ -543,7 +1189,50 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		}
 	}
 
-	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
+	dataBaseFileName := v.DataBaseFileName()
+	// The fold and the index write must work on the same .ecj that runtime
+	// deletes append to through ecjFile — the volume's resolved index dir,
+	// which can differ from IndexBaseFileName when an .ecx copy exists in
+	// both the data and index directories.
+	indexBaseFileName := v.EcIndexBaseFileName()
+
+	// Resolve the offline-compaction location before taking the journal
+	// lock: FindEcVolume takes the ec-volume map lock, and acquiring it inside
+	// the journal lock inverts DestroyEcVolume's map->journal order — a decode
+	// holding the journal lock while waiting on the map deadlocks a destroy
+	// holding the map lock while waiting on the journal.
+	var volumeLocation *storage.DiskLocation
+	for _, location := range vs.store.Locations {
+		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
+			volumeLocation = location
+			break
+		}
+	}
+	if volumeLocation == nil {
+		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
+	}
+
+	// Merge .ecj deletions into .ecx so that HasLiveNeedles and FindDatFileSize
+	// see the full set of deleted needles. Without this, needles deleted after the
+	// last ecx rebuild would still appear live, causing the decoded .dat to include
+	// data that should be skipped and HasLiveNeedles to return a false positive.
+	//
+	// The journal lock is held across the fold: RebuildEcxFile unlinks .ecj,
+	// and a delete committed between its read and the unlink would land on the
+	// detached inode that ecjFile keeps open — synced, successful, and
+	// invisible to every path-based reader. ReopenDeletionJournal then points
+	// the handle back at a fresh journal, so deletes committed during the .dat
+	// rebuild stay durable and reach the index write below.
+	unlockJournal := v.LockDeletionJournal()
+	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		unlockJournal()
+		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+	}
+	if err := v.ReopenDeletionJournal(); err != nil {
+		unlockJournal()
+		return nil, fmt.Errorf("reopen deletion journal %s: %v", indexBaseFileName, err)
+	}
+	unlockJournal()
 
 	// If the EC index contains no live entries, decoding should be a no-op:
 	// just allow the caller to purge EC shards and do not generate an empty normal volume.
@@ -555,43 +1244,180 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
 	}
 
-	// calculate .dat file size
-	datFileSize, err := erasure_coding.FindDatFileSize(dataBaseFileName, indexBaseFileName)
+	// calculate .dat file size. Pass shard 0's resolved path: on a multi-disk
+	// server the volume's shards can sit on several disks, so the .ec00 is not
+	// necessarily beside the EcVolume's own base path.
+	datFileSize, err := erasure_coding.FindDatFileSize(shardFileNames[0], indexBaseFileName)
 	if err != nil {
-		return nil, fmt.Errorf("FindDatFileSize %s: %v", dataBaseFileName, err)
+		return nil, fmt.Errorf("FindDatFileSize %s: %v", shardFileNames[0], err)
 	}
 
+	// The shard block layout was fixed by the .dat size at encode time (recorded
+	// in .vif); deletions can shrink the live extent below a large-block row
+	// boundary, so the layout must not be derived from datFileSize. WriteDatFile
+	// infers the layout from the shard size when .vif does not record it.
 	// write .dat file from .ec00 ~ .ec09 files
-	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, shardFileNames); err != nil {
+	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, v.DatFileSize(), shardFileNames, v.ECContext.LargeBlockSize(), v.ECContext.SmallBlockSize()); err != nil {
 		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
+
+	// Fail the decode rather than report a short volume: the caller deletes the
+	// shards once this call returns, and today its only check is that the files
+	// are non-empty.
+	if err := erasure_coding.VerifyDecodedDatFile(dataBaseFileName, datFileSize); err != nil {
+		return nil, err
+	}
+
+	// Runtime deletes serialize on the volume's journal lock; holding it from
+	// the journal-consuming index write through the offline compaction keeps a
+	// committed delete from slipping past the rebuilt .idx.
+	defer v.LockDeletionJournal()()
 
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
 	}
 
+	// The EC generation is gone; drop its bitrot sidecar(s) so a later EC
+	// re-encode cannot mistake a stale .ecsum for protection.
+	removeBitrotSidecars(dataBaseFileName)
+	if indexBaseFileName != dataBaseFileName {
+		removeBitrotSidecars(indexBaseFileName)
+	}
+
+	if err := vs.store.CompactVolumeFiles(
+		needle.VolumeId(req.VolumeId),
+		v.Collection,
+		volumeLocation,
+		vs.needleMapKind,
+		vs.ldbTimout,
+		0,
+		vs.compactionBytePerSecond,
+	); err != nil {
+		// Benign only when the swap never started or was settled: a surviving
+		// .cpc marker means the commit was decided but the renames could not
+		// be reconciled, so .dat/.idx may be a mismatched pair — fail the
+		// decode and let the caller keep the shards.
+		if util.FileExists(dataBaseFileName + ".cpc") {
+			return nil, fmt.Errorf("CompactVolumeFiles %s: %w", dataBaseFileName, err)
+		}
+		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
+	}
+
+	// Co-locate the rebuilt index with the data. The rebuild wrote the .idx to
+	// the shared -dir.idx directory, but the on-demand VolumeMount scans only
+	// the data directory and matches on .idx/.vif: with the index off in the
+	// index directory it would find the volume's leftover EC .vif instead and
+	// skip it as EC metadata. Moving the .idx next to the .dat lets the mount
+	// find the volume; VolumeConsolidateIndex returns it to the index directory
+	// once the EC shards are deleted.
+	if volumeLocation.IdxDirectory != volumeLocation.Directory {
+		idxSrc := storage.VolumeFileName(volumeLocation.IdxDirectory, v.Collection, int(req.VolumeId)) + ".idx"
+		idxDst := storage.VolumeFileName(volumeLocation.Directory, v.Collection, int(req.VolumeId)) + ".idx"
+		if util.FileExists(idxSrc) {
+			if moveErr := storage.RenameOrCopyFile(idxSrc, idxDst); moveErr != nil {
+				glog.Warningf("co-locate rebuilt index %s -> %s: %v", idxSrc, idxDst, moveErr)
+			}
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
+}
+
+// adoptStagedVolume finalizes a normal volume the caller decoded off-box and
+// streamed here as <base><ext>.copying (ReceiveFile staged-new-volume mode). It
+// renames the staged files into place under a .note in-progress marker and
+// mounts the volume, so <vid> is registered here only as a normal volume — never
+// as an EC/normal twin in one directory.
+func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	vid := needle.VolumeId(req.VolumeId)
+	if vs.store.GetVolume(vid) != nil {
+		return nil, fmt.Errorf("staged volume %d already exists on this server", req.VolumeId)
+	}
+	want := types.ToDiskType(req.DiskType)
+
+	// Locate the disk the ReceiveFile push staged onto: the disk_type location
+	// whose <base>.dat.copying exists.
+	var base string
+	for _, l := range vs.store.Locations {
+		if l.DiskType != want {
+			continue
+		}
+		candidate := storage.VolumeFileName(l.Directory, req.Collection, int(req.VolumeId))
+		if util.FileExists(candidate + ".dat.copying") {
+			base = candidate
+			break
+		}
+	}
+	if base == "" {
+		return nil, fmt.Errorf("staged volume %d: no .dat.copying found on a %s disk", req.VolumeId, req.DiskType)
+	}
+	for _, ext := range []string{".dat", ".idx", ".vif"} {
+		if !util.FileExists(base + ext + ".copying") {
+			return nil, fmt.Errorf("staged volume %d missing %s.copying", req.VolumeId, ext)
+		}
+	}
+
+	// .note in-progress marker (VolumeCopy discipline): a crash mid-rename leaves a
+	// .note that fails the load and sweeps the partial volume on restart.
+	noteFile := base + ".note"
+	if err := util.WriteFile(noteFile, []byte(fmt.Sprintf("adopting decoded volume %d", req.VolumeId)), 0644); err != nil {
+		return nil, fmt.Errorf("write .note for volume %d: %w", req.VolumeId, err)
+	}
+
+	// Rename staged files into place, then drop the .note before mounting — a
+	// volume that still carries a .note is swept by loadExistingVolume.
+	for _, ext := range []string{".vif", ".dat", ".idx"} {
+		if err := os.Rename(base+ext+".copying", base+ext); err != nil {
+			os.Remove(noteFile)
+			return nil, fmt.Errorf("rename staged %s for volume %d: %w", ext, req.VolumeId, err)
+		}
+	}
+	os.Remove(noteFile)
+
+	if err := vs.store.MountVolume(vid, &req.Collection); err != nil {
+		return nil, fmt.Errorf("mount staged volume %d: %w", req.VolumeId, err)
+	}
+	glog.V(0).Infof("VolumeEcShardsToVolume: adopted decoded volume %d from staging (%s)", req.VolumeId, base)
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
 
 func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
 
-	glog.V(0).Infof("VolumeEcStatus: %v", req)
-
 	vid := needle.VolumeId(req.GetVolumeId())
-	ecv, found := vs.store.FindEcVolume(vid)
-	if !found {
-		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
-	}
 
-	shardInfos := make([]*volume_server_pb.EcShardInfo, len(ecv.Shards))
-	for i, s := range ecv.Shards {
-		shardInfos[i] = s.ToEcShardInfo()
+	// Multi-disk volume servers register one EcVolume per DiskLocation
+	// that holds shards for the same vid: shards may be spread across
+	// disks while the .ecx lives on whichever disk owned the original
+	// .dat. Walk every DiskLocation here so the response reflects the
+	// full local shard set; the per-disk ecVolumesLock is taken inside
+	// DiskLocation.FindEcVolume.
+	var primary *erasure_coding.EcVolume
+	var seenShards erasure_coding.ShardBits
+	shardInfos := make([]*volume_server_pb.EcShardInfo, 0, erasure_coding.MaxShardCount)
+	for _, location := range vs.store.Locations {
+		ecv, ok := location.FindEcVolume(vid)
+		if !ok {
+			continue
+		}
+		if primary == nil {
+			primary = ecv
+		}
+		for _, s := range ecv.Shards {
+			if seenShards.Has(s.ShardId) {
+				continue
+			}
+			seenShards = seenShards.Set(s.ShardId)
+			shardInfos = append(shardInfos, s.ToEcShardInfo())
+		}
+	}
+	if primary == nil {
+		return nil, fmt.Errorf("VolumeEcShardsInfo: EC volume %d not found", vid)
 	}
 
 	var files, filesDeleted, totalSize uint64
-	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+	err := primary.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
 		// deleted files are counted when computing EC volume sizes. this aligns with VolumeStatus(),
 		// which reports the raw data backend file size, regardless of deleted files.
 		totalSize += uint64(size.Raw())
@@ -608,11 +1434,25 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		return nil, err
 	}
 
+	// Report the layout this holder will actually serve reads through. It is
+	// the only way a coordinator can tell a holder that understands the
+	// uniform block layout from one that dropped the unknown .vif field on the
+	// floor and mounted the volume as legacy.
+	var ecShardConfig *volume_server_pb.EcShardConfig
+	if primary.ECContext != nil {
+		ecShardConfig = &volume_server_pb.EcShardConfig{
+			DataShards:   uint32(primary.ECContext.DataShards),
+			ParityShards: uint32(primary.ECContext.ParityShards),
+			BlockSize:    primary.ECContext.BlockSize,
+		}
+	}
+
 	res := &volume_server_pb.VolumeEcShardsInfoResponse{
 		EcShardInfos:     shardInfos,
 		FileCount:        files,
 		FileDeletedCount: filesDeleted,
 		VolumeSize:       totalSize,
+		EcShardConfig:    ecShardConfig,
 	}
 
 	return res, nil

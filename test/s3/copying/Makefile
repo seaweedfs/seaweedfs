@@ -13,6 +13,9 @@ ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
 VOLUME_MAX_SIZE_MB ?= 50
 
+# Let the tests force-drop collections at the master they actually run against
+export MASTER_ENDPOINT ?= http://127.0.0.1:$(MASTER_PORT)
+
 # Test directory
 TEST_DIR := $(shell pwd)
 SEAWEEDFS_ROOT := $(shell cd ../../../ && pwd)
@@ -73,12 +76,12 @@ start-seaweedfs: check-binary
 		-ip=127.0.0.1 \
 		> /tmp/seaweedfs-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s -f http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "$(GREEN)S3 service is ready$(NC)"; \
 			break; \
 		fi; \
-		echo "Waiting for S3 service... ($$i/30)"; \
+		echo "Waiting for S3 service... ($$i/90)"; \
 		sleep 1; \
 	done
 	@sleep 2

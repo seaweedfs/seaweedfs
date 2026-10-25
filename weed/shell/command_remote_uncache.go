@@ -57,7 +57,7 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 		return nil
 	}
 
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
 	if listErr != nil {
 		return listErr
 	}
@@ -102,7 +102,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true
 		}
 
-		if entry.RemoteEntry.LastLocalSyncTsNs/1e9 < entry.Attributes.Mtime {
+		if entry.RemoteEntry.LastLocalSyncTsNs < entry.Attributes.Mtime*1e9+int64(entry.Attributes.MtimeNs) {
 			return true // should not uncache an entry that is not synchronized with remote
 		}
 
@@ -141,8 +141,8 @@ type FileFilter struct {
 
 func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	ff = &FileFilter{}
-	ff.include = remoteMountCommand.String("include", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
-	ff.exclude = remoteMountCommand.String("exclude", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.include = remoteMountCommand.String("include", "", "patterns of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.exclude = remoteMountCommand.String("exclude", "", "patterns of file names, e.g., *.pdf, *.html, ab?d.txt")
 	ff.minSize = remoteMountCommand.Int64("minSize", -1, "minimum file size in bytes")
 	ff.maxSize = remoteMountCommand.Int64("maxSize", -1, "maximum file size in bytes")
 	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds (created time)")
@@ -152,19 +152,28 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	return
 }
 
-func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
-	if entry.Attributes == nil {
-		return false
-	}
+// matchesName applies only the name-based include/exclude patterns,
+// usable for remote entries where local attributes are not available.
+func (ff *FileFilter) matchesName(name string) bool {
 	if *ff.include != "" {
-		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
+		if ok, _ := filepath.Match(*ff.include, name); !ok {
 			return false
 		}
 	}
 	if *ff.exclude != "" {
-		if ok, _ := filepath.Match(*ff.exclude, entry.Name); ok {
+		if ok, _ := filepath.Match(*ff.exclude, name); ok {
 			return false
 		}
+	}
+	return true
+}
+
+func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
+	if entry.Attributes == nil {
+		return false
+	}
+	if !ff.matchesName(entry.Name) {
+		return false
 	}
 	if *ff.minSize != -1 {
 		if int64(entry.Attributes.FileSize) < *ff.minSize {

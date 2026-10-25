@@ -49,25 +49,30 @@ func TestSTSAssumeRoleValidation(t *testing.T) {
 		t.Fatal("AssumeRole action is not implemented in the running server - please rebuild weed binary with new code and restart the server")
 	}
 
-	t.Run("missing_role_arn", func(t *testing.T) {
+	t.Run("missing_role_arn_defaults_to_caller_identity", func(t *testing.T) {
+		// SeaweedFS intentionally allows AssumeRole without RoleArn to support
+		// S3-compatible clients that omit it. In that case the session is tied
+		// to the caller's own identity (User Context assumption). See
+		// handleAssumeRole in weed/s3api/s3api_sts.go.
 		resp, err := callSTSAPIWithSigV4(t, url.Values{
 			"Action":          {"AssumeRole"},
 			"Version":         {"2011-06-15"},
 			"RoleSessionName": {"test-session"},
-			// RoleArn is missing
+			// RoleArn is missing on purpose
 		}, "test-access-key", "test-secret-key")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
-			"Should fail without RoleArn")
-
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		var errResp STSErrorTestResponse
-		err = xml.Unmarshal(body, &errResp)
-		require.NoError(t, err, "Failed to parse error response: %s", string(body))
-		assert.Equal(t, "MissingParameter", errResp.Error.Code)
+		assert.Equal(t, http.StatusOK, resp.StatusCode,
+			"Should succeed without RoleArn (user-context assumption): %s", string(body))
+
+		var assumeResp AssumeRoleTestResponse
+		require.NoError(t, xml.Unmarshal(body, &assumeResp),
+			"Failed to parse response: %s", string(body))
+		assert.NotEmpty(t, assumeResp.Result.Credentials.AccessKeyId,
+			"AccessKeyId should be issued for user-context assumption")
 	})
 
 	t.Run("missing_role_session_name", func(t *testing.T) {
@@ -337,7 +342,10 @@ func callSTSAPIWithSigV4(t *testing.T, params url.Values, accessKey, secretKey s
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Host", req.URL.Host)
+	// Do NOT set req.Header["Host"] — aws-sdk-go v1 v4.Signer reads the host
+	// from req.URL.Host/req.Host, and a manual Host header makes the signer
+	// emit `host;host` in SignedHeaders, producing a different signature than
+	// the server calculates from canonical headers.
 
 	// Sign request with AWS Signature V4 using official SDK
 	creds := credentials.NewStaticCredentials(accessKey, secretKey, "")

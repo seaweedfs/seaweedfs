@@ -14,9 +14,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -32,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -42,20 +45,32 @@ func init() {
 const (
 	readbufferSize                 = 16
 	jwtFilerTokenExpirationSeconds = 300
+	// mtime is only second resolution, so a directory touched this recently is
+	// left for the next run rather than compared against a timestamp a
+	// concurrent write could share
+	directoryQuietPeriod = 5 * time.Second
 )
 
 type commandVolumeFsck struct {
-	env                      *CommandEnv
-	writer                   io.Writer
-	bucketsPath              string
-	collection               *string
-	volumeIds                map[uint32]bool
-	tempFolder               string
-	verbose                  *bool
-	forcePurging             *bool
-	findMissingChunksInFiler *bool
-	verifyNeedle             *bool
-	filerSigningKey          string
+	env                       *CommandEnv
+	writer                    io.Writer
+	bucketsPath               string
+	collection                *string
+	collectionMatcher         *wildcard.CollectionMatcher
+	knownVolumeIds            map[uint32]bool
+	volumeIds                 map[uint32]bool
+	scopedFilerPath           string
+	tempFolder                string
+	verbose                   *bool
+	forcePurging              *bool
+	purgeConcurrency          *int
+	skipEcVolumes             *bool
+	findMissingChunksInFiler  *bool
+	verifyNeedle              *bool
+	filerSigningKey           string
+	unresolvedManifestEntries atomic.Int64
+	purgedDirsLock            sync.Mutex
+	purgedDirs                map[util.FullPath]struct{}
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -85,6 +100,12 @@ func (c *commandVolumeFsck) Help() string {
 		A newly uploaded chunk may appear as orphan if metadata commit is still pending.
 		The default 5h cutoff provides sufficient buffer for metadata commits.
 
+	Step 2 reads the filer from one consistent snapshot when its store supports
+	that (the SQL stores do), so a file renamed while the filer is being read is
+	still counted and its chunks are not mistaken for orphans. Other stores are
+	walked directory by directory; there, avoid running with -reallyDeleteFromVolume
+	while files are being renamed or moved.
+
 `
 }
 
@@ -96,12 +117,14 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
+	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
-	c.collection = fsckCommand.String("collection", "", "the collection name")
+	c.collection = fsckCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
 	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
+	c.purgeConcurrency = fsckCommand.Int("purgeConcurrency", 16, "parallel filer deletes for -reallyDeleteFilerEntries")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Hour, "only include entries on volume servers before this cutoff time to check orphan chunks")
 	modifyTimeAgo := fsckCommand.Duration("modifyTimeAgo", 0, "only include entries after this modify time to check orphan chunks")
@@ -111,12 +134,20 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
+	// The command struct is a singleton registered in init(), so any state
+	// not bound to a flag persists across shell invocations. Reset the
+	// unresolved-manifest counter so a previous failed run can't permanently
+	// suppress -reallyDeleteFromVolume in this session.
+	c.unresolvedManifestEntries.Store(0)
+	c.purgedDirs = make(map[util.FullPath]struct{})
+
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 	c.volumeIds = make(map[uint32]bool)
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
+			volumeIdStr = strings.TrimSpace(volumeIdStr)
 			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				c.volumeIds[uint32(volumeIdInt)] = true
 			} else {
@@ -125,7 +156,11 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 	c.env = commandEnv
-	c.writer = writer
+	c.writer = &lockedWriter{w: writer}
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
+		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
+	}
 
 	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -133,7 +168,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// create a temp folder
-	c.tempFolder, err = os.MkdirTemp(*tempPath, "sw_fsck")
+	c.tempFolder, err = os.MkdirTemp(util.ResolvePath(*tempPath), "sw_fsck")
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %w", err)
 	}
@@ -150,8 +185,42 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("failed to collect all volume locations: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("read filer buckets path: %w", err)
+	// Every volume the master knows about, before any filtering: a filer
+	// entry pointing at a volume that was filtered out of this run is
+	// excluded, not missing — it must never be reported or purged.
+	c.knownVolumeIds = make(map[uint32]bool)
+	for _, vidMap := range dataNodeVolumeIdToVInfo {
+		for vid := range vidMap {
+			c.knownVolumeIds[vid] = true
+		}
+	}
+
+	// If the operator specified -volumeId, reject unknown ids up front instead
+	// of silently filtering them out and reporting "no orphan data". A silent
+	// success on a missing volume looks identical to a clean volume and hides
+	// typos, already-deleted volumes, and stale scripts.
+	if len(c.volumeIds) > 0 {
+		known := make(map[uint32]bool)
+		for _, vidMap := range dataNodeVolumeIdToVInfo {
+			for vid := range vidMap {
+				known[vid] = true
+			}
+		}
+		var missing []uint32
+		for vid := range c.volumeIds {
+			if !known[vid] {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+			return fmt.Errorf("volume(s) not found on master: %v", missing)
+		}
+	}
+
+	c.scopedFilerPath = c.resolveScopedFilerPath(dataNodeVolumeIdToVInfo)
+	if *c.verbose && c.scopedFilerPath != "/" {
+		fmt.Fprintf(c.writer, "scoping filer walk to %s\n", c.scopedFilerPath)
 	}
 
 	var collectCutoffFromAtNs int64 = 0
@@ -168,13 +237,17 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
 		eg.Go(func() error {
 			for volumeId, vinfo := range volumeIdToVInfo {
+				if *c.skipEcVolumes && vinfo.isEcVolume {
+					delete(volumeIdToVInfo, volumeId)
+					continue
+				}
 				if len(c.volumeIds) > 0 {
 					if _, ok := c.volumeIds[volumeId]; !ok {
 						delete(volumeIdToVInfo, volumeId)
 						continue
 					}
 				}
-				if *c.collection != "" && vinfo.collection != *c.collection {
+				if !c.collectionMatcher.Matches(vinfo.collection) {
 					delete(volumeIdToVInfo, volumeId)
 					continue
 				}
@@ -184,7 +257,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 			}
 			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
+				fmt.Fprintf(c.writer, "dn %+v filtered %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
 			}
 			return nil
 		})
@@ -198,22 +271,48 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
 
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
-			return fmt.Errorf("collectFilerFileIdAndPaths: %w", err)
+		var queuePurge func(purgeItem)
+		var finishPurge func()
+		if *applyPurging || *purgeAbsent {
+			queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
 		}
-		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
-			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
-				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
+		err = func() error {
+			if err := c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, queuePurge, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
+				return fmt.Errorf("collectFilerFileIdAndPaths: %w", err)
 			}
+			for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
+				// for each volume, check filer file ids
+				if err := c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, queuePurge); err != nil {
+					return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
+				}
+			}
+			return nil
+		}()
+		if finishPurge != nil {
+			finishPurge()
 		}
+		if err != nil {
+			return err
+		}
+		c.purgeEmptyDirectories()
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, nil, 0, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %w", err)
 		}
+		// If any entry's manifest could not be resolved, our in-use fid set
+		// is missing the sub-chunks behind it. Purging orphans now would
+		// delete live data referenced only via the unresolved manifest, so
+		// disable -reallyDeleteFromVolume for this run and tell the operator
+		// to fix the broken entries first.
+		applyPurgingEffective := *applyPurging
+		if unresolved := c.unresolvedManifestEntries.Load(); unresolved > 0 && applyPurgingEffective {
+			fmt.Fprintf(c.writer, "WARNING: %d entry(ies) had unresolvable chunk manifests; refusing to apply -reallyDeleteFromVolume to avoid deleting live sub-chunks. Fix the entries listed above (e.g. delete or repair them) and re-run.\n",
+				unresolved)
+			applyPurgingEffective = false
+		}
 		// volume file ids subtract filer file ids
-		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, *applyPurging, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
+		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, applyPurgingEffective, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
 			return fmt.Errorf("findExtraChunksInVolumeServers: %w", err)
 		}
 	}
@@ -221,7 +320,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, queuePurge func(purgeItem), collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
 	}
@@ -245,14 +344,33 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
+	return doTraverseAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil)
 			if resolveErr != nil {
-				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
+				// Cancellation/deadline isn't manifest corruption; surface it
+				// so the BFS bails out cleanly without polluting the
+				// unresolved-manifest counter (which would otherwise block
+				// purges and mislead the operator about the failure cause).
+				if errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded) {
+					return resolveErr
+				}
+				// A single broken manifest used to abort the whole traversal,
+				// leaving the operator with no way to identify orphans without
+				// first fixing the broken file. Instead, record only the
+				// top-level chunk fids (data chunks plus the manifest needles
+				// themselves — sub-chunks behind the unreadable manifest are
+				// unknown), warn, and keep going. The unresolved counter blocks
+				// any purge step downstream so we never delete a sub-chunk we
+				// couldn't account for.
+				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; purging will be disabled\n",
+					util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
+				c.unresolvedManifestEntries.Add(1)
+				dataChunks = entry.Entry.GetChunks()
+				manifestChunks = nil
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
@@ -264,10 +382,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				}
 				select {
 				case outputChan <- &Item{
-					vid:     chunk.Fid.VolumeId,
-					fileKey: chunk.Fid.FileKey,
-					cookie:  chunk.Fid.Cookie,
-					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+					vid:        chunk.Fid.VolumeId,
+					fileKey:    chunk.Fid.FileKey,
+					cookie:     chunk.Fid.Cookie,
+					path:       util.NewFullPath(entry.Dir, entry.Entry.Name),
+					hardLinkId: entry.Entry.GetHardLinkId(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -289,6 +408,13 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					if _, err := f.Write([]byte(i.path)); err != nil {
 						return err
 					}
+					util.Uint32toBytes(buffer[:4], uint32(len(i.hardLinkId)))
+					if _, err := f.Write(buffer[:4]); err != nil {
+						return err
+					}
+					if _, err := f.Write(i.hardLinkId); err != nil {
+						return err
+					}
 				} else if *c.findMissingChunksInFiler {
 					// check if the volume matches the filter
 					if len(c.volumeIds) > 0 {
@@ -296,10 +422,15 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 							continue
 						}
 					}
+					// A volume the master knows but this run filtered out is not a
+					// missing volume: its files are healthy and stay untouched.
+					if c.knownVolumeIds[i.vid] {
+						continue
+					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
 						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
-						c.httpDelete(i.path)
+						queuePurge(purgeItem{path: i.path, hardLinkId: i.hardLinkId})
 					}
 				}
 			}
@@ -307,10 +438,10 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		})
 }
 
-func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
+func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, queuePurge func(purgeItem)) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, applyPurging)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, queuePurge)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -321,30 +452,39 @@ func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInf
 func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, applyPurging bool, modifyFrom, cutoffFrom uint64) error {
 
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
-	volumeIdOrphanFileIds := make(map[uint32]map[string]bool)
-	isSeveralReplicas := make(map[uint32]bool)
+	// map[volumeId]map[fid]replicaCount — counts how many replicas reported
+	// this fid as orphan. A fid is safe to purge without -forcePurging only
+	// when replicaCount == volumeReplicaCounts[volumeId] (i.e. every replica
+	// agrees it's orphan). The previous bool-based tracking treated "seen on
+	// any 2 replicas" as "seen on all replicas", which was wrong for
+	// 3+-replica volumes.
+	volumeIdOrphanFileIds := make(map[uint32]map[string]int)
+	volumeReplicaCounts := make(map[uint32]int)
 	isEcVolumeReplicas := make(map[uint32]bool)
-	isReadOnlyReplicas := make(map[uint32]bool)
-	serverReplicas := make(map[uint32][]pb.ServerAddress)
+	// Track which specific replicas were read-only so we only flip those
+	// back on exit. The old `isReadOnlyReplicas[volumeId] = bool` leaked
+	// read-only state across replicas: if one replica was RO and another RW,
+	// the deferred cleanup would mark the originally-RW replica RO too.
+	readOnlyServerReplicas := make(map[uint32][]pb.ServerAddress)
+	// Phase 1: collect orphan fids from every replica of every volume.
+	// The purge step runs in Phase 2, AFTER every replica has contributed.
+	// Running purge inside this loop (as the original code did) meant the
+	// first replica's orphans were deleted before later replicas could
+	// participate in the intersection — so the "only purge fids seen on
+	// all replicas" safety net only worked by accident, and purge also
+	// fired multiple times per volume (once per data-node iteration).
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
 			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, &vinfo, modifyFrom, cutoffFrom)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
-			isSeveralReplicas[volumeId] = false
 			if _, found := volumeIdOrphanFileIds[volumeId]; !found {
-				volumeIdOrphanFileIds[volumeId] = make(map[string]bool)
-			} else {
-				isSeveralReplicas[volumeId] = true
+				volumeIdOrphanFileIds[volumeId] = make(map[string]int)
 			}
+			volumeReplicaCounts[volumeId]++
 			for _, fid := range orphanFileIds {
-				if isSeveralReplicas[volumeId] {
-					if _, found := volumeIdOrphanFileIds[volumeId][fid]; !found {
-						continue
-					}
-				}
-				volumeIdOrphanFileIds[volumeId][fid] = isSeveralReplicas[volumeId]
+				volumeIdOrphanFileIds[volumeId][fid]++
 			}
 
 			totalInUseCount += inUseCount
@@ -357,55 +497,40 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				}
 			}
 			isEcVolumeReplicas[volumeId] = vinfo.isEcVolume
-			if isReadOnly, found := isReadOnlyReplicas[volumeId]; !(found && isReadOnly) {
-				isReadOnlyReplicas[volumeId] = vinfo.isReadOnly
+			if vinfo.isReadOnly {
+				readOnlyServerReplicas[volumeId] = append(readOnlyServerReplicas[volumeId], vinfo.server)
 			}
-			serverReplicas[volumeId] = append(serverReplicas[volumeId], vinfo.server)
 		}
+	}
 
+	// Phase 2: purge. At most one call to purgeFileIdsForOneVolume per
+	// volume — that helper already fans out to all replica locations via
+	// MasterClient.GetLocations, so iterating per replica here (as the old
+	// code did) would issue N*N delete RPCs for N replicas.
+	if applyPurging {
+		var skippedVolumeIds []uint32
 		for volumeId, orphanReplicaFileIds := range volumeIdOrphanFileIds {
-			if !(applyPurging && len(orphanReplicaFileIds) > 0) {
+			if len(orphanReplicaFileIds) == 0 {
 				continue
 			}
-			orphanFileIds := []string{}
-			for fid, foundInAllReplicas := range orphanReplicaFileIds {
-				if !isSeveralReplicas[volumeId] || *c.forcePurging || (isSeveralReplicas[volumeId] && foundInAllReplicas) {
-					orphanFileIds = append(orphanFileIds, fid)
-				}
-			}
-			if !(len(orphanFileIds) > 0) {
-				continue
-			}
-			if *c.verbose {
-				fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
-			}
-
 			if isEcVolumeReplicas[volumeId] {
 				fmt.Fprintf(c.writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
-			for _, server := range serverReplicas[volumeId] {
-				needleVID := needle.VolumeId(volumeId)
-
-				if isReadOnlyReplicas[volumeId] {
-					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false)
-					if err != nil {
-						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
-					}
-					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
-					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
-
-					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
-				}
-
-				if *c.verbose {
-					fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
-				}
-
-				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
-					return fmt.Errorf("purging volume %d: %v", volumeId, err)
-				}
+			// Call out to a closure per volume so the deferred "mark
+			// readonly again" fires between volumes instead of piling up
+			// until findExtraChunksInVolumeServers returns. Per-volume
+			// failures (e.g. a replica stuck read-only) don't halt the
+			// rest of the run; the volume is remembered and its deletes
+			// are skipped.
+			if err := c.purgeOneVolume(volumeId, orphanReplicaFileIds, volumeReplicaCounts[volumeId], readOnlyServerReplicas[volumeId]); err != nil {
+				fmt.Fprintf(c.writer, "skip purging volume %d: %v\n", volumeId, err)
+				skippedVolumeIds = append(skippedVolumeIds, volumeId)
 			}
+		}
+		if len(skippedVolumeIds) > 0 {
+			sort.Slice(skippedVolumeIds, func(i, j int) bool { return skippedVolumeIds[i] < skippedVolumeIds[j] })
+			fmt.Fprintf(c.writer, "skipped purge on %d volume(s): %v\n", len(skippedVolumeIds), skippedVolumeIds)
 		}
 	}
 
@@ -426,6 +551,48 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 		fmt.Fprintf(c.writer, "no orphan data\n")
 	}
 
+	return nil
+}
+
+// purgeOneVolume picks the orphan fids to delete for a single volume and
+// fires the delete RPC. It's split out of findExtraChunksInVolumeServers so
+// the `defer markVolumeWritable(context.Background(), ..., false, false)` at the bottom fires
+// between volumes — putting that defer inside the caller's for-loop would
+// leave every processed volume writable until the whole fsck run finished.
+func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds map[string]int, replicaCount int, readOnlyReplicas []pb.ServerAddress) error {
+	orphanFileIds := make([]string, 0, len(orphanReplicaFileIds))
+	for fid, foundInReplicaCount := range orphanReplicaFileIds {
+		// Default safety net: only purge fids every replica reported as
+		// orphan. -forcePurging bypasses this for operators who've already
+		// decided they're OK with the single-replica evidence.
+		if foundInReplicaCount == replicaCount || *c.forcePurging {
+			orphanFileIds = append(orphanFileIds, fid)
+		}
+	}
+	if len(orphanFileIds) == 0 {
+		return nil
+	}
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
+	}
+
+	needleVID := needle.VolumeId(volumeId)
+	for _, server := range readOnlyReplicas {
+		if err := markVolumeWritable(context.Background(), c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
+			// Replicas flipped writable earlier roll back via the defer.
+			return fmt.Errorf("mark %v writable: %v", server, err)
+		}
+		fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
+		defer markVolumeWritable(context.Background(), c.env.option.GrpcDialOption, needleVID, server, false, false)
+	}
+
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
+	}
+
+	if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
+		return fmt.Errorf("purging volume %d: %v", volumeId, err)
+	}
 	return nil
 }
 
@@ -478,13 +645,27 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 }
 
 type Item struct {
-	vid     uint32
-	fileKey uint64
-	cookie  uint32
-	path    util.FullPath
+	vid        uint32
+	fileKey    uint64
+	cookie     uint32
+	path       util.FullPath
+	hardLinkId []byte
 }
 
-func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
+// lockedWriter serializes concurrent writers — the traversal, the consumer,
+// and the purge workers all log through c.writer at the same time.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
+}
+
+func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte)) error {
 	fp, err := os.Open(getFilerFileIdFile(c.tempFolder, volumeId))
 	if err != nil {
 		return err
@@ -519,13 +700,23 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
 		item.path = util.FullPath(pathBytes)
+		item.hardLinkId = nil
+		if _, err := io.ReadFull(br, buffer[:4]); err != nil {
+			return fmt.Errorf("read fid hard link id size for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+		}
+		if hardLinkIdSize := util.BytesToUint32(buffer[:4]); hardLinkIdSize > 0 {
+			item.hardLinkId = make([]byte, int(hardLinkIdSize))
+			if _, err := io.ReadFull(br, item.hardLinkId); err != nil {
+				return fmt.Errorf("read fid hard link id for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
+			}
+		}
 		needleId := types.NeedleId(item.fileKey)
-		fn(needleId, item.path)
+		fn(needleId, item.path, item.hardLinkId)
 	}
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, queuePurge func(purgeItem)) (err error) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
 	}
@@ -536,17 +727,58 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte) {
 		if _, found := db.Get(needleId); !found {
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
-			if applyPurging {
-				c.httpDelete(itemPath)
+			if queuePurge != nil {
+				queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
 			}
 		}
 	}); err != nil {
 		return
 	}
 	return nil
+}
+
+type purgeItem struct {
+	path       util.FullPath
+	hardLinkId []byte
+}
+
+// startPurgeWorkers fans deletes across at least one worker and returns a
+// queue function plus a finish function that closes the channels and waits
+// for in-flight deletes. Paths that share a hard link id always land on the
+// same worker, so their shared hard-link counter updates stay serialized —
+// concurrent deletes of the same id could both read count N and write N-1,
+// leaving the shared record behind after every path is gone.
+func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(purgeItem), finish func()) {
+	if workers < 1 {
+		workers = 1
+	}
+	chans := make([]chan purgeItem, workers)
+	var wg sync.WaitGroup
+	for w := range chans {
+		chans[w] = make(chan purgeItem, 128)
+		wg.Add(1)
+		go func(ch <-chan purgeItem) {
+			defer wg.Done()
+			for it := range ch {
+				deleteFn(it.path)
+			}
+		}(chans[w])
+	}
+	return func(it purgeItem) {
+			key := []byte(it.path)
+			if len(it.hardLinkId) > 0 {
+				key = it.hardLinkId
+			}
+			chans[int(uint32(util.HashToInt32(key))%uint32(workers))] <- it
+		}, func() {
+			for _, ch := range chans {
+				close(ch)
+			}
+			wg.Wait()
+		}
 }
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
@@ -558,13 +790,13 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 
 	req.URL = &url.URL{
 		Scheme: "http",
-		Host:   c.env.option.FilerAddress.ToHttpAddress(),
+		Host:   c.env.FilerAddress().ToHttpAddress(),
 		Path:   string(path),
 	}
 
 	if c.filerSigningKey != "" {
 		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
-		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+		req.Header.Set("Authorization", security.BearerPrefix+string(encodedJwt))
 	}
 
 	if *c.verbose {
@@ -587,6 +819,89 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
 		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
 	}
+
+	if resp.StatusCode < http.StatusBadRequest {
+		dir, _ := path.DirAndName()
+		c.purgedDirsLock.Lock()
+		c.purgedDirs[util.FullPath(dir)] = struct{}{}
+		c.purgedDirsLock.Unlock()
+	}
+}
+
+// purgeEmptyDirectories removes the directories emptied by the purged entries, walking up while each parent is empty too.
+func (c *commandVolumeFsck) purgeEmptyDirectories() {
+	candidates := make(map[util.FullPath]struct{})
+	c.purgedDirsLock.Lock()
+	for dir := range c.purgedDirs {
+		for d := dir; c.canPurgeDirectory(d); {
+			candidates[d] = struct{}{}
+			parent, _ := d.DirAndName()
+			d = util.FullPath(parent)
+		}
+	}
+	c.purgedDirsLock.Unlock()
+
+	dirs := make([]util.FullPath, 0, len(candidates))
+	for dir := range candidates {
+		dirs = append(dirs, dir)
+	}
+	// deepest first, so a directory is only tried once its children are gone
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+
+	for _, dir := range dirs {
+		entry, _, _, lookupErr := filer_pb.GetEntry(context.Background(), c.env, dir)
+		if lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound) {
+			fmt.Fprintf(c.writer, "lookup directory %s: %v\n", dir, lookupErr)
+			continue
+		}
+		// a directory key object is an S3 object of its own
+		if entry == nil || entry.IsDirectoryKeyObject() {
+			continue
+		}
+		// a zero mtime turns the delete's condition off, leaving nothing to hold it to
+		mtime := entry.Attributes.GetMtime()
+		if mtime <= 0 || mtime >= time.Now().Add(-directoryQuietPeriod).Unix() {
+			continue
+		}
+		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
+			if !errors.Is(err, filer.ErrNonEmptyFolder) {
+				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
+			}
+			continue
+		}
+		fmt.Fprintf(c.writer, "deleted empty directory %s\n", dir)
+	}
+}
+
+// deleteEmptyDirectory deletes dir unless it changed since it was looked up at mtime,
+// so a directory promoted to an S3 object meanwhile survives. The delete is not
+// recursive, leaving the filer to reject a directory that is not empty.
+func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64) error {
+	parent, name := dir.DirAndName()
+	return c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:          parent,
+			Name:               name,
+			IfNotModifiedAfter: mtime,
+		})
+		if err != nil {
+			return err
+		}
+		if resp.Error != "" {
+			return filer.DeleteEntryError(resp.Error)
+		}
+		return nil
+	})
+}
+
+func (c *commandVolumeFsck) canPurgeDirectory(dir util.FullPath) bool {
+	root := c.getCollectFilerFilePath()
+	if string(dir) == root || !strings.HasPrefix(string(dir), strings.TrimSuffix(root, "/")+"/") {
+		return false
+	}
+	// deleting a bucket drops its whole collection
+	parent, _ := dir.DirAndName()
+	return string(dir) != c.bucketsPath && parent != c.bucketsPath
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, vinfo *VInfo, modifyFrom, cutoffFrom uint64) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
@@ -599,9 +914,9 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath, _ []byte) {
 		inUseCount++
-		if *c.verifyNeedle {
+		if *c.verifyNeedle && !vinfo.isEcVolume {
 			if needleValue, ok := volumeFileIdDb.Get(filerNeedleId); ok && !needleValue.Size.IsDeleted() {
 				if _, err := readNeedleStatus(c.env.option.GrpcDialOption, vinfo.server, volumeId, *needleValue); err != nil {
 					// files may be deleted during copying filesIds
@@ -629,7 +944,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		if n.Size.IsDeleted() {
 			return nil
 		}
-		if cutoffFrom > 0 || modifyFrom > 0 {
+		if !vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
 			return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption,
 				func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 					resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -649,6 +964,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 					return nil
 				})
 		} else {
+			if vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
+				if *c.verbose {
+					fmt.Fprintf(c.writer, "skipping time-based filtering for EC volume %d (cutoffFrom=%d, modifyFrom=%d)\n", volumeId, cutoffFrom, modifyFrom)
+				}
+			}
 			orphanFileIds = append(orphanFileIds, n.Key.FileId(volumeId))
 			orphanFileCount++
 			orphanDataSize += uint64(n.Size)
@@ -736,7 +1056,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			deleteResults := operation.DeleteFileIdsAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false)
+			deleteResults := operation.DeleteFileIdsAtOneVolumeServer(context.Background(), server, c.env.option.GrpcDialOption, fidList, false)
 			if deleteResults != nil {
 				resultChan <- deleteResults
 			}
@@ -758,10 +1078,69 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 }
 
 func (c *commandVolumeFsck) getCollectFilerFilePath() string {
+	return c.scopedFilerPath
+}
+
+func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
 	if *c.collection != "" {
-		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
+		// fs.configure can bind a collection to any path prefix, so files
+		// referencing the filtered volumes may live anywhere. A bucket-dir
+		// walk could miss them and report their live chunks as orphans;
+		// only a full walk is safe for a collection filter.
+		return "/"
 	}
-	return "/"
+	if len(c.volumeIds) == 0 {
+		return "/"
+	}
+	collections := make(map[string]struct{})
+	for _, vidMap := range dataNodeVolumeIdToVInfo {
+		for vid, vinfo := range vidMap {
+			if _, ok := c.volumeIds[vid]; !ok {
+				continue
+			}
+			// empty collection: volume can be referenced from anywhere
+			if vinfo.collection == "" {
+				return "/"
+			}
+			collections[vinfo.collection] = struct{}{}
+			if len(collections) > 1 {
+				return "/"
+			}
+		}
+	}
+	if len(collections) != 1 {
+		return "/"
+	}
+	var collection string
+	for col := range collections {
+		collection = col
+	}
+	exists, err := c.bucketDirExists(collection)
+	if err != nil || !exists {
+		return "/"
+	}
+	return fmt.Sprintf("%s/%s", c.bucketsPath, collection)
+}
+
+func (c *commandVolumeFsck) bucketDirExists(name string) (bool, error) {
+	var found bool
+	err := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: c.bucketsPath,
+			Name:      name,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+				return nil
+			}
+			return err
+		}
+		if resp.Entry != nil && resp.Entry.IsDirectory {
+			found = true
+		}
+		return nil
+	})
+	return found, err
 }
 
 func getVolumeFileIdFile(tempFolder string, dataNodeid string, vid uint32) string {

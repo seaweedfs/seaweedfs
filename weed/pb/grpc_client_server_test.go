@@ -1,0 +1,208 @@
+package pb
+
+import (
+	"context"
+	"fmt"
+	"runtime"
+	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// TestShouldInvalidateConnection_MarshalErrorIsPerRequest ensures that a
+// client-side proto marshal failure does NOT cause the shared cached
+// ClientConn to be torn down. Tearing it down would cancel every other
+// in-flight RPC (seaweedfs#9139: one file with invalid-UTF-8 bytes triggered
+// an avalanche of "connection is closing" errors on unrelated operations).
+func TestShouldInvalidateConnection_MarshalErrorIsPerRequest(t *testing.T) {
+	// Reproduces the exact error gRPC returns when a string field in the
+	// outgoing request contains invalid UTF-8 bytes.
+	marshalErr := status.Error(codes.Internal,
+		"grpc: error while marshaling: string field contains invalid UTF-8")
+	if shouldInvalidateConnection(context.Background(), marshalErr) {
+		t.Fatalf("client-side marshal error must not invalidate the shared connection")
+	}
+
+	// Same error wrapped with fmt.Errorf (common when callers add context).
+	wrapped := fmt.Errorf("upload data: %w", marshalErr)
+	if shouldInvalidateConnection(context.Background(), wrapped) {
+		t.Fatalf("wrapped marshal error must not invalidate the shared connection")
+	}
+}
+
+// TestShouldInvalidateConnection_CallerContextExpiryIsPerRequest ensures that a
+// Canceled/DeadlineExceeded caused by the caller's own context expiring does NOT
+// tear down the shared cached ClientConn. Doing so would cancel every other
+// in-flight RPC on it with "the client connection is closing" — the cascade
+// that turned one slow chunk assign into a flood of failures during a
+// high-concurrency upload (seaweedfs#9765).
+func TestShouldInvalidateConnection_CallerContextExpiryIsPerRequest(t *testing.T) {
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
+		err := status.Error(code, "context expired")
+		if shouldInvalidateConnection(expired, err) {
+			t.Fatalf("%v with an expired caller context must not invalidate the shared connection", code)
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_StaleChannelStillInvalidates ensures the
+// carve-out above is gated on the RPC's context: a Canceled/DeadlineExceeded
+// while that context is still live is the genuine stale-channel signal (e.g. a
+// peer restart behind a k8s Service VIP) and must still invalidate so the next
+// attempt dials fresh.
+func TestShouldInvalidateConnection_StaleChannelStillInvalidates(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
+		err := status.Error(code, "stale channel")
+		if !shouldInvalidateConnection(live, err) {
+			t.Fatalf("%v with a live attempt context must still invalidate the connection", code)
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_NonCancellableContextIsNoEvidence covers
+// seaweedfs#10947. Background/TODO never expires, so Err() stays nil forever and
+// the guard above answered "stale channel" for every caller that has no deadline
+// to honor — which is almost all of them, the S3 gateway included. One client
+// abandoning a request then closed the shared filer channel and every concurrent
+// multipart part died with "the client connection is closing".
+func TestShouldInvalidateConnection_NonCancellableContextIsNoEvidence(t *testing.T) {
+	for _, ctx := range []context.Context{context.Background(), context.TODO(), nil} {
+		for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
+			err := status.Error(code, "context canceled")
+			if shouldInvalidateConnection(ctx, err) {
+				t.Fatalf("%v must not invalidate the shared connection on a non-cancellable context", code)
+			}
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_ClientConnClosingIsNotStale ensures a caller
+// whose RPC was rejected because this process is already closing the shared
+// ClientConn does not close it again. gRPC raises ErrClientConnClosing locally,
+// so it is only ever the footprint of another goroutine's teardown - reading it
+// as a stale-channel signal lets one teardown re-arm itself across the herd of
+// callers it just cancelled.
+func TestShouldInvalidateConnection_ClientConnClosingIsNotStale(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, err := range []error{grpc.ErrClientConnClosing, fmt.Errorf("assign volume: %w", grpc.ErrClientConnClosing)} {
+		if shouldInvalidateConnection(live, err) {
+			t.Fatalf("%v must not invalidate the shared connection", err)
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_ResourceExhaustedIsPerRequest ensures the
+// master's growth-in-progress assign shed (codes.ResourceExhausted) does NOT
+// tear down the shared cached ClientConn. The shed fires per-request across a
+// herd of concurrent assigns; invalidating on it would cancel every other
+// in-flight assign with "the client connection is closing" — the cascade in
+// seaweedfs#10118. It is retried by the caller without touching the channel.
+func TestShouldInvalidateConnection_ResourceExhaustedIsPerRequest(t *testing.T) {
+	shed := status.Error(codes.ResourceExhausted, "no writable volumes for x, volume growth in progress")
+	if shouldInvalidateConnection(context.Background(), shed) {
+		t.Fatalf("ResourceExhausted shed must not invalidate the shared connection")
+	}
+	if shouldInvalidateConnection(nil, shed) {
+		t.Fatalf("ResourceExhausted shed must not invalidate the shared connection (nil ctx)")
+	}
+}
+
+// TestShouldInvalidateConnection_GenuineInternalStillInvalidates ensures the
+// marshal-error carve-out does not swallow real server-side Internal errors,
+// which previously caused — and should continue to cause — connection
+// invalidation.
+func TestShouldInvalidateConnection_GenuineInternalStillInvalidates(t *testing.T) {
+	serverInternal := status.Error(codes.Internal, "stream terminated by RST_STREAM with code 2")
+	if !shouldInvalidateConnection(context.Background(), serverInternal) {
+		t.Fatalf("genuine server-side Internal must still invalidate the connection")
+	}
+}
+
+// TestShouldInvalidateConnection_TransportErrorsStillInvalidate is a
+// regression guard for the string-matching fallback path (e.g. a raw
+// "connection refused" from net.Dial that never acquired a gRPC status).
+func TestShouldInvalidateConnection_TransportErrorsStillInvalidate(t *testing.T) {
+	for _, msg := range []string{
+		"rpc error: code = Unavailable desc = transport is closing",
+		"dial tcp: connection refused",
+		"read: connection reset by peer",
+	} {
+		if !shouldInvalidateConnection(context.Background(), fmt.Errorf("%s", msg)) {
+			t.Fatalf("transport error %q must still invalidate", msg)
+		}
+	}
+}
+
+// TestIsClientSideMarshalError_RequiresGrpcStatus ensures the carve-out is
+// type-based (via errors.As on the grpc status interface), not a naive
+// string match against arbitrary errors that happen to mention marshaling.
+// A plain errors.New(...) with the same prefix must NOT be treated as a
+// per-request marshal error — we have no evidence the connection is healthy.
+func TestIsClientSideMarshalError_RequiresGrpcStatus(t *testing.T) {
+	impostor := fmt.Errorf("grpc: error while marshaling: synthetic non-status error")
+	if isClientSideMarshalError(impostor) {
+		t.Fatalf("plain error must not match the marshal-error carve-out")
+	}
+}
+
+// TestResolveLocalGrpcSocket_RemotePortCollision is a regression test for
+// issue #9254. A `weed server` process registers a Unix socket for its
+// in-process volume server on host A. A standalone `weed volume` on host B
+// happens to use the same gRPC port. Dials from the master to host B must
+// continue out over TCP — they must NOT be hijacked into host A's local
+// socket on the basis of port match alone.
+func TestResolveLocalGrpcSocket_RemotePortCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+	}
+	// Snapshot and restore global state so the test does not leak into others.
+	localGrpcSocketsLock.Lock()
+	prevSockets := localGrpcSockets
+	prevHosts := localGrpcHosts
+	localGrpcSockets = make(map[int]string)
+	localGrpcHosts = make(map[int]map[string]struct{})
+	localGrpcSocketsLock.Unlock()
+	t.Cleanup(func() {
+		localGrpcSocketsLock.Lock()
+		localGrpcSockets = prevSockets
+		localGrpcHosts = prevHosts
+		localGrpcSocketsLock.Unlock()
+	})
+
+	const localHost = "10.0.0.2"
+	const remoteHost = "10.0.0.3"
+	const collidingPort = 17334
+	const socketPath = "/tmp/seaweedfs-volume-grpc-17334.sock"
+
+	RegisterLocalGrpcSocket(localHost, collidingPort, socketPath)
+
+	cases := []struct {
+		name    string
+		address string
+		want    string
+	}{
+		{"local advertised host routes to socket", localHost + ":17334", socketPath},
+		{"loopback v4 routes to socket", "127.0.0.1:17334", socketPath},
+		{"localhost routes to socket", "localhost:17334", socketPath},
+		{"loopback v6 routes to socket", "[::1]:17334", socketPath},
+		{"empty host (bare port) routes to socket", ":17334", socketPath},
+		{"remote host with same port stays on TCP", remoteHost + ":17334", ""},
+		{"unrelated host with same port stays on TCP", "192.168.1.5:17334", ""},
+		{"unregistered port stays on TCP", localHost + ":17335", ""},
+		{"malformed address stays on TCP", "not-a-host-port", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveLocalGrpcSocket(tc.address); got != tc.want {
+				t.Fatalf("resolveLocalGrpcSocket(%q) = %q, want %q", tc.address, got, tc.want)
+			}
+		})
+	}
+}

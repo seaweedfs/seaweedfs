@@ -4,8 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // TestUploadReaderInChunksReturnsPartialResultsOnError verifies that when
@@ -17,13 +26,11 @@ func TestUploadReaderInChunksReturnsPartialResultsOnError(t *testing.T) {
 	testData := bytes.Repeat([]byte("test data for chunk upload failure testing"), 1000) // ~40KB
 	reader := bytes.NewReader(testData)
 
-	uploadAttempts := 0
+	var uploadAttempts int32
 
 	// Create a mock assign function that succeeds for first chunk, then fails
-	assignFunc := func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error) {
-		uploadAttempts++
-
-		if uploadAttempts == 1 {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		if atomic.AddInt32(&uploadAttempts, 1) == 1 {
 			// First chunk succeeds
 			return nil, &AssignResult{
 				Fid:       "test-fid-1,1234",
@@ -97,7 +104,7 @@ func TestUploadReaderInChunksSuccessPath(t *testing.T) {
 	reader := bytes.NewReader(testData)
 
 	// Mock assign function that always succeeds
-	assignFunc := func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error) {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
 		return nil, &AssignResult{
 			Fid:       "test-fid,1234",
 			Url:       "http://test-volume:8080",
@@ -187,7 +194,7 @@ func TestUploadReaderInChunksContextCancellation(t *testing.T) {
 	// Cancel immediately to trigger cancellation handling
 	cancel()
 
-	assignFunc := func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error) {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
 		return nil, &AssignResult{
 			Fid:       "test-fid,1234",
 			Url:       "http://test-volume:8080",
@@ -226,6 +233,61 @@ func TestUploadReaderInChunksContextCancellation(t *testing.T) {
 		t.Error("Expected non-nil result even on context cancellation")
 	} else {
 		t.Logf("✓ Got partial result on cancellation: chunks=%d", len(result.FileChunks))
+	}
+}
+
+// TestUploadChunkToHoldersRollsBackOnPartialFailure verifies that when a fan-out
+// chunk write fails on one holder, the copies that already landed on the other
+// holders are deleted (type=replicate, local-only) so nothing is left orphaned.
+func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
+	const fid = "3,01abcdef"
+	var goodDeletes, badDeletes int32
+
+	// Sequence the failure strictly after the good upload so the test does not
+	// depend on timing: the failing holder returns its error only once the good
+	// holder has stored the chunk, so the good copy is always what gets rolled back.
+	goodUploaded := make(chan struct{})
+	var once sync.Once
+
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			if strings.Contains(r.URL.Path, "01abcdef") && r.URL.Query().Get("type") == "replicate" {
+				atomic.AddInt32(&goodDeletes, 1)
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		fmt.Fprintf(w, `{"name":"f","size":11}`)
+		once.Do(func() { close(goodUploaded) })
+	}))
+	defer good.Close()
+
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&badDeletes, 1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		select {
+		case <-goodUploaded:
+		case <-time.After(5 * time.Second):
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "boom")
+	}))
+	defer bad.Close()
+
+	hosts := []string{strings.TrimPrefix(good.URL, "http://"), strings.TrimPrefix(bad.URL, "http://")}
+	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", false, &ChunkedUploadOption{})
+
+	if err == nil {
+		t.Fatal("expected error from a partial fan-out")
+	}
+	if got := atomic.LoadInt32(&goodDeletes); got != 1 {
+		t.Errorf("expected the succeeded holder to receive 1 cleanup DELETE, got %d", got)
+	}
+	if got := atomic.LoadInt32(&badDeletes); got != 0 {
+		t.Errorf("expected no cleanup DELETE to the failed holder, got %d", got)
 	}
 }
 
@@ -268,7 +330,7 @@ func TestUploadReaderInChunksReaderFailure(t *testing.T) {
 		failAfter: 10000, // Fail after 10KB
 	}
 
-	assignFunc := func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error) {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
 		return nil, &AssignResult{
 			Fid:       "test-fid,1234",
 			Url:       "http://test-volume:8080",
@@ -309,4 +371,396 @@ func TestUploadReaderInChunksReaderFailure(t *testing.T) {
 
 	t.Logf("✓ Got partial result on read failure: chunks=%d, totalSize=%d",
 		len(result.FileChunks), result.TotalSize)
+}
+
+// truncatedReader yields some bytes then reports io.ErrUnexpectedEOF, mimicking a
+// request body cut short by a client abort or reverse-proxy timeout.
+type truncatedReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *truncatedReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.ErrUnexpectedEOF
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func TestUploadReaderInChunksTagsTruncatedBody(t *testing.T) {
+	reader := &truncatedReader{data: bytes.Repeat([]byte("x"), 10000)}
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{Fid: "test-fid,1234", Url: "http://test-volume:8080", Count: 1}, nil
+	}
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return &UploadResult{Size: uint32(len(data))}, nil
+	}
+
+	_, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+		UploadFunc: uploadFunc,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a truncated body")
+	}
+	if !errors.Is(err, ErrTruncatedBody) {
+		t.Errorf("expected ErrTruncatedBody, got %v", err)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("expected io.ErrUnexpectedEOF to remain in the chain, got %v", err)
+	}
+}
+
+// uploadSingleChunk runs a single-chunk upload against uploadFunc, handing out a
+// fresh volume on every assignment, and reports how many assignments it took.
+func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error)) (*ChunkedUploadResult, int, error) {
+	t.Helper()
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		return nil, &AssignResult{
+			Fid:   fmt.Sprintf("%d,0a0b0c0d", assigns),
+			Url:   fmt.Sprintf("volume-%d:8080", assigns),
+			Auth:  security.EncodedJwt(fmt.Sprintf("jwt-%d", assigns)),
+			Count: 1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+		UploadFunc: uploadFunc,
+	})
+	return result, assigns, err
+}
+
+// A volume at capacity answers every attempt against the same fid with a 500,
+// so the chunk has to move to a freshly assigned volume rather than take the
+// whole object down with it.
+func TestUploadReaderInChunksReassignsOnFullVolume(t *testing.T) {
+	var jwts []security.EncodedJwt
+	result, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		jwts = append(jwts, option.Jwt)
+		if strings.Contains(option.UploadUrl, "volume-1:") {
+			return nil, &uploadStatusError{
+				StatusCode: http.StatusInternalServerError,
+				err:        errors.New("failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"),
+			}
+		}
+		return &UploadResult{Size: uint32(len(data))}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	// A secured cluster mints a JWT per assignment; presenting the full volume's
+	// token to the new one would 401.
+	if len(jwts) != 2 || jwts[0] != "jwt-1" || jwts[1] != "jwt-2" {
+		t.Errorf("expected each attempt to carry its own assignment JWT, got %v", jwts)
+	}
+	if len(result.FileChunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(result.FileChunks))
+	}
+	if got := result.FileChunks[0].FileId; got != "2,0a0b0c0d" {
+		t.Errorf("expected the chunk to record the reassigned fid, got %s", got)
+	}
+}
+
+func TestUploadReaderInChunksDoesNotReassignOnClientError(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusBadRequest, err: errors.New("mismatching cookie")}
+	})
+
+	if err == nil {
+		t.Fatal("expected a 4xx to fail the upload")
+	}
+	// Another volume would reject the same request the same way.
+	if assigns != 1 {
+		t.Fatalf("expected 1 assignment, got %d", assigns)
+	}
+}
+
+func TestUploadReaderInChunksBoundsReassignment(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("volume full")}
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	// Spelled out rather than compared to chunkAssignAttempts: the budget is
+	// what bounds this against retriedUploadData's own attempts, so raising it
+	// should fail here, not pass silently.
+	if assigns != 3 {
+		t.Fatalf("expected 3 assignments, got %d", assigns)
+	}
+}
+
+// The fan-out path is what a real multi-replica cluster takes, and it behaves
+// differently from the relay path under failure: it cancels its siblings and
+// rolls back the copies that landed. Drive the reassignment loop through it.
+func TestUploadReaderInChunksReassignsAcrossHolders(t *testing.T) {
+	var primaryDeletes, fullDeletes int32
+
+	healthy := func(deletes *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				atomic.AddInt32(deletes, 1)
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"name":"chunk","size":4096}`)
+		}))
+	}
+
+	full := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&fullDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer full.Close()
+
+	var secondaryDeletes int32
+	primary, secondary := healthy(&primaryDeletes), healthy(&secondaryDeletes)
+	defer primary.Close()
+	defer secondary.Close()
+
+	host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		if assigns == 1 {
+			// Two holders, so uploadChunk takes the fan-out path; one is full.
+			return nil, &AssignResult{
+				Fid:      "1,0a0b0c0d",
+				Url:      host(primary),
+				Replicas: []Location{{Url: host(full)}},
+				Count:    1,
+			}, nil
+		}
+		return nil, &AssignResult{
+			Fid:      "2,0a0b0c0d",
+			Url:      host(primary),
+			Replicas: []Location{{Url: host(secondary)}},
+			Count:    1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	if len(result.FileChunks) != 1 || result.FileChunks[0].FileId != "2,0a0b0c0d" {
+		t.Fatalf("expected the chunk to record the reassigned fid, got %+v", result.FileChunks)
+	}
+	// The copy that landed on the healthy holder before its peer reported full
+	// is referenced by nothing, so it has to be rolled back.
+	if atomic.LoadInt32(&primaryDeletes) == 0 {
+		t.Error("expected the copy that landed to be rolled back")
+	}
+	// The full holder is not in uploadChunkToHolders' succeeded set, so only the
+	// loop's own rollback reaches it — and it has to, because a 5xx there can
+	// still mean the needle was committed before replication failed.
+	if atomic.LoadInt32(&fullDeletes) == 0 {
+		t.Error("expected the abandoned fid to be deleted from the failed holder too")
+	}
+	if atomic.LoadInt32(&secondaryDeletes) != 0 {
+		t.Error("the reassigned volume kept the chunk; it must not be rolled back")
+	}
+}
+
+// retriedUploadData retries the same URL three times by default. On the relay
+// path the reassignment loop retries everything that would, so leaving both in
+// place would multiply into nine upload calls for one chunk.
+//
+// This counts calls that reached a handler and answered. doUploadData reissues
+// once more on a connection reset before any of them return, which no HTTP
+// status can provoke; upload_content_test covers that separately.
+func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
+	var posts, deletes int32
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		atomic.AddInt32(&posts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer dead.Close()
+
+	assigns := 0
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+			assigns++
+			// One holder, so uploadChunk takes the relay path.
+			return nil, &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", assigns), Url: strings.TrimPrefix(dead.URL, "http://"), Count: 1}, nil
+		},
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	if got := atomic.LoadInt32(&posts); got != 3 {
+		t.Errorf("expected 3 upload calls, one per assignment, got %d", got)
+	}
+	// Including the last one: giving up does not make the needle it may have
+	// committed anyone else's to find, and no chunk will ever name that fid.
+	if got := atomic.LoadInt32(&deletes); got != 3 {
+		t.Errorf("expected every abandoned fid to be rolled back, got %d deletes", got)
+	}
+}
+
+// TestUploadReaderInChunksAppendsFsyncWhenAssigned verifies that a chunk
+// assignment carrying the storage rule's fsync decision lands as ?fsync=true
+// on the volume server upload URL.
+func TestUploadReaderInChunksAppendsFsyncWhenAssigned(t *testing.T) {
+	testData := []byte("data needing fsync")
+	reader := bytes.NewReader(testData)
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{
+			Fid:       "test-fid,1234",
+			Url:       "http://test-volume:8080",
+			PublicUrl: "http://test-volume:8080",
+			Count:     1,
+			Fsync:     true,
+		}, nil
+	}
+
+	var gotUploadUrl string
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		gotUploadUrl = option.UploadUrl
+		return &UploadResult{
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+		}, nil
+	}
+
+	if _, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
+		ChunkSize:       8 * 1024,
+		SmallFileLimit:  256,
+		SaveSmallInline: false,
+		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
+	}); err != nil {
+		t.Fatalf("Expected successful upload, got error: %v", err)
+	}
+	if !strings.Contains(gotUploadUrl, "?fsync=true") {
+		t.Errorf("Expected the upload URL to carry ?fsync=true when the assignment says fsync, got %q", gotUploadUrl)
+	}
+}
+
+// A holder that stalls past the assignment JWT's expiry answers the rollback
+// delete with 401; the cleanup renews the token instead of leaking the copy.
+func TestDeleteChunkFromHoldersRenewsExpiredJwt(t *testing.T) {
+	var staleDeletes, freshDeletes int32
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		switch r.Header.Get("Authorization") {
+		case "Bearer fresh-jwt":
+			atomic.AddInt32(&freshDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			atomic.AddInt32(&staleDeletes, 1)
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"wrong jwt"}`)
+		}
+	}))
+	defer holder.Close()
+
+	lookups := 0
+	deleteChunkFromHolders(
+		[]string{strings.TrimPrefix(holder.URL, "http://")},
+		"1,0a0b0c0d",
+		"stale-jwt",
+		&ChunkedUploadOption{
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
+				lookups++
+				return "fresh-jwt"
+			},
+		},
+	)
+
+	if lookups != 1 {
+		t.Fatalf("expected one jwt renewal, got %d", lookups)
+	}
+	if atomic.LoadInt32(&freshDeletes) != 1 {
+		t.Fatalf("expected the delete retried with the fresh jwt, got %d fresh deletes", freshDeletes)
+	}
+}
+
+// A later holder that rejects the renewed token can trigger another renewal:
+// the one-retry limit is per holder, not per cleanup pass.
+func TestDeleteChunkFromHoldersRenewsPerHolder(t *testing.T) {
+	var acceptedDeletes int32
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer jwt-2" {
+			atomic.AddInt32(&acceptedDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"wrong jwt"}`)
+	}))
+	defer holder.Close()
+
+	tokens := []security.EncodedJwt{"jwt-1", "jwt-2"}
+	lookups := 0
+	deleteChunkFromHolders(
+		[]string{
+			strings.TrimPrefix(holder.URL, "http://"),
+			strings.TrimPrefix(holder.URL, "http://"),
+		},
+		"1,0a0b0c0d",
+		"stale-jwt",
+		&ChunkedUploadOption{
+			LookupJwtFunc: func(ctx context.Context, fileId string) security.EncodedJwt {
+				token := tokens[lookups]
+				lookups++
+				return token
+			},
+		},
+	)
+
+	if lookups != 2 {
+		t.Fatalf("expected a renewal per rejecting holder, got %d", lookups)
+	}
+	if atomic.LoadInt32(&acceptedDeletes) != 1 {
+		t.Fatalf("expected the second holder's retried delete to land, got %d", acceptedDeletes)
+	}
 }

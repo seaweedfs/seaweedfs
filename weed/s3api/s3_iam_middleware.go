@@ -3,10 +3,9 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,29 +13,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
-
-// privateNetworks contains pre-parsed private IP ranges for efficient lookups
-var privateNetworks []*net.IPNet
-
-func init() {
-	// Private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
-	privateRanges := []string{
-		"10.0.0.0/8",     // IPv4 private
-		"172.16.0.0/12",  // IPv4 private
-		"192.168.0.0/16", // IPv4 private
-		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err == nil {
-			privateNetworks = append(privateNetworks, network)
-		}
-	}
-}
 
 // IAMIntegration defines the interface for IAM integration
 type IAMIntegration interface {
@@ -44,14 +24,21 @@ type IAMIntegration interface {
 	AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode
 	ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error)
 	ValidateTrustPolicyForPrincipal(ctx context.Context, roleArn, principalArn string) error
+	DefaultAllow() bool
+}
+
+// IAMManagerProvider exposes the IAMManager backing an IAM integration.
+type IAMManagerProvider interface {
+	GetIAMManager() *integration.IAMManager
 }
 
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
-	iamManager   *integration.IAMManager
-	stsService   *sts.STSService
-	filerAddress string
-	enabled      bool
+	iamManager     *integration.IAMManager
+	stsService     *sts.STSService
+	filerAddress   string
+	enabled        bool
+	trustedProxies atomic.Pointer[policy_engine.TrustedProxies]
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
@@ -69,6 +56,17 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 	}
 }
 
+// GetIAMManager returns the IAMManager backing this integration.
+func (s3iam *S3IAMIntegration) GetIAMManager() *integration.IAMManager {
+	return s3iam.iamManager
+}
+
+// SetTrustedProxies configures the allowlist used to decide whether
+// forwarded headers are honored when extracting aws:SourceIp.
+func (s3iam *S3IAMIntegration) SetTrustedProxies(tp *policy_engine.TrustedProxies) {
+	s3iam.trustedProxies.Store(tp)
+}
+
 // AuthenticateJWT authenticates JWT tokens using our STS service
 func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
 
@@ -78,11 +76,11 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 
 	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
+	if !strings.HasPrefix(authHeader, security.BearerPrefix) {
 		return nil, s3err.ErrAccessDenied
 	}
 
-	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
+	sessionToken := strings.TrimPrefix(authHeader, security.BearerPrefix)
 	if sessionToken == "" {
 		return nil, s3err.ErrAccessDenied
 	}
@@ -128,8 +126,21 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			return nil, s3err.ErrAccessDenied
 		}
 
+		// A token without a subject has no issuer-scoped principal; letting it
+		// through would make the client-supplied claims below stand in for one.
+		if identity.UserID == "" {
+			return nil, s3err.ErrAccessDenied
+		}
+
 		// Extract role from OIDC identity
 		if identity.RoleArn == "" {
+			return nil, s3err.ErrAccessDenied
+		}
+
+		// Same trust-policy gate as AssumeRoleWithWebIdentity: the role mapping
+		// alone must not grant a role that STS would refuse for this token.
+		if err := s3iam.iamManager.ValidateTrustPolicyForWebIdentity(ctx, identity.RoleArn, sessionToken, nil); err != nil {
+			glog.V(3).Infof("OIDC bearer token rejected by trust policy of role %s: %v", identity.RoleArn, err)
 			return nil, s3err.ErrAccessDenied
 		}
 
@@ -157,6 +168,22 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		// Set critical claims explicitly, overwriting any from attributes to ensure correctness.
 		claims["sub"] = identity.UserID
 		claims["role"] = identity.RoleArn
+		claims["iss"] = identity.Issuer
+
+		// The bare sub collides across issuers; aws:userid carries the same
+		// (sub, iss) hash STS sessions already expose, so downstream ownership
+		// keys stay namespaced per identity provider. A claim the token itself
+		// supplies is always scrubbed, never adopted.
+		if parentUser := sts.ComputeParentUser(identity.UserID, identity.Issuer); parentUser != "" {
+			claims["aws:userid"] = parentUser
+		} else {
+			delete(claims, "aws:userid")
+		}
+		if issuers := s3iam.trustedOIDCIssuers(ctx); len(issuers) > 0 {
+			claims["seaweed:oidc-issuers"] = strings.Join(issuers, " ")
+		} else {
+			delete(claims, "seaweed:oidc-issuers")
+		}
 
 		// Use real email address if available
 		emailAddress := identity.UserID + "@oidc.local"
@@ -179,48 +206,17 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				EmailAddress: emailAddress,
 				Id:           identity.UserID,
 			},
-			Claims: claims,
+			Claims:        claims,
+			IdentityClaim: sts.ResolveIdentityClaim(claims),
 		}, s3err.ErrNone
 	}
 
-	// This is an STS-issued token - validate with STS service
-	// ValidateSessionToken performs cryptographic verification and extraction of trusted claims
-	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
-	if err != nil {
-		glog.V(3).Infof("STS session validation failed: %v", err)
-		return nil, s3err.ErrAccessDenied
-	}
-
-	// Create claims map starting with request context (which holds custom claims)
-	claims := make(map[string]interface{})
-	if sessionInfo.RequestContext != nil {
-		for k, v := range sessionInfo.RequestContext {
-			claims[k] = v
-		}
-	}
-
-	// Add standard claims
-	claims["sub"] = sessionInfo.Subject
-	claims["role"] = sessionInfo.RoleArn
-	claims["principal"] = sessionInfo.Principal
-	claims["snam"] = sessionInfo.SessionName
-
-	// Create IAM identity from VALIDATED session info
-	// We use the trusted data returned by the STS service, not the unverified token claims
-	identity := &IAMIdentity{
-		Name:         sessionInfo.Subject,
-		Principal:    sessionInfo.Principal,
-		SessionToken: sessionToken,
-		Account: &Account{
-			DisplayName:  sessionInfo.SessionName,
-			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
-			Id:           sessionInfo.Subject,
-		},
-		Claims: claims,
-	}
-
-	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
-	return identity, s3err.ErrNone
+	// STS session tokens authenticate SigV4 requests via proof of possession
+	// (signature with the derived secret). As bearer tokens they would turn
+	// every presigned URL, which carries the token in X-Amz-Security-Token,
+	// into a standalone credential.
+	glog.V(3).Infof("Rejected STS session token presented as bearer token")
+	return nil, s3err.ErrAccessDenied
 }
 
 // ValidateSessionToken checks the validity of an STS session token
@@ -237,23 +233,31 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrNone // Fallback to existing authorization
 	}
 
-	if identity.SessionToken == "" {
+	if identity == nil || identity.Principal == "" {
 		return s3err.ErrAccessDenied
 	}
 
-	// Build resource ARN for the S3 operation
-	resourceArn := buildS3ResourceArn(bucket, objectKey)
-
 	// Extract request context for policy conditions
-	requestContext := extractRequestContext(r)
+	requestContext := s3iam.extractRequestContext(r)
 
-	// Add s3:prefix to request context based on object key
-	// This ensures that policy conditions referencing s3:prefix (like StringLike)
-	// work correctly for both ListObjects (where objectKey is the prefix) and
-	// object operations (where we treat the object key as the prefix for matching)
-	if objectKey != "" && objectKey != "/" {
-		requestContext["s3:prefix"] = objectKey
+	// For list operations, populate the s3:prefix condition key and ensure the
+	// resource ARN stays at bucket level (matching AWS ListBucket semantics).
+	// See https://github.com/seaweedfs/seaweedfs/issues/8969
+	resourceObjectKey := objectKey
+	if isBucketListingRequest(r, action) {
+		listPrefix := r.URL.Query().Get("prefix")
+		if listPrefix != "" {
+			requestContext["s3:prefix"] = listPrefix
+		} else if objectKey != "" && objectKey != "/" {
+			requestContext["s3:prefix"] = objectKey
+		} else {
+			requestContext["s3:prefix"] = ""
+		}
+		resourceObjectKey = ""
 	}
+
+	// Build resource ARN for the S3 operation
+	resourceArn := buildS3ResourceArn(bucket, resourceObjectKey)
 
 	// Add identity claims to request context for policy variables
 	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
@@ -276,14 +280,19 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		}
 	}
 
-	// Determine the specific S3 action based on the HTTP request details
-	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)
+	// Determine the specific S3 action based on the HTTP request details. The
+	// prefix promoted into objectKey is not part of the URL; resolve against
+	// the bucket-level object so ?versions and ?uploads keep their own action.
+	specificAction := ResolveS3Action(r, string(action), bucket, resourceObjectKey)
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
-		Principal:      identity.Principal,
-		Action:         specificAction,
-		Resource:       resourceArn,
+		Principal: identity.Principal,
+		Action:    specificAction,
+		Resource:  resourceArn,
+		// Static SigV4 IAM users do not carry a session token. IAMManager
+		// evaluates their attached policies directly and only validates STS/OIDC
+		// session state when a token is actually present.
 		SessionToken:   identity.SessionToken,
 		RequestContext: requestContext,
 		PolicyNames:    identity.PolicyNames,
@@ -310,14 +319,23 @@ func (s3iam *S3IAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Conte
 	return s3iam.iamManager.ValidateTrustPolicyForPrincipal(ctx, roleArn, principalArn)
 }
 
+// DefaultAllow returns whether access is allowed by default when no policy is found
+func (s3iam *S3IAMIntegration) DefaultAllow() bool {
+	if s3iam.iamManager == nil {
+		return true // Default to true if IAM is not enabled
+	}
+	return s3iam.iamManager.DefaultAllow()
+}
+
 // IAMIdentity represents an authenticated identity with session information
 type IAMIdentity struct {
-	Name         string
-	Principal    string
-	SessionToken string
-	Account      *Account
-	PolicyNames  []string
-	Claims       map[string]interface{}
+	Name          string
+	Principal     string
+	SessionToken  string
+	Account       *Account
+	PolicyNames   []string
+	Claims        map[string]interface{}
+	IdentityClaim string // Authoritative OIDC identity claim for audit logging; empty for non-federated sessions
 }
 
 // IsAdmin checks if the identity has admin privileges
@@ -360,150 +378,21 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
 }
 
-// hasSpecificQueryParameters checks if the request has query parameters that indicate specific granular operations
-func hasSpecificQueryParameters(query url.Values) bool {
-	// Check for object-level operation indicators
-	objectParams := []string{
-		"acl",        // ACL operations
-		"tagging",    // Tagging operations
-		"retention",  // Object retention
-		"legal-hold", // Legal hold
-		"versions",   // Versioning operations
-	}
-
-	// Check for multipart operation indicators
-	multipartParams := []string{
-		"uploads",    // List/initiate multipart uploads
-		"uploadId",   // Part operations, complete, abort
-		"partNumber", // Upload part
-	}
-
-	// Check for bucket-level operation indicators
-	bucketParams := []string{
-		"policy",         // Bucket policy operations
-		"website",        // Website configuration
-		"cors",           // CORS configuration
-		"lifecycle",      // Lifecycle configuration
-		"notification",   // Event notification
-		"replication",    // Cross-region replication
-		"encryption",     // Server-side encryption
-		"accelerate",     // Transfer acceleration
-		"requestPayment", // Request payment
-		"logging",        // Access logging
-		"versioning",     // Versioning configuration
-		"inventory",      // Inventory configuration
-		"analytics",      // Analytics configuration
-		"metrics",        // CloudWatch metrics
-		"location",       // Bucket location
-	}
-
-	// Check if any of these parameters are present
-	allParams := append(append(objectParams, multipartParams...), bucketParams...)
-	for _, param := range allParams {
-		if _, exists := query[param]; exists {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isMethodActionMismatch detects when HTTP method doesn't align with the intended S3 action
-// This provides a mechanism to use fallback action mapping when there's a semantic mismatch
-func isMethodActionMismatch(method string, fallbackAction Action) bool {
-	switch fallbackAction {
-	case s3_constants.ACTION_WRITE:
-		// WRITE actions should typically use PUT, POST, or DELETE methods
-		// GET/HEAD methods indicate read-oriented operations
-		return method == "GET" || method == "HEAD"
-
-	case s3_constants.ACTION_READ:
-		// READ actions should typically use GET or HEAD methods
-		// PUT, POST, DELETE methods indicate write-oriented operations
-		return method == "PUT" || method == "POST" || method == "DELETE"
-
-	case s3_constants.ACTION_LIST:
-		// LIST actions should typically use GET method
-		// PUT, POST, DELETE methods indicate write-oriented operations
-		return method == "PUT" || method == "POST" || method == "DELETE"
-
-	case s3_constants.ACTION_DELETE_BUCKET:
-		// DELETE_BUCKET should use DELETE method
-		// Other methods indicate different operation types
-		return method != "DELETE"
-
-	default:
-		// For unknown actions or actions that already have s3: prefix, don't assume mismatch
-		return false
-	}
-}
-
-// mapLegacyActionToIAM provides fallback mapping for legacy actions
-// This ensures backward compatibility while the system transitions to granular actions
-func mapLegacyActionToIAM(legacyAction Action) string {
-	switch legacyAction {
-	case s3_constants.ACTION_READ:
-		return "s3:GetObject" // Fallback for unmapped read operations
-	case s3_constants.ACTION_WRITE:
-		return "s3:PutObject" // Fallback for unmapped write operations
-	case s3_constants.ACTION_LIST:
-		return "s3:ListBucket" // Fallback for unmapped list operations
-	case s3_constants.ACTION_TAGGING:
-		return "s3:GetObjectTagging" // Fallback for unmapped tagging operations
-	case s3_constants.ACTION_READ_ACP:
-		return "s3:GetObjectAcl" // Fallback for unmapped ACL read operations
-	case s3_constants.ACTION_WRITE_ACP:
-		return "s3:PutObjectAcl" // Fallback for unmapped ACL write operations
-	case s3_constants.ACTION_DELETE_BUCKET:
-		return "s3:DeleteBucket" // Fallback for unmapped bucket delete operations
-	case s3_constants.ACTION_ADMIN:
-		return "s3:*" // Fallback for unmapped admin operations
-
-	// Handle granular multipart actions (already correctly mapped)
-	case s3_constants.ACTION_CREATE_MULTIPART_UPLOAD:
-		return "s3:CreateMultipartUpload"
-	case s3_constants.ACTION_UPLOAD_PART:
-		return "s3:UploadPart"
-	case s3_constants.ACTION_COMPLETE_MULTIPART:
-		return "s3:CompleteMultipartUpload"
-	case s3_constants.ACTION_ABORT_MULTIPART:
-		return "s3:AbortMultipartUpload"
-	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
-		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
-	case s3_constants.ACTION_LIST_PARTS:
-		return s3_constants.S3_ACTION_LIST_PARTS
-
-	default:
-		// If it's already a properly formatted S3 action, return as-is
-		actionStr := string(legacyAction)
-		if strings.HasPrefix(actionStr, "s3:") {
-			return actionStr
-		}
-		// Fallback: convert to S3 action format
-		return "s3:" + actionStr
-	}
-}
-
 // extractRequestContext extracts request context for policy conditions
-func extractRequestContext(r *http.Request) map[string]interface{} {
+func (s3iam *S3IAMIntegration) extractRequestContext(r *http.Request) map[string]interface{} {
 	context := make(map[string]interface{})
 
-	// Extract source IP for IP-based conditions
-	// Use AWS-compatible key name for policy variable substitution
-	sourceIP := extractSourceIP(r)
+	sourceIP := s3iam.extractSourceIP(r)
 	if sourceIP != "" {
 		context["aws:SourceIp"] = sourceIP
 	}
 
-	// Extract user agent
 	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
 		context["userAgent"] = userAgent
 	}
 
-	// Extract request time
 	context["requestTime"] = r.Context().Value("requestTime")
 
-	// Extract additional headers that might be useful for conditions
 	if referer := r.Header.Get("Referer"); referer != "" {
 		context["referer"] = referer
 	}
@@ -511,62 +400,11 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 	return context
 }
 
-// extractSourceIP extracts the real source IP from the request
-// SECURITY: Prioritizes RemoteAddr over client-controlled headers to prevent spoofing
-// Only trusts X-Forwarded-For/X-Real-IP if RemoteAddr appears to be from a trusted proxy
-func extractSourceIP(r *http.Request) string {
-	// Always start with RemoteAddr as the most trustworthy source
-	remoteIP := r.RemoteAddr
-	if ip, _, err := net.SplitHostPort(remoteIP); err == nil {
-		remoteIP = ip
-	}
-
-	// NOTE: The current heuristic of using isPrivateIP assumes reverse proxies are on a
-	// private/local network. This may be insufficient for some cloud, CDN, or multi-tier
-	// proxy deployments where proxies terminate connections from public IPs. In such
-	// environments, deployment-specific controls (e.g., network ACLs or proxy configs)
-	// should be used to ensure only trusted components can set forwarding headers.
-	// Future enhancements may introduce an explicit, configurable trusted proxy CIDR list.
-	isTrustedProxy := isPrivateIP(remoteIP)
-
-	if isTrustedProxy {
-		// Check X-Real-IP header first (single IP, more reliable than X-Forwarded-For)
-		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-			return strings.TrimSpace(realIP)
-		}
-
-		// Check X-Forwarded-For header (can contain multiple IPs, take the first one)
-		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-			if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
-				return strings.TrimSpace(ips[0])
-			}
-		}
-	}
-
-	// Fall back to RemoteAddr (most secure)
-	return remoteIP
-}
-
-// isPrivateIP checks if an IP is in a private range (localhost or RFC1918)
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	// Check for localhost and link-local addresses (IPv4/IPv6)
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-
-	// Check against pre-parsed private CIDR ranges
-	for _, network := range privateNetworks {
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
+// extractSourceIP returns the client IP for aws:SourceIp condition
+// evaluation, honoring forwarded headers only when the direct TCP peer is in
+// the configured trusted-proxy allowlist (see SetTrustedProxies).
+func (s3iam *S3IAMIntegration) extractSourceIP(r *http.Request) string {
+	return s3iam.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
@@ -594,14 +432,6 @@ func ParseUnverifiedJWTToken(tokenString string) (jwt.MapClaims, error) {
 	return nil, fmt.Errorf("invalid token claims")
 }
 
-// minInt returns the minimum of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // SetIAMIntegration adds advanced IAM integration to the S3ApiServer
 func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 	if s3a.iam != nil {
@@ -612,90 +442,12 @@ func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 	}
 }
 
-// EnhancedS3ApiServer extends S3ApiServer with IAM integration
-type EnhancedS3ApiServer struct {
-	*S3ApiServer
-	iamIntegration IAMIntegration
-}
-
-// NewEnhancedS3ApiServer creates an S3 API server with IAM integration
-func NewEnhancedS3ApiServer(baseServer *S3ApiServer, iamManager *integration.IAMManager) *EnhancedS3ApiServer {
-	// Set the IAM integration on the base server
-	baseServer.SetIAMIntegration(iamManager)
-
-	return &EnhancedS3ApiServer{
-		S3ApiServer:    baseServer,
-		iamIntegration: NewS3IAMIntegration(iamManager, "localhost:8888"),
-	}
-}
-
-// AuthenticateJWTRequest handles JWT authentication for S3 requests
-func (enhanced *EnhancedS3ApiServer) AuthenticateJWTRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
-	ctx := r.Context()
-
-	// Use our IAM integration for JWT authentication
-	iamIdentity, errCode := enhanced.iamIntegration.AuthenticateJWT(ctx, r)
-	if errCode != s3err.ErrNone {
-		return nil, errCode
-	}
-
-	// Convert IAMIdentity to the existing Identity structure
-	identity := &Identity{
-		Name:    iamIdentity.Name,
-		Account: iamIdentity.Account,
-		// Note: Actions will be determined by policy evaluation
-		Actions:     []Action{}, // Empty - authorization handled by policy engine
-		PolicyNames: iamIdentity.PolicyNames,
-	}
-
-	// Store session token for later authorization
-	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
-	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
-
-	return identity, s3err.ErrNone
-}
-
-// AuthorizeRequest handles authorization for S3 requests using policy engine
-func (enhanced *EnhancedS3ApiServer) AuthorizeRequest(r *http.Request, identity *Identity, action Action) s3err.ErrorCode {
-	ctx := r.Context()
-
-	// Get session info from request headers (set during authentication)
-	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-	principal := r.Header.Get("X-SeaweedFS-Principal")
-
-	if sessionToken == "" || principal == "" {
-		glog.V(3).Info("No session information available for authorization")
-		return s3err.ErrAccessDenied
-	}
-
-	// Extract bucket and object from request
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	prefix := s3_constants.GetPrefix(r)
-
-	// For List operations, use prefix for permission checking if available
-	if action == s3_constants.ACTION_LIST && object == "" && prefix != "" {
-		object = prefix
-	} else if (object == "/" || object == "") && prefix != "" {
-		object = prefix
-	}
-
-	// Create IAM identity for authorization
-	iamIdentity := &IAMIdentity{
-		Name:         identity.Name,
-		Principal:    principal,
-		SessionToken: sessionToken,
-		Account:      identity.Account,
-	}
-
-	// Use our IAM integration for authorization
-	return enhanced.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
-}
-
 // OIDCIdentity represents an identity validated through OIDC
 type OIDCIdentity struct {
 	UserID      string
 	RoleArn     string
 	Provider    string
+	Issuer      string
 	Email       string
 	DisplayName string
 	Groups      []string
@@ -759,11 +511,60 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 		UserID:      externalIdentity.UserID,
 		RoleArn:     roleArn,
 		Provider:    fmt.Sprintf("%T", provider), // Use provider type as identifier
+		Issuer:      externalIdentity.Issuer,
 		Email:       externalIdentity.Email,
 		DisplayName: externalIdentity.DisplayName,
 		Groups:      externalIdentity.Groups,
 		Attributes:  externalIdentity.Attributes,
 	}, nil
+}
+
+// trustedOIDCIssuers returns the issuer URLs of the OIDC providers the
+// deployment is configured to trust. It is what a legacy (pre-scoping) bare
+// subject can be re-anchored to: exactly one issuer makes the mapping
+// unambiguous; anything else leaves it unknown, which callers must treat as
+// fail-closed rather than guessing from the caller's issuer.
+//
+// The list is only safe while complete. Without a provider store the
+// registered providers are the whole set — there is nowhere an issuer could
+// hide. With a store, a failed listing leaves the real set unknown, and
+// passing the registered subset off as complete could collapse a
+// multi-issuer deployment to a single issuer: the one shape a bare subject
+// re-anchors under, so a caller from that issuer could claim a stored
+// subject that belongs to a provider hidden behind the error. Fail closed.
+func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string {
+	if s3iam.iamManager == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var issuers []string
+	// Configured identity providers registered with STS cover deployments
+	// whose OIDC setup lives in config rather than the provider store.
+	if stsService := s3iam.iamManager.GetSTSService(); stsService != nil {
+		for _, p := range stsService.GetProviders() {
+			if issuer, ok := p.(interface{ GetIssuer() string }); ok {
+				if iss := issuer.GetIssuer(); iss != "" && !seen[iss] {
+					seen[iss] = true
+					issuers = append(issuers, iss)
+				}
+			}
+		}
+	}
+	if s3iam.iamManager.GetOIDCProviderStore() == nil {
+		return issuers
+	}
+	records, err := s3iam.iamManager.ListOIDCProviders(ctx)
+	if err != nil {
+		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
+		return nil
+	}
+	for _, rec := range records {
+		if rec.URL != "" && !seen[rec.URL] {
+			seen[rec.URL] = true
+			issuers = append(issuers, rec.URL)
+		}
+	}
+	return issuers
 }
 
 // selectPrimaryRole simply picks the first role from the list

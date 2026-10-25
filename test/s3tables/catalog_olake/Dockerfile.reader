@@ -1,0 +1,14 @@
+# Strict Iceberg reader used by the OLake integration test. PyIceberg is
+# deliberate here: it rejects manifests that omit the spec's field ids and
+# parquet without either field ids or a name mapping, so a passing read proves
+# the catalog served something every engine can consume -- not just something
+# OLake itself can read back.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "pyiceberg[s3fs]==0.11.1" "pyarrow==25.0.0"
+
+COPY inspect_table.py /app/
+
+ENTRYPOINT ["python3", "/app/inspect_table.py"]

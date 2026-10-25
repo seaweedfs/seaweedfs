@@ -3,11 +3,13 @@ package example
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -15,12 +17,15 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
@@ -34,18 +39,19 @@ const (
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	s3Client   *s3.S3
-	isRunning  bool
-	startOnce  sync.Once
-	wg         sync.WaitGroup
-	masterPort int
-	volumePort int
-	filerPort  int
-	s3Port     int
-	s3Endpoint string
+	dataDir       string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	s3Client      *s3.S3
+	isRunning     bool
+	startOnce     sync.Once
+	wg            sync.WaitGroup
+	masterPort    int
+	volumePort    int
+	filerPort     int
+	s3Port        int
+	s3Endpoint    string
+	rustVolumeCmd *exec.Cmd
 }
 
 // TestS3Integration demonstrates basic S3 operations against a running weed mini instance
@@ -68,6 +74,22 @@ func TestS3Integration(t *testing.T) {
 		testPutObject(t, cluster)
 	})
 
+	t.Run("UploadPart", func(t *testing.T) {
+		testPutPartWithChecksum(t, cluster)
+	})
+
+	t.Run("PutObjectWithChecksum", func(t *testing.T) {
+		testPutObjectWithChecksum(t, cluster)
+	})
+
+	t.Run("UploadPartWithChecksum", func(t *testing.T) {
+		testUploadPartWithChecksum(t, cluster)
+	})
+
+	t.Run("PutObjectWithChecksumAndSSEC", func(t *testing.T) {
+		testPutObjectWithChecksumAndSSEC(t, cluster)
+	})
+
 	t.Run("GetObject", func(t *testing.T) {
 		testGetObject(t, cluster)
 	})
@@ -80,42 +102,27 @@ func TestS3Integration(t *testing.T) {
 		testDeleteObject(t, cluster)
 	})
 
+	t.Run("DeleteDirectoryMarkerWithChildren", func(t *testing.T) {
+		testDeleteDirectoryMarkerWithChildren(t, cluster)
+	})
+
 	t.Run("DeleteBucket", func(t *testing.T) {
 		testDeleteBucket(t, cluster)
 	})
 }
 
 // findAvailablePort finds an available port by binding to port 0
-func findAvailablePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
 
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
-}
-
-// startMiniCluster starts a weed mini instance directly without exec
-func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	// Find available ports
-	masterPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find master port: %v", err)
-	}
-	volumePort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find volume port: %v", err)
-	}
-	filerPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find filer port: %v", err)
-	}
-	s3Port, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find s3 port: %v", err)
-	}
+// startMiniCluster starts a weed mini instance directly without exec.
+// Extra flags can be appended via extraArgs.
+func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
+	// Allocate non-colliding ports (including gRPC offsets) for weed mini.
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3", "Admin"})
+	adminPort := ports[4]
+	masterPort := ports[0]
+	volumePort := ports[1]
+	filerPort := ports[2]
+	s3Port := ports[3]
 	// Create temporary directory for test data
 	testDir := t.TempDir()
 
@@ -140,10 +147,18 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	// Create empty security.toml to disable JWT authentication in tests
 	securityToml := filepath.Join(testDir, "security.toml")
-	err = os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
+	err := os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create security.toml: %v", err)
+	}
+
+	// Set environment variables for admin credentials safely for this test
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
 	}
 
 	// Start weed mini in a goroutine by calling the command directly
@@ -165,20 +180,22 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 		// Configure args for mini command
 		// Note: When running via 'go test', os.Args[0] is the test binary
 		// We need to make it look like we're running 'weed mini'
-		os.Args = []string{
+		os.Args = append([]string{
 			"weed",
 			"-dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
-			"-webdav.port=0",               // Disable WebDAV
+			"-webdav=false", // Disable WebDAV
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
 			"-ip=127.0.0.1",
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
-		}
+		}, extraArgs...)
+		os.Args = append(os.Args, testutil.MiniAdminArgs(adminPort)...)
+		os.Args = append(os.Args, "-s3.port.lance=0", "-s3.port.iceberg=0")
 
 		// Suppress most logging during tests
 		glog.MaxSize = 1024 * 1024
@@ -198,10 +215,17 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	}()
 
 	// Wait for S3 service to be ready
-	err = waitForS3Ready(cluster.s3Endpoint, 30*time.Second)
-	if err != nil {
+	if !testutil.WaitForService(cluster.s3Endpoint, 30*time.Second) {
 		cancel()
-		return nil, fmt.Errorf("S3 service failed to start: %v", err)
+		return nil, fmt.Errorf("S3 service failed to start at %s", cluster.s3Endpoint)
+	}
+
+	// If VOLUME_SERVER_IMPL=rust, start a Rust volume server alongside weed mini
+	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+		if err := cluster.startRustVolumeServer(t); err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to start Rust volume server: %v", err)
+		}
 	}
 
 	cluster.isRunning = true
@@ -225,8 +249,80 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	return cluster, nil
 }
 
+// startRustVolumeServer starts a Rust volume server that registers with the same master.
+func (c *TestCluster) startRustVolumeServer(t *testing.T) error {
+	t.Helper()
+
+	rustBinary, err := framework.FindOrBuildRustBinary()
+	if err != nil {
+		return fmt.Errorf("resolve rust volume binary: %v", err)
+	}
+
+	rustPorts, err := testutil.AllocatePorts(2)
+	if err != nil {
+		return fmt.Errorf("find rust volume ports: %v", err)
+	}
+	rustVolumePort := rustPorts[0]
+	rustVolumeGrpcPort := rustPorts[1]
+
+	rustVolumeDir := filepath.Join(c.dataDir, "rust-volume")
+	if err := os.MkdirAll(rustVolumeDir, 0o755); err != nil {
+		return fmt.Errorf("create rust volume dir: %v", err)
+	}
+
+	securityToml := filepath.Join(c.dataDir, "security.toml")
+
+	args := []string{
+		"--port", strconv.Itoa(rustVolumePort),
+		"--port.grpc", strconv.Itoa(rustVolumeGrpcPort),
+		"--port.public", strconv.Itoa(rustVolumePort),
+		"--ip", "127.0.0.1",
+		"--ip.bind", "127.0.0.1",
+		"--dir", rustVolumeDir,
+		"--max", "16",
+		"--master", "127.0.0.1:" + strconv.Itoa(c.masterPort),
+		"--securityFile", securityToml,
+		"--preStopSeconds", "0",
+	}
+
+	logFile, err := os.Create(filepath.Join(c.dataDir, "rust-volume.log"))
+	if err != nil {
+		return fmt.Errorf("create rust volume log: %v", err)
+	}
+
+	c.rustVolumeCmd = exec.Command(rustBinary, args...)
+	c.rustVolumeCmd.Dir = c.dataDir
+	c.rustVolumeCmd.Stdout = logFile
+	c.rustVolumeCmd.Stderr = logFile
+	if err := c.rustVolumeCmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start rust volume: %v", err)
+	}
+
+	// Wait for the Rust volume server to be ready
+	rustEndpoint := fmt.Sprintf("http://127.0.0.1:%d/healthz", rustVolumePort)
+	deadline := time.Now().Add(15 * time.Second)
+	client := &http.Client{Timeout: 1 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(rustEndpoint)
+		if err == nil {
+			resp.Body.Close()
+			t.Logf("Rust volume server ready on port %d (grpc %d)", rustVolumePort, rustVolumeGrpcPort)
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("rust volume server not ready after 15s (port %d)", rustVolumePort)
+}
+
 // Stop stops the test cluster
 func (c *TestCluster) Stop() {
+	// Stop Rust volume server first
+	if c.rustVolumeCmd != nil && c.rustVolumeCmd.Process != nil {
+		c.rustVolumeCmd.Process.Kill()
+		c.rustVolumeCmd.Wait()
+	}
+
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -258,25 +354,6 @@ func (c *TestCluster) Stop() {
 			break
 		}
 	}
-}
-
-// waitForS3Ready waits for the S3 service to be ready
-func waitForS3Ready(endpoint string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(endpoint)
-		if err == nil {
-			resp.Body.Close()
-			// Wait a bit more to ensure service is fully ready
-			time.Sleep(500 * time.Millisecond)
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	return fmt.Errorf("timeout waiting for S3 service at %s", endpoint)
 }
 
 // Test functions
@@ -334,6 +411,282 @@ func testPutObject(t *testing.T, cluster *TestCluster) {
 	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
 
 	t.Logf("✓ Put object: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
+}
+
+func createTestBucket(t *testing.T, cluster *TestCluster, prefix string) string {
+	bucketName := prefix + randomString(8)
+	_, err := cluster.s3Client.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	return bucketName
+}
+
+// generateSSECKey returns a 32-byte key as a raw string (what the SDK expects
+// for SSECustomerKey) and its base64-encoded MD5 (for SSECustomerKeyMD5).
+func generateSSECKey() (keyRaw, keyMD5B64 string) {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(rng.Intn(256))
+	}
+	keyRaw = string(key)
+	keyHash := md5.Sum(key)
+	keyMD5B64 = base64.StdEncoding.EncodeToString(keyHash[:])
+	return
+}
+
+func testPutObjectWithChecksum(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-put-checksum-")
+	objectKey := "test-checksummed-object.txt"
+	objectData := "Hello, SeaweedFS S3!"
+
+	correctMD5 := calculateMd5(objectData)
+	incorrectMD5 := calculateMd5(objectData + "incorrect")
+
+	// Put object with incorrect MD5 should be rejected
+	_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(incorrectMD5),
+	})
+	assertBadDigestError(t, err, "PutObject should fail with incorrect MD5")
+
+	t.Logf("✓ Put object with incorrect MD5 rejected: %s/%s", bucketName, objectKey)
+
+	// Put object with correct MD5 should succeed
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(correctMD5),
+	})
+	require.NoError(t, err, "Failed to put object")
+
+	// Verify object exists
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, headResp.ContentLength)
+	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
+
+	t.Logf("✓ Put object with correct MD5: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
+}
+
+// putObjectSSEC sends a PutObject request with SSE-C headers over HTTP.
+// The AWS SDK v1 refuses to send SSE-C keys over plain HTTP, so we use the
+// low-level Request API and clear the Validate handlers to bypass that check.
+// We use Clear() because the specific validator is internal and not easily removable by name.
+func putObjectSSEC(client *s3.S3, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+	req, output := client.PutObjectRequest(input)
+	req.Handlers.Validate.Clear()
+	err := req.Send()
+	return output, err
+}
+
+func headObjectSSEC(client *s3.S3, input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+	req, output := client.HeadObjectRequest(input)
+	req.Handlers.Validate.Clear()
+	err := req.Send()
+	return output, err
+}
+
+func testPutObjectWithChecksumAndSSEC(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-put-checksum-ssec-")
+	objectKey := "test-checksummed-ssec-object.txt"
+	objectData := "Hello, SeaweedFS S3 with SSE-C!"
+
+	correctMD5 := calculateMd5(objectData)
+	incorrectMD5 := calculateMd5(objectData + "incorrect")
+	keyRaw, keyMD5B64 := generateSSECKey()
+
+	// Put object with SSE-C and incorrect MD5 should be rejected
+	_, err := putObjectSSEC(cluster.s3Client, &s3.PutObjectInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		Body:                 bytes.NewReader([]byte(objectData)),
+		ContentMD5:           aws.String(incorrectMD5),
+		SSECustomerAlgorithm: aws.String("AES256"),
+		SSECustomerKey:       aws.String(keyRaw),
+		SSECustomerKeyMD5:    aws.String(keyMD5B64),
+	})
+	assertBadDigestError(t, err, "PutObject with SSE-C should fail with incorrect MD5")
+
+	t.Logf("Put object with SSE-C and incorrect MD5 rejected: %s/%s", bucketName, objectKey)
+
+	// Put object with SSE-C and correct MD5 should succeed
+	_, err = putObjectSSEC(cluster.s3Client, &s3.PutObjectInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		Body:                 bytes.NewReader([]byte(objectData)),
+		ContentMD5:           aws.String(correctMD5),
+		SSECustomerAlgorithm: aws.String("AES256"),
+		SSECustomerKey:       aws.String(keyRaw),
+		SSECustomerKeyMD5:    aws.String(keyMD5B64),
+	})
+	require.NoError(t, err, "Failed to put object with SSE-C and correct MD5")
+
+	// Verify object exists (SSE-C requires the key for HeadObject too)
+	headResp, err := headObjectSSEC(cluster.s3Client, &s3.HeadObjectInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		SSECustomerAlgorithm: aws.String("AES256"),
+		SSECustomerKey:       aws.String(keyRaw),
+		SSECustomerKeyMD5:    aws.String(keyMD5B64),
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, headResp.ContentLength)
+	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
+
+	t.Logf("Put object with SSE-C and correct MD5: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
+}
+
+func testUploadPartWithChecksum(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-upload-part-checksum-")
+	objectKey := "test-multipart-checksum.txt"
+	objectData := "Hello, SeaweedFS S3 Multipart!"
+
+	// Initiate multipart upload
+	initResp, err := cluster.s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	uploadID := initResp.UploadId
+
+	correctMD5 := calculateMd5(objectData)
+	incorrectMD5 := calculateMd5(objectData + "incorrect")
+
+	// Upload part with incorrect MD5
+	_, err = cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int64(1),
+		UploadId:   uploadID,
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(incorrectMD5),
+	})
+	assertBadDigestError(t, err, "UploadPart should fail with incorrect MD5")
+
+	// Upload part with correct MD5
+	partResp, err := cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int64(1),
+		UploadId:   uploadID,
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(correctMD5),
+	})
+	require.NoError(t, err, "Failed to upload part with correct MD5")
+
+	// Complete multipart upload
+	_, err = cluster.s3Client.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: uploadID,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: []*s3.CompletedPart{
+				{
+					ETag:       partResp.ETag,
+					PartNumber: aws.Int64(1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+
+	// Verify object exists
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
+
+	t.Logf("✓ Multipart upload with checksum successful: %s/%s", bucketName, objectKey)
+}
+
+func testPutPartWithChecksum(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-put-checksum-")
+	objectKey := "test-checksummed-part.txt"
+
+	partData := "Hello, SeaweedFS S3!"
+
+	correctMD5 := calculateMd5(partData)
+	incorrectMD5 := calculateMd5(partData + "incorrect")
+
+	createResp, err := cluster.s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+
+	uploadID := createResp.UploadId
+
+	partBody := []byte(partData)
+
+	_, err = cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadID,
+		PartNumber: aws.Int64(1),
+		Body:       bytes.NewReader(partBody),
+		ContentMD5: aws.String(incorrectMD5),
+	})
+	assertBadDigestError(t, err, "UploadPart should fail with incorrect MD5")
+
+	uploadResp, err := cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadID,
+		PartNumber: aws.Int64(1),
+		Body:       bytes.NewReader(partBody),
+		ContentMD5: aws.String(correctMD5),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: uploadID,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: []*s3.CompletedPart{
+				{
+					ETag:       uploadResp.ETag,
+					PartNumber: aws.Int64(1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+
+	// Verify object exists
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(partData)), aws.Int64Value(headResp.ContentLength))
+
+	t.Logf("✓ UploadPart with MD5 validation: %s/%s", bucketName, objectKey)
+}
+
+func calculateMd5(objectData string) string {
+	dataBytes := []byte(objectData)
+	hash := md5.Sum(dataBytes)
+	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+func assertBadDigestError(t *testing.T, err error, description string) {
+	require.Error(t, err, description)
+
+	var awsErr awserr.Error
+	require.ErrorAs(t, err, &awsErr)
+	assert.Equal(t, "BadDigest", awsErr.Code())
 }
 
 func testGetObject(t *testing.T, cluster *TestCluster) {
@@ -450,6 +803,47 @@ func testDeleteObject(t *testing.T, cluster *TestCluster) {
 	t.Logf("✓ Deleted object: %s/%s", bucketName, objectKey)
 }
 
+func testDeleteDirectoryMarkerWithChildren(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-delete-dir-marker-")
+	childKey := "test-content/file1.txt"
+	directoryMarkerKey := "test-content/"
+
+	_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(childKey),
+		Body:   bytes.NewReader([]byte("child")),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(directoryMarkerKey),
+		Body:        bytes.NewReader(nil),
+		ContentType: aws.String("application/octet-stream"),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(directoryMarkerKey),
+	})
+	require.NoError(t, err, "Deleting a directory marker should succeed even when children exist")
+
+	listResp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("test-content/"),
+	})
+	require.NoError(t, err)
+
+	foundKeys := make(map[string]bool)
+	for _, obj := range listResp.Contents {
+		foundKeys[aws.StringValue(obj.Key)] = true
+	}
+
+	assert.True(t, foundKeys[childKey], "Child object should remain after deleting the directory marker")
+	assert.False(t, foundKeys[directoryMarkerKey], "Directory marker should no longer be listed after deletion")
+}
+
 func testDeleteBucket(t *testing.T, cluster *TestCluster) {
 	bucketName := "test-delete-bucket-" + randomString(8)
 
@@ -474,6 +868,49 @@ func testDeleteBucket(t *testing.T, cluster *TestCluster) {
 	}
 
 	t.Logf("✓ Deleted bucket: %s", bucketName)
+}
+
+func TestS3DeleteBucketNotEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	t.Run("DeleteNonEmptyBucketFails", func(t *testing.T) {
+		bucketName := createTestBucket(t, cluster, "test-notempty-")
+		objectKey := "keep-me.txt"
+
+		// Put an object so the bucket is non-empty
+		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader([]byte("data")),
+		})
+		require.NoError(t, err)
+
+		// Attempt to delete the non-empty bucket — must fail with BucketNotEmpty (409)
+		_, err = cluster.s3Client.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+		require.Error(t, err, "deleting a non-empty bucket should fail")
+		var awsErr awserr.Error
+		require.ErrorAs(t, err, &awsErr)
+		assert.Equal(t, "BucketNotEmpty", awsErr.Code(),
+			"expected BucketNotEmpty error code, got %s: %s", awsErr.Code(), awsErr.Message())
+	})
+
+	t.Run("DeleteEmptyBucketSucceeds", func(t *testing.T) {
+		bucketName := createTestBucket(t, cluster, "test-empty-")
+
+		// Delete the empty bucket — should succeed even with the flag
+		_, err := cluster.s3Client.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+		require.NoError(t, err, "deleting an empty bucket should succeed")
+	})
 }
 
 // randomString generates a random string for unique naming

@@ -3,9 +3,8 @@ package webhook
 import (
 	"fmt"
 	"net/url"
-	"slices"
-	"strconv"
 
+	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
@@ -20,28 +19,15 @@ const (
 type eventType string
 
 const (
-	eventTypeCreate eventType = "create"
-	eventTypeDelete eventType = "delete"
-	eventTypeUpdate eventType = "update"
-	eventTypeRename eventType = "rename"
+	eventTypeCreate = eventType(notification.EventTypeCreate)
+	eventTypeDelete = eventType(notification.EventTypeDelete)
+	eventTypeUpdate = eventType(notification.EventTypeUpdate)
+	eventTypeRename = eventType(notification.EventTypeRename)
 )
 
 func (e eventType) valid() bool {
-	return slices.Contains([]eventType{
-		eventTypeCreate,
-		eventTypeDelete,
-		eventTypeUpdate,
-		eventTypeRename,
-	},
-		e,
-	)
+	return notification.ValidEventType(string(e))
 }
-
-var (
-	pubSubHandlerNameTemplate = func(n int) string {
-		return "webhook_handler_" + strconv.Itoa(n)
-	}
-)
 
 type client interface {
 	sendMessage(message *webhookMessage) error
@@ -59,7 +45,7 @@ func newWebhookMessage(key string, message proto.Message) *webhookMessage {
 		return nil
 	}
 
-	eventType := string(detectEventType(notification))
+	eventType := string(detectEventType(key, notification))
 
 	return &webhookMessage{
 		Key:          key,
@@ -157,26 +143,6 @@ func (c *config) validate() error {
 	return nil
 }
 
-func detectEventType(notification *filer_pb.EventNotification) eventType {
-	hasOldEntry := notification.OldEntry != nil
-	hasNewEntry := notification.NewEntry != nil
-	hasNewParentPath := notification.NewParentPath != ""
-
-	if !hasOldEntry && hasNewEntry {
-		return eventTypeCreate
-	}
-
-	if hasOldEntry && !hasNewEntry {
-		return eventTypeDelete
-	}
-
-	if hasOldEntry && hasNewEntry {
-		if hasNewParentPath {
-			return eventTypeRename
-		}
-
-		return eventTypeUpdate
-	}
-
-	return eventTypeUpdate
+func detectEventType(key string, n *filer_pb.EventNotification) eventType {
+	return eventType(notification.DetectEventType(key, n))
 }

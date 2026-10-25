@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"google.golang.org/grpc"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -74,11 +72,7 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return fmt.Errorf("only one of -put, -get, -list, -delete can be specified")
 	}
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
+	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		if *put {
 			if *name == "" {
 				return fmt.Errorf("-name is required")
@@ -86,7 +80,7 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if *file == "" {
 				return fmt.Errorf("-file is required")
 			}
-			data, err := os.ReadFile(*file)
+			data, err := os.ReadFile(util.ResolvePath(*file))
 			if err != nil {
 				return fmt.Errorf("failed to read policy file: %v", err)
 			}
@@ -145,6 +139,6 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 
 		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	})
 
 }

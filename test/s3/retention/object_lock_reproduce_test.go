@@ -19,6 +19,8 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 	t.Logf("=== Reproducing Object Lock Header Processing Issue ===")
 	t.Logf("Bucket name: %s", bucketName)
 
+	cleanupLeftoverTestBuckets(t, client)
+
 	// Step 1: Create bucket with Object Lock enabled header
 	t.Logf("\n1. Creating bucket with ObjectLockEnabledForBucket=true")
 	t.Logf("   This should send x-amz-bucket-object-lock-enabled: true header")
@@ -94,6 +96,8 @@ func TestNormalBucketCreationStillWorks(t *testing.T) {
 	bucketName := fmt.Sprintf("normal-test-%d", time.Now().UnixNano())
 
 	t.Logf("=== Testing Normal Bucket Creation ===")
+
+	cleanupLeftoverTestBuckets(t, client)
 
 	// Create bucket without Object Lock
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{

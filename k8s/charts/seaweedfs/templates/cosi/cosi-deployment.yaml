@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.cosi.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -38,7 +39,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.cosi.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.cosi.restartPolicy }}
       {{- if .Values.cosi.affinity }}
       affinity:
         {{ tpl .Values.cosi.affinity . | nindent 8 | trim }}
@@ -56,8 +57,11 @@ spec:
       {{- if .Values.cosi.priorityClassName }}
       priorityClassName: {{ .Values.cosi.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.cosi.schedulerName }}
+      schedulerName: {{ .Values.cosi.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
-      serviceAccountName: {{ include "seaweedfs.componentName" (list . "objectstorage-provisioner") }}
+      serviceAccountName: {{ include "seaweedfs.serviceAccountName" . }}-objectstorage-provisioner
       {{- if .Values.cosi.initContainers }}
       initContainers:
         {{ tpl .Values.cosi.initContainers . | nindent 8 | trim }}
@@ -68,7 +72,7 @@ spec:
       containers:
         - name: seaweedfs-cosi-driver
           image: "{{ .Values.cosi.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: DRIVERNAME
               value: "{{ .Values.cosi.driverName }}"
@@ -88,7 +92,7 @@ spec:
             {{- end }}
             - name: SEAWEEDFS_FILER
               value: "{{ include "seaweedfs.componentName" (list . "filer") }}:{{ .Values.filer.grpcPort }}"
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: WEED_GRPC_CLIENT_KEY
               value: /usr/local/share/ca-certificates/client/tls.key
             - name: WEED_GRPC_CLIENT_CERT
@@ -96,8 +100,10 @@ spec:
             - name: WEED_GRPC_CA
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
-            {{- if .Values.cosi.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.cosi.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.cosi "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -105,20 +111,9 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext (tpl (.Values.cosi.extraVolumeMounts | default "") .) (tpl (.Values.cosi.extraVolumes | default "") .)) | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
             {{- if .Values.cosi.enableAuth }}
@@ -126,11 +121,13 @@ spec:
               name: config-users
               readOnly: true
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
               subPath: security.toml
+            {{- end }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
@@ -152,9 +149,12 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.cosi.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.cosi.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           args:
             - {{ printf "--v=%s" (default "5" .Values.cosi.sidecar.logLevel) }}
           env:
@@ -163,6 +163,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext "" "") | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
           {{- with .Values.cosi.sidecar.resources }}
@@ -173,9 +174,10 @@ spec:
           securityContext: {{- omit .Values.cosi.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.cosi.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.cosi.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.cosi.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.cosi.containerSecurityContext (tpl (.Values.cosi.extraVolumeMounts | default "") .) (tpl (.Values.cosi.extraVolumes | default "") .) true) | nindent 8 }}
         - name: socket
           emptyDir: {}
         {{- if .Values.cosi.enableAuth }}
@@ -188,10 +190,12 @@ spec:
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: ca-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-ca-cert

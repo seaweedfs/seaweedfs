@@ -8,12 +8,11 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
-	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -32,7 +31,17 @@ func (store *PostgresStore) GetName() string {
 }
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
+	// Default on so minimal configs are not exposed to duplicate-key tx
+	// poisoning on Postgres; an explicit false still disables it.
+	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
+		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
 		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
@@ -53,26 +62,24 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
-func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
+	createTable = ResolveCreateTableQuery(createTable)
 	if !enableUpsert {
 		upsertQuery = ""
+	} else if upsertQuery == "" {
+		upsertQuery = DefaultUpsertQuery
 	}
-	store.SqlGenerator = &SqlGenPostgres{
-		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   `drop table "%s"`,
+	gen := &SqlGenPostgres{
+		CreateTableSqlTemplate: createTable,
+		DropTableSqlTemplate:   `drop table if exists "%s"`,
 		UpsertQueryTemplate:    upsertQuery,
 	}
+	store.SqlGenerator = gen
 
 	// pgx-optimized connection string with better timeouts and connection handling
 	sqlUrl := "connect_timeout=30"
-
-	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
-	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
-	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
-	}
 
 	if hostname != "" {
 		sqlUrl += " host=" + hostname
@@ -113,23 +120,23 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		sqlUrl += " search_path=" + schema
 		adaptedSqlUrl += " search_path=" + schema
 	}
-	var dbErr error
-	store.DB, dbErr = sql.Open("pgx", sqlUrl)
-	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
+	db, openErr := OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	if openErr != nil {
+		return openErr
+	}
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
+
+	if createTable != "" {
+		if _, err = store.DB.ExecContext(context.Background(), gen.GetSqlCreateTable(abstract_sql.DEFAULT_TABLE)); err != nil {
+			return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 		}
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
 	}
 
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
-
-	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
-	}
+	ConfigureListOrdering(store.DB, gen)
 
 	return nil
 }

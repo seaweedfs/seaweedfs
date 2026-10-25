@@ -2,6 +2,7 @@ package localsink
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,11 +56,16 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 	return localsink.Dir
 }
 
+func (localsink *LocalSink) GetDestinationIdentity() string {
+	return localsink.Dir
+}
+
 func (localsink *LocalSink) IsIncremental() bool {
 	return localsink.isIncremental
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	key = sanitizeFsKey(key)
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
@@ -71,13 +77,17 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 }
 
 func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+	key = sanitizeFsKey(key)
 	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
 		return nil
 	}
 	glog.V(4).Infof("Create Entry key: %s", key)
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
+	}
 
 	dir := filepath.Dir(key)
 
@@ -93,33 +103,56 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	}
 
 	mode := os.FileMode(entry.Attributes.FileMode)
-	dstFile, err := os.OpenFile(util.ToShortFileName(key), os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
+	shortFileName := util.ToShortFileName(key)
 
-	fi, err := dstFile.Stat()
+	// Write to a temp file in the same directory, then atomically rename
+	// on success. This prevents leaving a truncated/empty file if
+	// decryption or chunk copy fails.
+	tmpFile, err := os.CreateTemp(dir, ".seaweedfs-tmp-*")
 	if err != nil {
 		return err
 	}
-	if fi.Mode() != mode {
-		glog.V(4).Infof("Modify file mode: %o -> %o", fi.Mode(), mode)
-		if err := dstFile.Chmod(mode); err != nil {
-			return err
+	tmpName := tmpFile.Name()
+	defer func() {
+		// Clean up temp file on any error (rename removes it on success)
+		if tmpFile != nil {
+			tmpFile.Close()
+			os.Remove(tmpName)
 		}
+	}()
+
+	if err := tmpFile.Chmod(mode); err != nil {
+		return err
 	}
 
 	writeFunc := func(data []byte) error {
-		_, writeErr := dstFile.Write(data)
+		_, writeErr := tmpFile.Write(data)
 		return writeErr
 	}
 
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		content, err := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if err != nil {
+			return fmt.Errorf("decrypt inline SSE content: %w", err)
+		}
+		if err := writeFunc(content); err != nil {
+			return err
+		}
+	} else {
+		if err := repl_util.CopyFromChunkViews(chunkViews, localsink.filerSource, writeFunc, entry); err != nil {
+			return err
+		}
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, localsink.filerSource, writeFunc); err != nil {
+	// Close before rename so the data is flushed
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	tmpFile = nil // prevent deferred cleanup
+
+	// Atomic rename into final destination
+	if err := os.Rename(tmpName, shortFileName); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
 
@@ -127,6 +160,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 }
 
 func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+	key = sanitizeFsKey(key)
 	if localsink.isMultiPartEntry(key) {
 		return true, nil
 	}

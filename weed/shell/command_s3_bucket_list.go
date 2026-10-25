@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -59,18 +60,19 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 
 	err = filer_pb.List(context.Background(), commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if !entry.IsDirectory {
+		if !entry.IsDirectory || strings.HasPrefix(entry.Name, ".") {
 			return nil
 		}
 		collection := getCollectionName(commandEnv, entry.Name)
-		var collectionSize, fileCount float64
+		var collectionSize, logicalSize, fileCount float64
 		if collectionInfo, found := collectionInfos[collection]; found {
 			collectionSize = collectionInfo.Size
+			logicalSize = collectionInfo.LogicalSize()
 			fileCount = collectionInfo.FileCount - collectionInfo.DeleteCount
 		}
-		fmt.Fprintf(writer, "  %s\tsize:%.0f\tchunk:%.0f", entry.Name, collectionSize, fileCount)
+		fmt.Fprintf(writer, "  %s\tsize:%.0f\tlogical:%.0f\tchunk:%.0f", entry.Name, collectionSize, logicalSize, fileCount)
 		if entry.Quota > 0 {
-			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
+			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, logicalSize*100/float64(entry.Quota))
 		}
 		// Show bucket owner (use %q to escape special characters)
 		if entry.Extended != nil {

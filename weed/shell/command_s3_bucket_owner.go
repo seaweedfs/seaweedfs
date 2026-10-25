@@ -96,6 +96,9 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
+			// The S3 API derives the owning account from this identity when no
+			// account id is recorded; a leftover one would keep the old owner.
+			delete(entry.Extended, s3_constants.ExtAmzOwnerKey)
 			fmt.Fprintf(writer, "Setting owner of bucket %s to: %s\n", *bucketName, owner)
 
 			// Update the entry
@@ -114,6 +117,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 		if *deleteOwner {
 			if entry.Extended != nil {
 				delete(entry.Extended, s3_constants.AmzIdentityId)
+				delete(entry.Extended, s3_constants.ExtAmzOwnerKey)
 			}
 			fmt.Fprintf(writer, "Removing owner from bucket %s\n", *bucketName)
 

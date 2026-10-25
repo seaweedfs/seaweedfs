@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -84,7 +85,7 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 
 	req.Header.Set("Content-Type", "application/json")
 	if h.token != "" {
-		req.Header.Set("Authorization", "Bearer "+h.token)
+		req.Header.Set("Authorization", security.BearerPrefix+h.token)
 	}
 
 	// Apply timeout via context (not on client) to avoid redundancy

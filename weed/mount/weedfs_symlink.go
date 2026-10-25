@@ -2,14 +2,12 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -20,7 +18,8 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
-	if s := checkName(name); s != fuse.OK {
+	var s fuse.Status
+	if name, s = checkName(name); s != fuse.OK {
 		return s
 	}
 
@@ -30,48 +29,56 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	}
 	entryFullPath := dirPath.Child(name)
 
+	now := time.Now().Unix()
+	// Pre-allocate the mount's local inode so the filer stores the same
+	// object identity we report to the kernel below. Without this, the filer
+	// assigns its own inode and subsequent cached reads would disagree with
+	// the inode we return from Symlink.
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
 	request := &filer_pb.CreateEntryRequest{
 		Directory: string(dirPath),
 		Entry: &filer_pb.Entry{
 			Name:        name,
 			IsDirectory: false,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime:         time.Now().Unix(),
-				Crtime:        time.Now().Unix(),
+				Mtime:         now,
+				Crtime:        now,
+				Ctime:         now,
 				FileMode:      uint32(os.FileMode(0777) | os.ModeSymlink),
 				Uid:           header.Uid,
 				Gid:           header.Gid,
 				SymlinkTarget: target,
+				Inode:         inode,
 			},
 		},
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
 	}
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err == nil {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirPath), request.Entry)
 		}
-
-		// Only cache the entry if the parent directory is already cached.
-		if wfs.metaCache.IsDirectoryCached(dirPath) {
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("insert meta cache for symlink %s: %w", entryFullPath, err)
-			}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("symlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirPath)
 		}
+		wfs.touchDirMtimeCtimeBest(dirPath)
+	}
 
-		return nil
-	})
+	// Map back to local uid/gid before writing to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
+
 	if err != nil {
 		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, 0, true)
+	inode = wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, request.Entry)
 
@@ -84,7 +91,9 @@ func (wfs *WFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) (out []b
 		return
 	}
 
-	entry, status := wfs.maybeLoadEntry(entryFullPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	entry, _, status := wfs.maybeLoadEntry(ctx, entryFullPath)
 	if status != fuse.OK {
 		return nil, status
 	}

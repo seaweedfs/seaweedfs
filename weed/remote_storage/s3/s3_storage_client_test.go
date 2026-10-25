@@ -1,15 +1,27 @@
 package s3
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestS3MakeUsesAnonymousCredentialsWhenKeysAreEmpty(t *testing.T) {
+	clearAWSCredentialEnv(t)
 	maker := s3RemoteStorageMaker{}
 	conf := &remote_pb.RemoteConf{
 		Type:             "s3",
@@ -27,6 +39,74 @@ func TestS3MakeUsesAnonymousCredentialsWhenKeysAreEmpty(t *testing.T) {
 	s3Client, ok := client.conn.(*awss3.S3)
 	require.True(t, ok)
 	require.Same(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+}
+
+func clearAWSCredentialEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"AWS_ACCESS_KEY_ID",
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+		"AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+		"AWS_SHARED_CREDENTIALS_FILE",
+		"AWS_CONFIG_FILE",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestS3MakeUsesDefaultCredentialChainWhenKeysAreEmptyAndSourceIsConfigured(t *testing.T) {
+	for name, value := range map[string]string{
+		"AWS_ACCESS_KEY_ID":                      "env-access",
+		"AWS_PROFILE":                            "some-profile",
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            "/var/run/secrets/token",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "http://127.0.0.1:1/creds",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/creds",
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearAWSCredentialEnv(t)
+			t.Setenv(name, value)
+			t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/test")
+
+			remoteClient, err := s3RemoteStorageMaker{}.Make(&remote_pb.RemoteConf{
+				Type:             "s3",
+				S3Region:         "us-east-1",
+				S3Endpoint:       "http://localhost:8333",
+				S3ForcePathStyle: true,
+			})
+			require.NoError(t, err)
+
+			s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+			require.True(t, ok)
+			require.NotSame(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+		})
+	}
+}
+
+// A caller that pins a custom http.Client still gets the default chain, so
+// remote providers resolve on an unguarded client while S3 requests use the
+// pinned one.
+func TestS3MakeResolvesEnvCredentialsWithCustomHTTPClient(t *testing.T) {
+	clearAWSCredentialEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-access")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	remoteClient, err := MakeWithHTTPClient(&remote_pb.RemoteConf{
+		Type:             "s3",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "http://localhost:8333",
+		S3ForcePathStyle: true,
+	}, &http.Client{})
+	require.NoError(t, err)
+
+	s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+	require.True(t, ok)
+	require.NotSame(t, credentials.AnonymousCredentials, s3Client.Config.Credentials)
+	value, err := s3Client.Config.Credentials.Get()
+	require.NoError(t, err)
+	require.Equal(t, "env-access", value.AccessKeyID)
 }
 
 func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
@@ -54,4 +134,409 @@ func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, conf.S3AccessKey, credValue.AccessKeyID)
 	require.Equal(t, conf.S3SecretKey, credValue.SecretAccessKey)
+}
+
+func TestS3RemoteStorageClientImplementsInterface(t *testing.T) {
+	var _ remote_storage.RemoteStorageClient = (*s3RemoteStorageClient)(nil)
+}
+
+func TestS3ErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
+	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
+	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
+// removeDirectoryMock serves canned listing pages and records the delete batches.
+type removeDirectoryMock struct {
+	s3iface.S3API
+	pages        []*awss3.ListObjectsV2Output
+	listInputs   []*awss3.ListObjectsV2Input
+	deleteInputs []*awss3.DeleteObjectsInput
+	deleteResp   *awss3.DeleteObjectsOutput
+	deleteErr    error
+}
+
+func (m *removeDirectoryMock) ListObjectsV2Pages(input *awss3.ListObjectsV2Input, fn func(*awss3.ListObjectsV2Output, bool) bool) error {
+	m.listInputs = append(m.listInputs, input)
+	for i, page := range m.pages {
+		if !fn(page, i == len(m.pages)-1) {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *removeDirectoryMock) DeleteObjects(input *awss3.DeleteObjectsInput) (*awss3.DeleteObjectsOutput, error) {
+	m.deleteInputs = append(m.deleteInputs, input)
+	if m.deleteErr != nil {
+		return nil, m.deleteErr
+	}
+	if m.deleteResp != nil {
+		return m.deleteResp, nil
+	}
+	return &awss3.DeleteObjectsOutput{}, nil
+}
+
+func listPage(keys ...string) *awss3.ListObjectsV2Output {
+	page := &awss3.ListObjectsV2Output{}
+	for _, key := range keys {
+		page.Contents = append(page.Contents, &awss3.Object{Key: aws.String(key)})
+	}
+	return page
+}
+
+func deletedKeys(input *awss3.DeleteObjectsInput) (keys []string) {
+	for _, object := range input.Delete.Objects {
+		keys = append(keys, aws.StringValue(object.Key))
+	}
+	return
+}
+
+func TestS3RemoveDirectoryDeletesEveryListedObject(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages: []*awss3.ListObjectsV2Output{
+			listPage("testdir/a.bin", "testdir/sub/b.bin"),
+			listPage("testdir/z.bin"),
+		},
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+
+	require.Len(t, mock.listInputs, 1)
+	// without the trailing slash the listing would also match /testdir2
+	require.Equal(t, "testdir/", aws.StringValue(mock.listInputs[0].Prefix))
+	require.Len(t, mock.deleteInputs, 2)
+	require.Equal(t, []string{"testdir/a.bin", "testdir/sub/b.bin"}, deletedKeys(mock.deleteInputs[0]))
+	require.Equal(t, []string{"testdir/z.bin"}, deletedKeys(mock.deleteInputs[1]))
+}
+
+func TestS3RemoveDirectoryEmptyListingSendsNoDeletes(t *testing.T) {
+	mock := &removeDirectoryMock{pages: []*awss3.ListObjectsV2Output{listPage()}}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+	require.Empty(t, mock.deleteInputs)
+}
+
+func TestS3RemoveDirectoryRefusesBucketRoot(t *testing.T) {
+	mock := &removeDirectoryMock{pages: []*awss3.ListObjectsV2Output{listPage("a.bin")}}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+	require.Empty(t, mock.listInputs)
+	require.Empty(t, mock.deleteInputs)
+}
+
+func TestS3RemoveDirectoryReturnsBatchError(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages:     []*awss3.ListObjectsV2Output{listPage("testdir/a.bin")},
+		deleteErr: fmt.Errorf("access denied"),
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.ErrorContains(t, client.RemoveDirectory(loc), "access denied")
+}
+
+func TestS3RemoveDirectoryReturnsPerKeyError(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages: []*awss3.ListObjectsV2Output{listPage("testdir/a.bin", "testdir/b.bin")},
+		deleteResp: &awss3.DeleteObjectsOutput{
+			Errors: []*awss3.Error{{
+				Key:     aws.String("testdir/a.bin"),
+				Code:    aws.String("InternalError"),
+				Message: aws.String("try again"),
+			}, {
+				Key:     aws.String("testdir/b.bin"),
+				Code:    aws.String("InternalError"),
+				Message: aws.String("try again"),
+			}},
+		},
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	err := client.RemoveDirectory(loc)
+	require.ErrorContains(t, err, "2 keys failed")
+	require.ErrorContains(t, err, "testdir/a.bin")
+}
+
+// captureRoundTripper records the PUT request that the s3manager uploader
+// sends, and short-circuits all calls with a 200 so the SDK is satisfied.
+type captureRoundTripper struct {
+	uploadReq *http.Request
+}
+
+func (c *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPut {
+		c.uploadReq = req.Clone(req.Context())
+	}
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header: http.Header{
+			"ETag": []string{"\"etag\""},
+		},
+		Request: req,
+	}, nil
+}
+
+func (c *captureRoundTripper) uploadContentType() string {
+	if c.uploadReq == nil {
+		return ""
+	}
+	return c.uploadReq.Header.Get("Content-Type")
+}
+
+func newS3ClientWithTransport(t *testing.T, rt http.RoundTripper, supportTagging bool) *s3RemoteStorageClient {
+	t.Helper()
+	conf := &remote_pb.RemoteConf{
+		Type:             "s3",
+		Name:             "test",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "https://example.invalid",
+		S3ForcePathStyle: true,
+		S3AccessKey:      "test-key",
+		S3SecretKey:      "test-secret",
+		S3SupportTagging: supportTagging,
+	}
+	rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: rt})
+	require.NoError(t, err)
+	return rs.(*s3RemoteStorageClient)
+}
+
+func newCapturingS3Client(t *testing.T) (*s3RemoteStorageClient, *captureRoundTripper) {
+	t.Helper()
+	rt := &captureRoundTripper{}
+	return newS3ClientWithTransport(t, rt, false), rt
+}
+
+func TestS3WriteFilePassesMimeAsContentType(t *testing.T) {
+	client, rt := newCapturingS3Client(t)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.html",
+	}
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mime: "text/html"},
+	}
+
+	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("<html></html>")))
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	require.Equal(t, "text/html", rt.uploadContentType(), "Content-Type should match entry.Attributes.Mime")
+}
+
+// recordingRoundTripper records every request and answers all of them with a 200.
+type recordingRoundTripper struct {
+	requests []*http.Request
+}
+
+func (c *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req.Clone(req.Context()))
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func newRecordingS3Client(t *testing.T, supportTagging bool) (*s3RemoteStorageClient, *recordingRoundTripper) {
+	t.Helper()
+	rt := &recordingRoundTripper{}
+	return newS3ClientWithTransport(t, rt, supportTagging), rt
+}
+
+func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, false)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"X-Amz-Tagging-k1": []byte("v1")}}
+
+	_, err := client.UpdateFileMetadata(loc, plain, tagged)
+	require.NoError(t, err)
+	require.Empty(t, rt.requests, "adding attributes must not send PutObjectTagging")
+
+	_, err = client.UpdateFileMetadata(loc, tagged, plain)
+	require.NoError(t, err)
+	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
+}
+
+func TestS3UpdateFileMetadataIgnoresNonTagAttributes(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	old := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+	updated := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v2")}}
+
+	_, err := client.UpdateFileMetadata(loc, old, updated)
+	require.NoError(t, err)
+	require.Empty(t, rt.requests, "non-tag attribute changes must not send tagging calls")
+}
+
+func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"X-Amz-Tagging-k1": []byte("v1")}}
+
+	_, err := client.UpdateFileMetadata(loc, plain, tagged)
+	require.NoError(t, err)
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodPut, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+
+	rt.requests = nil
+	_, err = client.UpdateFileMetadata(loc, tagged, plain)
+	require.NoError(t, err)
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodDelete, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+}
+
+func TestS3WriteFileSendsOnlyTagAttributes(t *testing.T) {
+	rt := &captureRoundTripper{}
+	client := newS3ClientWithTransport(t, rt, true)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.bin",
+	}
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			"X-Amz-Tagging-a b":  []byte("x=y"),
+			"Seaweed-X-Amz-Acl":  []byte(`[{"Permission":"FULL_CONTROL"}]`),
+			"Seaweed-X-Amz-ETag": []byte("etag-1"),
+			"Cache-Control":      []byte("no-cache"),
+		},
+	}
+
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	require.NoError(t, err)
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	require.Equal(t, "a%20b=x%3Dy", rt.uploadReq.Header.Get("X-Amz-Tagging"))
+}
+
+func TestS3WriteFileOmitsTaggingWhenNoTagAttributes(t *testing.T) {
+	rt := &captureRoundTripper{}
+	client := newS3ClientWithTransport(t, rt, true)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.bin",
+	}
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{"Seaweed-X-Amz-Acl": []byte(`[{"Permission":"FULL_CONTROL"}]`)},
+	}
+
+	_, err := client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+	require.NoError(t, err)
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	require.Empty(t, rt.uploadReq.Header.Get("X-Amz-Tagging"))
+}
+
+func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {
+	client, rt := newCapturingS3Client(t)
+	loc := &remote_pb.RemoteStorageLocation{
+		Name:   "test",
+		Bucket: "bucket",
+		Path:   "/dir/test.bin",
+	}
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{},
+	}
+
+	_, _ = client.WriteFile(loc, entry, bytes.NewReader([]byte("data")))
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	// When entry.Attributes.Mime is empty we don't force a Content-Type so the
+	// remote can apply its own default rather than getting a misleading one.
+	require.Equal(t, "", rt.uploadContentType())
+}
+
+// errorRoundTripper answers every request with an S3 XML error.
+type errorRoundTripper struct {
+	statusCode int
+	code       string
+}
+
+func (e *errorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	body := `<?xml version="1.0" encoding="UTF-8"?><Error><Code>` + e.code + `</Code><Message>m</Message></Error>`
+	return &http.Response{
+		StatusCode: e.statusCode,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/xml"}},
+		Request:    req,
+	}, nil
+}
+
+func TestS3ReadNotFoundClassification(t *testing.T) {
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/obj.bin"}
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		notFound   bool
+	}{
+		{"missing key", http.StatusNotFound, "NoSuchKey", true},
+		{"missing bucket", http.StatusNotFound, "NoSuchBucket", false},
+		{"access denied", http.StatusForbidden, "AccessDenied", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newS3ClientWithTransport(t, &errorRoundTripper{statusCode: tt.statusCode, code: tt.code}, false)
+
+			_, err := client.ReadFile(loc, 0, 10)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "ReadFile: %v", err)
+
+			_, err = client.ReadFileAsStream(context.Background(), loc, 0, 10)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "ReadFileAsStream: %v", err)
+		})
+	}
+}
+
+func TestIsNoSuchKey(t *testing.T) {
+	require.True(t, isNoSuchKey(fmt.Errorf("download: %w", awserr.New(awss3.ErrCodeNoSuchKey, "missing", nil))))
+	require.False(t, isNoSuchKey(awserr.New(awss3.ErrCodeNoSuchBucket, "missing", nil)))
+}
+
+func TestS3MakeResolvesEnvCredentialsWhenAnonymousDefault(t *testing.T) {
+	clearAWSCredentialEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-access")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	remoteClient, err := s3RemoteStorageMaker{}.Make(&remote_pb.RemoteConf{
+		Type:             "s3",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "http://localhost:8333",
+		S3ForcePathStyle: true,
+	})
+	require.NoError(t, err)
+
+	s3Client, ok := remoteClient.(*s3RemoteStorageClient).conn.(*awss3.S3)
+	require.True(t, ok)
+	value, err := s3Client.Config.Credentials.Get()
+	require.NoError(t, err)
+	require.Equal(t, "env-access", value.AccessKeyID)
+	require.Equal(t, "env-secret", value.SecretAccessKey)
 }

@@ -1,10 +1,15 @@
 package weed_server
 
 import (
+	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/viant/ptrie"
+	"google.golang.org/grpc"
 )
 
 func TestPtrie(t *testing.T) {
@@ -30,3 +35,77 @@ func TestPtrie(t *testing.T) {
 
 	assert.False(t, excludedTrie.Has(b))
 }
+
+type captureTraverseStream struct {
+	grpc.ServerStream
+	ctx       context.Context
+	visited   []string
+	entryTsNs map[string]int64
+}
+
+func (s *captureTraverseStream) Context() context.Context { return s.ctx }
+
+func (s *captureTraverseStream) Send(resp *filer_pb.TraverseBfsMetadataResponse) error {
+	dir := resp.Directory
+	if dir != "/" {
+		dir += "/"
+	}
+	path := dir + resp.Entry.Name
+	s.visited = append(s.visited, path)
+	if s.entryTsNs == nil {
+		s.entryTsNs = make(map[string]int64)
+	}
+	s.entryTsNs[path] = resp.EntryTsNs
+	return nil
+}
+
+func TestTraverseBfsMetadata(t *testing.T) {
+	store := newRenameTestStore()
+	// "/.system-data" shares the "/.system" byte prefix but is a different
+	// path component, so it must not be excluded.
+	for _, dir := range []string{"/", "/a", "/a/sub", "/b", "/.system", "/.system-data"} {
+		store.entries[dir] = newDirectoryEntry(dir, 1)
+	}
+	for _, file := range []string{"/a/f1", "/a/sub/f2", "/b/f3", "/.system/secret", "/.system-data/keep"} {
+		store.entries[file] = newFileEntry(file, 2)
+	}
+
+	server := &FilerServer{filer: newRenameTestFiler(t, store)}
+	stream := &captureTraverseStream{ctx: context.Background()}
+
+	err := server.TraverseBfsMetadata(&filer_pb.TraverseBfsMetadataRequest{
+		Directory:        "/",
+		ExcludedPrefixes: []string{"/.system"},
+	}, stream)
+	assert.NoError(t, err)
+
+	// The excluded subtree is skipped; everything else (including the
+	// /.system-data sibling) is visited exactly once.
+	assert.ElementsMatch(t, []string{
+		"/", "/a", "/a/f1", "/a/sub", "/a/sub/f2", "/b", "/b/f3",
+		"/.system-data", "/.system-data/keep",
+	}, stream.visited)
+
+	// Each entry's parent must be streamed before the entry itself, so a
+	// consumer can apply the tree top-down.
+	seen := make(map[string]bool)
+	for _, path := range stream.visited {
+		if path != "/" {
+			parent, _ := util.FullPath(path).DirAndName()
+			assert.Truef(t, seen[parent], "parent %s of %s not streamed first", parent, path)
+		}
+		seen[path] = true
+	}
+
+	// Every response carries a commit timestamp for ordering; with no
+	// recorded commit it falls back to the entry's mtime.
+	for path, tsNs := range stream.entryTsNs {
+		if path == "/" {
+			assert.Equal(t, filer.Root.Attr.Mtime.UnixNano(), tsNs)
+			continue
+		}
+		assert.Equalf(t, store.entries[path].Attr.Mtime.UnixNano(), tsNs, "entry_ts_ns for %s", path)
+	}
+}
+
+var _ filer_pb.SeaweedFiler_TraverseBfsMetadataServer = (*captureTraverseStream)(nil)

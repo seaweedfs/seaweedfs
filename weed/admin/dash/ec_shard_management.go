@@ -6,10 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
@@ -47,7 +45,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 	// Get detailed EC shard information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -68,6 +66,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
+								shardsInfo := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Mark this shard as present for this volume
@@ -77,7 +76,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 											VolumeID:     volumeId,
 											ShardID:      uint32(shardId),
 											Collection:   ecShardInfo.Collection,
-											Size:         0, // EC shards don't have individual size in the API response
+											Size:         uint64(shardsInfo.Size(erasure_coding.ShardId(shardId))),
 											Server:       node.Id,
 											DataCenter:   dc.Id,
 											Rack:         rack.Id,
@@ -264,7 +263,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 	// Get detailed EC shard information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -333,10 +332,19 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 								// Process each shard this server has for this volume
 								shardBits := ecShardInfo.EcIndexBits
+								shardSizes := ecShardInfo.ShardSizes
+								sizeIndex := 0
 								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Record shard location
 										volume.ShardLocations[shardId] = node.Id
+										if sizeIndex < len(shardSizes) {
+											size := shardSizes[sizeIndex]
+											if size >= 0 {
+												volume.ShardSizes[shardId] = size
+											}
+										}
+										sizeIndex++
 										totalShards++
 									}
 								}
@@ -352,38 +360,6 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 	if err != nil {
 		return nil, err
-	}
-
-	// Collect shard size information from volume servers
-	for volumeId, volume := range volumeData {
-		// Group servers by volume to minimize gRPC calls
-		serverHasVolume := make(map[string]bool)
-		for _, server := range volume.Servers {
-			serverHasVolume[server] = true
-		}
-
-		// Query each server for shard sizes
-		for server := range serverHasVolume {
-			err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
-				resp, err := client.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{
-					VolumeId: volumeId,
-				})
-				if err != nil {
-					glog.V(1).Infof("Failed to get EC shard info from %s for volume %d: %v", server, volumeId, err)
-					return nil // Continue with other servers, don't fail the entire request
-				}
-
-				// Update shard sizes
-				for _, shardInfo := range resp.EcShardInfos {
-					volume.ShardSizes[int(shardInfo.ShardId)] = shardInfo.Size
-				}
-
-				return nil
-			})
-			if err != nil {
-				glog.V(1).Infof("Failed to connect to volume server %s: %v", server, err)
-			}
-		}
 	}
 
 	// Calculate completeness for each volume
@@ -532,18 +508,6 @@ func getShardCount(ecIndexBits uint32) int {
 	return count
 }
 
-// getMissingShards returns a slice of missing shard IDs for a volume
-// Assumes default 10+4 EC configuration (14 total shards)
-func getMissingShards(ecIndexBits uint32) []int {
-	var missing []int
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		if (ecIndexBits & (1 << uint(i))) == 0 {
-			missing = append(missing, i)
-		}
-	}
-	return missing
-}
-
 // sortEcShards sorts EC shards based on the specified field and order
 func sortEcShards(shards []EcShardWithInfo, sortBy string, sortOrder string) {
 	sort.Slice(shards, func(i, j int) bool {
@@ -597,7 +561,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 	// Get detailed EC shard information for the specific volume via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
 		if err != nil {
 			return err
 		}
@@ -609,6 +573,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 						for _, diskInfo := range node.DiskInfos {
 							// Process EC shard information for this specific volume
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// An older master ignores the filter.
 								if ecShardInfo.Id == volumeID {
 									collection = ecShardInfo.Collection
 									dataCenters[dc.Id] = true
@@ -616,13 +581,23 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 									// Create individual shard entries for each shard this server has
 									shardBits := ecShardInfo.EcIndexBits
+									shardSizes := ecShardInfo.ShardSizes
+									sizeIndex := 0
 									for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 										if (shardBits & (1 << uint(shardId))) != 0 {
+											var shardSize uint64
+											if sizeIndex < len(shardSizes) {
+												size := shardSizes[sizeIndex]
+												if size >= 0 {
+													shardSize = uint64(size)
+												}
+											}
+											sizeIndex++
 											ecShard := EcShardWithInfo{
 												VolumeID:     ecShardInfo.Id,
 												ShardID:      uint32(shardId),
 												Collection:   ecShardInfo.Collection,
-												Size:         0, // EC shards don't have individual size in the API response
+												Size:         shardSize,
 												Server:       node.Id,
 												DataCenter:   dc.Id,
 												Rack:         rack.Id,
@@ -651,46 +626,6 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("EC volume %d not found", volumeID)
-	}
-
-	// Collect shard size information from volume servers
-	shardSizeMap := make(map[string]map[uint32]uint64) // server -> shardId -> size
-	for _, shard := range shards {
-		server := shard.Server
-		if _, exists := shardSizeMap[server]; !exists {
-			// Query this server for shard sizes
-			err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
-				resp, err := client.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{
-					VolumeId: volumeID,
-				})
-				if err != nil {
-					glog.V(1).Infof("Failed to get EC shard info from %s for volume %d: %v", server, volumeID, err)
-					return nil // Continue with other servers, don't fail the entire request
-				}
-
-				// Store shard sizes for this server
-				shardSizeMap[server] = make(map[uint32]uint64)
-				for _, shardInfo := range resp.EcShardInfos {
-					shardSizeMap[server][shardInfo.ShardId] = uint64(shardInfo.Size)
-				}
-
-				return nil
-			})
-			if err != nil {
-				glog.V(1).Infof("Failed to connect to volume server %s: %v", server, err)
-			}
-		}
-	}
-
-	// Update shard sizes in the shards array
-	for i := range shards {
-		server := shards[i].Server
-		shardId := shards[i].ShardID
-		if serverSizes, exists := shardSizeMap[server]; exists {
-			if size, exists := serverSizes[shardId]; exists {
-				shards[i].Size = size
-			}
-		}
 	}
 
 	// Calculate completeness based on unique shard IDs

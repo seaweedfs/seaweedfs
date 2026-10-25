@@ -62,7 +62,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	// collect filers
 	var filers []pb.ServerAddress
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: *commandEnv.option.FilerGroup,
@@ -114,7 +114,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, master := range masters {
 		for _, volumeServer := range volumeServers {
 			fmt.Fprintf(writer, "checking master %s to volume server %s ... ", string(master), string(volumeServer))
-			err := pb.WithMasterClient(false, master, commandEnv.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			err := pb.WithMasterClient(context.Background(), false, master, commandEnv.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
 				pong, err := client.Ping(context.Background(), &master_pb.PingRequest{
 					Target:     string(volumeServer),
 					TargetType: cluster.VolumeServerType,
@@ -137,7 +137,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 				continue
 			}
 			fmt.Fprintf(writer, "checking master %s to %s ... ", string(sourceMaster), string(targetMaster))
-			err := pb.WithMasterClient(false, sourceMaster, commandEnv.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			err := pb.WithMasterClient(context.Background(), false, sourceMaster, commandEnv.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
 				pong, err := client.Ping(context.Background(), &master_pb.PingRequest{
 					Target:     string(targetMaster),
 					TargetType: cluster.MasterType,
@@ -213,28 +213,11 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 		}
 	}
 
-	// check between volume servers
-	for _, sourceVolumeServer := range volumeServers {
-		for _, targetVolumeServer := range volumeServers {
-			if sourceVolumeServer == targetVolumeServer {
-				continue
-			}
-			fmt.Fprintf(writer, "checking volume server %s to %s ... ", string(sourceVolumeServer), string(targetVolumeServer))
-			err := pb.WithVolumeServerClient(false, sourceVolumeServer, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-				pong, err := client.Ping(context.Background(), &volume_server_pb.PingRequest{
-					Target:     string(targetVolumeServer),
-					TargetType: cluster.VolumeServerType,
-				})
-				if err == nil {
-					printTiming(writer, pong.StartTimeNs, pong.RemoteTimeNs, pong.StopTimeNs)
-				}
-				return err
-			})
-			if err != nil {
-				fmt.Fprintf(writer, "%v\n", err)
-			}
-		}
-	}
+	// Direct volume-to-volume connectivity is intentionally not validated
+	// here. Each volume server now restricts Ping to peers it can identify
+	// (its configured/current masters), so it does not carry a peer-volume
+	// list to drive a mesh check from. The master->volume and filer->volume
+	// probes above do not exercise volume-to-volume reachability.
 
 	// check between filers, and need to connect to itself
 	for _, sourceFiler := range filers {

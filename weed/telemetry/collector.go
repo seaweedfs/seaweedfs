@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
@@ -67,8 +68,9 @@ func (c *Collector) CollectAndSendAsync() {
 	}
 
 	go func() {
-		data := c.collectData()
-		c.client.SendTelemetryAsync(data)
+		if data := c.collectData(); data != nil {
+			c.client.SendTelemetryAsync(data)
+		}
 	}()
 }
 
@@ -79,7 +81,7 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 		return
 	}
 
-	glog.V(0).Infof("Starting telemetry collection every %v", interval)
+	glog.V(0).Infof("Reporting anonymous cluster statistics to %s every %v once %d GiB are stored, use -telemetry=false to opt out", c.client.url, interval, proto.MinDiskBytes>>30)
 
 	// Send initial telemetry after a short delay
 	go func() {
@@ -106,7 +108,9 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 	}()
 }
 
-// collectData gathers telemetry data from the topology
+// collectData gathers telemetry data from the topology. It returns nil while
+// the cluster stores less than proto.MinDiskBytes, so throwaway clusters never
+// report.
 func (c *Collector) collectData() *proto.TelemetryData {
 	data := &proto.TelemetryData{
 		Version:   c.version,
@@ -130,6 +134,10 @@ func (c *Collector) collectData() *proto.TelemetryData {
 		data.BrokerCount = int32(c.countBrokers())
 	}
 
+	if data.TotalDiskBytes < proto.MinDiskBytes {
+		glog.V(2).Infof("Skipping telemetry: %d bytes stored, reporting starts at %d", data.TotalDiskBytes, proto.MinDiskBytes)
+		return nil
+	}
 	return data
 }
 
@@ -152,6 +160,7 @@ func (c *Collector) countVolumeServers() int {
 func (c *Collector) collectVolumeStats() (uint64, int) {
 	var totalDiskBytes uint64
 	var totalVolumeCount int
+	ecVolumeIds := make(map[needle.VolumeId]struct{})
 
 	for _, dcNode := range c.topo.Children() {
 		dc := dcNode.(*topology.DataCenter)
@@ -164,11 +173,21 @@ func (c *Collector) collectVolumeStats() (uint64, int) {
 					totalVolumeCount++
 					totalDiskBytes += volumeInfo.Size
 				}
+				// An encoded volume leaves GetVolumes and is reported as
+				// shards, so without this a cluster reports none of the
+				// bytes it erasure-coded. Every shard copy counts, parity
+				// included, the way a replicated volume counts every replica.
+				for _, ecInfo := range dn.GetEcShards() {
+					totalDiskBytes += uint64(ecInfo.ShardsInfo.TotalSize())
+					// One volume's shards are spread over many nodes, so
+					// count the volume once rather than once per holder.
+					ecVolumeIds[ecInfo.VolumeId] = struct{}{}
+				}
 			}
 		}
 	}
 
-	return totalDiskBytes, totalVolumeCount
+	return totalDiskBytes, totalVolumeCount + len(ecVolumeIds)
 }
 
 // countFilers counts the number of active filer servers across all groups

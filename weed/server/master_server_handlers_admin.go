@@ -13,8 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend/memory_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -25,24 +23,18 @@ import (
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	collectionName := r.FormValue("collection")
-	collection, ok := ms.Topo.FindCollection(collectionName)
-	if !ok {
+	if _, ok := ms.Topo.FindCollection(collectionName); !ok {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
 	}
-	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(false, server.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
-				Collection: collection.Name,
-			})
-			return deleteErr
-		})
-		if err != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, err)
-			return
-		}
+
+	// The same two passes the gRPC CollectionDelete runs, rather than a second
+	// copy of the volume-server walk: this handler deleted only the normal
+	// volumes and left the collection's EC shards behind.
+	if err := ms.deleteCollection(r.Context(), collectionName); err != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
 	}
-	ms.Topo.DeleteCollection(collectionName)
 
 	w.WriteHeader(http.StatusNoContent)
 	return
@@ -51,6 +43,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = version.Version()
+	m["TopologyId"] = ms.Topo.GetTopologyId()
 	m["Topology"] = ms.Topo.ToInfo()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -68,7 +61,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	// glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, 0, "", ms.preallocateSize, false)
+	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, ms.option.MaxParallelVacuumPerRack, 0, "", ms.preallocateSize, false, 0)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -90,6 +83,9 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		} else {
 			var newVidLocations []*master_pb.VolumeLocation
 			newVidLocations, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, uint32(count), option, ms.Topo)
+			if len(newVidLocations) > 0 {
+				ms.broadcastVolumeLocationsToClients(newVidLocations)
+			}
 			count = uint64(len(newVidLocations))
 		}
 	} else {
@@ -129,14 +125,15 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
+	fileSizeLimitBytes := int64(ms.option.FileSizeLimitMB) * 1024 * 1024
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption)
+		submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption, fileSizeLimitBytes)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return masterUrl }, ms.grpcDialOption)
+			submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return masterUrl }, ms.grpcDialOption, fileSizeLimitBytes)
 		}
 	}
 }

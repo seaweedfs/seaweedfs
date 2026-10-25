@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"html/template"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 //go:embed master.html
@@ -16,7 +18,7 @@ var templateFunctions = template.FuncMap{
 	"url": func(input string) string {
 
 		if !strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://") {
-			return "http://" + input
+			return "http://" + pb.ServerAddress(input).ToHttpAddress()
 		}
 
 		return input
@@ -25,4 +27,4 @@ var templateFunctions = template.FuncMap{
 
 var StatusTpl = template.Must(template.New("status").Funcs(templateFunctions).Parse(masterHtml))
 
-var StatusNewRaftTpl = template.Must(template.New("status").Parse(masterNewRaftHtml))
+var StatusNewRaftTpl = template.Must(template.New("status").Funcs(templateFunctions).Parse(masterNewRaftHtml))

@@ -1,7 +1,6 @@
 package example
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -22,10 +21,8 @@ func TestIAMOperations(t *testing.T) {
 	// Set credentials before starting cluster
 	accessKey := "testkey123"
 	secretKey := "testsecret456"
-	os.Setenv("AWS_ACCESS_KEY_ID", accessKey)
-	os.Setenv("AWS_SECRET_ACCESS_KEY", secretKey)
-	defer os.Unsetenv("AWS_ACCESS_KEY_ID")
-	defer os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+	t.Setenv("AWS_ACCESS_KEY_ID", accessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", secretKey)
 
 	// Create and start test cluster
 	cluster, err := startMiniCluster(t)

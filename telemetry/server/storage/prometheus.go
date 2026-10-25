@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ type PrometheusStorage struct {
 	// Prometheus metrics
 	totalClusters     prometheus.Gauge
 	activeClusters    prometheus.Gauge
+	confirmedClusters prometheus.Gauge
 	volumeServerCount *prometheus.GaugeVec
 	totalDiskBytes    *prometheus.GaugeVec
 	totalVolumeCount  *prometheus.GaugeVec
@@ -20,11 +22,14 @@ type PrometheusStorage struct {
 	brokerCount       *prometheus.GaugeVec
 	clusterInfo       *prometheus.GaugeVec
 	telemetryReceived prometheus.Counter
+	reportsSkipped    prometheus.Counter
 
 	// In-memory storage for API endpoints (if needed)
 	mu        sync.RWMutex
 	instances map[string]*telemetryData
+	histories map[string][]HistorySample
 	stats     map[string]interface{}
+	dirty     bool // instances changed since the last successful state save
 }
 
 // telemetryData is an internal struct that includes the received timestamp
@@ -34,6 +39,11 @@ type telemetryData struct {
 }
 
 func NewPrometheusStorage() *PrometheusStorage {
+	return newPrometheusStorage(prometheus.DefaultRegisterer)
+}
+
+func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
+	promauto := promauto.With(reg)
 	return &PrometheusStorage{
 		totalClusters: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_total_clusters",
@@ -43,26 +53,30 @@ func NewPrometheusStorage() *PrometheusStorage {
 			Name: "seaweedfs_telemetry_active_clusters",
 			Help: "Number of active SeaweedFS clusters (last 7 days)",
 		}),
+		confirmedClusters: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "seaweedfs_telemetry_confirmed_clusters",
+			Help: "Active clusters seen on at least 7 distinct days (last 7 days)",
+		}),
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
 			Help: "Number of volume servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		totalDiskBytes: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_disk_bytes",
 			Help: "Total disk usage in bytes per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		totalVolumeCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_count",
 			Help: "Total number of volumes per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		filerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_filer_count",
 			Help: "Number of filer servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		brokerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_broker_count",
 			Help: "Number of broker servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		clusterInfo: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_cluster_info",
 			Help: "Cluster information (always 1, labels contain metadata)",
@@ -71,7 +85,12 @@ func NewPrometheusStorage() *PrometheusStorage {
 			Name: "seaweedfs_telemetry_reports_received_total",
 			Help: "Total number of telemetry reports received",
 		}),
+		reportsSkipped: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "seaweedfs_telemetry_reports_skipped_total",
+			Help: fmt.Sprintf("Reports not kept because the cluster stores less than %d GiB", proto.MinDiskBytes>>30),
+		}),
 		instances: make(map[string]*telemetryData),
+		histories: make(map[string][]HistorySample),
 		stats:     make(map[string]interface{}),
 	}
 }
@@ -80,38 +99,50 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update Prometheus metrics
-	labels := prometheus.Labels{
-		"cluster_id": data.ClusterId,
-		"version":    data.Version,
-		"os":         data.Os,
-	}
-
-	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
-	s.totalDiskBytes.With(labels).Set(float64(data.TotalDiskBytes))
-	s.totalVolumeCount.With(labels).Set(float64(data.TotalVolumeCount))
-	s.filerCount.With(labels).Set(float64(data.FilerCount))
-	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
-
-	infoLabels := prometheus.Labels{
-		"cluster_id": data.ClusterId,
-		"version":    data.Version,
-		"os":         data.Os,
-	}
-	s.clusterInfo.With(infoLabels).Set(1)
-
 	s.telemetryReceived.Inc()
+	if data.TotalDiskBytes < proto.MinDiskBytes {
+		s.reportsSkipped.Inc()
+		return nil
+	}
+
+	// Drop the cluster_info series recorded under the previous label set when
+	// a cluster reports back with a different version or OS, so it is not
+	// counted under two versions at once.
+	if prev, ok := s.instances[data.TopologyId]; ok &&
+		(prev.TelemetryData.Version != data.Version || prev.TelemetryData.Os != data.Os) {
+		s.clusterInfo.Delete(infoLabels(prev.TelemetryData))
+	}
+	s.setClusterMetrics(data)
 
 	// Store in memory for API endpoints
-	s.instances[data.ClusterId] = &telemetryData{
+	receivedAt := time.Now().UTC()
+	s.instances[data.TopologyId] = &telemetryData{
 		TelemetryData: data,
-		ReceivedAt:    time.Now().UTC(),
+		ReceivedAt:    receivedAt,
 	}
+	s.appendHistory(data, receivedAt)
+	s.dirty = true
 
 	// Update aggregated stats
 	s.updateStats()
 
 	return nil
+}
+
+// setClusterMetrics records a report's values on the Prometheus gauges.
+// Value gauges are keyed by cluster_id only so a cluster's series continues
+// across upgrades; version/os metadata lives on cluster_info (join with
+// `* on(cluster_id) group_left(version, os)`). Callers must hold s.mu.
+func (s *PrometheusStorage) setClusterMetrics(data *proto.TelemetryData) {
+	labels := prometheus.Labels{
+		"cluster_id": data.TopologyId,
+	}
+	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
+	s.totalDiskBytes.With(labels).Set(float64(data.TotalDiskBytes))
+	s.totalVolumeCount.With(labels).Set(float64(data.TotalVolumeCount))
+	s.filerCount.With(labels).Set(float64(data.FilerCount))
+	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
+	s.clusterInfo.With(infoLabels(data)).Set(1)
 }
 
 func (s *PrometheusStorage) GetStats() (map[string]interface{}, error) {
@@ -143,45 +174,57 @@ func (s *PrometheusStorage) GetInstances(limit int) ([]*telemetryData, error) {
 	return instances, nil
 }
 
+// GetMetrics returns fleet-wide daily totals across confirmed clusters for the
+// last `days` days, in the parallel-array shape the dashboard charts expect.
+// Totals come from the daily histories rather than from s.instances, which holds
+// only each cluster's most recent report and so would credit every cluster to
+// the single day it last reported on.
 func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return current metrics from in-memory storage
-	// Historical data should be queried from Prometheus directly
-	cutoff := time.Now().AddDate(0, 0, -days)
+	histories := s.seriesHistories()
+	axis := newDailySeries(days, histories)
+	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 
-	var volumeServers []map[string]interface{}
-	var diskUsage []map[string]interface{}
-
-	for _, instance := range s.instances {
-		if instance.ReceivedAt.After(cutoff) {
-			volumeServers = append(volumeServers, map[string]interface{}{
-				"date":  instance.ReceivedAt.Format("2006-01-02"),
-				"value": instance.TelemetryData.VolumeServerCount,
-			})
-			diskUsage = append(diskUsage, map[string]interface{}{
-				"date":  instance.ReceivedAt.Format("2006-01-02"),
-				"value": instance.TelemetryData.TotalDiskBytes,
-			})
+	diskUsage := make([]uint64, len(axis.dates))
+	serverCounts := make([]int64, len(axis.dates))
+	for _, history := range histories {
+		if disk, ok := align(axis, history, activeSince, diskBytes); ok {
+			for i, v := range disk {
+				diskUsage[i] += v
+			}
+		}
+		if servers, ok := align(axis, history, activeSince, serverCount); ok {
+			for i, v := range servers {
+				serverCounts[i] += int64(v)
+			}
 		}
 	}
 
 	return map[string]interface{}{
-		"volume_servers": volumeServers,
-		"disk_usage":     diskUsage,
+		"dates":         axis.dates,
+		"server_counts": serverCounts,
+		"disk_usage":    diskUsage,
 	}, nil
 }
 
 func (s *PrometheusStorage) updateStats() {
 	now := time.Now()
-	last7Days := now.AddDate(0, 0, -7)
+	last7Days := now.AddDate(0, 0, -activeDays)
 	last30Days := now.AddDate(0, 0, -30)
 
 	totalInstances := 0
 	activeInstances := 0
-	versions := make(map[string]int)
-	osDistribution := make(map[string]int)
+	confirmedInstances := 0
+	confirmedByDays := make(map[int]int, len(confirmThresholds))
+	for _, threshold := range confirmThresholds {
+		confirmedByDays[threshold] = 0
+	}
+	versionsAll := make(map[string]int)
+	osAll := make(map[string]int)
+	versionsConfirmed := make(map[string]int)
+	osConfirmed := make(map[string]int)
 
 	for _, instance := range s.instances {
 		if instance.ReceivedAt.After(last30Days) {
@@ -189,21 +232,46 @@ func (s *PrometheusStorage) updateStats() {
 		}
 		if instance.ReceivedAt.After(last7Days) {
 			activeInstances++
-			versions[instance.TelemetryData.Version]++
-			osDistribution[instance.TelemetryData.Os]++
+			versionsAll[instance.TelemetryData.Version]++
+			osAll[instance.TelemetryData.Os]++
+			// A cluster is confirmed once seen on confirmDays distinct UTC
+			// days (histories hold one sample per day), so short-lived
+			// clusters can't skew the distributions below.
+			daysSeen := len(s.histories[instance.TelemetryData.TopologyId])
+			for _, threshold := range confirmThresholds {
+				if daysSeen >= threshold {
+					confirmedByDays[threshold]++
+				}
+			}
+			if daysSeen >= confirmDays {
+				confirmedInstances++
+				versionsConfirmed[instance.TelemetryData.Version]++
+				osConfirmed[instance.TelemetryData.Os]++
+			}
 		}
+	}
+
+	// Before any cluster has a week of history (fresh server with no
+	// prior state), fall back to all active clusters so the dashboard
+	// distributions aren't empty.
+	versions, osDistribution := versionsConfirmed, osConfirmed
+	if confirmedInstances == 0 {
+		versions, osDistribution = versionsAll, osAll
 	}
 
 	// Update Prometheus gauges
 	s.totalClusters.Set(float64(totalInstances))
 	s.activeClusters.Set(float64(activeInstances))
+	s.confirmedClusters.Set(float64(confirmedInstances))
 
 	// Update cached stats for API
 	s.stats = map[string]interface{}{
-		"total_instances":  totalInstances,
-		"active_instances": activeInstances,
-		"versions":         versions,
-		"os_distribution":  osDistribution,
+		"total_instances":     totalInstances,
+		"active_instances":    activeInstances,
+		"confirmed_instances": confirmedInstances,
+		"confirmed_by_days":   confirmedByDays,
+		"versions":            versions,
+		"os_distribution":     osDistribution,
 	}
 }
 
@@ -216,20 +284,49 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 	for instanceID, instance := range s.instances {
 		if instance.ReceivedAt.Before(cutoff) {
 			delete(s.instances, instanceID)
+			s.deleteClusterMetrics(instance.TelemetryData)
+			s.dirty = true
+		}
+	}
 
-			// Remove from Prometheus metrics
-			labels := prometheus.Labels{
-				"cluster_id": instance.TelemetryData.ClusterId,
-				"version":    instance.TelemetryData.Version,
-				"os":         instance.TelemetryData.Os,
-			}
-			s.volumeServerCount.Delete(labels)
-			s.totalDiskBytes.Delete(labels)
-			s.totalVolumeCount.Delete(labels)
-			s.filerCount.Delete(labels)
-			s.brokerCount.Delete(labels)
+	for id, h := range s.histories {
+		if _, ok := s.instances[id]; !ok {
+			delete(s.histories, id)
+			s.dirty = true
+			continue
+		}
+		i := 0
+		for i < len(h) && time.Unix(h[i].Ts, 0).Before(cutoff) {
+			i++
+		}
+		if i > 0 {
+			s.histories[id] = append([]HistorySample(nil), h[i:]...)
+			s.dirty = true
 		}
 	}
 
 	s.updateStats()
+}
+
+// deleteClusterMetrics removes all gauges stored for the given report's
+// cluster. Callers must hold s.mu.
+func (s *PrometheusStorage) deleteClusterMetrics(data *proto.TelemetryData) {
+	labels := prometheus.Labels{
+		"cluster_id": data.TopologyId,
+	}
+	s.volumeServerCount.Delete(labels)
+	s.totalDiskBytes.Delete(labels)
+	s.totalVolumeCount.Delete(labels)
+	s.filerCount.Delete(labels)
+	s.brokerCount.Delete(labels)
+	s.clusterInfo.Delete(infoLabels(data))
+}
+
+// infoLabels is the full label set used by the cluster_info metric.
+func infoLabels(data *proto.TelemetryData) prometheus.Labels {
+	return prometheus.Labels{
+		"cluster_id": data.TopologyId,
+		"version":    data.Version,
+		"os":         data.Os,
+	}
 }

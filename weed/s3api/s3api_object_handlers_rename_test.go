@@ -1,0 +1,281 @@
+package s3api
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+)
+
+// TestRenameSourceCandidates: AWS spells x-amz-rename-source as a bare key in
+// its CLI, Java and Rust examples and as bucket/key in a second CLI example and
+// the boto3 conditional one, so both readings have to survive parsing. The
+// literal key leads; the bucket-qualified reading follows only when the value
+// carries the request's own bucket.
+func TestRenameSourceCandidates(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		want    []string
+		wantErr s3err.ErrorCode
+	}{
+		{"bare key", "source.txt", []string{"source.txt"}, s3err.ErrNone},
+		{"bare key with leading slash", "/source.txt", []string{"source.txt"}, s3err.ErrNone},
+		{"bare key with prefix", "dir/source.txt", []string{"dir/source.txt"}, s3err.ErrNone},
+		{"bucket qualified", "/bucket/dir/key.txt", []string{"bucket/dir/key.txt", "dir/key.txt"}, s3err.ErrNone},
+		{"bucket qualified without leading slash", "bucket/key.txt", []string{"bucket/key.txt", "key.txt"}, s3err.ErrNone},
+		{"key whose first segment is another bucket", "other/key.txt", []string{"other/key.txt"}, s3err.ErrNone},
+		{"percent encoded", "a%20b.txt", []string{"a b.txt"}, s3err.ErrNone},
+		{"plus stays literal", "a+b.txt", []string{"a+b.txt"}, s3err.ErrNone},
+		{"duplicate slashes collapse", "//dir//key.txt", []string{"dir/key.txt"}, s3err.ErrNone},
+		{"bucket name alone is a key", "bucket", []string{"bucket"}, s3err.ErrNone},
+		{"bucket prefix with empty key", "bucket/", []string{"bucket/"}, s3err.ErrNone},
+		{"missing header", "", nil, s3err.ErrInvalidRenameSource},
+		{"parent traversal", "../other/key.txt", nil, s3err.ErrInvalidRenameSource},
+		{"encoded parent traversal", "%2e%2e/other/key.txt", nil, s3err.ErrInvalidRenameSource},
+		{"parent traversal behind the bucket", "/bucket/../other/key.txt", nil, s3err.ErrInvalidRenameSource},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt?renameObject", nil)
+			require.NoError(t, err)
+			if tc.source != "" {
+				r.Header.Set(s3_constants.AmzRenameSource, tc.source)
+			}
+
+			candidates, errCode := renameSourceCandidates(r, "bucket")
+			assert.Equal(t, tc.wantErr, errCode)
+			assert.Equal(t, tc.want, candidates)
+		})
+	}
+}
+
+func TestRenameSourceConditionalHeaders(t *testing.T) {
+	mtime := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtime.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("d41d8cd98f00b204e9800998ecf8427e")},
+	}
+
+	tests := []struct {
+		name   string
+		header string
+		value  string
+		want   s3err.ErrorCode
+	}{
+		{"if-match hit", s3_constants.AmzRenameSourceIfMatch, `"d41d8cd98f00b204e9800998ecf8427e"`, s3err.ErrNone},
+		{"if-match miss", s3_constants.AmzRenameSourceIfMatch, "0000", s3err.ErrPreconditionFailed},
+		{"if-match star", s3_constants.AmzRenameSourceIfMatch, "*", s3err.ErrNone},
+		{"if-none-match miss", s3_constants.AmzRenameSourceIfNoneMatch, "0000", s3err.ErrNone},
+		{"if-none-match hit", s3_constants.AmzRenameSourceIfNoneMatch, "d41d8cd98f00b204e9800998ecf8427e", s3err.ErrPreconditionFailed},
+		// AWS documents * on the source If-None-Match as always failing.
+		{"if-none-match star", s3_constants.AmzRenameSourceIfNoneMatch, "*", s3err.ErrPreconditionFailed},
+		{"modified since older", s3_constants.AmzRenameSourceIfModifiedSince, mtime.Add(-time.Hour).Format(http.TimeFormat), s3err.ErrNone},
+		{"modified since newer", s3_constants.AmzRenameSourceIfModifiedSince, mtime.Add(time.Hour).Format(http.TimeFormat), s3err.ErrPreconditionFailed},
+		{"unmodified since newer", s3_constants.AmzRenameSourceIfUnmodifiedSince, mtime.Add(time.Hour).Format(http.TimeFormat), s3err.ErrNone},
+		{"unmodified since older", s3_constants.AmzRenameSourceIfUnmodifiedSince, mtime.Add(-time.Hour).Format(http.TimeFormat), s3err.ErrPreconditionFailed},
+		{"unparsable date", s3_constants.AmzRenameSourceIfModifiedSince, "not a date", s3err.ErrInvalidRequest},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt?renameObject", nil)
+			require.NoError(t, err)
+			r.Header.Set(tc.header, tc.value)
+
+			assert.Equal(t, tc.want, validateSourceConditionalHeaders(r, entry, renameSourceConditionalHeaders))
+		})
+	}
+
+	t.Run("no headers", func(t *testing.T) {
+		r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt?renameObject", nil)
+		require.NoError(t, err)
+		assert.Equal(t, s3err.ErrNone, validateSourceConditionalHeaders(r, entry, renameSourceConditionalHeaders))
+	})
+}
+
+// TestSourceConditionalHeaderPrecedence: RFC 7232 lets an ETag precondition
+// settle its own side, so the date header next to it is not evaluated. AWS
+// documents the same for CopyObject: a matching x-amz-copy-source-if-match with
+// a failing x-amz-copy-source-if-unmodified-since copies instead of returning 412.
+func TestSourceConditionalHeaderPrecedence(t *testing.T) {
+	mtime := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	etag := "d41d8cd98f00b204e9800998ecf8427e"
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtime.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte(etag)},
+	}
+	before := mtime.Add(-time.Hour).Format(http.TimeFormat)
+	after := mtime.Add(time.Hour).Format(http.TimeFormat)
+
+	for _, names := range []sourceConditionalHeaderNames{copySourceConditionalHeaders, renameSourceConditionalHeaders} {
+		t.Run(names.ifMatch, func(t *testing.T) {
+			t.Run("matched if-match outranks a failing if-unmodified-since", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifMatch, etag)
+				r.Header.Set(names.ifUnmodifiedSince, before)
+				assert.Equal(t, s3err.ErrNone, validateSourceConditionalHeaders(r, entry, names))
+			})
+
+			t.Run("passed if-none-match outranks a failing if-modified-since", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifNoneMatch, "0000")
+				r.Header.Set(names.ifModifiedSince, after)
+				assert.Equal(t, s3err.ErrNone, validateSourceConditionalHeaders(r, entry, names))
+			})
+
+			t.Run("a failing if-match still loses", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifMatch, "0000")
+				r.Header.Set(names.ifUnmodifiedSince, after)
+				assert.Equal(t, s3err.ErrPreconditionFailed, validateSourceConditionalHeaders(r, entry, names))
+			})
+		})
+	}
+}
+
+// TestRenameTokenAnswersItsOwnRetry walks the retry x-amz-client-token is there
+// for: the rename commits, its response is lost, and the SDK resends the request
+// unchanged. The move carries the token to the destination, so the destination
+// can answer a retry that its own source no longer can.
+func TestRenameTokenAnswersItsOwnRetry(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	entry := &filer_pb.Entry{
+		Name:     "src.txt",
+		Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("d41d8cd98f00b204e9800998ecf8427e")},
+	}
+	require.NoError(t, markRenameToken(entry, clientToken, renameSource, "dst.txt"))
+
+	moved := proto.Clone(entry).(*filer_pb.Entry)
+	moved.Name = "dst.txt"
+
+	assert.Equal(t, renameTokenSameRequest, classifyRenameToken(moved, clientToken, renameSource, "dst.txt"))
+	assert.Equal(t, renameTokenReused, classifyRenameToken(moved, clientToken, "/bucket/other.txt", "dst.txt"))
+	assert.Equal(t, renameTokenUnrelated, classifyRenameToken(moved, "rename-token-of-another-request", renameSource, "dst.txt"))
+	// A copy of a renamed object carries its token along; the key it names does not.
+	assert.Equal(t, renameTokenUnrelated, classifyRenameToken(moved, clientToken, renameSource, "copy.txt"))
+
+	// The token is the gateway's own bookkeeping and must not reach a GET or HEAD.
+	assert.True(t, s3_constants.IsSeaweedFSInternalHeader(s3_constants.SeaweedFSRenameToken))
+}
+
+// A reused token is refused with 400 Bad Request, matching the AWS S3
+// RenameObject API documentation for IdempotencyParameterMismatch.
+func TestRenameTokenReuseAnswersBadRequest(t *testing.T) {
+	api := s3err.GetAPIError(s3err.ErrIdempotentParameterMismatch)
+	assert.Equal(t, http.StatusBadRequest, api.HTTPStatusCode)
+	assert.Equal(t, "IdempotentParameterMismatch", api.Code)
+}
+
+func TestClassifyRenameToken(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	stamped := func(token renameToken) *filer_pb.Entry {
+		raw, err := json.Marshal(token)
+		require.NoError(t, err)
+		return &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: raw}}
+	}
+	live := renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Unix()}
+
+	tests := []struct {
+		name        string
+		dstEntry    *filer_pb.Entry
+		clientToken string
+		want        renameTokenVerdict
+	}{
+		{"nothing at the destination", nil, clientToken, renameTokenUnrelated},
+		{"request without a token", stamped(live), "", renameTokenUnrelated},
+		{"destination the rename never wrote", &filer_pb.Entry{Name: "dst.txt"}, clientToken, renameTokenUnrelated},
+		{"another rename's token", stamped(live), "rename-token-of-another-request", renameTokenUnrelated},
+		{"same request", stamped(live), clientToken, renameTokenSameRequest},
+		{"token reused for another source", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, renameTokenReused},
+		{"token of a rename to another key", stamped(renameToken{Token: clientToken, Source: renameSource, Dest: "elsewhere.txt", Unix: time.Now().Unix()}), clientToken, renameTokenUnrelated},
+		{"expired token", stamped(renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Add(-renameTokenValidity - time.Minute).Unix()}), clientToken, renameTokenUnrelated},
+		{"unreadable token", &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: []byte("{")}}, clientToken, renameTokenUnrelated},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifyRenameToken(tc.dstEntry, tc.clientToken, renameSource, "dst.txt"))
+		})
+	}
+}
+
+// TestRetryRenameDecision covers the handler's retry branch, including the
+// fallthrough the classification alone cannot express: when the destination
+// carries this request's token but the source is still there, the rename is
+// performed rather than short-circuited.
+func TestRetryRenameDecision(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	stamped := func(token renameToken) *filer_pb.Entry {
+		raw, err := json.Marshal(token)
+		require.NoError(t, err)
+		return &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: raw}}
+	}
+	live := renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Unix()}
+
+	tests := []struct {
+		name        string
+		dstEntry    *filer_pb.Entry
+		clientToken string
+		srcErrCode  s3err.ErrorCode
+		wantErr     s3err.ErrorCode
+		wantSettled bool
+	}{
+		// A retry whose source is gone is answered as success.
+		{"same request, source gone", stamped(live), clientToken, s3err.ErrNoSuchKey, s3err.ErrNone, true},
+		// A retry whose source is back falls through: the rename proceeds.
+		{"same request, source present", stamped(live), clientToken, s3err.ErrNone, s3err.ErrNone, false},
+		// A reused token is refused regardless of source state.
+		{"reused token, source gone", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, s3err.ErrNoSuchKey, s3err.ErrIdempotentParameterMismatch, true},
+		{"reused token, source present", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, s3err.ErrNone, s3err.ErrIdempotentParameterMismatch, true},
+		// An unrelated destination falls through to the ordinary rename path.
+		{"unrelated, source gone", nil, clientToken, s3err.ErrNoSuchKey, s3err.ErrNone, false},
+		{"unrelated, source present", nil, clientToken, s3err.ErrNone, s3err.ErrNone, false},
+		// A request without a token is never settled by the retry path.
+		{"no token, destination stamped", stamped(live), "", s3err.ErrNoSuchKey, s3err.ErrNone, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errCode, settled := retryRenameDecision(tc.dstEntry, tc.clientToken, renameSource, "dst.txt", tc.srcErrCode)
+			assert.Equal(t, tc.wantSettled, settled)
+			assert.Equal(t, tc.wantErr, errCode)
+		})
+	}
+}
+
+// TestRouting_RenameObject pins PUT /bucket/key?renameObject to the RenameObject
+// route rather than the plain PutObject one that would otherwise match it.
+func TestRouting_RenameObject(t *testing.T) {
+	router := mux.NewRouter()
+	setupRoutingTestServer(t).registerRouter(router)
+
+	req, err := http.NewRequest(http.MethodPut, "http://localhost/bucket/dst.txt?renameObject", nil)
+	require.NoError(t, err)
+	req.Header.Set(s3_constants.AmzRenameSource, "/bucket/src.txt")
+
+	var match mux.RouteMatch
+	require.True(t, router.Match(req, &match), "no route matched")
+
+	queries, err := match.Route.GetQueriesTemplates()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"renameObject="}, queries)
+}

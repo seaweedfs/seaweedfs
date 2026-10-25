@@ -1,0 +1,307 @@
+package iceberg
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+type planningIndex struct {
+	SnapshotID        int64                          `json:"snapshotId"`
+	ManifestList      string                         `json:"manifestList,omitempty"`
+	UpdatedAtMs       int64                          `json:"updatedAtMs"`
+	DataManifestCount int64                          `json:"dataManifestCount,omitempty"`
+	Compaction        *planningIndexCompaction       `json:"compaction,omitempty"`
+	RewriteManifests  *planningIndexRewriteManifests `json:"rewriteManifests,omitempty"`
+}
+
+type planningIndexCompaction struct {
+	ConfigHash string `json:"configHash"`
+	Eligible   bool   `json:"eligible"`
+}
+
+type planningIndexRewriteManifests struct {
+	Threshold int64 `json:"threshold"`
+	Eligible  bool  `json:"eligible"`
+}
+
+type tableMetadataEnvelope struct {
+	// Format is the catalog's own record of what the table is. A native Lance
+	// table has no Iceberg metadata at all, so without this the parse below
+	// fails and the table is skipped as if it were corrupt.
+	Format           string `json:"format"`
+	MetadataVersion  int    `json:"metadataVersion"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+	Metadata         *struct {
+		FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
+	} `json:"metadata,omitempty"`
+	PlanningIndex json.RawMessage `json:"planningIndex,omitempty"`
+}
+
+// tableState is the catalog's view of one table: its Iceberg metadata, the
+// metadata file backing it, where its files live, and the cached planning index.
+type tableState struct {
+	Metadata         table.Metadata
+	MetadataFileName string
+	// DataPath is the bucket-relative directory holding metadata/ and data/.
+	DataPath      string
+	PlanningIndex *planningIndex
+}
+
+// tableTypeProperty is the Hive/Glue-style format marker. Catalogs that have no
+// native concept of a non-Iceberg table register one as an Iceberg table with a
+// placeholder schema and set this property instead; the Lance namespace's
+// Iceberg REST adapter writes table_type=lance.
+const tableTypeProperty = "table_type"
+
+// errForeignFormat means the catalog entry belongs to a format this worker does
+// not maintain. It is a normal outcome of scanning a mixed catalog, not damage.
+var errForeignFormat = errors.New("not an iceberg table")
+
+// isIcebergTableEntry reports whether a catalog entry is an Iceberg table this
+// worker may rewrite. Views share the entry shape, and a foreign format
+// registered through the catalog shares the location but not the file layout -
+// a Lance dataset keeps its fragments under data/, where every one of them is
+// unreferenced by the Iceberg metadata and so looks like an orphan.
+func isIcebergTableEntry(extended map[string][]byte, meta table.Metadata) bool {
+	if s3tables.EntryType(extended) != s3tables.EntryTypeTable {
+		return false
+	}
+	tableType, ok := meta.Properties()[tableTypeProperty]
+	return !ok || strings.EqualFold(tableType, "iceberg")
+}
+
+func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath string) (*tableState, error) {
+	var envelope tableMetadataEnvelope
+	if err := json.Unmarshal(metadataBytes, &envelope); err != nil {
+		return nil, fmt.Errorf("parse metadata xattr: %w", err)
+	}
+	if envelope.Format != "" && envelope.Format != s3tables.FormatIceberg {
+		return nil, fmt.Errorf("%w: %s", errForeignFormat, envelope.Format)
+	}
+	if envelope.Metadata == nil || len(envelope.Metadata.FullMetadata) == 0 {
+		return nil, fmt.Errorf("no fullMetadata in table xattr")
+	}
+
+	meta, err := table.ParseMetadataBytes(envelope.Metadata.FullMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("parse iceberg metadata: %w", err)
+	}
+
+	var index *planningIndex
+	if len(envelope.PlanningIndex) > 0 {
+		if err := json.Unmarshal(envelope.PlanningIndex, &index); err != nil {
+			glog.V(2).Infof("iceberg maintenance: ignoring invalid planning index cache: %v", err)
+			index = nil
+		}
+	}
+
+	metadataFileName := metadataFileNameFromLocation(envelope.MetadataLocation)
+	if metadataFileName == "" {
+		metadataFileName = fmt.Sprintf("v%d.metadata.json", envelope.MetadataVersion)
+	}
+	return &tableState{
+		Metadata:         meta,
+		MetadataFileName: metadataFileName,
+		DataPath:         tableDataPath(bucketName, tablePath, envelope.MetadataLocation),
+		PlanningIndex:    index,
+	}, nil
+}
+
+// tableDataPath resolves the bucket-relative directory holding a table's files.
+// The catalog records the table's real location in the metadata location, which
+// is the catalog path only for tables the catalog placed there itself: a client
+// creating a table through the REST catalog can be handed a location elsewhere
+// in the bucket, e.g. "ns/table-<uuid>" when the catalog path was occupied.
+// Locations outside the table's own bucket fall back to the catalog path.
+func tableDataPath(bucketName, tablePath, metadataLocation string) string {
+	dataDir := s3tables.TableDataDirFromMetadataLocation(metadataLocation)
+	if rel, ok := cutPathPrefix(dataDir, path.Join(s3tables.TablesPath, bucketName)); ok && rel != "" {
+		return rel
+	}
+	return tablePath
+}
+
+func (idx *planningIndex) matchesSnapshot(meta table.Metadata) bool {
+	if idx == nil {
+		return false
+	}
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil || currentSnap.ManifestList == "" {
+		return false
+	}
+	return idx.SnapshotID == currentSnap.SnapshotID && idx.ManifestList == currentSnap.ManifestList
+}
+
+func (idx *planningIndex) compactionEligible(config Config) (bool, bool) {
+	if idx == nil || idx.Compaction == nil {
+		return false, false
+	}
+	if idx.Compaction.ConfigHash != compactionPlanningConfigHash(config) {
+		return false, false
+	}
+	return idx.Compaction.Eligible, true
+}
+
+func (idx *planningIndex) rewriteManifestsEligible(config Config) (bool, bool) {
+	if idx == nil || idx.RewriteManifests == nil {
+		return false, false
+	}
+	if idx.RewriteManifests.Threshold != config.MinManifestsToRewrite {
+		return false, false
+	}
+	return idx.RewriteManifests.Eligible, true
+}
+
+func compactionPlanningConfigHash(config Config) string {
+	return fmt.Sprintf("target=%d|min=%d|strategy=%s|sortcap=%d",
+		config.TargetFileSizeBytes, config.MinInputFiles,
+		config.RewriteStrategy, config.SortMaxInputBytes)
+}
+
+func operationRequested(ops []string, wanted string) bool {
+	for _, op := range ops {
+		if op == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func mergePlanningIndexSections(index, existing *planningIndex) *planningIndex {
+	if index == nil || existing == nil {
+		return index
+	}
+	if index.SnapshotID != existing.SnapshotID || index.ManifestList != existing.ManifestList {
+		return index
+	}
+	if index.Compaction == nil && existing.Compaction != nil {
+		compactionCopy := *existing.Compaction
+		index.Compaction = &compactionCopy
+	}
+	if index.RewriteManifests == nil && existing.RewriteManifests != nil {
+		rewriteCopy := *existing.RewriteManifests
+		index.RewriteManifests = &rewriteCopy
+	}
+	return index
+}
+
+func buildPlanningIndexFromManifests(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, dataPath string,
+	meta table.Metadata,
+	config Config,
+	ops []string,
+	manifests []iceberg.ManifestFile,
+) (*planningIndex, error) {
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil || currentSnap.ManifestList == "" {
+		return nil, nil
+	}
+
+	index := &planningIndex{
+		SnapshotID:        currentSnap.SnapshotID,
+		ManifestList:      currentSnap.ManifestList,
+		UpdatedAtMs:       time.Now().UnixMilli(),
+		DataManifestCount: countDataManifests(manifests),
+	}
+
+	if operationRequested(ops, "compact") {
+		eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, dataPath, manifests, config, meta, nil)
+		if err != nil {
+			return nil, err
+		}
+		index.Compaction = &planningIndexCompaction{
+			ConfigHash: compactionPlanningConfigHash(config),
+			Eligible:   eligible,
+		}
+	}
+
+	if operationRequested(ops, "rewrite_manifests") {
+		index.RewriteManifests = &planningIndexRewriteManifests{
+			Threshold: config.MinManifestsToRewrite,
+			Eligible:  index.DataManifestCount >= config.MinManifestsToRewrite,
+		}
+	}
+
+	return index, nil
+}
+
+func persistPlanningIndex(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	index *planningIndex,
+) error {
+	if index == nil {
+		return nil
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
+	tableName := path.Base(tableDir)
+	parentDir := path.Dir(tableDir)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: parentDir,
+		Name:      tableName,
+	})
+	if err != nil {
+		return fmt.Errorf("lookup table entry: %w", err)
+	}
+	if resp == nil || resp.Entry == nil {
+		return fmt.Errorf("table entry not found")
+	}
+
+	existingXattr, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadata]
+	if !ok || len(existingXattr) == 0 {
+		return fmt.Errorf("no metadata xattr on table entry")
+	}
+
+	var internalMeta map[string]json.RawMessage
+	if err := json.Unmarshal(existingXattr, &internalMeta); err != nil {
+		return fmt.Errorf("unmarshal metadata xattr: %w", err)
+	}
+	if existingState, err := parseTableMetadataEnvelope(existingXattr, bucketName, tablePath); err == nil {
+		index = mergePlanningIndexSections(index, existingState.PlanningIndex)
+	}
+
+	indexJSON, err := json.Marshal(index)
+	if err != nil {
+		return fmt.Errorf("marshal planning index: %w", err)
+	}
+	internalMeta["planningIndex"] = indexJSON
+
+	updatedXattr, err := json.Marshal(internalMeta)
+	if err != nil {
+		return fmt.Errorf("marshal updated metadata xattr: %w", err)
+	}
+
+	expectedExtended := s3tables.SnapshotExtended(resp.Entry.Extended)
+	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
+	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+		Directory:        parentDir,
+		Entry:            resp.Entry,
+		ExpectedExtended: expectedExtended,
+	})
+	if err != nil {
+		if status.Code(err) == codes.FailedPrecondition {
+			return nil
+		}
+		return fmt.Errorf("update table entry: %w", err)
+	}
+
+	return nil
+}

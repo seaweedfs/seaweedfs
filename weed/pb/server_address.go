@@ -86,6 +86,23 @@ func (sa ServerAddress) ToGrpcAddress() string {
 	return ServerToGrpcAddress(string(sa))
 }
 
+// ToHost returns the host part only, without any port information.
+func (sa ServerAddress) ToHost() string {
+	httpAddr := sa.ToHttpAddress()
+
+	host, _, err := net.SplitHostPort(httpAddr)
+	if err == nil {
+		return host
+	}
+
+	// Fallback: if parsing fails, it's likely a host without a port.
+	// Handle bracketed IPv6 (e.g., "[::1]" without port) by trimming brackets.
+	if strings.HasPrefix(httpAddr, "[") && strings.HasSuffix(httpAddr, "]") {
+		return httpAddr[1 : len(httpAddr)-1]
+	}
+	return httpAddr
+}
+
 // LookUp may return an error for some records along with successful lookups - make sure you do not
 // discard `addresses` even if `err == nil`
 func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {
@@ -140,34 +157,12 @@ func (sa ServerAddresses) ToAddressMap() (addresses map[string]ServerAddress) {
 	return
 }
 
-func (sa ServerAddresses) ToAddressStrings() (addresses []string) {
-	parts := strings.Split(string(sa), ",")
-	for _, address := range parts {
-		addresses = append(addresses, address)
-	}
-	return
-}
-
 func ToAddressStrings(addresses []ServerAddress) []string {
 	var strings []string
 	for _, addr := range addresses {
 		strings = append(strings, string(addr))
 	}
 	return strings
-}
-func ToAddressStringsFromMap(addresses map[string]ServerAddress) []string {
-	var strings []string
-	for _, addr := range addresses {
-		strings = append(strings, string(addr))
-	}
-	return strings
-}
-func FromAddressStrings(strings []string) []ServerAddress {
-	var addresses []ServerAddress
-	for _, addr := range strings {
-		addresses = append(addresses, ServerAddress(addr))
-	}
-	return addresses
 }
 
 func ParseUrl(input string) (address ServerAddress, path string, err error) {

@@ -2,7 +2,6 @@ package wdclient
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -11,60 +10,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 )
-
-func TestLocationIndex(t *testing.T) {
-	vm := &vidMap{}
-	// test must be failed
-	mustFailed := func(length int) {
-		_, err := vm.getLocationIndex(length)
-		if err == nil {
-			t.Errorf("length %d must be failed", length)
-		}
-		if err.Error() != fmt.Sprintf("invalid length: %d", length) {
-			t.Errorf("length %d must be failed. error: %v", length, err)
-		}
-	}
-
-	mustFailed(-1)
-	mustFailed(0)
-
-	mustOk := func(length, cursor, expect int) {
-		if length <= 0 {
-			t.Fatal("please don't do this")
-		}
-		vm.cursor = int32(cursor)
-		got, err := vm.getLocationIndex(length)
-		if err != nil {
-			t.Errorf("length: %d, why? %v\n", length, err)
-			return
-		}
-		if got != expect {
-			t.Errorf("cursor: %d, length: %d, expect: %d, got: %d\n", cursor, length, expect, got)
-			return
-		}
-	}
-
-	for i := -1; i < 100; i++ {
-		mustOk(7, i, (i+1)%7)
-	}
-
-	// when cursor reaches MaxInt64
-	mustOk(7, maxCursorIndex, 0)
-
-	// test with constructor
-	vm = newVidMap("")
-	length := 7
-	for i := 0; i < 100; i++ {
-		got, err := vm.getLocationIndex(length)
-		if err != nil {
-			t.Errorf("length: %d, why? %v\n", length, err)
-			return
-		}
-		if got != i%length {
-			t.Errorf("length: %d, i: %d, got: %d\n", length, i, got)
-		}
-	}
-}
 
 func TestLookupFileId(t *testing.T) {
 	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", pb.ServerDiscovery{})
@@ -173,18 +118,49 @@ func TestConcurrentGetLocations(t *testing.T) {
 	wg.Wait()
 }
 
-func BenchmarkLocationIndex(b *testing.B) {
-	b.SetParallelism(8)
-	vm := vidMap{
-		cursor: maxCursorIndex - 4000,
+func TestHasVolumeServer(t *testing.T) {
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", pb.ServerDiscovery{})
+
+	regular := Location{Url: "10.0.0.1:8080", GrpcPort: 18080}
+	ecOnly := Location{Url: "10.0.0.2:8080", GrpcPort: 18080}
+
+	mc.addLocation(7, regular)
+	mc.addEcLocation(9, ecOnly)
+
+	addr := func(u string) pb.ServerAddress { return pb.ServerAddress(u) }
+
+	if !mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("regular volume server must be known by http address")
 	}
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_, err := vm.getLocationIndex(3)
-			if err != nil {
-				b.Error(err)
-			}
-		}
-	})
+	if !mc.HasVolumeServer(addr("10.0.0.1:8080.18080")) {
+		t.Fatalf("regular volume server must be known by grpc-suffix address")
+	}
+	if !mc.HasVolumeServer(addr("10.0.0.2:8080")) {
+		t.Fatalf("ec-only volume server must be known")
+	}
+	if mc.HasVolumeServer(addr("127.0.0.1:1")) {
+		t.Fatalf("unknown address must not be known")
+	}
+
+	// Adding the same location twice must not double-count:
+	// deleting once should evict the server.
+	mc.addLocation(7, regular)
+	mc.deleteLocation(7, regular)
+	if mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("server should be evicted after deleteLocation")
+	}
+
+	// Removing the EC entry must also drop the index entry.
+	mc.deleteEcLocation(9, ecOnly)
+	if mc.HasVolumeServer(addr("10.0.0.2:8080")) {
+		t.Fatalf("server should be evicted after deleteEcLocation")
+	}
+
+	// deleteVid removes every reference held by that vid in one call.
+	mc.addLocation(11, regular)
+	mc.addEcLocation(11, regular)
+	mc.InvalidateCache("11,abc")
+	if mc.HasVolumeServer(addr("10.0.0.1:8080")) {
+		t.Fatalf("server should be evicted after InvalidateCache")
+	}
 }

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -56,7 +58,12 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	if fileName != "" && strings.Contains(formValues.Get("Key"), "${filename}") {
 		formValues.Set("Key", strings.Replace(formValues.Get("Key"), "${filename}", fileName, -1))
 	}
-	object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
+	rawObject := formValues.Get("Key")
+	if rawObject == "" || !s3_constants.IsValidObjectKey(rawObject) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+	object := s3_constants.NormalizeObjectKey(rawObject)
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
@@ -74,10 +81,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify policy signature.
-	errCode := s3a.iam.doesPolicySignatureMatch(formValues)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
+	}
+	if identity != nil {
+		r = r.WithContext(recordIdentityInContext(r, identity))
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
@@ -97,8 +107,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 		// Make sure formValues adhere to policy restrictions.
 		if err = policy.CheckPostPolicy(formValues, postPolicyForm); err != nil {
-			w.Header().Set("Location", r.URL.Path)
-			w.WriteHeader(http.StatusTemporaryRedirect)
+			glog.V(3).Infof("PostPolicy check failed for bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponseWithMessage(w, r, s3err.ErrAccessDenied, err.Error())
 			return
 		}
 
@@ -118,8 +128,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
 	contentType := formValues.Get("Content-Type")
@@ -128,23 +136,66 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 	r.Header.Set("Content-Type", contentType)
 
-	// Add s3 postpolicy support header
-	for k, _ := range formValues {
-		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
-			r.Header.Set(k, formValues.Get(k))
-			continue
-		}
+	// Forward validated POST form fields to the underlying PUT as headers.
+	applyPostPolicyFormHeaders(r, formValues)
 
-		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-			r.Header.Set(k, formValues.Get(k))
+	// Authorize the object like the PUT path.
+	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+		return
+	}
+	// An acl or x-amz-grant-* form field rides onto the upload as ACL headers,
+	// which the PUT path only applies under s3:PutObjectAcl.
+	if postRequestsAcl(r) {
+		if errCode := s3a.iam.AuthorizeObjectAclWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+			return
 		}
 	}
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, 1)
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("PostPolicyBucketHandler: object lock state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	if err := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); err != nil {
+		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
+		return
+	}
+
+	var etag string
+	var versionId string
+	var sseMetadata SSEResponseMetadata
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		versionId, etag, errCode, sseMetadata = s3a.putVersionedObject(r, bucket, object, fileBody, contentType)
+	case s3_constants.VersioningSuspended:
+		etag, errCode, sseMetadata = s3a.putSuspendedVersioningObject(r, bucket, object, fileBody, contentType)
+	default:
+		filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
+		// Use fileSize, not r.ContentLength: the multipart body inflates ContentLength.
+		ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
+		etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	}
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	if successRedirect != "" {
@@ -178,6 +229,69 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	}
 
+}
+
+// postPolicyReservedFormFields are multipart form fields that are part of the
+// POST Object auth/policy mechanism (or handled explicitly elsewhere in the
+// handler) and must not be forwarded to the upload as HTTP headers. Keys are
+// already run through http.CanonicalHeaderKey before lookup.
+var postPolicyReservedFormFields = map[string]struct{}{
+	// POST policy signature (V2)
+	"Policy":         {},
+	"Signature":      {},
+	"Awsaccesskeyid": {},
+	// POST policy signature (V4)
+	"X-Amz-Signature":      {},
+	"X-Amz-Credential":     {},
+	"X-Amz-Algorithm":      {},
+	"X-Amz-Date":           {},
+	"X-Amz-Security-Token": {},
+	// Target descriptors
+	"Key":    {},
+	"File":   {},
+	"Bucket": {},
+	// Success actions (handled elsewhere in the handler)
+	"Success_action_redirect": {},
+	"Success_action_status":   {},
+	"Redirect":                {},
+	// Content-Type is resolved separately above (from form or file part)
+	"Content-Type": {},
+}
+
+// applyPostPolicyFormHeaders forwards validated POST Object form fields to the
+// request headers so they are applied to the resulting PUT. Reserved fields
+// that are part of the POST policy mechanism itself (signature, key, etc.) are
+// skipped. The acl form field is translated to the X-Amz-Acl header to match
+// how AWS promotes the form value to the underlying PUT.
+func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
+	for k := range formValues {
+		if _, reserved := postPolicyReservedFormFields[k]; reserved {
+			continue
+		}
+		switch {
+		case k == "Acl":
+			r.Header.Set(s3_constants.AmzCannedAcl, formValues.Get(k))
+		case k == "Cache-Control",
+			k == "Expires",
+			k == "Content-Disposition",
+			k == "Content-Encoding",
+			k == "Content-Language":
+			r.Header.Set(k, formValues.Get(k))
+		case strings.HasPrefix(k, "X-Amz-"):
+			r.Header.Set(k, formValues.Get(k))
+		}
+	}
+}
+
+// postRequestsAcl reports whether the request carries ACL headers, whether
+// promoted from the POST form fields or supplied on the request itself.
+func postRequestsAcl(r *http.Request) bool {
+	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(header) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Extract form fields and file data from a HTTP POST Policy
@@ -267,11 +381,16 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 	return redirectValues.Encode()
 }
 
-// Check to see if Policy is signed correctly.
-func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) s3err.ErrorCode {
+// Check to see if Policy is signed correctly, returning the signing identity.
+// The verified form's access key is recorded in ctx's identity holder.
+// Write authorization happens later in the handler via AuthorizeObjectWrite,
+// which evaluates the identity's attached IAM policies, session policies, and
+// the bucket policy against the real object key; gating here on the legacy
+// Actions projection would deny identities those mechanisms allow.
+func (iam *IdentityAccessManagement) doesPolicySignatureMatch(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
-		return iam.doesPolicySignatureV2Match(formValues)
+		return iam.doesPolicySignatureV2Match(ctx, formValues)
 	}
-	return iam.doesPolicySignatureV4Match(formValues)
+	return iam.doesPolicySignatureV4Match(ctx, formValues)
 }

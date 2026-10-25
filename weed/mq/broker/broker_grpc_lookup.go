@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 				return err
 			}
 
-			if !resp.Entry.IsDirectory {
+			if resp.Entry == nil || !resp.Entry.IsDirectory {
 				continue
 			}
 
@@ -135,7 +136,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 					break
 				}
 
-				if !topicResp.Entry.IsDirectory {
+				if topicResp.Entry == nil || !topicResp.Entry.IsDirectory {
 					continue
 				}
 
@@ -232,14 +233,20 @@ func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.Top
 	exists := false
 	err := b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		topicPath := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, request.Topic.Namespace, request.Topic.Name)
-		confResp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		_, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: topicPath,
 			Name:      filer.TopicConfFile,
 		})
-		if err == nil && confResp.Entry != nil {
+		if lookupErr == nil {
 			exists = true
+			return nil
 		}
-		return nil // Don't propagate error, just check existence
+		// A definitive "not found" means the topic does not exist; surface any
+		// other (transient) error so we never cache a false negative.
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return lookupErr
 	})
 
 	if err != nil {
@@ -336,7 +343,7 @@ func (b *MessageQueueBroker) GetTopicPublishers(ctx context.Context, request *mq
 	// Collect publishers from each partition that is hosted on this broker
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		// Only collect from partitions where this broker is the leader
-		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+		if pb.ServerAddress(assignment.LeaderBroker).Equals(b.option.BrokerAddress()) {
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get publisher information from local partition
@@ -390,7 +397,7 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 	// Collect subscribers from each partition that is hosted on this broker
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		// Only collect from partitions where this broker is the leader
-		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+		if pb.ServerAddress(assignment.LeaderBroker).Equals(b.option.BrokerAddress()) {
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get subscriber information from local partition
@@ -430,5 +437,5 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 }
 
 func (b *MessageQueueBroker) isLockOwner() bool {
-	return b.lockAsBalancer.LockOwner() == b.option.BrokerAddress().String()
+	return pb.ServerAddress(b.lockAsBalancer.LockOwner()).Equals(b.option.BrokerAddress())
 }

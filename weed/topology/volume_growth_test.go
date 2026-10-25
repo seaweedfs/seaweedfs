@@ -116,7 +116,7 @@ func setup(topologyLayout string) *Topology {
 					}
 					if vi.ReplicaPlacement != nil {
 						vl := topo.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, needle.EMPTY_TTL, types.HardDriveType)
-						vl.RegisterVolume(&vi, server)
+						vl.RegisterVolume(&vi, server, nil)
 						vl.setVolumeWritable(vi.Id)
 					}
 					server.AddOrUpdateVolume(vi)
@@ -433,7 +433,13 @@ func TestPickForWrite(t *testing.T) {
 						continue
 					}
 					volumeGrowOption.DataNode = dn
-					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl)
+					// Small expectedDataSize hint: this test iterates many times
+					// and the layout uses a 32KB volume size limit. With hint=0
+					// (default 1MB pendingDelta), RecordAssign would exceed the
+					// limit on the first call and eagerly remove the volume
+					// from writable. Keep the hint tiny so effectiveSize stays
+					// below the limit across all iterations.
+					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl, 1024)
 					if dc == "dc0" {
 						if err == nil || count != 0 || !shouldGrow {
 							fmt.Println(dc, r, dn, "pick for write should be with error")
@@ -452,8 +458,57 @@ func TestPickForWrite(t *testing.T) {
 						fmt.Println(dc, r, dn, "pick for write error : not should grow")
 						t.Fail()
 					}
+
+					// Also verify with a non-zero expectedDataSize hint
+					if dc != "dc0" {
+						fileId2, count2, _, shouldGrow2, err2 := topo.PickForWrite(1, volumeGrowOption, vl, 1024)
+						if err2 != nil {
+							fmt.Println(dc, r, dn, "pick for write with size hint error:", err2)
+							t.Fail()
+						} else if count2 == 0 || len(fileId2) == 0 || shouldGrow2 {
+							fmt.Println(dc, r, dn, "pick for write with size hint unexpected result")
+							t.Fail()
+						}
+					}
 				}
 			}
+		}
+	}
+}
+
+// TestPickNodesByWeightPrefersDistinctHosts: a rack runs two physical machines
+// with two volume servers each. Picking two nodes (e.g. for a same-rack replica
+// pair) must land them on distinct hosts so a single machine failure cannot take
+// out both replicas, even though the four data nodes are independent.
+func TestPickNodesByWeightPrefersDistinctHosts(t *testing.T) {
+	rack := NewRack("rack1")
+	mk := func(id, ip string, maxVol int64) *DataNode {
+		dn := NewDataNode(id)
+		dn.Ip = ip
+		rack.LinkChildNode(dn)
+		disk := dn.getOrCreateDisk("")
+		disk.UpAdjustDiskUsageDelta("", &DiskUsageCounts{maxVolumeCount: maxVol})
+		return dn
+	}
+	mk("s1a", "10.0.0.1", 10)
+	mk("s1b", "10.0.0.1", 10)
+	mk("s2a", "10.0.0.2", 10)
+	mk("s2b", "10.0.0.2", 10)
+
+	option := &VolumeGrowOption{DiskType: types.HardDriveType}
+
+	// Selection is weighted-random, so exercise it repeatedly: with two machines
+	// available the chosen pair must always span both.
+	for i := 0; i < 50; i++ {
+		first, rest, err := rack.PickNodesByWeight(2, option, func(node Node) error { return nil })
+		if err != nil {
+			t.Fatalf("PickNodesByWeight: %v", err)
+		}
+		if len(rest) != 1 {
+			t.Fatalf("got %d rest nodes, want 1", len(rest))
+		}
+		if nodeHost(first) == nodeHost(rest[0]) {
+			t.Errorf("both picks on host %s; expected distinct machines", nodeHost(first))
 		}
 	}
 }

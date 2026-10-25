@@ -1,0 +1,56 @@
+[package]
+name= "reed-solomon-erasure"
+version = "6.0.0"
+authors = ["Darren Ldl <darrenldldev@gmail.com>"]
+edition = "2018"
+build = "build.rs"
+exclude = [
+    "appveyor.yml",
+    ".travis.yml"
+]
+
+description = "Rust implementation of Reed-Solomon erasure coding"
+
+documentation = "https://docs.rs/reed-solomon-erasure"
+homepage= "https://github.com/darrenldl/reed-solomon-erasure"
+repository= "https://github.com/darrenldl/reed-solomon-erasure"
+
+readme= "README.md"
+
+keywords= ["reed-solomon", "erasure"]
+
+categories= ["encoding"]
+
+license = "MIT"
+
+[features]
+default = ["std"] # simd off by default
+std = ["parking_lot"]
+simd-accel = ["cc", "libc"]
+
+[badges]
+travis-ci = { repository = "darrenldl/reed-solomon-erasure" }
+appveyor= { repository = "darrenldl/reed-solomon-erasure" }
+codecov = { repository = "darrenldl/reed-solomon-erasure" }
+coveralls = { repository = "darrenldl/reed-solomon-erasure" }
+
+[dependencies]
+libc = { version = "0.2", optional = true }
+# `log2()` impl for `no_std`
+libm = "0.2.1"
+lru = "0.16.3"
+# Efficient `Mutex` implementation for `std` environment
+parking_lot = { version = "0.11.2", optional = true }
+smallvec = "1.2"
+# `Mutex` implementation for `no_std` environment with the same high-level API as `parking_lot`
+spin = { version = "0.9.2", default-features = false, features = ["spin_mutex"] }
+
+[dev-dependencies]
+rand = "0.7.2"
+quickcheck = "0.9"
+
+[build-dependencies]
+cc = { version = "1.0", optional = true }
+
+[[bench]]
+name = "reconstruct"

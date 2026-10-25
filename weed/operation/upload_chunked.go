@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -15,7 +17,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
+
+// ErrTruncatedBody tags a source read that ended before the expected bytes
+// arrived, so callers can tell a truncated input (client abort, reverse-proxy
+// timeout) apart from a volume-server upload fault.
+var ErrTruncatedBody = errors.New("truncated request body")
 
 // ChunkedUploadResult contains the result of a chunked upload
 type ChunkedUploadResult struct {
@@ -36,8 +44,9 @@ type ChunkedUploadOption struct {
 	Jwt             security.EncodedJwt
 	MimeType        string
 	Cipher          bool // encrypt data on volume servers
-	AssignFunc      func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error)
+	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
+	LookupJwtFunc   func(ctx context.Context, fileId string) security.EncodedJwt                        // Optional: renews the volume JWT for a cleanup delete
 }
 
 var chunkBufferPool = sync.Pool{
@@ -63,6 +72,15 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	var wg sync.WaitGroup
 	const bytesBufferCounter = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)
+
+	// objectFailed reports whether another chunk has already doomed the upload,
+	// so an in-flight chunk stops spending its retry budget on bytes nobody
+	// will reference.
+	objectFailed := func() bool {
+		uploadErrLock.Lock()
+		defer uploadErrLock.Unlock()
+		return uploadErr != nil
+	}
 
 uploadLoop:
 	for {
@@ -99,12 +117,19 @@ uploadLoop:
 		// Read one chunk
 		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
 		if err != nil {
-			glog.V(2).Infof("UploadReaderInChunks: read error at offset %d: %v", chunkOffset, err)
+			// Attach offset + bytes-read to distinguish client disconnect
+			// before any data (offset=0,got=0) from mid-stream truncation.
+			// A bare io.ErrUnexpectedEOF is not actionable on its own (see #9149).
+			wrapped := fmt.Errorf("read chunk at offset %d (got %d bytes): %w", chunkOffset, dataSize, err)
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				wrapped = fmt.Errorf("%w: %w", ErrTruncatedBody, wrapped)
+			}
+			glog.V(2).Infof("UploadReaderInChunks: %v", wrapped)
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
 			uploadErrLock.Lock()
 			if uploadErr == nil {
-				uploadErr = err
+				uploadErr = wrapped
 			}
 			uploadErrLock.Unlock()
 			break
@@ -146,7 +171,7 @@ uploadLoop:
 
 		// Upload chunk in parallel goroutine
 		wg.Add(1)
-		go func(offset int64, buf *bytes.Buffer) {
+		go func(offset int64, buf *bytes.Buffer, size int64) {
 			defer func() {
 				chunkBufferPool.Put(buf)
 				<-bytesBufferLimitChan
@@ -154,7 +179,7 @@ uploadLoop:
 			}()
 
 			// Assign volume for this chunk
-			_, assignResult, assignErr := opt.AssignFunc(ctx, 1)
+			_, assignResult, assignErr := opt.AssignFunc(ctx, 1, uint64(size))
 			if assignErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
@@ -163,9 +188,6 @@ uploadLoop:
 				uploadErrLock.Unlock()
 				return
 			}
-
-			// Upload chunk data
-			uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
 			// Use per-assignment JWT if present, otherwise fall back to the original JWT
 			// This is critical for secured clusters where each volume assignment has its own JWT
@@ -178,33 +200,35 @@ uploadLoop:
 			chunkMd5 := md5.Sum(buf.Bytes())
 			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 
-			uploadOption := &UploadOption{
-				UploadUrl:         uploadUrl,
-				Cipher:            opt.Cipher,
-				IsInputCompressed: false,
-				MimeType:          opt.MimeType,
-				PairMap:           nil,
-				Jwt:               jwt,
-				Md5:               chunkMd5B64,
-			}
-
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
-			// Use mock upload function if provided (for testing), otherwise use real uploader
-			if opt.UploadFunc != nil {
-				uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
-			} else {
-				uploader, uploaderErr := NewUploader()
-				if uploaderErr != nil {
-					uploadErrLock.Lock()
-					if uploadErr == nil {
-						uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-					}
-					uploadErrLock.Unlock()
-					return
+			// A target that fills up, loses its replica peer, or goes away fails
+			// every attempt against the same fid, so ask for a fresh assignment and
+			// retry there rather than losing the whole object to one bad volume.
+			for attempt := 1; ; attempt++ {
+				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
+				if uploadResultErr == nil {
+					break
 				}
-				uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				// The volume server commits the needle before replicating, so a
+				// failed write can still leave a copy behind. No chunk will name
+				// this fid whether we retry or give up here, and an unreferenced
+				// needle is not garbage vacuum can find, so drop it either way.
+				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt, opt)
+				if attempt == chunkAssignAttempts || !ShouldReassignUpload(uploadResultErr) || objectFailed() {
+					break
+				}
+				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
+				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
+				if assignErr != nil {
+					uploadResultErr = fmt.Errorf("reassign volume after %w: %w", uploadResultErr, assignErr)
+					break
+				}
+				jwt = opt.Jwt
+				if assignResult.Auth != "" {
+					jwt = assignResult.Auth
+				}
 			}
 
 			if uploadResultErr != nil {
@@ -235,7 +259,7 @@ uploadLoop:
 			fileChunks = append(fileChunks, chunk)
 			fileChunksLock.Unlock()
 
-		}(chunkOffset, bytesBuffer)
+		}(chunkOffset, bytesBuffer, dataSize)
 
 		// Update offset for next chunk
 		chunkOffset += dataSize
@@ -272,4 +296,165 @@ uploadLoop:
 		TotalSize:    chunkOffset,
 		SmallContent: nil,
 	}, nil
+}
+
+// chunkAssignAttempts bounds how many volumes one chunk may be offered to
+// before the upload gives up.
+const chunkAssignAttempts = 3
+
+// uploadChunk writes one chunk to its assigned volume. It fans out to every
+// holder, except for cipher: per-call encryption would give each replica
+// different bytes, so keep its relay path.
+func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	holders := chunkHolders(assignResult)
+	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+		return uploadChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, assignResult.Fsync, opt)
+	}
+	uploadOption := &UploadOption{
+		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+		Cipher:            opt.Cipher,
+		IsInputCompressed: false,
+		MimeType:          opt.MimeType,
+		PairMap:           nil,
+		Jwt:               jwt,
+		Md5:               md5b64,
+		// One upload call per assignment: the caller retries everything a
+		// same-URL retry would, and a different volume is the better second try.
+		// This bounds retriedUploadData only — doUploadData still reissues once
+		// on a connection reset, with a rewound body, which is a transport
+		// stutter rather than a fresh attempt at the volume. The fan-out path
+		// keeps its retries, where absorbing a blip locally beats cancelling
+		// every holder and re-uploading the chunk.
+		MaxAttempts: 1,
+	}
+	if assignResult.Fsync {
+		uploadOption.UploadUrl += "?fsync=true"
+	}
+	// Use mock upload function if provided (for testing), otherwise use real uploader
+	if opt.UploadFunc != nil {
+		return opt.UploadFunc(ctx, data, uploadOption)
+	}
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	return uploader.UploadData(ctx, data, uploadOption)
+}
+
+// chunkHolders returns the assigned volume plus its replica holders.
+func chunkHolders(assignResult *AssignResult) []string {
+	hosts := []string{assignResult.Url}
+	for _, replica := range assignResult.Replicas {
+		if replica.Url != "" && replica.Url != assignResult.Url {
+			hosts = append(hosts, replica.Url)
+		}
+	}
+	return hosts
+}
+
+// uploadChunkToHolders writes the chunk to every holder concurrently (each with
+// type=replicate). On the first failure it cancels the remaining uploads and
+// deletes any copies that already landed, so a partial fan-out leaves no
+// orphaned needle the caller cannot see.
+func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption) (*UploadResult, error) {
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	glog.V(4).Infof("replica fan-out: writing chunk %s to %d holders %v", fid, len(hosts), hosts)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type outcome struct {
+		host   string
+		result *UploadResult
+		err    error
+	}
+	outcomes := make(chan outcome, len(hosts))
+	for _, host := range hosts {
+		go func(host string) {
+			uploadUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+			if fsync {
+				uploadUrl += "&fsync=true"
+			}
+			uploadOption := &UploadOption{
+				UploadUrl:         uploadUrl,
+				Cipher:            false,
+				IsInputCompressed: false,
+				MimeType:          opt.MimeType,
+				PairMap:           nil,
+				Jwt:               jwt,
+				Md5:               md5b64,
+			}
+			r, e := uploader.UploadData(ctx, data, uploadOption)
+			outcomes <- outcome{host, r, e}
+		}(host)
+	}
+	var first *UploadResult
+	var firstErr error
+	var succeeded []string
+	for range hosts {
+		o := <-outcomes
+		if o.err != nil {
+			// Once one holder fails the rest are cancelled, so errors arrive in
+			// no fixed order. Prefer one the caller can act on, or the choice of
+			// which host to report — and whether to retry elsewhere — turns on
+			// goroutine scheduling.
+			if firstErr == nil {
+				firstErr = o.err
+				cancel()
+			} else if !ShouldReassignUpload(firstErr) && ShouldReassignUpload(o.err) {
+				firstErr = o.err
+			}
+		} else {
+			succeeded = append(succeeded, o.host)
+			if first == nil {
+				first = o.result
+			}
+		}
+	}
+	if firstErr != nil {
+		// A failed fan-out records no chunk, so roll back the copies that landed
+		// before the cancel rather than leaking them as orphans.
+		deleteChunkFromHolders(succeeded, fid, jwt, opt)
+		return nil, firstErr
+	}
+	return first, nil
+}
+
+// cleanupJwtLookupTimeout bounds a cleanup-token renewal, covering the wait
+// for a master plus the lookup RPC, so a master outage cannot stall the
+// rollback of a failed fan-out.
+const cleanupJwtLookupTimeout = 10 * time.Second
+
+// deleteChunkFromHolders best-effort removes a needle from each holder it landed
+// on, using type=replicate so the volume drops only its local copy. A failed
+// delete falls back to vacuum reclaiming the orphan.
+func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt, opt *ChunkedUploadOption) {
+	// An unresponsive holder can stall the upload past the write JWT's expiry,
+	// so renew the token whenever a holder rejects the delete as unauthorized.
+	// Each holder's delete is retried at most once, and a slow holder that
+	// outlives the renewed token can still trigger another renewal.
+	deleteJwt := jwt
+	for _, host := range hosts {
+		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+		body, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+		if status == http.StatusUnauthorized && opt.LookupJwtFunc != nil {
+			lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
+			token := opt.LookupJwtFunc(lookupCtx, fid)
+			cancel()
+			if token != "" {
+				deleteJwt = token
+				body, status, err = util_http.DeleteProxied(deleteUrl, string(deleteJwt))
+			}
+		}
+		if err != nil {
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: %v", fid, host, err)
+			continue
+		}
+		switch status {
+		case http.StatusNotFound, http.StatusNoContent, http.StatusAccepted, http.StatusOK:
+		default:
+			glog.Warningf("replica fan-out cleanup: delete %s from %s: status %d: %s", fid, host, status, body)
+		}
+	}
 }

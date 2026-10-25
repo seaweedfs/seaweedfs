@@ -60,7 +60,7 @@ func TestUploadLimitTimeoutAndReplicateBypass(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -143,7 +143,7 @@ func TestUploadLimitWaitThenProceed(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -226,7 +226,7 @@ func TestUploadLimitTimeoutThenRecovery(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -289,7 +289,7 @@ func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -336,7 +336,7 @@ func TestDownloadLimitWaitThenProceedWithoutReplica(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -398,7 +398,7 @@ func TestDownloadLimitTimeoutThenRecovery(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -593,7 +593,7 @@ func TestUploadLimitDisabledAllowsConcurrentUploads(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -646,7 +646,7 @@ func TestDownloadLimitDisabledAllowsConcurrentDownloads(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -691,7 +691,7 @@ func TestDownloadLimitInvalidVidWhileOverLimitReturnsBadRequest(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P8())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

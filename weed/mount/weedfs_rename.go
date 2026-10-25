@@ -2,18 +2,83 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
-	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// doRename tries the streaming mux first, falling back to unary on transport errors.
+func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntryRequest, oldPath, newPath util.FullPath, newPathLock **cluster.LiveLock) error {
+	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
+		err := wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
+			return wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
+		})
+		if err == nil || !errors.Is(err, ErrStreamTransport) {
+			return err // success or application error
+		}
+		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
+	}
+	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
+		// The stream is dedicated to this attempt, so cancelling its context
+		// abandons just this rename. Bound the silence between events the way
+		// the mutation mux does: a filer that accepts the stream then stalls
+		// must not hold the failover walk hostage, but a long rename that
+		// keeps sending events may take as long as it needs. Local event
+		// work is not wire silence — a directory rename can spend longer
+		// than the bound migrating a child's DLM lock — so the timer defers
+		// while the handler runs instead of cancelling a healthy stream.
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		var inHandler atomic.Bool
+		var silence *time.Timer
+		silence = time.AfterFunc(wfs.filerRPCWait(), func() {
+			if inHandler.Load() {
+				silence.Reset(wfs.filerRPCWait())
+				return
+			}
+			cancel()
+		})
+		defer silence.Stop()
+
+		stream, streamErr := client.StreamRenameEntry(streamCtx, request)
+		if streamErr != nil {
+			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
+		}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				if ctx.Err() == nil && streamCtx.Err() != nil {
+					return fmt.Errorf("dir Rename %s => %s: no event for %s", oldPath, newPath, wfs.filerRPCWait())
+				}
+				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
+			}
+			inHandler.Store(true)
+			err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
+			inHandler.Store(false)
+			if err != nil {
+				return err
+			}
+			// The event just proved the filer alive; the bound covers the
+			// wait for the next one, not the whole rename.
+			silence.Reset(wfs.filerRPCWait())
+		}
+		return nil
+	})
+}
 
 /** Rename a file
  *
@@ -127,7 +192,7 @@ renameat2()
 const (
 	RenameEmptyFlag = 0
 	RenameNoReplace = 1
-	RenameExchange  = fs.RENAME_EXCHANGE
+	RenameExchange  = 2
 	RenameWhiteout  = 3
 )
 
@@ -136,7 +201,12 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if s := checkName(newName); s != fuse.OK {
+	// Both names end up in StreamRenameEntryRequest (proto string fields), so
+	// sanitize both. checkName handles newName's length check; oldName may
+	// legitimately be a pre-existing entry whose bytes were not validated.
+	oldName = sanitizeFuseName(oldName)
+	var s fuse.Status
+	if newName, s = checkName(newName); s != fuse.OK {
 		return s
 	}
 
@@ -161,9 +231,48 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	newPath := newDir.Child(newName)
 
-	oldEntry, status := wfs.maybeLoadEntry(oldPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldPath)
 	if status != fuse.OK {
 		return status
+	}
+
+	// POSIX: enforce sticky bit on the source directory.
+	if oldDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, oldDir); dirCode != fuse.OK {
+		return dirCode
+	} else if oldDirEntry != nil && oldDirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if oldEntry != nil && oldEntry.Attributes != nil {
+			targetUid = oldEntry.Attributes.Uid
+		}
+		if code := checkStickyBit(oldDirEntry.Attributes.FileMode, oldDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
+	var newEntry *filer_pb.Entry
+	if in.Flags != RenameNoReplace {
+		if loaded, _, newStatus := wfs.maybeLoadEntry(ctx, newPath); newStatus == fuse.OK {
+			newEntry = loaded
+		} else if newStatus != fuse.ENOENT {
+			return newStatus
+		}
+	}
+
+	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
+	if newEntry != nil {
+		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, newDir); dirCode != fuse.OK {
+			return dirCode
+		} else if newDirEntry != nil && newDirEntry.Attributes != nil {
+			targetUid := uint32(0)
+			if newEntry.Attributes != nil {
+				targetUid = newEntry.Attributes.Uid
+			}
+			if code := checkStickyBit(newDirEntry.Attributes.FileMode, newDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+				return code
+			}
+		}
 	}
 
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldPath, oldEntry); wormEnforced {
@@ -172,71 +281,215 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
-	// update remote filer
-	err := wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		request := &filer_pb.StreamRenameEntryRequest{
-			OldDirectory: string(oldDir),
-			OldName:      oldName,
-			NewDirectory: string(newDir),
-			NewName:      newName,
-			Signatures:   []int32{wfs.signature},
-		}
-
-		stream, err := client.StreamRenameEntry(ctx, request)
-		if err != nil {
-			code = fuse.EIO
-			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
-		}
-
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					break
-				} else {
-					if strings.Contains(recvErr.Error(), "not empty") {
-						code = fuse.Status(syscall.ENOTEMPTY)
-					} else if strings.Contains(recvErr.Error(), "not directory") {
-						code = fuse.ENOTDIR
+	// Acquire DLM locks on both old and new paths to prevent another mount
+	// from opening either path for writing during the rename. Lock in
+	// sorted order to prevent deadlocks when two mounts rename in opposite
+	// directions (A→B vs B→A).
+	//
+	// Skip the old-path lock if this mount already holds it via an open
+	// file handle (otherwise we'd deadlock trying to re-acquire our own lock).
+	// Acquiring before the handle marks below keeps a lock failure from
+	// leaving source handles flagged for a rename that never happened.
+	var heldLocks []*cluster.LiveLock
+	var newPathLock *cluster.LiveLock
+	if wfs.lockClient != nil {
+		// A handle open on the target holds its lock; claiming it up front
+		// keeps the path locked through the rename (its close would otherwise
+		// release it mid-flight) without waiting on our own ownership.
+		var newPathLockFh *FileHandle
+		defer func() {
+			for _, l := range heldLocks {
+				l.Stop()
+			}
+			if newPathLock != nil {
+				// Never adopted by a migrated handle — return it to the
+				// handle it came from if that is still open.
+				if newPathLockFh != nil {
+					if cur, ok := wfs.fhMap.FindFileHandle(newPathLockFh.inode); ok && cur == newPathLockFh {
+						lk := wfs.fhLockTable.AcquireLock("renameDLM", cur.fh, util.ExclusiveLock)
+						if cur.dlmLock == nil {
+							cur.dlmLock = newPathLock
+							newPathLock = nil
+						}
+						wfs.fhLockTable.ReleaseLock(cur.fh, lk)
 					}
-					return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
+				}
+				if newPathLock != nil {
+					newPathLock.Stop()
 				}
 			}
+		}()
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
 
-			if err = wfs.handleRenameResponse(ctx, resp); err != nil {
-				glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
-				return err
+		// Check if the source file handle already holds a DLM lock on oldPath
+		oldPathAlreadyLocked := false
+		sourceInode, sourceMapped := wfs.inodeToPath.GetInode(oldPath)
+		if !sourceMapped && oldEntry != nil && oldEntry.Attributes != nil {
+			sourceInode = oldEntry.Attributes.Inode
+		}
+		if sourceInode != 0 {
+			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok {
+				lk := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
+				oldPathAlreadyLocked = fh.dlmLock != nil
+				wfs.fhLockTable.ReleaseLock(fh.fh, lk)
 			}
-
+		}
+		targetInode, targetMapped := wfs.inodeToPath.GetInode(newPath)
+		if !targetMapped && newEntry != nil && newEntry.Attributes != nil {
+			targetInode = newEntry.Attributes.Inode
+		}
+		if targetInode != 0 && targetInode != sourceInode {
+			if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok {
+				targetFhLock := wfs.fhLockTable.AcquireLock("renameDLM", targetFh.fh, util.ExclusiveLock)
+				if targetFh.dlmLock != nil {
+					newPathLock = targetFh.dlmLock
+					targetFh.dlmLock = nil
+					newPathLockFh = targetFh
+				}
+				wfs.fhLockTable.ReleaseLock(targetFh.fh, targetFhLock)
+			}
 		}
 
-		return nil
+		// Determine which paths need new DLM locks
+		pathsToLock := []string{}
+		if newPathLock == nil {
+			pathsToLock = append(pathsToLock, string(newPath))
+		}
+		if !oldPathAlreadyLocked && string(oldPath) != string(newPath) {
+			pathsToLock = append(pathsToLock, string(oldPath))
+		}
+		// Sort for consistent lock ordering
+		if len(pathsToLock) == 2 && pathsToLock[0] > pathsToLock[1] {
+			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
+		}
 
-	})
+		for _, p := range pathsToLock {
+			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
+			if dlmLock == nil {
+				return fuse.Status(syscall.EAGAIN)
+			}
+			if p == string(newPath) {
+				newPathLock = dlmLock
+			} else {
+				heldLocks = append(heldLocks, dlmLock)
+			}
+		}
+		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
+	}
+
+	// Ensure the source file's metadata exists on the filer before renaming.
+	// Two cases can leave the entry only in the local cache:
+	//   1. deferFilerCreate=true — file handle still open, dirtyMetadata set.
+	//   2. writebackCache — close() triggered async flush, handle released.
+	// The filer rename will fail with ENOENT unless we flush/wait first.
+	sourceInode, sourceMapped := wfs.inodeToPath.GetInode(oldPath)
+	if sourceMapped {
+		// Case 1: handle still open with deferred metadata — flush synchronously
+		// BEFORE any async flush interference.
+		if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dirtyMetadata {
+			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
+			// Prerequisite for the rename, so it must complete: non-cancellable context.
+			if flushStatus := wfs.doFlush(context.Background(), fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
+				glog.Warningf("dir Rename %s: flush before rename failed: %v", oldPath, flushStatus)
+				return flushStatus
+			}
+		}
+		// Case 2: handle already released, async flush may be in flight.
+		// Mark ALL handles for this inode as renamed so the async flush
+		// skips old-path metadata creation (which would re-insert the
+		// renamed entry into the meta cache after rename events clean it up).
+		wfs.fhMap.MarkInodeRenamed(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
+	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
+		// GetInode failed (Forget already removed the mapping), but the
+		// entry's stored inode can still identify pending async flushes.
+		sourceInode = oldEntry.Attributes.Inode
+		wfs.fhMap.MarkInodeRenamed(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
+	}
+
+	// Replacing the destination deletes what it held, so a handle still open
+	// on that entry has to stop writing the name back, exactly as an unlink
+	// makes it. Windows is where this bites: the close carrying the flush runs
+	// after the application's CloseHandle returned, so the flush can land on
+	// top of what the rename just put there.
+	if in.Flags == RenameEmptyFlag {
+		targetInode, targetMapped := wfs.inodeToPath.GetInode(newPath)
+		if !targetMapped && newEntry != nil && newEntry.Attributes != nil {
+			// Forget dropped the mapping, but the entry's stored inode still
+			// names the handle, the way the source side falls back.
+			targetInode = newEntry.Attributes.Inode
+		}
+		if targetInode != 0 && targetInode != sourceInode {
+			// Drained before the mark, not after: a flush already queued
+			// belongs to the destination as it stands, and one that runs
+			// marked is skipped and takes its handle with it, past the reach
+			// of the restore below.
+			wfs.waitForPendingAsyncFlush(context.Background(), targetInode)
+			epoch := wfs.markHandleDeleted(targetInode)
+			// A rename that does not happen leaves the destination where it
+			// was, so its handle has to go back to writing that name.
+			defer func() {
+				if code != fuse.OK {
+					wfs.clearHandleDeleted(targetInode, epoch)
+				}
+			}()
+		}
+	}
+
+	// update remote filer
+	request := &filer_pb.StreamRenameEntryRequest{
+		OldDirectory: string(oldDir),
+		OldName:      oldName,
+		NewDirectory: string(newDir),
+		NewName:      newName,
+		Signatures:   []int32{wfs.signature},
+	}
+
+	err := wfs.doRename(context.Background(), request, oldPath, newPath, &newPathLock)
 	if err != nil {
-		glog.V(0).Infof("Link: %v", err)
-		return
+		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
+		// Map error strings to FUSE status codes. String matching is used
+		// instead of raw errno to stay portable across platforms (errno
+		// numeric values differ between Linux and macOS).
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
+			return fuse.Status(syscall.ENOENT)
+		} else if strings.Contains(msg, "not empty") {
+			return fuse.Status(syscall.ENOTEMPTY)
+		} else if strings.Contains(msg, "not directory") {
+			return fuse.ENOTDIR
+		}
+		return fuse.EIO
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
+	wfs.touchDirMtimeCtimeBest(oldDir)
+	if oldDir != newDir {
+		wfs.touchDirMtimeCtimeBest(newDir)
+		// Adjust subdirectory counts when moving a directory across parents.
+		if oldEntry != nil && oldEntry.IsDirectory {
+			wfs.inodeToPath.AdjustSubdirCount(oldDir, -1)
+			wfs.inodeToPath.AdjustSubdirCount(newDir, 1)
+		}
+	}
 
 	return fuse.OK
 
 }
 
-func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse) error {
+func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse, renameNewPath util.FullPath, renameNewPathLock **cluster.LiveLock) error {
 	// comes from filer StreamRenameEntry, can only be create or delete entry
 
 	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
 
 	if resp.EventNotification.NewEntry != nil {
-		// with new entry, the old entry name also exists. This is the first step to create new entry
-		newEntry := filer.FromPbEntry(resp.EventNotification.NewParentPath, resp.EventNotification.NewEntry)
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, "", newEntry); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply metadata event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
+			if resp.EventNotification.NewParentPath != "" {
+				wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.EventNotification.NewParentPath))
+			}
 		}
 
 		oldParent, newParent := util.FullPath(resp.Directory), util.FullPath(resp.EventNotification.NewParentPath)
@@ -245,20 +498,48 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
 
-		// Keep the renamed destination immediately readable even when the directory
-		// itself is not marked as fully cached.
-		if !wfs.metaCache.IsDirectoryCached(newParent) {
-			if err := wfs.metaCache.InsertEntry(ctx, newEntry); err != nil {
-				return err
-			}
-		}
-
 		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
 		if sourceInode != 0 {
 			fh, foundFh := wfs.fhMap.FindFileHandle(sourceInode)
 			if foundFh {
 				if entry := fh.GetEntry(); entry != nil {
 					entry.Name = newName
+				}
+				// Keep the saved handle path current so any flush fallback
+				// after Forget uses the post-rename location, not the old one.
+				fh.RememberPath(newPath)
+
+				// Migrate the DLM lock from old path to new path so the
+				// lock key matches the current file location. Hold the
+				// fhLockTable to prevent ReleaseHandle from concurrently
+				// stopping the lock during migration. Acquire before
+				// releasing: a failed migration keeps the old lock rather
+				// than leaving the handle unlocked.
+				if wfs.lockClient != nil && oldPath != newPath {
+					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
+					if fh.dlmLock != nil {
+						var newLock *cluster.LiveLock
+						if newPath == renameNewPath && renameNewPathLock != nil && *renameNewPathLock != nil {
+							// The rename already holds a lock on the target;
+							// adopt it — re-acquiring our own lock would block
+							// until this handle is released.
+							newLock = *renameNewPathLock
+							*renameNewPathLock = nil
+						} else {
+							owner := fmt.Sprintf("mount-%d", wfs.signature)
+							newLock = wfs.lockClient.NewBlockingLongLivedLock(
+								string(newPath), owner, lock_manager.LiveLockTTL,
+							)
+						}
+						if newLock != nil {
+							fh.dlmLock.Stop()
+							fh.dlmLock = newLock
+							glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+						} else {
+							glog.Warningf("DLM lock migration to %s failed; keeping lock on %s", newPath, oldPath)
+						}
+					}
+					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 				}
 			}
 			// invalidate attr and data
@@ -271,8 +552,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 
 	} else if resp.EventNotification.OldEntry != nil {
 		// without new entry, only old entry name exists. This is the second step to delete old entry
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, util.NewFullPath(resp.Directory, resp.EventNotification.OldEntry.Name), nil); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply delete event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
 		}
 	}
 

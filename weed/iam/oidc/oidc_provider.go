@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,22 +18,64 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
-// OIDCProvider implements OpenID Connect authentication
+// OIDCProvider implements OpenID Connect authentication with JTI replay protection.
+//
+// Replay Protection:
+// The provider validates the 'jti' (JWT ID) claim to prevent token replay attacks.
+// Each JTI is stored in memory until the token expires. If a token with a duplicate
+// JTI is presented, it is rejected with ErrProviderTokenReplayed.
+//
+// The JTI cache is bounded by JTICacheMaxSize and uses automatic TTL-based expiration.
+// A token without a usable jti claim is tracked by the token's own fingerprint
+// instead, so a repeated presentation is still detected as a replay.
+//
+// Thread Safety:
+// All methods are safe for concurrent use. The JTI cache uses atomic LoadOrStore
+// operations to prevent TOCTOU race conditions.
 type OIDCProvider struct {
-	name          string
-	config        *OIDCConfig
-	initialized   bool
-	jwksCache     *JWKS
-	httpClient    *http.Client
-	jwksFetchedAt time.Time
-	jwksTTL       time.Duration
+	name        string
+	config      *OIDCConfig
+	initialized bool
+	httpClient  *http.Client
+	jwksTTL     time.Duration
+
+	// mu guards the lazily-mutated cache fields below: jwksCache, jwksFetchedAt,
+	// resolvedJWKSUri, and discoveryFailed are all populated on the first
+	// validate-token call and refreshed when the cache expires. Multiple S3
+	// requests can land here in parallel, so they need synchronization.
+	mu              sync.RWMutex
+	jwksCache       *JWKS
+	jwksFetchedAt   time.Time
+	resolvedJWKSUri string
+	discoveryFailed bool
+
+	// jti wraps the consumed-token cache behind the replay protection. It is
+	// allocated by NewOIDCProvider or lazily by replayCache, and survives
+	// re-initialization, so a config refresh cannot reopen already-consumed
+	// tokens for replay. jtiOnce makes a zero-value OIDCProvider safe.
+	jti     *jtiReplayCache
+	jtiOnce sync.Once
+}
+
+// replayCache returns the consumed-token cache, allocating it for providers
+// built without NewOIDCProvider so the delegated operations never panic on a
+// nil cache.
+func (p *OIDCProvider) replayCache() *jtiReplayCache {
+	p.jtiOnce.Do(func() {
+		if p.jti == nil {
+			p.jti = newJTIReplayCache(p.name)
+		}
+	})
+	return p.jti
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -39,8 +83,15 @@ type OIDCConfig struct {
 	// Issuer is the OIDC issuer URL
 	Issuer string `json:"issuer"`
 
-	// ClientID is the OAuth2 client ID
-	ClientID string `json:"clientId"`
+	// ClientID is the OAuth2 client ID. Either ClientID or ClientIDs is
+	// required; when both are present, ClientID is appended to the audience
+	// allowlist.
+	ClientID string `json:"clientId,omitempty"`
+
+	// ClientIDs is the AWS-compatible audience allowlist. Tokens are accepted
+	// when any of `aud` or `azp` matches any entry. Mutually compatible with
+	// ClientID for backward compatibility.
+	ClientIDs []string `json:"clientIds,omitempty"`
 
 	// ClientSecret is the OAuth2 client secret (optional for public clients)
 	ClientSecret string `json:"clientSecret,omitempty"`
@@ -63,12 +114,225 @@ type OIDCConfig struct {
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
 
+	// Thumbprints, when non-empty, pins the issuer's TLS certificate against
+	// this allowlist of SHA-1 hex digests. Matches the AWS IAM
+	// CreateOpenIDConnectProvider semantics. Empty means "trust the system
+	// root store" (or whatever TLSCACert configures).
+	Thumbprints []string `json:"thumbprints,omitempty"`
+
+	// AllowedPrincipalTagKeys filters the keys read from the AWS principal
+	// session tags claim. Empty means "no tags surfaced". Provide an explicit
+	// allowlist (e.g. ["team", "env"]) to opt specific keys in.
+	AllowedPrincipalTagKeys []string `json:"allowedPrincipalTagKeys,omitempty"`
+
+	// PolicyClaim names a JWT claim whose value carries the effective policy
+	// list for the session. When non-empty and the assume request opts into
+	// claim-based policy mode via the ClaimBasedPolicyRoleArn sentinel, the
+	// policies are pulled from this claim rather than from a server-side
+	// role mapping. Accepted shapes: string (single policy), comma-separated
+	// string, or string array.
+	PolicyClaim string `json:"policyClaim,omitempty"`
+
 	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
 	TLSCACert string `json:"tlsCaCert,omitempty"`
 
 	// TLSInsecureSkipVerify controls whether to skip TLS verification.
 	// WARNING: Should only be used in development/testing environments. Never use in production.
 	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
+
+	// JTIReplayProtectionEnabled enables token replay protection via JTI tracking (default: true)
+	// Use pointer to distinguish between "not set" (nil = default true) and "explicitly false"
+	JTIReplayProtectionEnabled *bool `json:"jtiReplayProtectionEnabled,omitempty"`
+
+	// JTICacheMaxSize sets maximum number of JTI entries to cache (default: 10000)
+	JTICacheMaxSize int `json:"jtiCacheMaxSize,omitempty"`
+}
+
+// PrincipalTagsClaim is the AWS-defined namespace claim that carries
+// principal session tags. Tokens that include this claim must encode it as
+// an object whose top-level keys are tag names. AWS uses the same string;
+// see https://docs.aws.amazon.com/IAM/latest/UserGuide/id_session-tags.html.
+const PrincipalTagsClaim = "https://aws.amazon.com/tags/principal_tags"
+
+// extractClaimPolicies reads policy names from the configured JWT claim.
+// Accepts three shapes: a single string ("readonly"), a comma-separated
+// string ("readonly,billing"), or a string array. Returns nil when the
+// provider isn't in claim-based mode or the claim is absent/empty.
+func extractClaimPolicies(claims map[string]interface{}, claimName string) []string {
+	if claimName == "" {
+		return nil
+	}
+	raw, ok := claims[claimName]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		return splitPolicyClaimString(v)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			out = append(out, s)
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
+func splitPolicyClaimString(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// filterPrincipalTags drops keys that are not on `allowed`. An empty
+// allowlist means "deny all" — security-conservative default that forces
+// operators to explicitly opt tags in. Returns nil when the result is empty.
+//
+// Comparison is case-insensitive on the key, matching AWS IAM's session-tag
+// rules (the AWS docs explicitly state tag keys are case-insensitive even
+// though the original casing is preserved on the value side). Without this
+// an IDP whose claim casing drifts from the operator's allowlist string
+// would fail in surprising ways.
+func filterPrincipalTags(tags map[string]string, allowed []string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	allowSet := make(map[string]struct{}, len(allowed))
+	for _, k := range allowed {
+		allowSet[strings.ToLower(k)] = struct{}{}
+	}
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		if _, ok := allowSet[strings.ToLower(k)]; ok {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// extractPrincipalTags pulls the principal-tags namespace claim out of the
+// JWT claim map. Only string values survive — everything else is dropped to
+// avoid surfacing structured data into a flat policy condition key. Returns
+// nil when the claim is absent or empty.
+func extractPrincipalTags(claims map[string]interface{}) map[string]string {
+	raw, ok := claims[PrincipalTagsClaim]
+	if !ok {
+		return nil
+	}
+	obj, ok := raw.(map[string]interface{})
+	if !ok || len(obj) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(obj))
+	for k, v := range obj {
+		switch s := v.(type) {
+		case string:
+			out[k] = s
+		case []interface{}:
+			// Multi-value tag: AWS condition keys carry only a single value, so
+			// take the first stringy element. Multi-value matching can land
+			// later if a real customer needs it.
+			for _, e := range s {
+				if str, ok := e.(string); ok {
+					out[k] = str
+					break
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// normalizeThumbprints lowercases and de-duplicates the configured allowlist.
+// Returns a set keyed by lowercase hex for O(1) lookup during TLS verification.
+func normalizeThumbprints(in []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(in))
+	for _, t := range in {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		out[t] = struct{}{}
+	}
+	return out
+}
+
+// verifyThumbprintMatch checks that some certificate in the negotiated chain
+// hashes to a thumbprint in `expected`. AWS pins the certificate immediately
+// below the root in the chain; we accept any chain certificate to also cover
+// self-signed deployments and skip-verify test setups. When the chain has not
+// been built (InsecureSkipVerify), we fall back to PeerCertificates.
+func verifyThumbprintMatch(cs tls.ConnectionState, expected map[string]struct{}) error {
+	candidates := collectThumbprintCandidates(cs)
+	for _, c := range candidates {
+		sum := sha1.Sum(c.Raw)
+		hexSum := hex.EncodeToString(sum[:])
+		if _, ok := expected[hexSum]; ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("OIDC TLS thumbprint did not match any configured allowlist entry")
+}
+
+// collectThumbprintCandidates flattens the verified chains and peer cert list
+// into a single slice of unique certificates worth checking.
+func collectThumbprintCandidates(cs tls.ConnectionState) []*x509.Certificate {
+	var out []*x509.Certificate
+	seen := map[string]struct{}{}
+	add := func(c *x509.Certificate) {
+		if c == nil {
+			return
+		}
+		k := string(c.Raw)
+		if _, ok := seen[k]; ok {
+			return
+		}
+		seen[k] = struct{}{}
+		out = append(out, c)
+	}
+	for _, chain := range cs.VerifiedChains {
+		for _, c := range chain {
+			add(c)
+		}
+	}
+	for _, c := range cs.PeerCertificates {
+		add(c)
+	}
+	return out
 }
 
 // JWKS represents JSON Web Key Set
@@ -93,8 +357,24 @@ type JWK struct {
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
 		name:       name,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseDowngradeRedirect},
+		jti:        newJTIReplayCache(name),
 	}
+}
+
+// refuseDowngradeRedirect is the redirect policy of the client that fetches
+// discovery documents and signing keys: a request that began over https may
+// not be redirected to plain http, where anyone on the network path could
+// substitute the keys and mint tokens STS accepts. It otherwise keeps
+// net/http's default limit of 10 redirects.
+func refuseDowngradeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from %s to non-https %s", via[0].URL.Redacted(), req.URL.Redacted())
+	}
+	return nil
 }
 
 // Name returns the provider name
@@ -145,6 +425,20 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		glog.Warningf("OIDC provider %q is configured to skip TLS verification. This is insecure and should not be used in production.", p.name)
 	}
 
+	// Thumbprint pinning: when configured, every TLS handshake to the IDP must
+	// present a chain whose terminal certificate (the cert just below the root,
+	// matching AWS IAM semantics) hashes to one of the listed SHA-1 digests.
+	// VerifyConnection runs after the chain build, so cs.VerifiedChains is
+	// populated when InsecureSkipVerify is false; we additionally pin against
+	// PeerCertificates so self-signed test setups work too.
+	if len(oidcConfig.Thumbprints) > 0 {
+		expected := normalizeThumbprints(oidcConfig.Thumbprints)
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			return verifyThumbprintMatch(cs, expected)
+		}
+		glog.V(2).Infof("OIDC provider %q: TLS thumbprint pinning enabled (%d allowed)", p.name, len(expected))
+	}
+
 	if oidcConfig.TLSCACert != "" {
 		// Validate that the CA cert path is absolute to prevent reading unintended files
 		if !filepath.IsAbs(oidcConfig.TLSCACert) {
@@ -170,9 +464,21 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		TLSClientConfig: tlsConfig,
 	}
 	p.httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
+		Timeout:       30 * time.Second,
+		Transport:     transport,
+		CheckRedirect: refuseDowngradeRedirect,
 	}
+
+	// Configure JTI replay protection last, so a config failure above cannot
+	// leave a running worker behind. A previous worker is always stopped,
+	// whether the new configuration enables protection or disables it.
+	// The consumed-token store survives re-initialization: resetting it would
+	// let already-seen tokens be replayed against the refreshed provider.
+	jtiEnabled := true
+	if oidcConfig.JTIReplayProtectionEnabled != nil {
+		jtiEnabled = *oidcConfig.JTIReplayProtectionEnabled
+	}
+	p.replayCache().configure(jtiEnabled, int64(oidcConfig.JTICacheMaxSize))
 
 	// For testing, we'll skip the actual OIDC client initialization
 	return nil
@@ -184,7 +490,7 @@ func (p *OIDCProvider) validateConfig(config *OIDCConfig) error {
 		return fmt.Errorf("issuer is required")
 	}
 
-	if config.ClientID == "" {
+	if config.ClientID == "" && len(config.ClientIDs) == 0 {
 		return fmt.Errorf("client ID is required")
 	}
 
@@ -196,8 +502,46 @@ func (p *OIDCProvider) validateConfig(config *OIDCConfig) error {
 	return nil
 }
 
+// allowedAudiences returns the merged list of acceptable audiences for this
+// provider. Both the singular ClientID and the plural ClientIDs are honoured;
+// duplicates collapse silently.
+func (p *OIDCProvider) allowedAudiences() []string {
+	if p.config == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	add(p.config.ClientID)
+	for _, c := range p.config.ClientIDs {
+		add(c)
+	}
+	return out
+}
+
 // Authenticate authenticates a user with an OIDC token
 func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, false)
+}
+
+// AuthenticateSingleUse authenticates and consumes the token so a second
+// presentation is rejected as a replay. The web-identity exchange uses it,
+// where a token buys a session exactly once; callers that validate the same
+// token on every request use Authenticate.
+func (p *OIDCProvider) AuthenticateSingleUse(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return p.authenticate(ctx, token, true)
+}
+
+func (p *OIDCProvider) authenticate(ctx context.Context, token string, singleUse bool) (*providers.ExternalIdentity, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -207,7 +551,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	}
 
 	// Validate token and get claims
-	claims, err := p.ValidateToken(ctx, token)
+	claims, err := p.validateToken(ctx, token, singleUse)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +560,10 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	email, _ := claims.GetClaimString("email")
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
+	// The raw `roles` claim (e.g. from a Keycloak realm-role mapper). Surfaced into
+	// the STS request context below (see ExternalIdentity.Roles) so resource policies
+	// can gate on jwt:roles. Distinct from the provider-configured role mapping below.
+	rawRoles, _ := claims.GetClaimStringSlice("roles")
 
 	// Debug: Log available claims
 	glog.V(3).Infof("Available claims: %+v", claims.Claims)
@@ -266,12 +614,16 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	}
 
 	identity := &providers.ExternalIdentity{
-		UserID:      claims.Subject,
-		Email:       email,
-		DisplayName: displayName,
-		Groups:      groups,
-		Attributes:  attributes,
-		Provider:    p.name,
+		UserID:        claims.Subject,
+		Email:         email,
+		DisplayName:   displayName,
+		Groups:        groups,
+		Roles:         rawRoles,
+		Attributes:    attributes,
+		Provider:      p.name,
+		Issuer:        claims.Issuer,
+		PrincipalTags: filterPrincipalTags(extractPrincipalTags(claims.Claims), p.config.AllowedPrincipalTagKeys),
+		ClaimPolicies: extractClaimPolicies(claims.Claims, p.config.PolicyClaim),
 	}
 
 	// Pass the token expiration to limit session duration
@@ -328,7 +680,7 @@ func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessT
 
 	// Set authorization header if access token is provided
 	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Authorization", security.BearerPrefix+accessToken)
 	}
 	req.Header.Set("Accept", "application/json")
 
@@ -366,6 +718,16 @@ func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessT
 
 // ValidateToken validates an OIDC JWT token
 func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, false)
+}
+
+// ValidateTokenSingleUse validates and consumes the token: a second
+// presentation of it is rejected as a replay. See AuthenticateSingleUse.
+func (p *OIDCProvider) ValidateTokenSingleUse(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return p.validateToken(ctx, token, true)
+}
+
+func (p *OIDCProvider) validateToken(ctx context.Context, token string, singleUse bool) (*providers.TokenClaims, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("provider not initialized")
 	}
@@ -422,33 +784,45 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("%w: expected %s, got %s", providers.ErrProviderInvalidIssuer, p.config.Issuer, issuer)
 	}
 
-	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
-	// Per RFC 7519, aud can be either a string or an array of strings
+	// Check audience claim (aud) or authorized party (azp) — Keycloak uses azp.
+	// Per RFC 7519, aud can be either a string or an array of strings.
+	// Multiple client IDs are supported per AWS IAM CreateOpenIDConnectProvider
+	// semantics: any one match in the allowlist accepts the token.
+	allowed := p.allowedAudiences()
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, a := range allowed {
+		allowedSet[a] = struct{}{}
+	}
+
 	var audienceMatched bool
 	if audClaim, ok := claims["aud"]; ok {
 		switch aud := audClaim.(type) {
 		case string:
-			if aud == p.config.ClientID {
+			if _, ok := allowedSet[aud]; ok {
 				audienceMatched = true
 			}
 		case []interface{}:
 			for _, a := range aud {
-				if str, ok := a.(string); ok && str == p.config.ClientID {
-					audienceMatched = true
-					break
+				if str, ok := a.(string); ok {
+					if _, ok := allowedSet[str]; ok {
+						audienceMatched = true
+						break
+					}
 				}
 			}
 		}
 	}
 
 	if !audienceMatched {
-		if azp, ok := claims["azp"].(string); ok && azp == p.config.ClientID {
-			audienceMatched = true
+		if azp, ok := claims["azp"].(string); ok {
+			if _, ok := allowedSet[azp]; ok {
+				audienceMatched = true
+			}
 		}
 	}
 
 	if !audienceMatched {
-		return nil, fmt.Errorf("%w: expected client ID %s", providers.ErrProviderInvalidAudience, p.config.ClientID)
+		return nil, fmt.Errorf("%w: token audience matches none of the configured client IDs", providers.ErrProviderInvalidAudience)
 	}
 
 	subject, ok := claims["sub"].(string)
@@ -484,6 +858,16 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	// Copy all claims
 	for key, value := range claims {
 		tokenClaims.Claims[key] = value
+	}
+
+	// Consume the token for replay protection. The check runs only for
+	// single-use callers: a bearer token is meant to be presented on every
+	// request, so validating it must not consume it.
+	if singleUse {
+		jti, _ := claims["jti"].(string)
+		if err := p.replayCache().consume(token, jti, subject, tokenClaims.ExpiresAt); err != nil {
+			return nil, err
+		}
 	}
 
 	return tokenClaims, nil
@@ -550,39 +934,176 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 	return roles
 }
 
-// getPublicKey retrieves the public key for the given key ID from JWKS
+// getPublicKey retrieves the public key for the given key ID from JWKS.
+// Cache hits use the read lock so concurrent token validations don't
+// serialize on JWKS lookup. Misses and expirations promote to the write
+// lock so the JWKS fetch + cache write happens once per refresh cycle.
 func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
-	// Fetch JWKS if not cached or refresh if expired
-	if p.jwksCache == nil || (!p.jwksFetchedAt.IsZero() && time.Since(p.jwksFetchedAt) > p.jwksTTL) {
-		if err := p.fetchJWKS(ctx); err != nil {
+	// Fast path: read lock and look in cache.
+	p.mu.RLock()
+	if p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL) {
+		for _, key := range p.jwksCache.Keys {
+			if key.Kid == kid {
+				k := key
+				p.mu.RUnlock()
+				return p.parseJWK(&k)
+			}
+		}
+	}
+	p.mu.RUnlock()
+
+	// Slow path: take the write lock for the (re)fetch + retry. Re-check the
+	// cache under the write lock in case another goroutine already refreshed.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cacheValid := p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL)
+	if !cacheValid {
+		if err := p.fetchJWKSLocked(ctx); err != nil {
 			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 		}
 	}
-
-	// Find the key with matching kid
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 
-	// Key not found in cache. Refresh JWKS once to handle key rotation and retry.
-	if err := p.fetchJWKS(ctx); err != nil {
+	// Key not found in cache. Refresh JWKS once to handle key rotation.
+	if err := p.fetchJWKSLocked(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh JWKS after key miss: %v", err)
 	}
 	for _, key := range p.jwksCache.Keys {
 		if key.Kid == kid {
-			return p.parseJWK(&key)
+			k := key
+			return p.parseJWK(&k)
 		}
 	}
 	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
 }
 
-// fetchJWKS fetches the JWKS from the provider
+// discoveryDocument is the subset of the OpenID Provider Configuration we need.
+// See https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata.
+type discoveryDocument struct {
+	Issuer  string `json:"issuer"`
+	JWKSUri string `json:"jwks_uri"`
+}
+
+// resolveJWKSUriLocked determines the JWKS URI for the provider. The caller
+// must hold p.mu (write lock); the function reads/writes p.resolvedJWKSUri
+// and p.discoveryFailed without taking the lock itself.
+//
+// Order of resolution:
+//  1. explicit config.JWKSUri (operator override; never overridden by discovery).
+//  2. cached resolvedJWKSUri from a prior discovery (refreshed when JWKS cache expires).
+//  3. .well-known/openid-configuration discovery (per OIDC Discovery 1.0).
+//  4. fallback to {issuer}/.well-known/jwks.json (compat path for IDPs that
+//     don't publish discovery).
+func (p *OIDCProvider) resolveJWKSUriLocked(ctx context.Context) (string, error) {
+	if p.config.JWKSUri != "" {
+		return p.config.JWKSUri, nil
+	}
+	if p.resolvedJWKSUri != "" {
+		return p.resolvedJWKSUri, nil
+	}
+
+	issuer := strings.TrimSuffix(p.config.Issuer, "/")
+
+	if !p.discoveryFailed {
+		discoveryURL := issuer + "/.well-known/openid-configuration"
+		uri, err := p.fetchDiscoveryJWKSUri(ctx, discoveryURL)
+		switch {
+		case err == nil:
+			p.resolvedJWKSUri = uri
+			return uri, nil
+		default:
+			// Cache the failure so we don't pay the discovery RTT on every refresh.
+			// Operators with non-discovery IDPs see one failed lookup at startup.
+			glog.V(3).Infof("OIDC discovery at %s failed (%v); falling back to /.well-known/jwks.json", discoveryURL, err)
+			p.discoveryFailed = true
+		}
+	}
+
+	return issuer + "/.well-known/jwks.json", nil
+}
+
+// fetchDiscoveryJWKSUri retrieves the OIDC discovery document and returns
+// the jwks_uri field. The issuer claim in the document must match config.Issuer
+// to defend against issuer-substitution attacks during discovery.
+func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create discovery request: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch discovery document: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
+	}
+
+	var doc discoveryDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("decode discovery document: %v", err)
+	}
+
+	if doc.JWKSUri == "" {
+		return "", fmt.Errorf("discovery document missing jwks_uri")
+	}
+
+	// Issuer must be present and match: a discovery doc that points to a
+	// different issuer is either a misconfiguration or an attack against
+	// issuer-confusion, and a doc that omits the issuer field entirely
+	// would have bypassed the previous check (doc.Issuer != "" guard) and
+	// silently accepted whatever JWKS URI the document supplied. OIDC
+	// Discovery 1.0 §3 mandates the issuer field, so treat missing as a
+	// hard failure. Compare after trimming a single trailing slash on each
+	// side because real IdPs disagree on whether the configured issuer
+	// has one.
+	if strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
+		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
+	}
+
+	// An https issuer's keys must come over https too; otherwise the issuer's
+	// TLS protects nothing. Refused here, discovery falls back to the
+	// issuer's own /.well-known/jwks.json.
+	if strings.HasPrefix(p.config.Issuer, "https://") && !strings.HasPrefix(doc.JWKSUri, "https://") {
+		return "", fmt.Errorf("discovery jwks_uri %q is not https for https issuer %q", doc.JWKSUri, p.config.Issuer)
+	}
+
+	return doc.JWKSUri, nil
+}
+
+// fetchJWKS is a thin wrapper around fetchJWKSLocked that acquires the
+// write lock. Used by tests; production callers in getPublicKey already
+// hold the lock and call fetchJWKSLocked directly.
 func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
-	jwksURL := p.config.JWKSUri
-	if jwksURL == "" {
-		jwksURL = strings.TrimSuffix(p.config.Issuer, "/") + "/.well-known/jwks.json"
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fetchJWKSLocked(ctx)
+}
+
+// fetchJWKSLocked fetches the JWKS from the provider. The caller must hold
+// p.mu (write lock); the function writes p.jwksCache and p.jwksFetchedAt
+// without taking the lock itself.
+//
+// Each fetch reattempts discovery if the previous attempt failed: a
+// transient 5xx that flipped discoveryFailed at startup shouldn't lock the
+// provider into the fallback path forever. The retry rate is bounded by
+// the JWKS TTL (typically 1h), so the discovery RTT cost is amortized.
+func (p *OIDCProvider) fetchJWKSLocked(ctx context.Context) error {
+	if p.config.JWKSUri == "" && p.resolvedJWKSUri == "" {
+		p.discoveryFailed = false
+	}
+	jwksURL, err := p.resolveJWKSUriLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve JWKS URI: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)
@@ -776,4 +1297,37 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 	}
 
 	return identity
+}
+
+// Shutdown gracefully stops the JTI cleanup goroutine.
+// Should be called when the provider is being shut down to prevent goroutine leaks.
+func (p *OIDCProvider) Shutdown(ctx context.Context) error {
+	return p.replayCache().stop(ctx)
+}
+
+// AdoptReplayStateFrom takes over the consumed-token store of the provider it
+// replaces, so tokens it already saw stay rejected across the rebuild. The
+// caller must shut down the replaced provider; only one cleanup worker may
+// sweep the shared store at a time. Call before the new provider serves
+// validators.
+func (p *OIDCProvider) AdoptReplayStateFrom(old *OIDCProvider) {
+	if old == nil || old == p || old.jti == nil {
+		return
+	}
+	p.replayCache().adoptFrom(old.jti)
+}
+
+// MergeReplayStateFrom hands this provider's store to another provider and
+// then folds the other's consumed-token entries in, so rejections the other
+// recorded keep holding when its records move to a shared provider. Repointing
+// first means tokens the other still consumes — in-flight exchanges or ones
+// routed to it before the provider map updates — land in the shared store
+// instead of a store this merge already drained. Unlike AdoptReplayStateFrom
+// it swaps nothing of its own, so it is safe on a provider that is already
+// serving validators.
+func (p *OIDCProvider) MergeReplayStateFrom(other *OIDCProvider) {
+	if other == nil || other == p {
+		return
+	}
+	p.replayCache().mergeFrom(other.replayCache())
 }

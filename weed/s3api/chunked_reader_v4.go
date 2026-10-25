@@ -31,6 +31,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -45,8 +46,12 @@ import (
 //
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
+//
+// Only the signature is verified here. The request was already authorized by
+// the Auth middleware, which also evaluates bucket policies; re-running the
+// permission check here does not, and would deny what the middleware allowed.
 func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
-	_, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, true)
+	_, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, false)
 	if errCode != s3err.ErrNone {
 		return nil, "", "", "", time.Time{}, errCode
 	}
@@ -79,7 +84,6 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	glog.V(3).Infof("creating a new newSignV4ChunkedReader")
 
 	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
-	authorizationHeader := req.Header.Get("Authorization")
 
 	var credential *Credential
 	var seedSignature, region, service string
@@ -90,15 +94,22 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' or 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER'
 	case streamingContentSHA256, streamingContentSHA256Trailer:
 		glog.V(3).Infof("streaming content sha256 (with trailer: %v)", contentSha256Header == streamingContentSHA256Trailer)
-		credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
-		if errCode != s3err.ErrNone {
-			return nil, errCode
+		// With IAM disabled there is no credential to verify against; leave
+		// cred nil so chunk signatures are decoded but not verified.
+		if iam.isEnabled() {
+			credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
+			if errCode != s3err.ErrNone {
+				return nil, errCode
+			}
 		}
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
-		if authorizationHeader != "" {
+		// The seed signature is a SigV4 concept; recompute it only for SigV4-signed
+		// requests. JWT-bearer, presigned, and anonymous unsigned-streaming uploads
+		// carry no header seed, and verifyV4Signature would fail parsing them.
+		if iam.isEnabled() && isRequestSignatureV4(req) {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
-			// but we do compute it to verify the caller has the correct permissions.
+			// but we do compute it to verify the request's signature.
 			_, _, _, _, _, errCode = iam.calculateSeedSignature(req)
 			if errCode != s3err.ErrNone {
 				return nil, errCode
@@ -136,6 +147,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 
 func extractChecksumAlgorithm(amzTrailerHeader string) (ChecksumAlgorithm, error) {
 	// Extract checksum algorithm from the x-amz-trailer header.
+	amzTrailerHeader = strings.ToLower(strings.TrimSpace(amzTrailerHeader))
 	switch amzTrailerHeader {
 	case "x-amz-checksum-crc32":
 		return ChecksumAlgorithmCRC32, nil
@@ -533,7 +545,7 @@ func parseChunkChecksum(b *bufio.Reader) (ChecksumAlgorithm, []byte, error) {
 					glog.V(3).Infof("multiple checksum headers found in trailer, using last: %s", key)
 				}
 				checksumAlgorithm = alg
-				checksum = value
+				checksum = bytes.Clone(value)
 			}
 			// Ignore other trailer headers like x-amz-trailer-signature
 		}

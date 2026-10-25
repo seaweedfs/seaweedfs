@@ -23,35 +23,32 @@ on:
       - '.github/workflows/volume-server-integration-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref || github.ref }}/volume-server-integration-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.24'
   TEST_TIMEOUT: '30m'
+  # Keep in step with the length of matrix.shard below.
+  SHARD_COUNT: 3
 
 jobs:
-  volume-server-integration-tests:
-    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
+  build-weed:
+    name: Build SeaweedFS Binary
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        test-type: [grpc, http]
-        shard: [1, 2, 3]
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v6
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build SeaweedFS binary
         run: |
@@ -60,28 +57,69 @@ jobs:
           chmod +x weed
           ./weed version
 
+      - name: Package binary
+        run: tar cf weed-binary.tar weed/weed
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: weed-binary
+          if-no-files-found: error
+          retention-days: 1
+          path: weed-binary.tar
+
+  volume-server-integration-tests:
+    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    needs: [build-weed]
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: [grpc, http]
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Download binary
+        uses: actions/download-artifact@v7
+        with:
+          name: weed-binary
+
+      - name: Restore binary
+        run: |
+          tar xf weed-binary.tar
+          chmod +x weed/weed
+          ./weed/weed version
+
+      # Dealing the listed tests out one by one keeps the shards even. Bucketing
+      # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of
+      # the 114 grpc tests and ran nearly twice as long as the other two shards.
+      - name: Select this shard's tests
+        env:
+          TEST_TYPE: ${{ matrix.test-type }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          tests=$(go test ./test/volume_server/"$TEST_TYPE"/... -list '.*' | grep '^Test' | sort -u)
+          # An empty list would make -run match nothing and the shard pass vacuously.
+          [ -n "$tests" ] || { echo "listed no tests in test/volume_server/$TEST_TYPE"; exit 1; }
+          selected=$(echo "$tests" | awk -v n="$SHARD_COUNT" -v i="$SHARD" 'NR % n == i - 1')
+          echo "shard $SHARD of $SHARD_COUNT runs $(echo "$selected" | wc -l) of $(echo "$tests" | wc -l) tests"
+          echo "TEST_PATTERN=^($(echo "$selected" | paste -sd'|' -))\$" >> "$GITHUB_ENV"
+
       - name: Run volume server integration tests
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
         run: |
-          if [ "${{ matrix.test-type }}" == "grpc" ]; then
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-H]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[I-S]"
-            else
-              TEST_PATTERN="^Test[T-Z]"
-            fi
-          else
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-G]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[H-R]"
-            else
-              TEST_PATTERN="^Test[S-Z]"
-            fi
-          fi
-          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }}, pattern: ${TEST_PATTERN})..."
+          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }} of ${SHARD_COUNT})..."
           go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
 
       - name: Collect logs on failure
@@ -92,7 +130,7 @@ jobs:
 
       - name: Archive logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: volume-server-integration-test-logs
           path: /tmp/volume-server-it-logs/
@@ -102,26 +140,9 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          if [ "${{ matrix.test-type }}" == "grpc" ]; then
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-H]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[I-S]"
-            else
-              TEST_PATTERN="^Test[T-Z]"
-            fi
-          else
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-G]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[H-R]"
-            else
-              TEST_PATTERN="^Test[S-Z]"
-            fi
-          fi
           echo "## Volume Server Integration Test Summary (${{ matrix.test-type }} - Shard ${{ matrix.shard }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Suite: test/volume_server/${{ matrix.test-type }} (Pattern: ${TEST_PATTERN})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server/${{ matrix.test-type }} (shard ${{ matrix.shard }} of ${SHARD_COUNT}, see 'Select this shard's tests' for the split)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"\${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
 
   volume-server-rust-smoke:
     name: Volume Server Rust Smoke (${{ matrix.mode }})
@@ -151,10 +172,16 @@ jobs:
           chmod +x weed
           ./weed version
 
+      - name: Build Rust volume launcher
+        run: |
+          cd rust/volume_server
+          cargo build --release
+
       - name: Run Rust-mode HTTP smoke tests
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
           VOLUME_SERVER_IMPL: rust
+          RUST_VOLUME_BINARY: ${{ github.workspace }}/rust/volume_server/target/release/weed-volume-rs
           VOLUME_SERVER_RUST_MODE: ${{ matrix.mode }}
         run: |
           go test -v -count=1 -timeout=25m ./test/volume_server/http/... -run "TestAdminStatusAndHealthz|TestUploadReadRangeHeadDeleteRoundTrip"
@@ -163,6 +190,7 @@ jobs:
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
           VOLUME_SERVER_IMPL: rust
+          RUST_VOLUME_BINARY: ${{ github.workspace }}/rust/volume_server/target/release/weed-volume-rs
           VOLUME_SERVER_RUST_MODE: ${{ matrix.mode }}
         run: |
           go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run "TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus"
@@ -175,7 +203,7 @@ jobs:
 
       - name: Archive logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: volume-server-rust-smoke-logs-${{ matrix.mode }}
           path: /tmp/volume-server-rust-smoke-logs/

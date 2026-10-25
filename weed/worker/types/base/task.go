@@ -16,6 +16,7 @@ type BaseTask struct {
 	logger           types.Logger
 	cancelled        bool
 	currentStage     string
+	workingDir       string
 }
 
 // NewBaseTask creates a new base task
@@ -115,4 +116,14 @@ func (t *BaseTask) Validate(params *worker_pb.TaskParams) error {
 func (t *BaseTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
 	// Subclasses must implement this
 	return 0
+}
+
+// SetWorkingDir sets the task working directory
+func (t *BaseTask) SetWorkingDir(workingDir string) {
+	t.workingDir = workingDir
+}
+
+// GetWorkingDir returns the task working directory
+func (t *BaseTask) GetWorkingDir() string {
+	return t.workingDir
 }

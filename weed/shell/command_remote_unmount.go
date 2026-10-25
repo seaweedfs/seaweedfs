@@ -52,7 +52,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return nil
 	}
 
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
 	if listErr != nil {
 		return listErr
 	}
@@ -65,7 +65,8 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("directory %s is not mounted", *dir)
 	}
 
-	// store a mount configuration in filer
+	// delete the mount mapping first: the filer reloads it on the spot, so the
+	// purge below stays local instead of deleting the remote objects
 	fmt.Fprintf(writer, "deleting mount for %s ...\n", *dir)
 	if err = filer.DeleteMountMapping(commandEnv, *dir); err != nil {
 		return fmt.Errorf("delete mount mapping: %w", err)
@@ -78,7 +79,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	// reset remote sync offset in case the folder is mounted again
-	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, *dir, time.Now().UnixNano()); err != nil {
+	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), *dir, time.Now().UnixNano()); err != nil {
 		return fmt.Errorf("reset remote.sync offset for %s: %v", *dir, err)
 	}
 

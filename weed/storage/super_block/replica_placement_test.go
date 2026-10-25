@@ -1,8 +1,28 @@
 package super_block
 
 import (
+	"fmt"
 	"testing"
 )
+
+func TestReplicaPlacementFromByteMatchesString(t *testing.T) {
+	for b := 0; b < 256; b++ {
+		want, err := NewReplicaPlacementFromString(fmt.Sprintf("%03d", b))
+		if err != nil {
+			t.Fatalf("byte %d: %v", b, err)
+		}
+		got, err := NewReplicaPlacementFromByte(byte(b))
+		if err != nil {
+			t.Fatalf("byte %d: %v", b, err)
+		}
+		if !got.Equals(want) {
+			t.Errorf("byte %d: got %+v, want %+v", b, got, want)
+		}
+		if got.Byte() != byte(b) {
+			t.Errorf("byte %d: round trip gave %d", b, got.Byte())
+		}
+	}
+}
 
 func TestReplicaPlacementSerialDeserial(t *testing.T) {
 	rp, _ := NewReplicaPlacementFromString("001")

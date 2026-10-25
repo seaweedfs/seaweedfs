@@ -479,9 +479,6 @@ func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile 
 				MimeType:          "application/vnd.apache.parquet",
 				PairMap:           nil,
 			},
-			func(host, fileId string) string {
-				return fmt.Sprintf("http://%s/%s", host, fileId)
-			},
 			io.NewSectionReader(sourceFile, i*chunkSize, chunkSize),
 		)
 		if err != nil {

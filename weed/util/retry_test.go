@@ -1,9 +1,146 @@
 package util
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestIsTransientError(t *testing.T) {
+	transient := []error{
+		// the S3 failure that motivated widening the gate: aws-sdk-go wraps the
+		// net error in an opaque type, so only the message survives
+		errors.New(`RequestError: send request failed caused by: Post "https://s3.eu-west-2.amazonaws.com/b/k?uploads=": read tcp 10.0.0.1:53868->1.2.3.4:443: read: connection reset by peer`),
+		errors.New("rpc error: code = Unavailable desc = transport is closing"),
+		errors.New("SlowDown: Please reduce your request rate."),
+		errors.New("InternalError: We encountered an internal error. Please try again."),
+		fmt.Errorf("send: %w", syscall.ETIMEDOUT),
+		&net.DNSError{Err: "operation timed out", IsTimeout: true},
+		io.ErrUnexpectedEOF,
+		// transport teardown the peer reports as Canceled, not the caller's
+		// own context cancel; also reachable through a caller's %w wrap
+		status.Error(codes.Canceled, "grpc: the client connection is closing"),
+		fmt.Errorf("create entry /x: %w", status.Error(codes.Canceled, "grpc: the client connection is closing")),
+	}
+	for _, err := range transient {
+		if !IsTransientError(err) {
+			t.Errorf("expected transient: %v", err)
+		}
+	}
+
+	permanent := []error{
+		nil,
+		errors.New("AccessDenied: Access Denied"),
+		errors.New("NoSuchBucket: The specified bucket does not exist"),
+		context.Canceled,
+		status.Error(codes.Canceled, context.Canceled.Error()),
+		fmt.Errorf("send: %w", status.Error(codes.Canceled, context.Canceled.Error())),
+		fmt.Errorf("write: %w", context.DeadlineExceeded),
+	}
+	for _, err := range permanent {
+		if IsTransientError(err) {
+			t.Errorf("expected permanent: %v", err)
+		}
+	}
+}
+
+// A caller that formats a path into its wrapper must not be able to hand the
+// substring matcher a word the client chose: once the chain carries the status
+// the server sent, that status is what gets classified.
+func TestIsTransientErrorPrefersServerStatus(t *testing.T) {
+	transient := []error{
+		fmt.Errorf("list %s: %w", "/buckets/b/logs", status.Error(codes.Unavailable, "filer is restarting")),
+		fmt.Errorf("list %s: %w", "/buckets/b/filer: no entry is found in filer store", status.Error(codes.Unavailable, "filer is restarting")),
+		status.Error(codes.ResourceExhausted, "too many requests"),
+		// the server's own text still counts when the code does not name the condition
+		status.Error(codes.Internal, "connection reset by peer"),
+	}
+	for _, err := range transient {
+		if !IsTransientError(err) {
+			t.Errorf("expected transient: %v", err)
+		}
+	}
+
+	permanent := []error{
+		fmt.Errorf("list %s: %w", "/buckets/transport/unavailable", status.Error(codes.PermissionDenied, "not allowed")),
+		fmt.Errorf("all filers failed, last error: %w",
+			fmt.Errorf("list %s: %w", "/buckets/slowdown/throttling", status.Error(codes.InvalidArgument, "bad prefix"))),
+	}
+	for _, err := range permanent {
+		if IsTransientError(err) {
+			t.Errorf("expected permanent: %v", err)
+		}
+	}
+}
+
+func TestIsTransientErrorMessage(t *testing.T) {
+	transient := []string{
+		"read tcp 10.0.0.1:8082->10.0.0.1:54848: i/o timeout",
+		// the same condition relayed by a volume server inside a JSON string
+		"Upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: I/O timeout",
+		"Connection reset by peer",
+		"dial tcp 10.0.0.1:8888: connect: no route to host",
+		"rpc error: code = Unavailable desc = the connection is unavailable",
+		// GCS per-object mutation limit on a hot file; the next attempt after a
+		// one-second backoff is under it
+		"googleapi: Error 429: The object bucket/samples.json exceeded the rate limit for object mutation operations (create, update, and delete). Please reduce your request rate. See https://cloud.google.com/storage/docs/gcs429., rateLimitExceeded",
+		"429 Too Many Requests",
+	}
+	for _, msg := range transient {
+		if !IsTransientErrorMessage(msg) {
+			t.Errorf("expected transient: %q", msg)
+		}
+	}
+
+	permanent := []string{
+		"",
+		"not found",
+		"invalid file id",
+		"chunk size mismatch",
+	}
+	for _, msg := range permanent {
+		if IsTransientErrorMessage(msg) {
+			t.Errorf("expected permanent: %q", msg)
+		}
+	}
+}
+
+func TestRetryTransientError(t *testing.T) {
+	callCount := 0
+	err := Retry("test", func() error {
+		callCount++
+		if callCount < 2 {
+			return errors.New("read: connection reset by peer")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Errorf("expected success, got %v", err)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 calls, got %d", callCount)
+	}
+
+	callCount = 0
+	err = Retry("test", func() error {
+		callCount++
+		return errors.New("AccessDenied: Access Denied")
+	})
+	if err == nil {
+		t.Error("expected error")
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 call for a permanent error, got %d", callCount)
+	}
+}
 
 func TestRetryUntil(t *testing.T) {
 	// Test case 1: Function succeeds immediately
@@ -60,6 +197,85 @@ func TestRetryUntil(t *testing.T) {
 		}
 		if callCount != 1 {
 			t.Errorf("Expected 1 call, got %d", callCount)
+		}
+	})
+}
+
+func TestRetryWithBackoff(t *testing.T) {
+	retryableErr := errors.New("unavailable")
+	shouldRetry := func(err error) bool { return err == retryableErr }
+
+	t.Run("SucceedsAfterRetries", func(t *testing.T) {
+		callCount := 0
+		err := RetryWithBackoff(context.Background(), "test", 30*time.Second, shouldRetry, func() error {
+			callCount++
+			if callCount < 3 {
+				return retryableErr
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("expected success, got %v", err)
+		}
+		if callCount != 3 {
+			t.Errorf("expected 3 calls, got %d", callCount)
+		}
+	})
+
+	t.Run("StopsOnNonRetryableError", func(t *testing.T) {
+		callCount := 0
+		fatalErr := errors.New("fatal")
+		err := RetryWithBackoff(context.Background(), "test", 30*time.Second, shouldRetry, func() error {
+			callCount++
+			return fatalErr
+		})
+		if err != fatalErr {
+			t.Errorf("expected fatal error, got %v", err)
+		}
+		if callCount != 1 {
+			t.Errorf("expected 1 call, got %d", callCount)
+		}
+	})
+
+	t.Run("StopsOnContextCancel", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		callCount := 0
+		start := time.Now()
+		err := RetryWithBackoff(ctx, "test", 30*time.Second, shouldRetry, func() error {
+			callCount++
+			return retryableErr
+		})
+		elapsed := time.Since(start)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("expected DeadlineExceeded, got %v", err)
+		}
+		if callCount <= 1 {
+			t.Errorf("expected multiple calls, got %d", callCount)
+		}
+		if elapsed > 5*time.Second {
+			t.Errorf("took %v, expected to stop near 2s deadline", elapsed)
+		}
+	})
+
+	t.Run("StopsOnMaxDuration", func(t *testing.T) {
+		callCount := 0
+		start := time.Now()
+		err := RetryWithBackoff(context.Background(), "test", 3*time.Second, shouldRetry, func() error {
+			callCount++
+			return retryableErr
+		})
+		elapsed := time.Since(start)
+		if err != retryableErr {
+			t.Errorf("expected retryable error, got %v", err)
+		}
+		if callCount <= 1 {
+			t.Errorf("expected multiple calls, got %d", callCount)
+		}
+		// Should stop around 3s (maxDuration), not run forever
+		if elapsed > 6*time.Second {
+			t.Errorf("took %v, expected to stop near 3s maxDuration", elapsed)
 		}
 	})
 }

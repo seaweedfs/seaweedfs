@@ -1,8 +1,8 @@
 package needle_map
 
-/* CompactMap is an in-memory map of needle indeces, optimized for memory usage.
+/* CompactMap is an in-memory map of needle indices, optimized for memory usage.
  *
- * It's implemented as a map of sorted indeces segments, which are in turn accessed through binary
+ * It's implemented as a map of sorted indices segments, which are in turn accessed through binary
  * search. This guarantees a best-case scenario (ordered inserts/updates) of O(1) and a worst case
  * scenario of O(log n) runtime, with memory usage unaffected by insert ordering.
  *
@@ -163,7 +163,7 @@ func (cs *CompactMapSegment) set(key types.NeedleId, offset types.Offset, size t
 	return
 }
 
-// get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+// get seeks a map entry by key. Returns an entry pointer, with a boolean specifying if the entry was found.
 func (cs *CompactMapSegment) get(key types.NeedleId) (*CompactNeedleValue, bool) {
 	if i, found := cs.bsearchKey(key); found {
 		return &cs.list[i], true
@@ -188,6 +188,23 @@ func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
 	}
 
 	return types.Size(0)
+}
+
+// remove erases a map entry entirely, returning whether it existed.
+func (cs *CompactMapSegment) remove(key types.NeedleId) bool {
+	i, found := cs.bsearchKey(key)
+	if !found {
+		return false
+	}
+	copy(cs.list[i:], cs.list[i+1:])
+	cs.list = cs.list[:len(cs.list)-1]
+	if len(cs.list) == 0 {
+		cs.firstKey, cs.lastKey = MaxCompactKey, 0
+	} else {
+		cs.firstKey = cs.list[0].key
+		cs.lastKey = cs.list[len(cs.list)-1].key
+	}
+	return true
 }
 
 func NewCompactMap() *CompactMap {
@@ -243,7 +260,7 @@ func (cm *CompactMap) Set(key types.NeedleId, offset types.Offset, size types.Si
 	return cs.set(key, offset, size)
 }
 
-// Get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+// Get seeks a map entry by key. Returns an entry pointer, with a boolean specifying if the entry was found.
 func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
 	cm.RLock()
 	defer cm.RUnlock()
@@ -271,6 +288,20 @@ func (cm *CompactMap) Delete(key types.NeedleId) types.Size {
 		return types.Size(0)
 	}
 	return cs.delete(key)
+}
+
+// Remove erases a map entry entirely, returning whether it existed. Unlike
+// Delete it leaves no tombstoned entry behind.
+func (cm *CompactMap) Remove(key types.NeedleId) bool {
+	cm.Lock()
+	defer cm.Unlock()
+
+	chunk := Chunk(key / SegmentChunkSize)
+	cs, ok := cm.segments[chunk]
+	if !ok {
+		return false
+	}
+	return cs.remove(key)
 }
 
 // AscendingVisit runs a function on all entries, in ascending key order. Returns any errors hit while visiting.

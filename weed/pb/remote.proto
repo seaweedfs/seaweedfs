@@ -26,6 +26,8 @@ message RemoteConf {
 
   string azure_account_name = 15;
   string azure_account_key = 16;
+  string azure_client_id = 17;
+  string azure_endpoint = 18;
 
   string backblaze_key_id = 20;
   string backblaze_application_key = 21;
@@ -63,6 +65,9 @@ message RemoteConf {
   string contabo_secret_key = 69;
   string contabo_endpoint = 70;
   string contabo_region = 71;
+
+  uint32 upload_concurrency = 72; // multipart upload concurrency per file, 0 = client default (1 for S3, 16 for Azure)
+  uint32 download_concurrency = 73; // multipart download concurrency per read, 0 = client default (5 for S3, 16 for Azure)
 }
 
 message RemoteStorageMapping {
@@ -73,4 +78,6 @@ message RemoteStorageLocation {
   string name = 1;
   string bucket = 2;
   string path = 3;
+  int32 listing_cache_ttl_seconds = 4; // 0 = disabled; >0 enables on-demand directory listing with this TTL in seconds
+  optional int32 cache_wait_ms = 5; // unset = size based default; 0 = read straight from the remote without caching
 }

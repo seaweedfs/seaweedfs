@@ -296,9 +296,9 @@ jdbc:postgresql://localhost:5432/default?user=seaweedfs&password=secret
 
 ```bash
 # Start PostgreSQL protocol server
-weed db -port=5432 -auth=trust
-weed db -port=5432 -auth=password -users="admin:secret;readonly:pass"
-weed db -port=5432 -tls-cert=server.crt -tls-key=server.key
+weed-db -port=5432 -auth=trust
+weed-db -port=5432 -auth=password -users="admin:secret;readonly:pass"
+weed-db -port=5432 -tls-cert=server.crt -tls-key=server.key
 
 # Configuration options
 -host=localhost              # Listen host

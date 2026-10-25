@@ -15,21 +15,30 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
 	f.onEmptyFolderCleanupEvents(event)
+	f.onRemoteDeletionEvents(event)
 }
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
+	oldDir := event.Directory
+	newDir := filer_pb.MetadataEventTargetDirectory(event)
 
-	if f.DirBucketsPath == event.Directory {
-		if filer_pb.IsCreate(event) {
-			if message.NewEntry.IsDirectory {
-				f.Store.OnBucketCreation(message.NewEntry.Name)
-			}
+	if filer_pb.IsCreate(event) {
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
 		}
-		if filer_pb.IsDelete(event) {
-			if message.OldEntry.IsDirectory {
-				f.Store.OnBucketDeletion(message.OldEntry.Name)
-			}
+	}
+	if filer_pb.IsDelete(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
+		}
+	}
+	if filer_pb.IsRename(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
+		}
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
 		}
 	}
 }
@@ -47,11 +56,18 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 	// Handle delete events - trigger folder cleanup check
 	if filer_pb.IsDelete(event) && message.OldEntry != nil {
 		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
 	}
 
 	// Handle create events - cancel pending cleanup for the folder
 	if filer_pb.IsCreate(event) && message.NewEntry != nil {
 		f.EmptyFolderCleaner.OnCreateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+	}
+
+	// Handle update events - drop the cached bucket cleanup policy
+	if filer_pb.IsUpdate(event) && message.NewEntry != nil {
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
 	}
 
 	// Handle rename/move events
@@ -59,6 +75,7 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 		// Treat the old location as a delete
 		if message.OldEntry != nil {
 			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+			f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
 		}
 		// Treat the new location as a create
 		if message.NewEntry != nil {
@@ -67,15 +84,14 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 				newDir = directory
 			}
 			f.EmptyFolderCleaner.OnCreateEvent(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
+			f.EmptyFolderCleaner.InvalidateBucketPolicy(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
 		}
 	}
 }
 
 func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataResponse) {
-	if DirectoryEtcSeaweedFS != event.Directory {
-		if DirectoryEtcSeaweedFS != event.EventNotification.NewParentPath {
-			return
-		}
+	if !filer_pb.MetadataEventTouchesDirectory(event, DirectoryEtcSeaweedFS) {
+		return
 	}
 
 	entry := event.EventNotification.NewEntry
@@ -83,7 +99,7 @@ func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataR
 		return
 	}
 
-	glog.V(0).Infof("procesing %v", event)
+	glog.V(0).Infof("processing %v", event)
 	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}
@@ -130,5 +146,11 @@ func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	}
 }
 func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
-	// FIXME add reloading
+	if !filer_pb.MetadataEventTouchesDirectory(event, DirectoryEtcRemote) {
+		return
+	}
+
+	// a mount left behind after remote.unmount would still send deletes to a
+	// remote the filer no longer owns
+	f.LoadRemoteStorageConfAndMapping()
 }

@@ -98,16 +98,6 @@ func TestOffsetFetchAfterCommit(t *testing.T) {
 	t.Skip("Integration test - requires mock broker setup")
 
 	t.Run("FetchAfterCommit", func(t *testing.T) {
-		type FetchRequest struct {
-			partition int32
-			offset    int64
-		}
-
-		type FetchResponse struct {
-			records    []byte
-			nextOffset int64
-		}
-
 		// Simulate: Commit offset 163, then fetch offset 164
 		committedOffset := int64(163)
 		nextFetchOffset := committedOffset + 1
@@ -204,33 +194,6 @@ func TestOffsetCommitConsistency(t *testing.T) {
 	})
 }
 
-// TestFetchEmptyPartitionHandling tests what happens when fetching
-// from a partition with no more messages
-func TestFetchEmptyPartitionHandling(t *testing.T) {
-	t.Skip("Integration test - requires mock broker setup")
-
-	t.Run("EmptyPartitionBehavior", func(t *testing.T) {
-		const (
-			topic      = "test-topic"
-			partition  = int32(0)
-			lastOffset = int64(999) // Messages 0-999 exist
-		)
-
-		// Test 1: Fetch at HWM should return empty
-		// Expected: Fetch(1000, HWM=1000) returns empty (not error)
-		// This is normal, consumer should retry
-
-		// Test 2: Fetch beyond HWM should return error or empty
-		// Expected: Fetch(1000, HWM=1000) + wait for new messages
-		// Consumer should NOT give up
-
-		// Test 3: After new message arrives, fetch should succeed
-		// Expected: Fetch(1000, HWM=1001) returns 1 message
-
-		t.Logf("✅ Empty partition handling verified")
-	})
-}
-
 // TestLongPollWithOffsetCommit verifies long-poll semantics work correctly
 // with offset commits (no throttling confusion)
 func TestLongPollWithOffsetCommit(t *testing.T) {
@@ -240,10 +203,8 @@ func TestLongPollWithOffsetCommit(t *testing.T) {
 		// Critical: long-poll duration should NOT be reported as throttleTimeMs
 		// This was bug 8969b4509
 
-		const maxWaitTime = 5 * time.Second
-
 		// Simulate long-poll wait (no data available)
-		time.Sleep(100 * time.Millisecond) // Broker waits up to maxWaitTime
+		time.Sleep(100 * time.Millisecond)
 
 		// throttleTimeMs should be 0 (NOT elapsed duration!)
 		throttleTimeMs := int32(0) // CORRECT

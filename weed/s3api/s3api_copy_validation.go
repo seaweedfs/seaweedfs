@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -115,23 +116,59 @@ func validateSSEKMSCopyRequirements(srcMetadata map[string][]byte, headers http.
 
 // validateEncryptionCompatibility validates that encryption methods are not conflicting
 func validateEncryptionCompatibility(headers http.Header) error {
-	hasSSEC := hasSSECHeaders(headers)
-	hasSSEKMS := headers.Get(s3_constants.AmzServerSideEncryption) == "aws:kms"
-	hasSSES3 := headers.Get(s3_constants.AmzServerSideEncryption) == "AES256"
+	// A repeated header is rejected rather than deduped: the encryption paths
+	// apply only the first value, so extra values could hide the method the
+	// client actually asked for.
+	for _, name := range []string{
+		s3_constants.AmzServerSideEncryption,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKey,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled,
+	} {
+		if len(headers.Values(name)) > 1 {
+			return &CopyValidationError{
+				Code:    s3err.ErrInvalidRequest,
+				Message: fmt.Sprintf("Multiple %s headers specified - only one is allowed", name),
+			}
+		}
+	}
 
-	// Count how many encryption methods are specified
-	encryptionCount := 0
-	if hasSSEC {
-		encryptionCount++
+	sseAlgorithm := headers.Get(s3_constants.AmzServerSideEncryption)
+	hasSSEC := hasSSECHeaders(headers)
+	hasSSEKMS := sseAlgorithm == s3_constants.SSEAlgorithmKMS
+	hasSSES3 := sseAlgorithm == s3_constants.SSEAlgorithmAES256
+
+	// Reject unsupported algorithms so they are never persisted as a bogus
+	// destination header advertising encryption that was never applied.
+	if sseAlgorithm != "" && !hasSSEKMS && !hasSSES3 {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidEncryptionAlgorithm,
+			Message: fmt.Sprintf("Unsupported server-side encryption algorithm: %s", sseAlgorithm),
+		}
 	}
-	if hasSSEKMS {
-		encryptionCount++
-	}
-	if hasSSES3 {
-		encryptionCount++
+
+	// KMS options only apply to aws:kms; with another method or none they name
+	// no method at all.
+	if !hasSSEKMS && hasHeaderValue(headers,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidRequest,
+			Message: "KMS encryption options require the aws:kms encryption method",
+		}
 	}
 
 	// Only one encryption method should be specified
+	encryptionCount := 0
+	for _, specified := range []bool{hasSSEC, hasSSEKMS, hasSSES3} {
+		if specified {
+			encryptionCount++
+		}
+	}
 	if encryptionCount > 1 {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidRequest,
@@ -140,6 +177,21 @@ func validateEncryptionCompatibility(headers http.Header) error {
 	}
 
 	return nil
+}
+
+// ValidateRequestEncryption rejects PutObject or CreateMultipartUpload
+// encryption headers that no single method can honor, with the InvalidArgument
+// codes S3 returns for them.
+func ValidateRequestEncryption(headers http.Header) s3err.ErrorCode {
+	err := validateEncryptionCompatibility(headers)
+	if err == nil {
+		return s3err.ErrNone
+	}
+	var validationErr *CopyValidationError
+	if errors.As(err, &validationErr) && validationErr.Code == s3err.ErrInvalidEncryptionAlgorithm {
+		return s3err.ErrInvalidEncryptionMethod
+	}
+	return s3err.ErrIncompatibleEncryptionMethod
 }
 
 // validateSSECCopyHeaderCompleteness validates that all required SSE-C copy headers are present
@@ -219,16 +271,29 @@ func validateSSECHeaderCompleteness(headers http.Header) error {
 }
 
 // Helper functions for header detection
+func hasHeaderValue(headers http.Header, names ...string) bool {
+	for _, name := range names {
+		for _, value := range headers.Values(name) {
+			if value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasSSECCopyHeaders(headers http.Header) bool {
-	return headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm) != "" ||
-		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey) != "" ||
-		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5) != ""
+	return hasHeaderValue(headers,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerKey,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5)
 }
 
 func hasSSECHeaders(headers http.Header) bool {
-	return headers.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" ||
-		headers.Get(s3_constants.AmzServerSideEncryptionCustomerKey) != "" ||
-		headers.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5) != ""
+	return hasHeaderValue(headers,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKey,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
 }
 
 // validateEncryptionContext validates the encryption context header format
@@ -242,8 +307,12 @@ func validateEncryptionContext(contextHeader string) error {
 	return nil
 }
 
-// ValidateCopySource validates the copy source path and permissions
+// ValidateCopySource validates the copy source path.
 func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
+	return validateCopySource(copySource, srcBucket, srcObject, "")
+}
+
+func validateCopySource(copySource string, srcBucket, srcObject, srcVersionId string) error {
 	if copySource == "" {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
@@ -262,6 +331,21 @@ func ValidateCopySource(copySource string, srcBucket, srcObject string) error {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidCopySource,
 			Message: "Source object cannot be empty",
+		}
+	}
+
+	// `.`/`..` segments are collapsed by the filer's path join; reject them as
+	// IsValidObjectKey does for the request URL so the source stays in-bucket.
+	if !s3_constants.IsValidBucketName(srcBucket) || !s3_constants.IsValidObjectKey(srcObject) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains invalid path segments",
+		}
+	}
+	if !isValidVersionID(srcVersionId) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidCopySource,
+			Message: "Copy source contains an invalid version ID",
 		}
 	}
 

@@ -3,12 +3,14 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
@@ -18,11 +20,116 @@ const (
 )
 
 type PoliciesCollection struct {
-	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
+	Policies            map[string]policy_engine.PolicyDocument            `json:"policies"`
+	InlinePolicies      map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
+	GroupInlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"groupInlinePolicies,omitempty"`
 }
 
 func validatePolicyName(name string) error {
 	return credential.ValidatePolicyName(name)
+}
+
+func newPoliciesCollection() *PoliciesCollection {
+	return &PoliciesCollection{
+		Policies:            make(map[string]policy_engine.PolicyDocument),
+		InlinePolicies:      make(map[string]map[string]policy_engine.PolicyDocument),
+		GroupInlinePolicies: make(map[string]map[string]policy_engine.PolicyDocument),
+	}
+}
+
+func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*PoliciesCollection, bool, error) {
+	policiesCollection := newPoliciesCollection()
+
+	content, foundLegacy, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, filer.IamPoliciesFile)
+	if err != nil {
+		return nil, false, err
+	}
+	if !foundLegacy || len(content) == 0 {
+		return policiesCollection, foundLegacy, nil
+	}
+
+	if err := json.Unmarshal(content, policiesCollection); err != nil {
+		return nil, false, err
+	}
+	if policiesCollection.Policies == nil {
+		policiesCollection.Policies = make(map[string]policy_engine.PolicyDocument)
+	}
+	if policiesCollection.InlinePolicies == nil {
+		policiesCollection.InlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+	if policiesCollection.GroupInlinePolicies == nil {
+		policiesCollection.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+
+	return policiesCollection, true, nil
+}
+
+func (store *FilerEtcStore) saveLegacyPoliciesCollection(ctx context.Context, policiesCollection *PoliciesCollection) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		content, err := json.MarshalIndent(policiesCollection, "", "  ")
+		if err != nil {
+			return err
+		}
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory, filer.IamPoliciesFile, content)
+	})
+}
+
+func policyDocumentToPbPolicy(name string, policy policy_engine.PolicyDocument) (*iam_pb.Policy, error) {
+	content, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	return &iam_pb.Policy{Name: name, Content: string(content)}, nil
+}
+
+// LoadManagedPolicies loads managed policies for the S3 runtime without
+// triggering legacy-to-multifile migration. This lets the runtime hydrate
+// policies while preserving any legacy inline policy data stored alongside
+// managed policies.
+func (store *FilerEtcStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	policies := make(map[string]policy_engine.PolicyDocument, len(policiesCollection.Policies))
+	for name, policy := range policiesCollection.Policies {
+		policies[name] = policy
+	}
+
+	if err := store.loadPoliciesFromMultiFile(ctx, policies); err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policy := range policies {
+		pbPolicy, err := policyDocumentToPbPolicy(name, policy)
+		if err != nil {
+			return nil, err
+		}
+		managedPolicies = append(managedPolicies, pbPolicy)
+	}
+
+	return managedPolicies, nil
+}
+
+// LoadInlinePolicies loads legacy inline policies keyed by user name. Inline
+// policies are still stored in the legacy shared policies file.
+func (store *FilerEtcStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	inlinePolicies := make(map[string]map[string]policy_engine.PolicyDocument, len(policiesCollection.InlinePolicies))
+	for userName, userPolicies := range policiesCollection.InlinePolicies {
+		inlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument, len(userPolicies))
+		for policyName, policy := range userPolicies {
+			inlinePolicies[userName][policyName] = policy
+		}
+	}
+
+	return inlinePolicies, nil
 }
 
 // GetPolicies retrieves all IAM policies from the filer
@@ -43,36 +150,17 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 	// 1. Load from legacy single file (low priority)
-	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, filer.IamPoliciesFile)
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	if foundLegacy && len(content) > 0 {
-		policiesCollection := &PoliciesCollection{
-			Policies: make(map[string]policy_engine.PolicyDocument),
-		}
-		if err := json.Unmarshal(content, policiesCollection); err != nil {
-			glog.Errorf("Failed to parse legacy IAM policies from %s/%s: %v",
-				filer.IamConfigDirectory, filer.IamPoliciesFile, err)
-		} else {
-			for name, policy := range policiesCollection.Policies {
-				policies[name] = policy
-			}
-		}
+	for name, policy := range policiesCollection.Policies {
+		policies[name] = policy
 	}
 
 	// 2. Load from multi-file structure (high priority, overrides legacy)
 	if err := store.loadPoliciesFromMultiFile(ctx, policies); err != nil {
 		return nil, err
-	}
-
-	// 3. Perform migration if we loaded legacy config
-	if foundLegacy {
-		if err := store.migratePoliciesToMultiFile(ctx, policies); err != nil {
-			glog.Errorf("Failed to migrate IAM policies to multi-file layout: %v", err)
-			return policies, err
-		}
 	}
 
 	return policies, nil
@@ -93,61 +181,33 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
-					continue
+					return fmt.Errorf("failed to read policy file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				var policy policy_engine.PolicyDocument
-				if err := json.Unmarshal(content, &policy); err != nil {
-					glog.Warningf("Failed to unmarshal policy %s: %v", entry.Name, err)
-					continue
-				}
-
-				// The file name is "policyName.json"
-				policyName := entry.Name
-				if len(policyName) > 5 && policyName[len(policyName)-5:] == ".json" {
-					policyName = policyName[:len(policyName)-5]
-					policies[policyName] = policy
-				}
+			if len(content) == 0 {
+				return fmt.Errorf("policy file %s is empty", entry.Name)
 			}
+			var policy policy_engine.PolicyDocument
+			if err := json.Unmarshal(content, &policy); err != nil {
+				return fmt.Errorf("failed to unmarshal policy %s: %w", entry.Name, err)
+			}
+
+			policyName := strings.TrimSuffix(entry.Name, ".json")
+			policies[policyName] = policy
 		}
 		return nil
-	})
-}
-
-func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, policies map[string]policy_engine.PolicyDocument) error {
-	glog.Infof("Migrating IAM policies to multi-file layout...")
-
-	// 1. Save all policies to individual files
-	for name, policy := range policies {
-		if err := store.savePolicy(ctx, name, policy); err != nil {
-			return err
-		}
-	}
-
-	// 2. Rename legacy file
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
-			OldDirectory: filer.IamConfigDirectory,
-			OldName:      filer.IamPoliciesFile,
-			NewDirectory: filer.IamConfigDirectory,
-			NewName:      IamLegacyPoliciesOldFile,
-		})
-		if err != nil {
-			glog.Errorf("Failed to rename legacy IAM policies file %s/%s to %s: %v",
-				filer.IamConfigDirectory, filer.IamPoliciesFile, IamLegacyPoliciesOldFile, err)
-		}
-		return err
 	})
 }
 
@@ -160,7 +220,7 @@ func (store *FilerEtcStore) savePolicy(ctx context.Context, name string, documen
 		if err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", data)
+		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", data)
 	})
 }
 
@@ -184,16 +244,33 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 	if err := validatePolicyName(name); err != nil {
 		return err
 	}
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-			Directory: filer.IamConfigDirectory + "/" + IamPoliciesDirectory,
-			Name:      name + ".json",
-		})
-		if err != nil && !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-			return err
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, foundLegacy, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	deleteLegacyPolicy := false
+	if foundLegacy {
+		if _, exists := policiesCollection.Policies[name]; exists {
+			delete(policiesCollection.Policies, name)
+			deleteLegacyPolicy = true
 		}
-		return nil
-	})
+	}
+
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.DoRemove(ctx, client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", false, false, false, false, nil)
+	}); err != nil {
+		return err
+	}
+
+	if deleteLegacyPolicy {
+		return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+	}
+
+	return nil
 }
 
 // GetPolicy retrieves a specific IAM policy by name from the filer
@@ -204,7 +281,7 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 
 	var policy *policy_engine.PolicyDocument
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json")
+		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return nil
@@ -234,4 +311,207 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 	}
 
 	return nil, nil // Policy not found
+}
+
+// PutUserInlinePolicy stores a per-user inline policy document.
+func (store *FilerEtcStore) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	if policiesCollection.InlinePolicies[userName] == nil {
+		policiesCollection.InlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	policiesCollection.InlinePolicies[userName][policyName] = document
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// GetUserInlinePolicy retrieves a per-user inline policy document.
+func (store *FilerEtcStore) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if userPolicies := policiesCollection.InlinePolicies[userName]; userPolicies != nil {
+		if doc, exists := userPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteUserInlinePolicy removes a per-user inline policy document.
+func (store *FilerEtcStore) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+	if userPolicies := policiesCollection.InlinePolicies[userName]; userPolicies != nil {
+		delete(userPolicies, policyName)
+		if len(userPolicies) == 0 {
+			delete(policiesCollection.InlinePolicies, userName)
+		}
+	}
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// ListUserInlinePolicies returns the names of all inline policies for a user.
+func (store *FilerEtcStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	userPolicies := policiesCollection.InlinePolicies[userName]
+	names := make([]string, 0, len(userPolicies))
+	for name := range userPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// PutGroupInlinePolicy stores a per-group inline policy document.
+func (store *FilerEtcStore) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	if policiesCollection.GroupInlinePolicies[groupName] == nil {
+		policiesCollection.GroupInlinePolicies[groupName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	policiesCollection.GroupInlinePolicies[groupName][policyName] = document
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// GetGroupInlinePolicy retrieves a per-group inline policy document.
+func (store *FilerEtcStore) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if groupPolicies := policiesCollection.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		if doc, exists := groupPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteGroupInlinePolicy removes a per-group inline policy document.
+func (store *FilerEtcStore) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+	if groupPolicies := policiesCollection.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		delete(groupPolicies, policyName)
+		if len(groupPolicies) == 0 {
+			delete(policiesCollection.GroupInlinePolicies, groupName)
+		}
+	}
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// ListGroupInlinePolicies returns the names of all inline policies for a group.
+func (store *FilerEtcStore) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groupPolicies := policiesCollection.GroupInlinePolicies[groupName]
+	names := make([]string, 0, len(groupPolicies))
+	for name := range groupPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// LoadGroupInlinePolicies returns all group inline policies stored in the
+// legacy file keyed by group name then policy name.
+func (store *FilerEtcStore) LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]map[string]policy_engine.PolicyDocument, len(policiesCollection.GroupInlinePolicies))
+	for groupName, groupPolicies := range policiesCollection.GroupInlinePolicies {
+		copied := make(map[string]policy_engine.PolicyDocument, len(groupPolicies))
+		for policyName, doc := range groupPolicies {
+			copied[policyName] = doc
+		}
+		result[groupName] = copied
+	}
+	return result, nil
+}
+
+// ListPolicyNames returns all managed policy names stored in the filer.
+func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	names := make([]string, 0)
+	seenNames := make(map[string]struct{})
+
+	store.mu.RLock()
+	configured := store.filerAddressFunc != nil
+	store.mu.RUnlock()
+
+	if !configured {
+		return names, nil
+	}
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for name := range policiesCollection.Policies {
+		if _, found := seenNames[name]; found {
+			continue
+		}
+		names = append(names, name)
+		seenNames[name] = struct{}{}
+	}
+
+	err = store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				continue
+			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
+			name := entry.Name[:len(entry.Name)-5]
+			if _, found := seenNames[name]; found {
+				continue
+			}
+			names = append(names, name)
+			seenNames[name] = struct{}{}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return names, nil
 }

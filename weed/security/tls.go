@@ -1,27 +1,69 @@
 package security
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
-	"time"
+
+	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security/certreload"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
 )
 
-const CredRefreshingInterval = time.Duration(5) * time.Hour
+// CredRefreshingInterval is the refresh cadence for gRPC mTLS certs.
+// Shares its source of truth with certreload.DefaultRefreshInterval so
+// a single WEED_TLS_CERT_REFRESH_INTERVAL env var tunes both gRPC and
+// HTTPS cert reload.
+var CredRefreshingInterval = certreload.DefaultRefreshInterval
 
 type Authenticator struct {
 	AllowedWildcardDomain string
 	AllowedCommonNames    map[string]bool
+}
+
+// SNIStrippingTransportCredentials wraps another TransportCredentials
+// and strips the port from the authority in ClientHandshake to prevent
+// advancedtls from using the full "host:port" as ServerName in SNI.
+type SNIStrippingTransportCredentials struct {
+	creds credentials.TransportCredentials
+}
+
+func (s *SNIStrippingTransportCredentials) ClientHandshake(ctx context.Context, authority string, rawConn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	host, _, err := net.SplitHostPort(authority)
+	if err == nil {
+		authority = host
+	}
+	return s.creds.ClientHandshake(ctx, authority, rawConn)
+}
+
+func (s *SNIStrippingTransportCredentials) ServerHandshake(rawConn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	return s.creds.ServerHandshake(rawConn)
+}
+
+func (s *SNIStrippingTransportCredentials) Info() credentials.ProtocolInfo {
+	return s.creds.Info()
+}
+
+func (s *SNIStrippingTransportCredentials) Clone() credentials.TransportCredentials {
+	return &SNIStrippingTransportCredentials{creds: s.creds.Clone()}
+}
+
+func (s *SNIStrippingTransportCredentials) OverrideServerName(serverNameOverride string) error {
+	return s.creds.OverrideServerName(serverNameOverride)
 }
 
 func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
@@ -105,12 +147,37 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	return grpc.Creds(ta), nil
 }
 
+func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+	// Resolve relative PEM paths against the config file's directory.
+	configDir := filepath.Dir(configFile)
+	for _, key := range []string{"grpc.ca", component + ".cert", component + ".key", component + ".client_cert", component + ".client_key"} {
+		p := v.GetString(key)
+		if p != "" && !filepath.IsAbs(p) {
+			v.Set(key, filepath.Join(configDir, p))
+		}
+	}
+	return LoadClientTLS(util.NewViperProxy(v), component), nil
+}
+
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	if config == nil {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 
-	certFileName, keyFileName, caFileName := config.GetString(component+".cert"), config.GetString(component+".key"), config.GetString("grpc.ca")
+	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
+	certFileName, keyFileName := config.GetString(component+".client_cert"), config.GetString(component+".client_key")
+	if certFileName == "" || keyFileName == "" {
+		if certFileName != "" || keyFileName != "" {
+			glog.Warningf("%s.client_cert and %s.client_key must both be set, falling back to %s.cert and %s.key", component, component, component, component)
+		}
+		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
+	}
+	caFileName := config.GetString("grpc.ca")
 	if certFileName == "" || keyFileName == "" || caFileName == "" {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
@@ -151,7 +218,41 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	return grpc.WithTransportCredentials(ta)
+	wrapped := &SNIStrippingTransportCredentials{creds: ta}
+	return grpc.WithTransportCredentials(wrapped)
+}
+
+// LoadHTTPClientFromFile creates an HTTP client using the https.client TLS
+// settings from the given security config file. Returns nil if HTTPS is not
+// enabled in the config. This is used by filer.sync to create per-cluster
+// HTTP clients when clusters use different certificates.
+func LoadHTTPClientFromFile(configFile string) (*util_http_client.HTTPClient, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+
+	if !v.GetBool("https.client.enabled") {
+		return nil, nil
+	}
+
+	configDir := filepath.Dir(configFile)
+	resolvePath := func(key string) string {
+		p := v.GetString(key)
+		if p != "" && !filepath.IsAbs(p) {
+			return filepath.Join(configDir, p)
+		}
+		return p
+	}
+
+	return util_http_client.NewHttpClientWithTLS(
+		resolvePath("https.client.cert"),
+		resolvePath("https.client.key"),
+		resolvePath("https.client.ca"),
+		v.GetBool("https.client.insecure_skip_verify"),
+		util_http_client.AddDialContext,
+	)
 }
 
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {

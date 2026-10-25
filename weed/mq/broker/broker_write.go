@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error {
@@ -35,7 +36,7 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
 	dir, name := fullpath.DirAndName()
-	entry, err := filer_pb.GetEntry(context.Background(), b, fullpath)
+	entry, _, _, err := filer_pb.GetEntry(context.Background(), b, fullpath)
 	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &filer_pb.Entry{
@@ -161,27 +162,26 @@ func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fi
 		return
 	}
 
+	uploadOption := &operation.UploadOption{
+		Cipher: b.option.Cipher,
+	}
+	if b.option.VolumeServerAccess == "filerProxy" {
+		// b.currentFiler can change on failover, so read it per attempt.
+		uploadOption.GenUploadUrl = func(host, fileId string) string {
+			return util_http.ProxyChunkUrl(string(b.currentFiler), fileId)
+		}
+	}
+
 	fileId, uploadResult, err, _ = uploader.UploadWithRetry(
 		b,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
 			Replication: b.option.DefaultReplication,
 			Collection:  "topics",
-			// TtlSec:      wfs.option.TtlSec,
-			// DiskType:    string(wfs.option.DiskType),
-			DataCenter: b.option.DataCenter,
-			Path:       targetFile,
+			DataCenter:  b.option.DataCenter,
+			Path:        targetFile,
 		},
-		&operation.UploadOption{
-			Cipher: b.option.Cipher,
-		},
-		func(host, fileId string) string {
-			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-			if b.option.VolumeServerAccess == "filerProxy" {
-				fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", b.currentFiler, fileId)
-			}
-			return fileUrl
-		},
+		uploadOption,
 		reader,
 	)
 	return

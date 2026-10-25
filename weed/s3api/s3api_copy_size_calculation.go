@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // CopySizeCalculator handles size calculations for different copy scenarios
@@ -76,12 +75,6 @@ func (calc *CopySizeCalculator) CalculateTargetSize() int64 {
 func (calc *CopySizeCalculator) CalculateActualSize() int64 {
 	// With IV in metadata, encrypted and unencrypted sizes are the same
 	return calc.srcSize
-}
-
-// CalculateEncryptedSize calculates the encrypted size for the given encryption type
-func (calc *CopySizeCalculator) CalculateEncryptedSize(encType EncryptionType) int64 {
-	// With IV in metadata, encrypted size equals actual size
-	return calc.CalculateActualSize()
 }
 
 // getSourceEncryptionType determines the encryption type of the source object
@@ -167,22 +160,6 @@ func (calc *CopySizeCalculator) GetSizeTransitionInfo() *SizeTransitionInfo {
 	}
 
 	return info
-}
-
-// String returns a string representation of the encryption type
-func (e EncryptionType) String() string {
-	switch e {
-	case EncryptionTypeNone:
-		return "None"
-	case EncryptionTypeSSEC:
-		return s3_constants.SSETypeC
-	case EncryptionTypeSSEKMS:
-		return s3_constants.SSETypeKMS
-	case EncryptionTypeSSES3:
-		return s3_constants.SSETypeS3
-	default:
-		return "Unknown"
-	}
 }
 
 // OptimizedSizeCalculation provides size calculations optimized for different scenarios

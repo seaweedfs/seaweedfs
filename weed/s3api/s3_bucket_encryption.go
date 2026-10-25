@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -32,18 +34,6 @@ type ServerSideEncryptionRule struct {
 type ApplyServerSideEncryptionByDefault struct {
 	SSEAlgorithm   string `xml:"SSEAlgorithm"`
 	KMSMasterKeyID string `xml:"KMSMasterKeyID,omitempty"`
-}
-
-// encryptionConfigToProto converts EncryptionConfiguration to protobuf format
-func encryptionConfigToProto(config *s3_pb.EncryptionConfiguration) *s3_pb.EncryptionConfiguration {
-	if config == nil {
-		return nil
-	}
-	return &s3_pb.EncryptionConfiguration{
-		SseAlgorithm:     config.SseAlgorithm,
-		KmsKeyId:         config.KmsKeyId,
-		BucketKeyEnabled: config.BucketKeyEnabled,
-	}
 }
 
 // encryptionConfigFromXML converts XML ServerSideEncryptionConfiguration to protobuf
@@ -204,6 +194,13 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 	// Get metadata using structured API
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
+		// If the bucket directory is not found (e.g., during bucket recreation after
+		// a partial delete), treat it as having no encryption configured rather than
+		// failing the upload with an internal error.
+		if errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found") {
+			glog.Warningf("getEncryptionConfiguration: bucket metadata not found for %s, treating as no encryption: %v", bucket, err)
+			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+		}
 		glog.Errorf("getEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return nil, s3err.ErrInternalError
 	}
@@ -290,71 +287,4 @@ func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]st
 	}
 
 	return headers
-}
-
-// IsDefaultEncryptionEnabled checks if default encryption is enabled for a configuration
-func IsDefaultEncryptionEnabled(config *s3_pb.EncryptionConfiguration) bool {
-	return config != nil && config.SseAlgorithm != ""
-}
-
-// GetDefaultEncryptionHeaders generates default encryption headers from configuration
-func GetDefaultEncryptionHeaders(config *s3_pb.EncryptionConfiguration) map[string]string {
-	if config == nil || config.SseAlgorithm == "" {
-		return nil
-	}
-
-	headers := make(map[string]string)
-	headers[s3_constants.AmzServerSideEncryption] = config.SseAlgorithm
-
-	if config.SseAlgorithm == "aws:kms" && config.KmsKeyId != "" {
-		headers[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = config.KmsKeyId
-	}
-
-	return headers
-}
-
-// encryptionConfigFromXMLBytes parses XML bytes to encryption configuration
-func encryptionConfigFromXMLBytes(xmlBytes []byte) (*s3_pb.EncryptionConfiguration, error) {
-	var xmlConfig ServerSideEncryptionConfiguration
-	if err := xml.Unmarshal(xmlBytes, &xmlConfig); err != nil {
-		return nil, err
-	}
-
-	// Validate namespace - should be empty or the standard AWS namespace
-	if xmlConfig.XMLName.Space != "" && xmlConfig.XMLName.Space != "http://s3.amazonaws.com/doc/2006-03-01/" {
-		return nil, fmt.Errorf("invalid XML namespace: %s", xmlConfig.XMLName.Space)
-	}
-
-	// Validate the configuration
-	if len(xmlConfig.Rules) == 0 {
-		return nil, fmt.Errorf("encryption configuration must have at least one rule")
-	}
-
-	rule := xmlConfig.Rules[0]
-	if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm == "" {
-		return nil, fmt.Errorf("encryption algorithm is required")
-	}
-
-	// Validate algorithm
-	validAlgorithms := map[string]bool{
-		"AES256":  true,
-		"aws:kms": true,
-	}
-
-	if !validAlgorithms[rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm] {
-		return nil, fmt.Errorf("unsupported encryption algorithm: %s", rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm)
-	}
-
-	config := encryptionConfigFromXML(&xmlConfig)
-	return config, nil
-}
-
-// encryptionConfigToXMLBytes converts encryption configuration to XML bytes
-func encryptionConfigToXMLBytes(config *s3_pb.EncryptionConfiguration) ([]byte, error) {
-	if config == nil {
-		return nil, fmt.Errorf("encryption configuration is nil")
-	}
-
-	xmlConfig := encryptionConfigToXML(config)
-	return xml.Marshal(xmlConfig)
 }

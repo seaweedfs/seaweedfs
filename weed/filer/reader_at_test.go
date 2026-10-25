@@ -3,10 +3,14 @@ package filer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockChunkCache struct {
@@ -77,7 +81,7 @@ func TestReaderAt(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
 		fileSize:      10,
-		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil),
+		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -124,7 +128,7 @@ func TestReaderAt0(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
 		fileSize:      10,
-		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil),
+		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -150,7 +154,7 @@ func TestReaderAt1(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
 		fileSize:      20,
-		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil),
+		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -183,7 +187,7 @@ func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
 		fileSize:      9,
-		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil),
+		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -195,10 +199,61 @@ func TestReaderAtSparseFileDoesNotLeak(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(NewIntervalList[*VisibleInterval](), 0, math.MaxInt64),
 		fileSize:      3,
-		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil),
+		readerCache:   NewReaderCache(3, &mockChunkCache{}, nil, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
 	testReadAt(t, readerAt, 0, 3, 3, io.EOF, []byte{2, 2, 2}, []byte{0, 0, 0})
 	testReadAt(t, readerAt, 1, 2, 2, io.EOF, []byte{2, 2}, []byte{0, 0})
+}
+
+// holeChunkCache serves every chunk but one, so that chunk falls through to a
+// lookup that fails.
+type holeChunkCache struct {
+	mockChunkCache
+	missingFileId string
+}
+
+func (c *holeChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) (int, error) {
+	if fileId == c.missingFileId {
+		return 0, nil
+	}
+	return c.mockChunkCache.ReadChunkAt(data, fileId, offset)
+}
+
+func (c *holeChunkCache) GetMaxFilePartSizeInCache() uint64 {
+	return math.MaxUint64
+}
+
+// The parallel reads place their bytes directly in the output buffer, so a
+// failing middle chunk leaves a hole with valid data after it. Reporting that
+// length would hand the caller bytes it never read.
+func TestReaderAtParallelFailureReturnsContiguousPrefix(t *testing.T) {
+	visibles := NewIntervalList[*VisibleInterval]()
+	for i, fileId := range []string{"1", "2", "3"} {
+		addVisibleInterval(visibles, &VisibleInterval{
+			start:     int64(i) * 4,
+			stop:      int64(i)*4 + 4,
+			fileId:    fileId,
+			chunkSize: 4,
+		})
+	}
+
+	readerAt := &ChunkReadAt{
+		ctx:        context.Background(),
+		chunkViews: ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		fileSize:   12,
+		readerCache: NewReaderCache(3, &holeChunkCache{missingFileId: "2"}, func(ctx context.Context, fileId string) ([]string, error) {
+			return nil, errors.New("volume down")
+		}, nil),
+		readerPattern: NewReaderPattern(),
+		prefetchCount: 3,
+	}
+
+	buf := make([]byte, 12)
+	n, err := readerAt.ReadAt(buf, 0)
+
+	require.Error(t, err)
+	assert.Equal(t, 4, n, "only the bytes before the failed chunk are readable")
+	assert.Equal(t, []byte{1, 1, 1, 1}, buf[:n])
 }

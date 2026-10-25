@@ -5,13 +5,31 @@ import (
 	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
+// clampTierConcurrency bounds a per-request transfer concurrency so a direct
+// gRPC caller cannot spawn an unbounded number of network workers.
+const maxTierConcurrency = 1024
+
+func clampTierConcurrency(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxTierConcurrency {
+		return maxTierConcurrency
+	}
+	return n
+}
+
 // VolumeTierMoveDatToRemote copy dat file to a remote tier
 func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTierMoveDatToRemoteRequest, stream volume_server_pb.VolumeServer_VolumeTierMoveDatToRemoteServer) error {
+	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
+		return err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return err
 	}
@@ -31,6 +49,10 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	diskFile, ok := v.DataBackend.(*backend.DiskFile)
 	if !ok {
 		return nil // already copied to remove. fmt.Errorf("volume %d is not on local disk", req.VolumeId)
+	}
+	_, modTime, err := diskFile.GetStat()
+	if err != nil {
+		return fmt.Errorf("stat data file %s: %v", diskFile.Name(), err)
 	}
 
 	// check valid storage backend type
@@ -66,29 +88,38 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	}
 
 	// copy the data file
-	key, size, err := backendStorage.CopyFile(diskFile.File, fn)
+	key, size, err := backendStorage.CopyFile(diskFile.File, fn, clampTierConcurrency(int(req.Concurrency)))
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}
 
-	// save the remote file to volume tier info
-	v.GetVolumeInfo().Files = append(v.GetVolumeInfo().GetFiles(), &volume_server_pb.RemoteFile{
+	// record the remote file and switch to it, unless a compaction commit
+	// replaced the .dat while it was being copied
+	if err := v.AttachRemoteDatFile(diskFile, &volume_server_pb.RemoteFile{
 		BackendType:  backendType,
 		BackendId:    backendId,
 		Key:          key,
 		Offset:       0,
 		FileSize:     uint64(size),
-		ModifiedTime: uint64(time.Now().Unix()),
+		ModifiedTime: uint64(modTime.Unix()),
 		Extension:    ".dat",
-	})
-
-	if err := v.SaveVolumeInfo(); err != nil {
-		return fmt.Errorf("volume %d failed to save remote file info: %v", v.Id, err)
+	}); err != nil {
+		// Remove the copy unless the .vif already names it.
+		recorded := false
+		for _, f := range v.GetVolumeInfo().GetFiles() {
+			if f.Key == key && f.BackendType == backendType && f.BackendId == backendId {
+				recorded = true
+			}
+		}
+		if !recorded {
+			if delErr := backendStorage.DeleteFile(key); delErr != nil {
+				glog.Warningf("volume %d: remove unused remote copy %s: %v", v.Id, key, delErr)
+			}
+		}
+		return fmt.Errorf("volume %d failed to attach remote file: %v", v.Id, err)
 	}
-
-	if err := v.LoadRemoteFile(); err != nil {
-		return fmt.Errorf("volume %d failed to load remote file: %v", v.Id, err)
-	}
+	// Deletes must reach the index now, not only after the next restart.
+	v.MarkTieredDeletable()
 
 	if !req.KeepLocalDatFile {
 		os.Remove(v.FileName(".dat"))

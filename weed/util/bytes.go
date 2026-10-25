@@ -13,6 +13,8 @@ import (
 	"unicode"
 )
 
+var randomRead = rand.Read
+
 // BytesToHumanReadable returns the converted human readable representation of the bytes.
 func BytesToHumanReadable(b uint64) string {
 	const unit = 1024
@@ -33,6 +35,9 @@ func BytesToHumanReadable(b uint64) string {
 
 func BytesToUint64(b []byte) (v uint64) {
 	length := uint(len(b))
+	if length == 0 {
+		return 0
+	}
 	for i := uint(0); i < length-1; i++ {
 		v += uint64(b[i])
 		v <<= 8
@@ -42,6 +47,9 @@ func BytesToUint64(b []byte) (v uint64) {
 }
 func BytesToUint32(b []byte) (v uint32) {
 	length := uint(len(b))
+	if length == 0 {
+		return 0
+	}
 	for i := uint(0); i < length-1; i++ {
 		v += uint32(b[i])
 		v <<= 8
@@ -50,9 +58,15 @@ func BytesToUint32(b []byte) (v uint32) {
 	return
 }
 func BytesToUint16(b []byte) (v uint16) {
-	v += uint16(b[0])
-	v <<= 8
-	v += uint16(b[1])
+	length := uint(len(b))
+	if length == 0 {
+		return 0
+	}
+	for i := uint(0); i < length-1; i++ {
+		v += uint16(b[i])
+		v <<= 8
+	}
+	v += uint16(b[length-1])
 	return
 }
 func Uint64toBytes(b []byte, v uint64) {
@@ -120,10 +134,6 @@ func Base64Encode(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-func Base64Md5(data []byte) string {
-	return Base64Encode(Md5(data))
-}
-
 func Md5(data []byte) []byte {
 	hash := md5.New()
 	hash.Write(data)
@@ -148,10 +158,12 @@ func RandomInt32() int32 {
 	return int32(BytesToUint32(buf))
 }
 
-func RandomUint64() int32 {
+func RandomUint64() uint64 {
 	buf := make([]byte, 8)
-	rand.Read(buf)
-	return int32(BytesToUint64(buf))
+	if _, err := randomRead(buf); err != nil {
+		panic(err)
+	}
+	return BytesToUint64(buf)
 }
 
 func RandomBytes(byteCount int) []byte {
@@ -262,3 +274,5 @@ const (
 	PByte = TByte * 1000
 	EByte = PByte * 1000
 )
+
+const ErrVolumeNoSpaceLeft = "no space left for disk type"

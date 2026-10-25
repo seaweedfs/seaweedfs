@@ -3,10 +3,14 @@ name: "helm: lint and test charts"
 on:
   push:
     branches: [ master ]
-    paths: ['k8s/**']
+    paths: ['k8s/**', '.github/workflows/helm_ci.yml', '.github/scripts/helm_jwt_keys.py']
   pull_request:
     branches: [ master ]
-    paths: ['k8s/**']
+    paths: ['k8s/**', '.github/workflows/helm_ci.yml', '.github/scripts/helm_jwt_keys.py']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -16,22 +20,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
+      - name: Set up Helm before fromToml was available
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+
+      - name: Record legacy Helm binary
+        run: echo "HELM_LEGACY=$(command -v helm)" >> "$GITHUB_ENV"
+
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.18.4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.10'
           check-latest: true
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@v2.8.0
+        uses: helm/chart-testing-action@v2.9.0
 
       - name: Run chart-testing (list-changed)
         id: list-changed
@@ -44,6 +56,17 @@ jobs:
       - name: Run chart-testing (lint)
         run: ct lint --target-branch ${{ github.event.repository.default_branch }} --all --validate-maintainers=false --chart-dirs k8s/charts
 
+      - name: Verify legacy Helm rendering
+        run: |
+          "$HELM_LEGACY" lint k8s/charts/seaweedfs
+          "$HELM_LEGACY" template test k8s/charts/seaweedfs > "$RUNNER_TEMP/legacy-default.yaml"
+          "$HELM_LEGACY" template test k8s/charts/seaweedfs \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            > "$RUNNER_TEMP/legacy-jwt.yaml"
+
+
       - name: Verify template rendering
         run: |
           set -e
@@ -51,29 +74,523 @@ jobs:
           
           echo "=== Testing default configuration ==="
           helm template test $CHART_DIR > /tmp/default.yaml
-          echo "✓ Default configuration renders successfully"
+          echo "Default configuration renders successfully"
           
           echo "=== Testing with S3 enabled ==="
           helm template test $CHART_DIR --set s3.enabled=true > /tmp/s3.yaml
           grep -q "kind: Deployment" /tmp/s3.yaml && grep -q "seaweedfs-s3" /tmp/s3.yaml
-          echo "✓ S3 deployment renders correctly"
-          
+          echo "S3 deployment renders correctly"
+
+          echo "=== Testing S3 rollout settings ==="
+          helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true > /tmp/s3-rollout-defaults.yaml
+          grep -q "terminationGracePeriodSeconds: 10$" /tmp/s3-rollout-defaults.yaml
+          test "$(grep -cE '^  strategy:|^ +lifecycle:' /tmp/s3-rollout-defaults.yaml)" -eq 0
+          helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true \
+            --set s3.terminationGracePeriodSeconds=30 \
+            --set s3.updateStrategy.type=RollingUpdate \
+            --set s3.updateStrategy.rollingUpdate.maxUnavailable=0 \
+            --set-string 's3.lifecycle.preStop.exec.command={sleep,5}' \
+            > /tmp/s3-rollout.yaml
+          grep -q "terminationGracePeriodSeconds: 30$" /tmp/s3-rollout.yaml
+          grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "maxUnavailable: 0"
+          grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "type: RollingUpdate"
+          grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
+          echo "S3 rollout settings render correctly"
+
+          echo "=== Testing the S3 config checksum is stable across renders ==="
+          # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered
+          # Secret drew new keys for the checksum whenever lookup found nothing (on
+          # install), so the first upgrade changed the checksum and restarted the
+          # filer and S3 pods although nothing had changed.
+          s3_checksum() {  # <template> <helm args...>: the checksum/s3config of one workload
+            local template=$1; shift
+            local sum
+            sum=$(helm template test $CHART_DIR --show-only "$template" "$@" \
+              | grep 'checksum/s3config:' | awk '{print $2}')
+            test -n "$sum" || { echo "no checksum/s3config in $template" >&2; return 1; }
+            echo "$sum"
+          }
+          s3_auth_args=(--set s3.enabled=true --set s3.enableAuth=true)
+          s3_sum=$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}")
+          filer_sum=$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}")
+          test "$s3_sum" = "$filer_sum"   # one Secret, one checksum
+          test "$s3_sum" = "$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}")"
+          s3_creds_sum=$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}" \
+            --set s3.credentials.admin.accessKey=a --set s3.credentials.admin.secretKey=b)
+          test "$s3_sum" != "$s3_creds_sum"
+          filer_audit_sum=$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}" \
+            --set-json 'filer.s3.auditLogConfig={"fluent_port":24224}')
+          test "$filer_sum" != "$filer_audit_sum"
+          # Settings the Secret does not read must not restart the S3 and filer pods.
+          test "$filer_sum" = "$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}" \
+            --set s3.replicas=3 --set s3.resources.limits.cpu=1)"
+          all_in_one_args=(--set allInOne.enabled=true --set allInOne.s3.enabled=true --set allInOne.s3.enableAuth=true)
+          aio_sum=$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}")
+          test "$aio_sum" = "$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}")"
+          aio_creds_sum=$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}" \
+            --set s3.credentials.admin.accessKey=a --set s3.credentials.admin.secretKey=b)
+          test "$aio_sum" != "$aio_creds_sum"
+          echo "S3 config checksum is stable and follows only what the S3 Secret reads"
+
+          echo "=== Testing S3 credentials from an existing secret ==="
+          credential_args=(
+            --set s3.credentials.admin.existingSecret=minio-root
+            --set s3.credentials.admin.accessKeyKey=root-user
+            --set s3.credentials.admin.secretKeyKey=root-password
+            --set s3.credentials.read.existingSecret=minio-root
+          )
+          for workload in \
+            "s3.enabled=true,s3.enableAuth=true" \
+            "filer.s3.enabled=true,filer.s3.enableAuth=true" \
+            "allInOne.enabled=true,allInOne.s3.enabled=true,allInOne.s3.enableAuth=true"
+          do
+            helm template test $CHART_DIR --set "$workload" "${credential_args[@]}" > /tmp/s3-existing-credentials.yaml
+            # The identities file names the variables, and each is bound to the key it was pointed at.
+            grep -q 'accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
+            grep -q 'secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}' /tmp/s3-existing-credentials.yaml
+            grep -q 'accessKey":"${SEAWEEDFS_S3_READ_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
+            for pair in \
+              "SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID root-user" \
+              "SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY root-password" \
+              "SEAWEEDFS_S3_READ_ACCESS_KEY_ID read_access_key_id" \
+              "SEAWEEDFS_S3_READ_SECRET_ACCESS_KEY read_secret_access_key"
+            do
+              set -- $pair
+              grep -A 4 -- "- name: $1\$" /tmp/s3-existing-credentials.yaml | grep -q "name: \"minio-root\""
+              grep -A 4 -- "- name: $1\$" /tmp/s3-existing-credentials.yaml | grep -q "key: \"$2\""
+            done
+            # The keys stay in the user's secret rather than being copied into the chart's.
+            ! grep -qE "^  (admin|read)_(access_key_id|secret_access_key):" /tmp/s3-existing-credentials.yaml
+            echo "S3 credentials reference the existing secret for $workload"
+          done
+
+          echo "=== Testing ingress labels ==="
+          helm template test $CHART_DIR --set s3.enabled=true,s3.ingress.enabled=true \
+            --set s3.ingress.labels.external-dns=s3 > /tmp/s3-ingress-labels.yaml
+          grep -A 12 "^kind: Ingress" /tmp/s3-ingress-labels.yaml | grep -q "^    external-dns: s3"
+          echo "S3 ingress renders custom labels"
+
+          echo "=== Testing HTTPRoute ==="
+          helm template test $CHART_DIR --show-only templates/s3/s3-httproute.yaml \
+            --set s3.enabled=true,s3.httpRoute.enabled=true \
+            --set 's3.httpRoute.parentRefs[0].name=gateway' > /tmp/s3-httproute.yaml
+          grep -q "^kind: HTTPRoute" /tmp/s3-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/s3-httproute.yaml | grep -q "name: test-seaweedfs-s3$"
+          grep -A 4 -- '- group: ""' /tmp/s3-httproute.yaml | grep -q "port: 8333$"
+          echo "S3 HTTPRoute routes to the s3 service by default"
+          helm template test $CHART_DIR --show-only templates/s3/s3-httproute.yaml \
+            --set filer.s3.enabled=true,filer.s3.port=8334,s3.httpRoute.enabled=true > /tmp/filer-s3-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/filer-s3-httproute.yaml | grep -q "port: 8334$"
+          echo "S3 on filer HTTPRoute uses filer.s3.port"
+          helm template test $CHART_DIR --show-only templates/master/master-httproute.yaml \
+            --set allInOne.enabled=true,master.enabled=false,master.httpRoute.enabled=true > /tmp/allinone-master-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/allinone-master-httproute.yaml | grep -q "name: test-seaweedfs-all-in-one$"
+          echo "All-in-one master HTTPRoute routes to the all-in-one service"
+
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml
-          echo "✓ All-in-one deployment renders correctly"
+          echo "All-in-one deployment renders correctly"
+
+          echo "=== Testing the all-in-one s3 secret is created by every flag that mounts it ==="
+          for auth in allInOne.s3.enableAuth s3.enableAuth filer.s3.enableAuth; do
+            helm template test $CHART_DIR \
+              --set allInOne.enabled=true --set allInOne.s3.enabled=true --set "$auth=true" \
+              > /tmp/allinone-s3-auth.yaml
+            grep -q "secretName: test-seaweedfs-s3-secret" /tmp/allinone-s3-auth.yaml
+            grep -q "name: test-seaweedfs-s3-secret" /tmp/allinone-s3-auth.yaml
+            echo "All-in-one s3 secret renders for $auth"
+          done
           
           echo "=== Testing with security enabled ==="
-          helm template test $CHART_DIR --set global.enableSecurity=true > /tmp/security.yaml
+          helm template test $CHART_DIR --set global.seaweedfs.enableSecurity=true > /tmp/security.yaml
           grep -q "security-config" /tmp/security.yaml
-          echo "✓ Security configuration renders correctly"
-          
+          echo "Security configuration renders correctly"
+
+          echo "=== Testing secure bucket-creation hook certificate mounts ==="
+          helm template test $CHART_DIR \
+            --show-only templates/shared/post-install-bucket-hook.yaml \
+            --set s3.enabled=true \
+            --set 's3.createBuckets[0].name=data' \
+            --set global.seaweedfs.enableSecurity=true \
+            > /tmp/security-bucket-hook.yaml
+          test "$(grep -cE '^[[:space:]]*- name: ca-cert$' /tmp/security-bucket-hook.yaml)" -eq 2
+          test "$(grep -cE '^[[:space:]]*- name: client-cert$' /tmp/security-bucket-hook.yaml)" -eq 2
+          grep -q 'mountPath: /usr/local/share/ca-certificates/ca/' /tmp/security-bucket-hook.yaml
+          grep -q 'mountPath: /usr/local/share/ca-certificates/client/' /tmp/security-bucket-hook.yaml
+          grep -q 'secretName: test-seaweedfs-ca-cert' /tmp/security-bucket-hook.yaml
+          grep -q 'secretName: test-seaweedfs-client-cert' /tmp/security-bucket-hook.yaml
+          echo "Secure bucket-creation hook mounts its CA and client certificate"
+
+          echo ""
+          echo "=== Testing admin.allowInsecureBind satisfies the admin auth render guard ==="
+          helm template test $CHART_DIR --set admin.enabled=true --set admin.allowInsecureBind=true \
+            > /tmp/admin-allow-insecure-bind.yaml
+          grep -q -- "-allowInsecureBind" /tmp/admin-allow-insecure-bind.yaml
+          echo "admin.allowInsecureBind renders -allowInsecureBind and passes the render guard"
+
+          if helm template test $CHART_DIR --set admin.enabled=true > /tmp/admin-no-auth.yaml 2>/tmp/admin-no-auth.err; then
+            echo "FAIL: admin.enabled=true with no auth configured should fail to render"
+            exit 1
+          fi
+          grep -q "admin.allowInsecureBind" /tmp/admin-no-auth.err
+          echo "admin with no auth configured still fails the render guard, and the guard mentions admin.allowInsecureBind"
+
+          echo ""
+          echo "=== Testing JWT expiration overrides ==="
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            > /tmp/jwt-volume-write-expiration.yaml
+          grep -q "security-config" /tmp/jwt-volume-write-expiration.yaml
+          grep -q "expires_after_seconds = 11" /tmp/jwt-volume-write-expiration.yaml
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeRead=22 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerWrite=33 \
+            --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.filerRead=44 \
+            > /tmp/jwt-expiration.yaml
+
+          assert_jwt_expiration() {
+            local section="$1"
+            local seconds="$2"
+            awk -v section="[$section]" -v seconds="$seconds" '
+              /^[[:space:]]*\[.*\][[:space:]]*$/ {
+                in_section = index($0, section) > 0
+              }
+              in_section && $0 ~ "^[[:space:]]*expires_after_seconds = " seconds "$" {
+                found = 1
+              }
+              END { exit !found }
+            ' /tmp/jwt-expiration.yaml
+          }
+
+          assert_jwt_expiration jwt.signing 11
+          assert_jwt_expiration jwt.signing.read 22
+          assert_jwt_expiration jwt.filer_signing 33
+          assert_jwt_expiration jwt.filer_signing.read 44
+
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerWrite=true \
+            --set global.seaweedfs.securityConfig.jwtSigning.filerRead=true \
+            > /tmp/jwt-default-expiration.yaml
+          if grep -q "expires_after_seconds =" /tmp/jwt-default-expiration.yaml; then
+            echo "FAIL: zero JWT expiration values should preserve runtime defaults"
+            exit 1
+          fi
+          echo "JWT expiration overrides render correctly"
+
+          echo ""
+          echo "=== Testing IAM gRPC opt-in path ==="
+          # Regression test: the filer registers the IAM gRPC service the
+          # Admin UI Users tab calls only when jwt.filer_signing.key is in
+          # security.toml. Operators must be able to enable that without
+          # the cert-manager mTLS bundle.
+          # Install PyYAML explicitly: this block runs before the later
+          # security+S3 block that does the same install, and we don't
+          # want to rely on the runner image shipping it.
+          pip install pyyaml -q
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def configmap(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == name:
+                      return d
+              return None
+
+          def workload_mounts(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  if d["metadata"]["name"] != name:
+                      continue
+                  pod = d["spec"]["template"]["spec"]
+                  vols = {v["name"] for v in pod.get("volumes", [])}
+                  mounts = set()
+                  for c in pod.get("containers", []):
+                      for vm in c.get("volumeMounts", []):
+                          mounts.add(vm["name"])
+                  return vols, mounts
+              return None, None
+
+          failed = []
+
+          # Case 1: defaults. The chart historically rendered nothing
+          # security-related; preserve that so this PR is non-breaking on
+          # existing installs.
+          out = render({})
+          if configmap(out, "test-seaweedfs-security-config") is not None:
+              failed.append("defaults: security ConfigMap should not render")
+          else:
+              print("defaults: no security-config ConfigMap (unchanged)")
+
+          # Case 2: filerWrite=true alone is the documented opt-in for
+          # the Admin UI Users tab. Configmap must render with
+          # [jwt.filer_signing] and NO [grpc.*] sections (cert paths
+          # only exist with mTLS).
+          out = render({
+              "global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true",
+              "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
+          })
+          cm = configmap(out, "test-seaweedfs-security-config")
+          if cm is None:
+              failed.append("filerWrite=true: security ConfigMap missing")
+          else:
+              toml = cm["data"]["security.toml"]
+              if "[jwt.filer_signing]" not in toml:
+                  failed.append("filerWrite=true: security.toml missing [jwt.filer_signing]")
+              if "[grpc" in toml:
+                  failed.append("filerWrite=true: security.toml unexpectedly has [grpc.*] (would need cert mounts)")
+              if "[jwt.filer_signing]" in toml and "[grpc" not in toml:
+                  print("filerWrite=true: security.toml has [jwt.filer_signing], no [grpc.*]")
+
+          # Case 3: filer + admin pods must MOUNT the security ConfigMap
+          # under filerWrite=true so the JWT key reaches both processes.
+          # Cert volumes must NOT be present (no mTLS).
+          for wl in ("test-seaweedfs-filer", "test-seaweedfs-admin"):
+              vols, mounts = workload_mounts(out, wl)
+              if vols is None:
+                  failed.append(f"filerWrite=true: workload {wl} not found")
+                  continue
+              if "security-config" not in vols or "security-config" not in mounts:
+                  failed.append(f"filerWrite=true: {wl} does not mount security-config (IAM gRPC would still fail)")
+              else:
+                  print(f"filerWrite=true: {wl} mounts security-config")
+              cert_vols = {v for v in vols if v.endswith("-cert")}
+              if cert_vols:
+                  failed.append(f"filerWrite=true: {wl} unexpectedly has cert volumes {sorted(cert_vols)}")
+
+          # Case 4: enableSecurity=true must still render the full toml
+          # with both [jwt.signing] and [grpc.*]. Guards against the
+          # decoupling change accidentally regressing the mTLS path.
+          out = render({"global.seaweedfs.enableSecurity": "true"})
+          cm = configmap(out, "test-seaweedfs-security-config")
+          if cm is None:
+              failed.append("enableSecurity=true: security ConfigMap missing")
+          else:
+              toml = cm["data"]["security.toml"]
+              missing = [s for s in ("[jwt.signing]", "[grpc.master]") if s not in toml]
+              if missing:
+                  failed.append(f"enableSecurity=true: security.toml missing {missing}")
+              else:
+                  print("enableSecurity=true: security.toml has [jwt.signing] + [grpc.*] preserved")
+
+          # Case 5: helper must tolerate explicit nulls (gemini-code-assist
+          # PR review). securityConfig=null was the parens-pattern crash
+          # the helper review caught.
+          for null_path in ("global.seaweedfs.securityConfig",
+                            "global.seaweedfs.securityConfig.jwtSigning"):
+              try:
+                  out = render({null_path: "null"})
+              except subprocess.CalledProcessError as e:
+                  failed.append(f"{null_path}=null: render failed: {e.output[:200] if e.output else e}")
+                  continue
+              if configmap(out, "test-seaweedfs-security-config") is not None:
+                  failed.append(f"{null_path}=null: should not render configmap")
+              else:
+                  print(f"{null_path}=null: render tolerates explicit null")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "IAM gRPC decoupling tests passed"
+
+          echo ""
+          echo "=== Testing bucket hook credentials ==="
+          # The bucket hook pipes s3.configure into `weed shell`, which needs
+          # the filer JWT signing key once jwtSigning.filerWrite is on: the
+          # filer rejects unsigned IAM gRPC calls, and `weed shell` still
+          # exits 0, so the Job goes green while anonymousRead is dropped.
+          # The key reaches the hook either through security.toml or through
+          # an environment override in extraEnvironmentVars.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import re, subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def hook_pod(manifest):
+              for d in yaml.safe_load_all(manifest):
+                  if d and d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          def cluster_endpoints(manifest):
+              """Where the chart's own Services put master and filer.
+
+              The hook's WEED_CLUSTER_* values have to match these: a defined
+              name pointing anywhere else fails the readiness wait exactly as
+              an undefined one does.
+              """
+              wanted = {"-master": "swfs-master", "-filer-client": "swfs-filer"}
+              found = {}
+              for d in yaml.safe_load_all(manifest):
+                  if not d or d.get("kind") != "Service":
+                      continue
+                  for suffix, portName in wanted.items():
+                      if not d["metadata"]["name"].endswith(suffix):
+                          continue
+                      port = next((p["port"] for p in d["spec"]["ports"] if p.get("name") == portName), None)
+                      if port:
+                          found[suffix] = f"{d['metadata']['name']}.{d['metadata']['namespace']}:{port}"
+              return found.get("-master"), found.get("-filer-client")
+
+          buckets = {
+              "s3.enabled": "true",
+              "s3.createBuckets[0].name": "data",
+              "s3.createBuckets[0].anonymousRead": "true",
+          }
+          jwt = dict(buckets, **{"global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true"})
+
+          failed = []
+
+          # The script in the hook addresses master and filer through
+          # WEED_CLUSTER_*, now rendered next to extraEnvironmentVars.
+          # Duplicate names would be a rendering bug.
+          out = render(buckets)
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("createBuckets: bucket hook Job missing")
+          else:
+              env = pod["containers"][0]["env"]
+              names = [e["name"] for e in env]
+              dupes = sorted({n for n in names if names.count(n) > 1})
+              if dupes:
+                  failed.append(f"createBuckets: duplicate env entries {dupes}")
+              values = {e["name"]: e.get("value") for e in env}
+              if not values.get("WEED_CLUSTER_DEFAULT"):
+                  failed.append("createBuckets: hook env WEED_CLUSTER_DEFAULT is empty")
+              rendered = (values.get("WEED_CLUSTER_SW_MASTER"), values.get("WEED_CLUSTER_SW_FILER"))
+              expected = cluster_endpoints(out)
+              if not all(expected):
+                  failed.append(f"createBuckets: no master/filer-client Service to compare against, found {expected}")
+              elif rendered != expected:
+                  failed.append(f"createBuckets: hook env holds {rendered}, the services are at {expected}")
+              elif not dupes:
+                  print("createBuckets: hook env resolves the cluster addresses once")
+              if any(v["name"] == "security-config" for v in pod.get("volumes", [])):
+                  failed.append("createBuckets: hook mounts security-config without JWT signing")
+
+          # filerWrite=true: the hook needs the same security.toml the filer
+          # gets, otherwise s3.configure fails with "missing authorization
+          # metadata".
+          pod = hook_pod(render(jwt))
+          if pod is None:
+              failed.append("filerWrite=true: bucket hook Job missing")
+          else:
+              vol = next((v for v in pod.get("volumes", []) if v["name"] == "security-config"), None)
+              mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
+              # The file has to land on one of weed's config search paths, so
+              # the target matters as much as the volume itself - and a volume
+              # of that name backed by anything but the chart's ConfigMap
+              # leaves `weed shell` without the signing key just the same.
+              target = ("/etc/seaweedfs/security.toml", "security.toml")
+              configmap = "test-seaweedfs-security-config"
+              if vol is None or mount is None:
+                  failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
+              elif (mount.get("mountPath"), mount.get("subPath")) != target:
+                  failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
+              elif vol.get("configMap", {}).get("name") != configmap:
+                  failed.append(f"filerWrite=true: security-config is not backed by the {configmap} ConfigMap: {vol}")
+              else:
+                  print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
+
+          # The readiness waits dereference the cluster env names, so renaming
+          # the cluster alias has to rename them too: an undefined name leaves
+          # the hook polling "http://" for five minutes and then failing the
+          # release. The endpoints stay chart-computed, so an address kept in
+          # extraEnvironmentVars is replaced, not rendered twice.
+          out = render(dict(buckets, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_DEFAULT": "prod",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_PROD_MASTER": "stale:9333",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_MASTER": "null",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_FILER": "null",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("cluster alias: bucket hook Job missing")
+          else:
+              container = pod["containers"][0]
+              env = {e["name"]: e.get("value") for e in container["env"]}
+              waited = re.findall(r'wait_for_service "http://\$(\w+)', container["command"][2])
+              undefined = sorted(n for n in set(waited) if not env.get(n))
+              renamed = (env.get("WEED_CLUSTER_PROD_MASTER"), env.get("WEED_CLUSTER_PROD_FILER"))
+              expected = cluster_endpoints(out)
+              if not waited:
+                  failed.append("cluster alias: hook script has no readiness waits")
+              elif undefined:
+                  failed.append(f"cluster alias: hook waits on undefined env {undefined}")
+              elif not all(expected):
+                  failed.append(f"cluster alias: no master/filer-client Service to compare against, found {expected}")
+              elif renamed != expected:
+                  # Both addresses under the renamed alias, not just the one
+                  # the values tried to keep: the stale one would fail the
+                  # release, and a missing filer address just as much.
+                  failed.append(f"cluster alias: hook waits on {renamed}, the services are at {expected}")
+              else:
+                  print("cluster alias: hook waits on the renamed names and the chart's addresses")
+
+          # Keys kept in a Secret are referenced, not inlined, so the hook
+          # must render valueFrom for non-string extraEnvironmentVars.
+          out = render(dict(jwt, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.name": "signing-keys",
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("secretKeyRef: bucket hook Job missing")
+          else:
+              entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
+              if entry is None:
+                  failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
+              elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
+                  failed.append(f"secretKeyRef: hook env rendered as {entry}")
+              else:
+                  print("secretKeyRef: hook env keeps the secret reference")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Bucket hook credential tests passed"
+
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
-            --set global.monitoring.enabled=true \
-            --set global.monitoring.gatewayHost=prometheus \
-            --set global.monitoring.gatewayPort=9091 > /tmp/monitoring.yaml
-          echo "✓ Monitoring configuration renders correctly"
+            --set global.seaweedfs.monitoring.enabled=true \
+            --set global.seaweedfs.monitoring.gatewayHost=prometheus \
+            --set global.seaweedfs.monitoring.gatewayPort=9091 > /tmp/monitoring.yaml
+          echo "Monitoring configuration renders correctly"
           
           echo "=== Testing with PVC storage ==="
           helm template test $CHART_DIR \
@@ -81,25 +598,220 @@ jobs:
             --set master.data.size=10Gi \
             --set master.data.storageClass=standard > /tmp/pvc.yaml
           grep -q "PersistentVolumeClaim" /tmp/pvc.yaml
-          echo "✓ PVC configuration renders correctly"
+          echo "PVC configuration renders correctly"
           
           echo "=== Testing with custom replicas ==="
           helm template test $CHART_DIR \
             --set master.replicas=3 \
             --set filer.replicas=2 \
             --set volume.replicas=3 > /tmp/replicas.yaml
-          echo "✓ Custom replicas configuration renders correctly"
+          echo "Custom replicas configuration renders correctly"
           
           echo "=== Testing filer with S3 gateway ==="
           helm template test $CHART_DIR \
             --set filer.s3.enabled=true \
             --set filer.s3.enableAuth=true > /tmp/filer-s3.yaml
-          echo "✓ Filer S3 gateway renders correctly"
+          echo "Filer S3 gateway renders correctly"
           
+          echo "=== Testing the mysql filer store gates its secret and env ==="
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MONGODB_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_LEVELDB2_ENABLED=false > /tmp/filer-mongodb.yaml
+          ! grep -q "db-secret" /tmp/filer-mongodb.yaml
+          ! grep -q "WEED_MYSQL" /tmp/filer-mongodb.yaml
+          grep -q "name: WEED_MONGODB_ENABLED" /tmp/filer-mongodb.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true > /tmp/filer-mysql.yaml
+          grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_USERNAME" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_PASSWORD" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql.yaml
+          # Secret-backed keys follow the same rule as the plain ones.
+          helm template test $CHART_DIR \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-off-secret.yaml
+          ! grep -q "WEED_MYSQL" /tmp/filer-mysql-off-secret.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-on-secret.yaml
+          grep -A 4 -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml | grep -q "name: db"
+          # A flag the chart cannot read counts as selected, not as off.
+          helm template test $CHART_DIR \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.key=enabled > /tmp/filer-mysql-secret.yaml
+          grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql-secret.yaml
+          grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql-secret.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL2_HOSTNAME=other > /tmp/filer-mysql2.yaml
+          grep -q "name: WEED_MYSQL2_HOSTNAME" /tmp/filer-mysql2.yaml
+          ! grep -q "WEED_MYSQL_" /tmp/filer-mysql2.yaml
+          echo "The mysql secret and env follow the selected filer store"
+
           echo "=== Testing SFTP enabled ==="
           helm template test $CHART_DIR --set sftp.enabled=true > /tmp/sftp.yaml
           grep -q "seaweedfs-sftp" /tmp/sftp.yaml
-          echo "✓ SFTP deployment renders correctly"
+          echo "SFTP deployment renders correctly"
+
+          echo ""
+          echo "=== Testing SFTP host key generation ==="
+          # The chart must not ship host key material: keys are generated
+          # per install, land in the secret the deployments mount at
+          # sftp.hostKeysFolder, and must be PKCS#8 ed25519 private keys,
+          # the shape the server's host key loader parses; it fails to
+          # start otherwise.
+          pip install pyyaml -q
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import base64, re, subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def secret(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") == "Secret" and d["metadata"]["name"] == name:
+                      return d
+              return None
+
+          def pod_spec(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet") and d["metadata"]["name"] == name:
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          def script_of(spec):
+              for c in spec["containers"]:
+                  cmd = c.get("command", [])
+                  if len(cmd) >= 3 and cmd[0] == "/bin/sh":
+                      return cmd[2]
+              raise AssertionError("no shell command block found")
+
+          def volume_secret(spec, volname):
+              for v in spec.get("volumes", []):
+                  if v["name"] == volname:
+                      return v["secret"]["secretName"]
+              return None
+
+          def mount_path(spec, volname):
+              for c in spec["containers"]:
+                  for vm in c.get("volumeMounts", []):
+                      if vm["name"] == volname:
+                          return vm["mountPath"]
+              return None
+
+          def parse_ed25519(pem):
+              m = re.match(r"-----BEGIN PRIVATE KEY-----\n(.+?)-----END PRIVATE KEY-----", pem.strip(), re.S)
+              if not m:
+                  raise AssertionError("not a PKCS#8 PEM private key")
+              der = base64.b64decode(m.group(1))
+              # RFC 8410: fixed PKCS#8 prefix, then the 32-byte seed
+              prefix = bytes.fromhex("302e020100300506032b657004220420")
+              if len(der) != 48 or not der.startswith(prefix):
+                  raise AssertionError("not an ed25519 PKCS#8 key")
+
+          failed = []
+          # public-key material of the key the chart used to bundle
+          BUNDLED = "H4McwcDphteXVullu6q7ephEN1N60z"
+
+          out1 = render({"sftp.enabled": "true"})
+          out2 = render({"sftp.enabled": "true"})
+
+          for label, out in (("first", out1), ("second", out2)):
+              if BUNDLED in out:
+                  failed.append(f"{label} render still contains the formerly bundled host key")
+
+          def folder_key(out):
+              s = secret(out, "test-seaweedfs-sftp-ssh-secret")
+              if s is None:
+                  return None
+              return base64.b64decode(s["data"]["ssh_host_ed25519_key"]).decode()
+
+          k1, k2 = folder_key(out1), folder_key(out2)
+          if k1 is None or k2 is None:
+              failed.append("sftp-ssh-secret not rendered with sftp.enabled=true")
+          else:
+              try:
+                  parse_ed25519(k1)
+                  print("generated host key parses as ed25519")
+              except Exception as e:
+                  failed.append(f"generated host key does not parse: {e}")
+              if k1 == k2:
+                  failed.append("two renders produced the same host key (key is not generated per install)")
+              else:
+                  print("host key differs between installs")
+
+          legacy1 = secret(out1, "test-seaweedfs-sftp-secret")["stringData"]["seaweedfs_sftp_ssh_private_key"]
+          legacy2 = secret(out2, "test-seaweedfs-sftp-secret")["stringData"]["seaweedfs_sftp_ssh_private_key"]
+          try:
+              parse_ed25519(legacy1)
+          except Exception as e:
+              failed.append(f"sftp-secret ssh key does not parse: {e}")
+          if legacy1 == legacy2:
+              failed.append("sftp-secret ssh key identical across renders")
+          else:
+              print("sftp-secret ssh key is generated per install")
+
+          spec = pod_spec(out1, "test-seaweedfs-sftp")
+          script = script_of(spec)
+          if "-sshPrivateKey" in script:
+              failed.append("sftp deployment passes -sshPrivateKey by default; the file only exists "
+                            "when enableAuth mounts /etc/sw and a missing key file is fatal")
+          if "-hostKeysFolder=/etc/sw/ssh" not in script:
+              failed.append("sftp deployment missing -hostKeysFolder=/etc/sw/ssh")
+          if volume_secret(spec, "config-ssh") != "test-seaweedfs-sftp-ssh-secret":
+              failed.append("sftp config-ssh volume does not reference the generated secret")
+          else:
+              print("sftp deployment mounts the generated secret at the host keys folder")
+
+          out = render({"sftp.enabled": "true", "sftp.existingSshConfigSecret": "my-keys"})
+          if secret(out, "test-seaweedfs-sftp-ssh-secret") is not None:
+              failed.append("existingSshConfigSecret set but the default ssh secret still renders")
+          if volume_secret(pod_spec(out, "test-seaweedfs-sftp"), "config-ssh") != "my-keys":
+              failed.append("existingSshConfigSecret is not the config-ssh volume source")
+          else:
+              print("existingSshConfigSecret replaces the generated secret")
+
+          out = render({"allInOne.enabled": "true", "allInOne.sftp.enabled": "true"})
+          spec = pod_spec(out, "test-seaweedfs-all-in-one")
+          if secret(out, "test-seaweedfs-sftp-ssh-secret") is None:
+              failed.append("all-in-one: ssh secret not rendered")
+          if "-sftp.hostKeysFolder=/etc/sw/ssh" not in script_of(spec):
+              failed.append("all-in-one: missing -sftp.hostKeysFolder=/etc/sw/ssh")
+          if volume_secret(spec, "config-ssh") != "test-seaweedfs-sftp-ssh-secret":
+              failed.append("all-in-one: config-ssh volume does not reference the generated secret")
+          else:
+              print("all-in-one mounts the generated secret")
+
+          out = render({"sftp.enabled": "true", "sftp.hostKeysFolder": "/keys"})
+          spec = pod_spec(out, "test-seaweedfs-sftp")
+          if "-hostKeysFolder=/keys" not in script_of(spec) or mount_path(spec, "config-ssh") != "/keys":
+              failed.append("custom hostKeysFolder: flag and secret mount do not agree")
+          else:
+              print("custom hostKeysFolder keeps flag and mount aligned")
+
+          out = render({"allInOne.enabled": "true", "allInOne.sftp.enabled": "true",
+                        "allInOne.sftp.hostKeysFolder": "/keys"})
+          spec = pod_spec(out, "test-seaweedfs-all-in-one")
+          if "-sftp.hostKeysFolder=/keys" not in script_of(spec) or mount_path(spec, "config-ssh") != "/keys":
+              failed.append("all-in-one custom hostKeysFolder: flag and secret mount do not agree")
+          else:
+              print("all-in-one custom hostKeysFolder keeps flag and mount aligned")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "SFTP host key generation tests passed"
           
           echo "=== Testing ingress configurations ==="
           helm template test $CHART_DIR \
@@ -108,18 +820,1300 @@ jobs:
             --set s3.enabled=true \
             --set s3.ingress.enabled=true > /tmp/ingress.yaml
           grep -q "kind: Ingress" /tmp/ingress.yaml
-          echo "✓ Ingress configurations render correctly"
+          echo "Ingress configurations render correctly"
           
           echo "=== Testing COSI driver ==="
           helm template test $CHART_DIR --set cosi.enabled=true > /tmp/cosi.yaml
           grep -q "seaweedfs-cosi" /tmp/cosi.yaml
-          echo "✓ COSI driver renders correctly"
+          echo "COSI driver renders correctly"
+
+          echo ""
+          echo "=== Testing configurable pod and container security contexts ==="
+          helm template test $CHART_DIR > /tmp/security-context-defaults.yaml
+
+          security_context_args=()
+          for component in master volume filer s3 sftp admin worker allInOne cosi; do
+            security_context_args+=(
+              --set "$component.podSecurityContext.enabled=true"
+              --set "$component.podSecurityContext.seccompProfile.type=RuntimeDefault"
+              --set "$component.containerSecurityContext.enabled=true"
+              --set "$component.containerSecurityContext.privileged=false"
+              --set "$component.containerSecurityContext.allowPrivilegeEscalation=false"
+              --set "$component.containerSecurityContext.readOnlyRootFilesystem=true"
+              --set "$component.containerSecurityContext.capabilities.drop[0]=ALL"
+              --set "$component.containerSecurityContext.seccompProfile.type=RuntimeDefault"
+            )
+          done
+
+          helm template test $CHART_DIR \
+            "${security_context_args[@]}" \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=test \
+            --set sftp.enabled=true \
+            --set admin.enabled=true \
+            --set admin.secret.adminPassword=ci-admin-password \
+            --set worker.enabled=true \
+            --set volume.idx.type=hostPath \
+            --set volume.idx.hostPathPrefix=/tmp \
+            --set cosi.enabled=true \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi > /tmp/security-contexts.yaml
+          helm template test $CHART_DIR \
+            "${security_context_args[@]}" \
+            --set allInOne.enabled=true \
+            --set master.enabled=false \
+            --set volume.enabled=false \
+            --set filer.enabled=false \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi > /tmp/security-contexts-aio.yaml
+          python3 - /tmp/security-context-defaults.yaml /tmp/security-contexts.yaml /tmp/security-contexts-aio.yaml <<'PYEOF'
+          import sys
+
+          import yaml
+
+          errors = []
+          workloads = 0
+          containers = 0
+          chart_managed_init_containers = 0
+          components = set()
+
+          def validate_container(workload_name, container):
+              context = container.get("securityContext", {})
+              prefix = f"{workload_name}/{container['name']}"
+              if "enabled" in context:
+                  errors.append(f"{prefix}: internal enabled flag leaked into container securityContext")
+              if context.get("privileged") is not False:
+                  errors.append(f"{prefix}: privileged is not false")
+              if context.get("allowPrivilegeEscalation") is not False:
+                  errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
+              if context.get("readOnlyRootFilesystem") is not True:
+                  errors.append(f"{prefix}: readOnlyRootFilesystem is not true")
+              if context.get("capabilities", {}).get("drop") != ["ALL"]:
+                  errors.append(f"{prefix}: capabilities.drop is not exactly [ALL]")
+              if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+                  errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
+              mounts = {mount["name"]: mount for mount in container.get("volumeMounts", [])}
+              if mounts.get("seaweedfs-tmp", {}).get("mountPath") != "/tmp":
+                  errors.append(f"{prefix}: writable temporary volume is not mounted at /tmp")
+
+          with open(sys.argv[1]) as stream:
+              default_documents = [document for document in yaml.safe_load_all(stream) if document]
+          for document in default_documents:
+              if document.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+                  continue
+              name = document["metadata"]["name"]
+              pod = document["spec"]["template"]["spec"]
+              if "securityContext" in pod:
+                  errors.append(f"{name}: pod securityContext should be absent by default")
+              if any(volume["name"] == "seaweedfs-tmp" for volume in pod.get("volumes", [])):
+                  errors.append(f"{name}: writable /tmp volume should be absent by default")
+              for container in pod.get("containers", []):
+                  if "securityContext" in container:
+                      errors.append(
+                          f"{name}/{container['name']}: container securityContext "
+                          f"should be absent by default"
+                      )
+                  if any(
+                      mount["name"] == "seaweedfs-tmp"
+                      for mount in container.get("volumeMounts", [])
+                  ):
+                      errors.append(
+                          f"{name}/{container['name']}: writable /tmp mount "
+                          f"should be absent by default"
+                      )
+
+          for path in sys.argv[2:]:
+              with open(path) as stream:
+                  documents = [document for document in yaml.safe_load_all(stream) if document]
+              for document in documents:
+                  if document.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+                      continue
+                  workloads += 1
+                  name = document["metadata"]["name"]
+                  pod = document["spec"]["template"]["spec"]
+                  volumes = {volume["name"]: volume for volume in pod.get("volumes", [])}
+                  temporary = volumes.get("seaweedfs-tmp", {}).get("emptyDir")
+                  if temporary is None:
+                      errors.append(f"{name}: writable /tmp emptyDir is missing")
+                  elif temporary.get("sizeLimit") != "64Mi":
+                      errors.append(f"{name}: temporary volume sizeLimit is not 64Mi")
+                  component = document["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component")
+                  if component:
+                      components.add(component)
+                  else:
+                      errors.append(f"{name}: app.kubernetes.io/component label is missing")
+                  pod_context = pod.get("securityContext", {})
+                  if "enabled" in pod_context:
+                      errors.append(f"{name}: internal enabled flag leaked into pod securityContext")
+                  if pod_context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+                      errors.append(f"{name}: pod seccompProfile is not RuntimeDefault")
+                  for container in pod.get("containers", []):
+                      containers += 1
+                      validate_container(name, container)
+                  for container in pod.get("initContainers", []):
+                      if container["name"] != "seaweedfs-vol-move-idx":
+                          continue
+                      chart_managed_init_containers += 1
+                      validate_container(name, container)
+
+          expected_components = {
+              "master", "volume", "filer", "s3", "sftp", "admin", "worker",
+              "objectstorage-provisioner", "bucket-hook", "seaweedfs-all-in-one",
+          }
+          if components != expected_components:
+              errors.append(
+                  f"security context workload coverage is incomplete: "
+                  f"expected {sorted(expected_components)}, got {sorted(components)}"
+              )
+          if workloads != 10 or containers != 12:
+              errors.append(
+                  f"expected 10 workloads and 12 containers, got "
+                  f"{workloads} workloads and {containers} containers"
+              )
+          if chart_managed_init_containers != 1:
+              errors.append(
+                  f"expected one chart-managed seaweedfs-vol-move-idx init container, "
+                  f"got {chart_managed_init_containers}"
+              )
+
+          if errors:
+              print("\n".join(f"FAIL: {error}" for error in errors), file=sys.stderr)
+              sys.exit(1)
+          print(f"Validated security contexts on {workloads} workloads and {containers} containers")
+          PYEOF
+
+          # The resize hook depends on lookup finding a live StatefulSet and
+          # therefore cannot render during helm template. Keep static coverage
+          # for both security-context blocks.
+          grep -Fqx '      securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}' \
+            "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
+          grep -Fqx '          securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}' \
+            "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
+          echo "Volume resize hook security contexts are covered"
           
           echo ""
-          echo "✅ All template rendering tests passed!"
+          echo "=== Testing long release name: service names match DNS references ==="
+          # Use a release name that, combined with chart name "seaweedfs", exceeds 63 chars.
+          # fullname = "my-very-long-release-name-that-will-cause-truncation-seaweedfs" (65 chars before trunc)
+          LONG_RELEASE="my-very-long-release-name-that-will-cause-truncation"
+
+          # --- Normal mode: master + filer-client services vs helper-produced addresses ---
+          helm template "$LONG_RELEASE" $CHART_DIR \
+            --set s3.enabled=true \
+            --set global.seaweedfs.createBuckets[0].name=test > /tmp/longname.yaml
+
+          # Extract Service names from metadata
+          MASTER_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname.yaml \
+            | grep -- '-master$')
+          FILER_CLIENT_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname.yaml \
+            | grep -- '-filer-client$')
+
+          # Extract the hostname from WEED_CLUSTER_SW_MASTER in post-install-bucket-hook
+          MASTER_ADDR=$(grep 'WEED_CLUSTER_SW_MASTER' -A1 /tmp/longname.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/')
+          FILER_ADDR=$(grep 'WEED_CLUSTER_SW_FILER' -A1 /tmp/longname.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/')
+
+          # Extract the hostname from S3 deployment -filer= argument
+          S3_FILER_HOST=$(grep '\-filer=' /tmp/longname.yaml \
+            | head -1 | sed 's/.*-filer=\([^:]*\).*/\1/')
+
+          # The address helpers produce "<svc>.<namespace>:<port>"; extract just the svc name
+          MASTER_ADDR_SVC=$(echo "$MASTER_ADDR" | cut -d. -f1)
+          FILER_ADDR_SVC=$(echo "$FILER_ADDR" | cut -d. -f1)
+          S3_FILER_SVC=$(echo "$S3_FILER_HOST" | cut -d. -f1)
+
+          echo "  master Service.name:       $MASTER_SVC"
+          echo "  cluster.masterAddress svc:  $MASTER_ADDR_SVC"
+          echo "  filer-client Service.name:  $FILER_CLIENT_SVC"
+          echo "  cluster.filerAddress svc:   $FILER_ADDR_SVC"
+          echo "  S3 -filer= svc:             $S3_FILER_SVC"
+
+          [ "$MASTER_SVC" = "$MASTER_ADDR_SVC" ] || { echo "FAIL: master service name mismatch"; exit 1; }
+          [ "$FILER_CLIENT_SVC" = "$FILER_ADDR_SVC" ] || { echo "FAIL: filer-client service name mismatch"; exit 1; }
+          [ "$FILER_CLIENT_SVC" = "$S3_FILER_SVC" ] || { echo "FAIL: S3 -filer= does not match filer-client service"; exit 1; }
+          echo "Normal mode: service names match DNS references with long release name"
+
+          # --- All-in-one mode: all-in-one service vs both helper addresses ---
+          helm template "$LONG_RELEASE" $CHART_DIR \
+            --set allInOne.enabled=true \
+            --set global.seaweedfs.createBuckets[0].name=test > /tmp/longname-aio.yaml
+
+          AIO_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname-aio.yaml \
+            | grep -- '-all-in-one$')
+          AIO_MASTER_ADDR_SVC=$(grep 'WEED_CLUSTER_SW_MASTER' -A1 /tmp/longname-aio.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/' | cut -d. -f1)
+          AIO_FILER_ADDR_SVC=$(grep 'WEED_CLUSTER_SW_FILER' -A1 /tmp/longname-aio.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/' | cut -d. -f1)
+
+          echo "  all-in-one Service.name:    $AIO_SVC"
+          echo "  cluster.masterAddress svc:  $AIO_MASTER_ADDR_SVC"
+          echo "  cluster.filerAddress svc:   $AIO_FILER_ADDR_SVC"
+
+          [ "$AIO_SVC" = "$AIO_MASTER_ADDR_SVC" ] || { echo "FAIL: all-in-one master address mismatch"; exit 1; }
+          [ "$AIO_SVC" = "$AIO_FILER_ADDR_SVC" ] || { echo "FAIL: all-in-one filer address mismatch"; exit 1; }
+          echo "All-in-one mode: service names match DNS references with long release name"
+
+          echo ""
+          echo "=== Testing security+S3: no blank lines in shell command blocks ==="
+          # Render the three manifests that include seaweedfs.s3.tlsArgs:
+          #   filer-statefulset, s3-deployment, all-in-one-deployment
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set filer.s3.enabled=true \
+            --set s3.enabled=true > /tmp/security-s3.yaml
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set allInOne.enabled=true \
+            --set allInOne.s3.enabled=true > /tmp/security-aio.yaml
+
+          pip install pyyaml -q
+          python3 - /tmp/security-s3.yaml /tmp/security-aio.yaml <<'PYEOF'
+          import yaml, sys
+          errors = []
+          for path in sys.argv[1:]:
+              with open(path) as f:
+                  docs = list(yaml.safe_load_all(f))
+              for doc in docs:
+                  if not doc or doc.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  name = doc["metadata"]["name"]
+                  for c in doc["spec"]["template"]["spec"].get("containers", []):
+                      cmd = c.get("command", [])
+                      if len(cmd) >= 3 and cmd[0] == "/bin/sh" and cmd[1] == "-ec":
+                          script = cmd[2]
+                          for i, line in enumerate(script.splitlines(), 1):
+                              if line.strip() == "":
+                                  errors.append(f"{path}: {name}/{c['name']} has blank line at script line {i}")
+          if errors:
+              for e in errors:
+                  print(f"FAIL: {e}", file=sys.stderr)
+              print("Rendered with: global.seaweedfs.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
+              sys.exit(1)
+          print("No blank lines in security+S3 command blocks")
+          PYEOF
+
+          echo ""
+          echo "=== Testing security+S3: -cert.file/-key.file gated on httpsPort (issue #9202) ==="
+          # Regression test: when enableSecurity=true but *.httpsPort is 0 (the default),
+          # the chart must NOT emit -cert.file / -key.file to the S3 frontend. Passing
+          # them promotes weed s3's main -port to HTTPS (see weed/command/s3.go), which
+          # makes the HTTP readinessProbe spam "TLS handshake error ... client sent an
+          # HTTP request to an HTTPS server" into the pod log.
+          #
+          # When *.httpsPort > 0, both -port.https and cert/key args MUST be emitted
+          # together so the opt-in HTTPS listener actually has credentials.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def script_of(manifest, kind_name):
+              for doc in yaml.safe_load_all(manifest):
+                  if not doc or doc.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  if doc["metadata"]["name"] != kind_name:
+                      continue
+                  for c in doc["spec"]["template"]["spec"]["containers"]:
+                      cmd = c.get("command", [])
+                      if len(cmd) >= 3 and cmd[0] == "/bin/sh" and cmd[1] == "-ec":
+                          return cmd[2]
+              raise AssertionError(f"no container script for {kind_name}")
+
+          cases = [
+              # (values, workload-name, httpsPort-set?, arg-prefix)
+              ({"global.seaweedfs.enableSecurity": "true",
+                "s3.enabled": "true"},
+               "test-seaweedfs-s3", False, ""),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "s3.enabled": "true",
+                "s3.httpsPort": "8443"},
+               "test-seaweedfs-s3", True, ""),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "filer.s3.enabled": "true"},
+               "test-seaweedfs-filer", False, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "filer.s3.enabled": "true",
+                "filer.s3.httpsPort": "8444"},
+               "test-seaweedfs-filer", True, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "allInOne.enabled": "true",
+                "allInOne.s3.enabled": "true"},
+               "test-seaweedfs-all-in-one", False, "s3."),
+              ({"global.seaweedfs.enableSecurity": "true",
+                "allInOne.enabled": "true",
+                "allInOne.s3.enabled": "true",
+                "allInOne.s3.httpsPort": "8445"},
+               "test-seaweedfs-all-in-one", True, "s3."),
+          ]
+
+          failed = False
+          for values, name, https_on, prefix in cases:
+              script = script_of(render(values), name)
+              cert_flag = f"-{prefix}cert.file="
+              key_flag = f"-{prefix}key.file="
+              https_flag = f"-{prefix}port.https="
+              has_cert = cert_flag in script
+              has_key = key_flag in script
+              has_https = https_flag in script
+              label = f"{name} (httpsPort {'set' if https_on else 'unset'})"
+              if https_on:
+                  if not (has_cert and has_key and has_https):
+                      print(f"FAIL: {label}: expected {cert_flag}, {key_flag}, {https_flag} all present "
+                            f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
+                      failed = True
+                  else:
+                      print(f"{label}: cert/key/https args emitted together")
+              else:
+                  if has_cert or has_key or has_https:
+                      print(f"FAIL: {label}: expected none of {cert_flag}/{key_flag}/{https_flag}; "
+                            f"main S3 -port would silently become HTTPS and break HTTP probes "
+                            f"(got cert={has_cert} key={has_key} https={has_https})", file=sys.stderr)
+                      failed = True
+                  else:
+                      print(f"{label}: no TLS args emitted, main -port stays HTTP")
+
+              # bash -n: pin down that the rendered script parses. Guards against
+              # a future helper change that leaves a dangling `\` with nothing
+              # after it (every current caller already exits cleanly because
+              # bash treats trailing `\<newline><EOF>` as line-continuation to
+              # an empty line — but keep the contract explicit).
+              parse = subprocess.run(["bash", "-n"], input=script, text=True,
+                                     capture_output=True)
+              if parse.returncode != 0:
+                  print(f"FAIL: {label}: bash -n rejected rendered script: {parse.stderr.strip()}",
+                        file=sys.stderr)
+                  failed = True
+
+          sys.exit(1 if failed else 0)
+          PYEOF
+
+          echo ""
+          echo "=== Testing all-in-one env: a key in both global and component renders once ==="
+          # Regression: all-in-one looped global and component extraEnvironmentVars
+          # in two separate ranges, emitting duplicate env entries for any key set
+          # in both maps. Render a shared key and assert it appears exactly once in
+          # the all-in-one container, with the component value winning (consistent
+          # with the merge helper the other components already use). pyyaml is
+          # installed by the earlier IAM gRPC block in this same step.
+          helm template test $CHART_DIR \
+            --set allInOne.enabled=true \
+            --set global.seaweedfs.extraEnvironmentVars.WEED_SHARED=fromGlobal \
+            --set allInOne.extraEnvironmentVars.WEED_SHARED=fromComponent > /tmp/aio-env.yaml
+          python3 - /tmp/aio-env.yaml <<'PYEOF'
+          import sys, yaml
+          from collections import Counter
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          dep = next(d for d in docs if d.get("kind") == "Deployment"
+                     and d["metadata"]["name"].endswith("all-in-one"))
+          envs = [e["name"] for c in dep["spec"]["template"]["spec"]["containers"]
+                  for e in c.get("env", [])]
+          dups = {k: v for k, v in Counter(envs).items() if v > 1}
+          if dups:
+              print(f"FAIL: duplicate env entries in all-in-one container: {dups}", file=sys.stderr)
+              sys.exit(1)
+          val = next(e.get("value") for c in dep["spec"]["template"]["spec"]["containers"]
+                     for e in c.get("env", []) if e["name"] == "WEED_SHARED")
+          if val != "fromComponent":
+              print(f"FAIL: WEED_SHARED should take the component value 'fromComponent', got '{val}'",
+                    file=sys.stderr)
+              sys.exit(1)
+          print("all-in-one env: shared key renders once, component value wins")
+          PYEOF
+
+          echo "=== Testing bucket versioning: YAML bool false suspends like string \"false\" ==="
+          # bool false used to be a silent no-op while string "false" suspended.
+          BOOL_FALSE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=verbucket \
+            --set s3.createBuckets[0].versioning=false | grep 's3.bucket.versioning -name verbucket' || true)
+          echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
+          echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
+
+          echo ""
+          echo "=== Testing hook Job labels ==="
+          # The hook Jobs were the only pods in the chart without the standard
+          # app.kubernetes.io label set, so nothing label-based could target
+          # them - NetworkPolicy podSelectors, monitoring, kubectl -l. Assert
+          # both the Job and its pod template carry the same name/instance/
+          # component triple the other components use, and that the triple is
+          # the hook's own so a per-component selector cannot match it too.
+          #
+          # Only the bucket hook is covered: the volume resize hook is gated on
+          # lookup finding a StatefulSet with a smaller PVC than requested, and
+          # lookup returns nothing under helm template, so it never renders here.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+          # The three a selector keys on, and the full set the other workloads
+          # carry - a missing chart or managed-by label is not a selector
+          # problem, but it does leave the hook Jobs looking unlike everything
+          # else the release owns.
+          TRIPLE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                    "app.kubernetes.io/component")
+          # The labels that identify the release rather than the workload, and
+          # so have to hold the same values everywhere. They are compared
+          # against a workload that already renders them instead of being
+          # spelled out here, which keeps the chart version out of the test.
+          # managed-by is not among them on purpose: the chart puts it on
+          # workload metadata but not on pod templates, so it cannot be part of
+          # a cross-workload comparison. Its presence is still checked below.
+          RELEASE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                     "helm.sh/chart")
+          STANDARD = TRIPLE + ("helm.sh/chart", "app.kubernetes.io/managed-by")
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def hook_job(manifest):
+              for d in docs(manifest):
+                  if d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d
+              return None
+
+          def triple(labels):
+              return {k: labels.get(k) for k in TRIPLE}
+
+          def release(labels):
+              return {k: labels.get(k) for k in RELEASE}
+
+          def reference(manifest):
+              """Any long-running workload; they all carry the release labels."""
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet"):
+                      return d
+              return None
+
+          modes = {
+              "s3": {"s3.enabled": "true",
+                     "s3.createBuckets[0].name": "b"},
+              "filer.s3": {"filer.s3.enabled": "true",
+                           "filer.s3.createBuckets[0].name": "b"},
+              "allInOne": {"allInOne.enabled": "true",
+                           "allInOne.s3.enabled": "true",
+                           "allInOne.s3.createBuckets[0].name": "b"},
+          }
+
+          failed = []
+          for mode, values in modes.items():
+              before = len(failed)
+              out = render(values)
+              job = hook_job(out)
+              if job is None:
+                  failed.append(f"{mode}: bucket hook Job not rendered")
+                  continue
+              job_labels = job["metadata"].get("labels", {})
+              pod_labels = job["spec"]["template"]["metadata"].get("labels", {})
+              ref = reference(out)
+              if ref is None:
+                  failed.append(f"{mode}: no workload to compare the release labels against")
+                  continue
+              ref_labels = release(ref["spec"]["template"]["metadata"].get("labels", {}))
+              for where, labels in (("Job", job_labels), ("pod", pod_labels)):
+                  missing = [k for k in STANDARD if not labels.get(k)]
+                  if missing:
+                      failed.append(f"{mode}: bucket hook {where} has no {missing}, "
+                                    "nothing can select it")
+                  component = labels.get("app.kubernetes.io/component")
+                  if component != "bucket-hook":
+                      failed.append(f"{mode}: bucket hook {where} component is "
+                                    f"{component!r}, expected 'bucket-hook'")
+                  # Present is not enough: the values have to be the release's
+                  # own, or a selector written for this release misses the hook.
+                  if release(labels) != ref_labels:
+                      failed.append(f"{mode}: bucket hook {where} release labels "
+                                    f"{release(labels)} differ from "
+                                    f"{ref['metadata']['name']}'s {ref_labels}")
+              # A selector written against the Job has to find its pods.
+              if triple(job_labels) != triple(pod_labels):
+                  failed.append(f"{mode}: bucket hook Job and pod disagree: "
+                                f"{triple(job_labels)} vs {triple(pod_labels)}")
+              # The triple must not also match another component's pods, or a
+              # selector meant for that component would pull the hook pod in.
+              for d in docs(out):
+                  if d.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  other = d["spec"]["template"]["metadata"].get("labels", {})
+                  if triple(other) == triple(pod_labels):
+                      failed.append(f"{mode}: bucket hook pod shares its label triple "
+                                    f"with {d['metadata']['name']}")
+              if len(failed) == before:
+                  print(f"{mode}: bucket hook Job and pod carry a distinct label triple")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Hook Job label tests passed"
+
+          echo ""
+          echo "=== Testing NetworkPolicy rendering ==="
+          # The policies are only exercised for real by the networkpolicy-install
+          # job below. These assertions cover what template rendering can see:
+          # that the flag stays off by default, that every deployed component has
+          # exactly one policy, that each policy allows every port its workload
+          # declares, and that egress stays a separate opt-in.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values, json_values=None):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              for k, v in (json_values or {}).items():
+                  args += ["--set-json", f"{k}={v}"]
+              return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+
+          def expect_failure(values, needle, label, json_values=None):
+              try:
+                  render(values, json_values)
+              except subprocess.CalledProcessError as e:
+                  if needle not in (e.output or ""):
+                      failed.append(f"{label}: unexpected error: {(e.output or '')[:200]}")
+                  else:
+                      print(label)
+                  return
+              failed.append(f"{label}: render should have failed")
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def component(labels):
+              return labels.get("app.kubernetes.io/component")
+
+          def policies(manifest):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") != "NetworkPolicy":
+                      continue
+                  out[component(d["spec"]["podSelector"]["matchLabels"])] = d
+              return out
+
+          def workloads(manifest, kinds=("Deployment", "StatefulSet")):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") in kinds:
+                      out[component(d["spec"]["template"]["metadata"]["labels"])] = d
+              return out
+
+          def allowed_ports(policy):
+              ports = set()
+              for rule in policy["spec"].get("ingress") or []:
+                  for p in rule.get("ports") or []:
+                      ports.add(p["port"])
+              return ports
+
+          def container_ports(workload):
+              ports = set()
+              for c in workload["spec"]["template"]["spec"].get("containers", []):
+                  for p in c.get("ports") or []:
+                      ports.add(p["containerPort"])
+              return ports
+
+          EVERYTHING = {
+              "s3.enabled": "true",
+              "sftp.enabled": "true",
+              "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
+              "worker.enabled": "true",
+              "cosi.enabled": "true",
+              "s3.createBuckets[0].name": "b",
+              "volumes.ssd.port": "8081",
+              "global.seaweedfs.monitoring.enabled": "true",
+          }
+
+          failed = []
+
+          # Off by default: the chart has never shipped a NetworkPolicy and must not
+          # start now, or every existing release in a default-deny namespace changes
+          # behaviour on the next upgrade.
+          if policies(render(EVERYTHING)):
+              failed.append("networkPolicy.enabled unset: policies rendered anyway")
+          else:
+              print("networkPolicy off by default: no policies rendered")
+
+          on = dict(EVERYTHING, **{"networkPolicy.enabled": "true"})
+          out = render(on)
+          pols = policies(out)
+          wls = workloads(out)
+
+          # Every workload gets exactly one policy, and every policy has a workload.
+          # A component with no policy is wide open under default-deny; a policy with
+          # no component is dead weight that hides a renamed label.
+          for comp in wls:
+              if comp not in pols:
+                  failed.append(f"{comp}: workload has no NetworkPolicy")
+          for comp in pols:
+              # The bucket hook Job is covered too, and a Job is not a workload here.
+              if comp not in wls and comp != "bucket-hook":
+                  failed.append(f"{comp}: NetworkPolicy selects a component that is not deployed")
+
+          # The ports a component listens on come from the same values as its
+          # containerPorts, so the two must agree. This is what catches a port added to
+          # a workload and forgotten in the policy - the failure mode that only shows up
+          # once someone turns the flag on.
+          for comp, wl in wls.items():
+              if comp not in pols:
+                  continue
+              declared = container_ports(wl)
+              allowed = allowed_ports(pols[comp])
+              missing = sorted(declared - allowed)
+              if missing:
+                  failed.append(f"{comp}: listens on {missing} but its policy does not allow it")
+          if not failed:
+              print("every workload has a policy covering all of its containerPorts")
+
+          # The bucket hook Job and its policy are gated on one shared helper, and
+          # this pins that down: a Job without its policy hangs under default-deny,
+          # a policy without its Job is noise. The combinations cover the modes that
+          # decide it, including the ones where a bucket list is ignored.
+          hook_cases = {
+              "nothing": {},
+              "s3 without buckets": {"s3.enabled": "true"},
+              "s3 with buckets": {"s3.enabled": "true", "s3.createBuckets[0].name": "b"},
+              "filer.s3 without buckets": {"filer.s3.enabled": "true"},
+              "filer.s3 with buckets": {"filer.s3.enabled": "true",
+                                        "filer.s3.createBuckets[0].name": "b"},
+              "s3 gateway, buckets on filer.s3": {"s3.enabled": "true",
+                                                  "filer.s3.createBuckets[0].name": "b"},
+              "allInOne without buckets": {"allInOne.enabled": "true",
+                                           "allInOne.s3.enabled": "true"},
+              "allInOne with buckets": {"allInOne.enabled": "true",
+                                        "allInOne.s3.enabled": "true",
+                                        "allInOne.s3.createBuckets[0].name": "b"},
+              # allInOne reads only its own bucket list, so s3.createBuckets is
+              # not enough to produce the Job.
+              "allInOne, buckets on s3": {"allInOne.enabled": "true",
+                                          "allInOne.s3.enabled": "true",
+                                          "s3.createBuckets[0].name": "b"},
+              "master off": {"master.enabled": "false", "s3.enabled": "true",
+                             "s3.createBuckets[0].name": "b"},
+              "buckets but no S3 endpoint": {"s3.createBuckets[0].name": "b"},
+          }
+          for label, values in hook_cases.items():
+              out = render(dict(values, **{"networkPolicy.enabled": "true"}))
+              job = any(d.get("kind") == "Job"
+                        and d["metadata"]["name"].endswith("-bucket-hook")
+                        for d in docs(out))
+              policy = "bucket-hook" in policies(out)
+              if job != policy:
+                  failed.append(f"{label}: bucket hook Job={job} but its policy={policy}; "
+                                "the two are gated on seaweedfs.bucketHookEnabled and "
+                                "have to appear together")
+          if not failed:
+              print(f"bucket hook Job and policy agree across {len(hook_cases)} modes")
+
+          # Egress is its own opt-in: with it off the policies must not constrain
+          # outbound traffic at all, or enabling networkPolicy alone would cut the filer
+          # off from its store.
+          for comp, p in pols.items():
+              if "Egress" in p["spec"]["policyTypes"]:
+                  failed.append(f"{comp}: Egress in policyTypes while networkPolicy.egress.enabled is false")
+          if not any("Egress" in p["spec"]["policyTypes"] for p in pols.values()):
+              print("egress off by default: policies are ingress-only")
+
+          # Components that need the API server must not silently lose it: rendering
+          # fails with a pointer to the value instead.
+          expect_failure(dict(on, **{"networkPolicy.egress.enabled": "true"}),
+                         "kubeApiServer.cidrs is empty",
+                         "empty kubeApiServer.cidrs fails the render with a pointer to the value")
+
+          egress_on = dict(on, **{
+              "networkPolicy.egress.enabled": "true",
+              "networkPolicy.egress.kubeApiServer.cidrs[0]": "10.96.0.1/32",
+          })
+
+          # An empty port or peer list is "everything" in a NetworkPolicy, not
+          # "nothing", so the two places that could be emptied have to be refused
+          # rather than quietly widened.
+          expect_failure(egress_on, "kubeApiServer.ports is empty",
+                         "empty kubeApiServer.ports is refused instead of allowing every port",
+                         json_values={"networkPolicy.egress.kubeApiServer.ports": "[]"})
+          expect_failure(egress_on, "allowDNS is on but both",
+                         "DNS with no selector is refused instead of allowing every pod",
+                         json_values={"networkPolicy.egress.dnsNamespaceSelector": "null",
+                                      "networkPolicy.egress.dnsPodSelector": "null"})
+
+          # Dropping one of the two DNS selectors must leave the key out, not
+          # render it as null - null namespaceSelector means this namespace and
+          # null podSelector means every pod in the peer namespace.
+          for dropped in ("dnsNamespaceSelector", "dnsPodSelector"):
+              out = render(egress_on, {f"networkPolicy.egress.{dropped}": "null"})
+              nulls = [(c, k) for c, p in policies(out).items()
+                       for r in p["spec"]["egress"]
+                       for t in r.get("to") or []
+                       for k, v in t.items() if v is None]
+              nulls += [(c, "ports") for c, p in policies(out).items()
+                        for r in p["spec"]["egress"] if "ports" in r and r["ports"] is None]
+              if nulls:
+                  failed.append(f"{dropped}=null: rendered null keys {sorted(set(nulls))}")
+              else:
+                  print(f"{dropped}=null: the key is left out rather than rendered as null")
+
+          # Helm allows a release named "123", and an unquoted label value then
+          # renders as a YAML integer. Label values are strings in the API, so the
+          # whole object gets rejected - a policy that never applies, silently.
+          # Every label the policies emit, in metadata and in every selector, has
+          # to survive that release name as a string.
+          numeric = subprocess.check_output(
+              ["helm", "template", "123", chart,
+               "--set", "networkPolicy.enabled=true",
+               "--set", "networkPolicy.egress.enabled=true",
+               "--set", "networkPolicy.egress.kubeApiServer.cidrs[0]=10.96.0.1/32",
+               "--set", "s3.enabled=true", "--set", "s3.createBuckets[0].name=b"],
+              text=True, stderr=subprocess.STDOUT)
+
+          def label_maps(policy):
+              yield "metadata", policy["metadata"].get("labels", {})
+              yield "podSelector", policy["spec"]["podSelector"]["matchLabels"]
+              for direction in ("ingress", "egress"):
+                  for i, rule in enumerate(policy["spec"].get(direction) or []):
+                      for peer in rule.get("to") or rule.get("from") or []:
+                          for key in ("podSelector", "namespaceSelector"):
+                              sel = peer.get(key) or {}
+                              yield f"{direction}[{i}].{key}", sel.get("matchLabels", {})
+
+          coerced = [(comp, where, k, v)
+                     for comp, p in policies(numeric).items()
+                     for where, labels in label_maps(p)
+                     for k, v in labels.items() if not isinstance(v, str)]
+          if coerced:
+              failed.append(f"release name 123: label values are not strings, so the API "
+                            f"server rejects the policy: {coerced}")
+          else:
+              print("a numeric release name keeps every policy label a string")
+
+          out = render(egress_on)
+          pols = policies(out)
+
+          # DNS for everyone: every component addresses its peers by service name.
+          for comp, p in pols.items():
+              dns = [r for r in p["spec"]["egress"]
+                     if {x["port"] for x in r.get("ports") or []} == {53}]
+              if not dns:
+                  failed.append(f"{comp}: egress on but no DNS rule")
+          if not failed:
+              print("every policy allows DNS when egress is on")
+
+          # The API server rule goes only to what talks to it, which is the COSI
+          # sidecar and, on an upgrade that grows a PVC, the resize hook. No
+          # seaweedfs binary does - there is no client-go in go.mod - so admin
+          # must not be in here: it would force everyone running admin to name an
+          # API server address for a connection that is never made.
+          apiserver = {c for c, p in pols.items()
+                       if any("ipBlock" in t for r in p["spec"]["egress"] for t in r.get("to") or [])}
+          expected = {"objectstorage-provisioner"}
+          if apiserver != expected:
+              failed.append(f"API server egress granted to {sorted(apiserver)}, expected {sorted(expected)}")
+          else:
+              print(f"API server egress limited to {sorted(expected)}")
+
+          # Which means egress on its own must render for a release that runs
+          # neither COSI nor a resize: no component of it reaches the API server,
+          # so nothing may demand a CIDR for one.
+          for label, values in {"defaults": {}, "admin": {"admin.enabled": "true", "admin.secret.adminPassword": "ci-admin-password"}}.items():
+              try:
+                  render(dict(values, **{"networkPolicy.enabled": "true",
+                                         "networkPolicy.egress.enabled": "true"}))
+                  print(f"egress on {label} renders without kubeApiServer.cidrs")
+              except subprocess.CalledProcessError as e:
+                  failed.append(f"{label}: egress needs kubeApiServer.cidrs but nothing "
+                                f"in the release talks to the API server: {(e.output or '')[:200]}")
+
+          # The resize hook's policy is gated on the same lookup as its Job, so
+          # neither is ever in a rendered set - a policy on its own would be an
+          # orphaned hook resource on every install, since Helm does not collect
+          # those. The hook annotations it carries when the lookup does hit are
+          # only reachable against a live cluster.
+          if "volume-resize-hook" in pols:
+              failed.append("volume-resize-hook policy rendered without its Job; the two "
+                            "are gated on seaweedfs.volumeResizeHookCommands and have to "
+                            "appear together")
+          else:
+              print("volume-resize-hook policy tracks its Job rather than rendering always")
+
+          # A components key that names nothing reads as "these rules are applied"
+          # and silently does not apply them.
+          expect_failure(dict(on, **{"networkPolicy.components.filerr.extraIngress[0].ports[0].port": "1"}),
+                         '"filerr" is not a component of this chart',
+                         "a misspelled networkPolicy.components key fails the render")
+
+          # The bucket hook is post-install, so the release manifest is already applied;
+          # its policy must be a plain resource that uninstall cleans up.
+          if "helm.sh/hook" in (pols["bucket-hook"]["metadata"].get("annotations") or {}):
+              failed.append("bucket-hook policy is a hook resource; post-install runs after the manifest is applied")
+          else:
+              print("bucket-hook policy is a plain release resource")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "NetworkPolicy rendering tests passed"
+
+          echo ""
+          echo "=== Testing enterprise license mount + master persistence ==="
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def workloads(manifest):
+              for d in yaml.safe_load_all(manifest):
+                  if d and d.get("kind") in ("Deployment", "StatefulSet"):
+                      yield d
+
+          ALL_ON = {
+              "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
+              "s3.enabled": "true",
+              "sftp.enabled": "true",
+              "worker.enabled": "true",
+          }
+          failed = []
+
+          # Case 1: unconfigured renders nothing, so existing installs are unaffected.
+          out = render(ALL_ON)
+          if "SEAWEED_LICENSE" in out or "seaweedfs-license" in out:
+              failed.append("defaults: license plumbing should not render")
+          else:
+              print("defaults: no license volume/env (unchanged)")
+
+          # Case 2: only the workloads that run a master carry the license.
+          LICENSE_PATH = "/etc/seaweedfs/license/seaweed-license.json"
+          out = render(dict(ALL_ON, **{
+              "global.seaweedfs.license.existingSecret": "lic",
+          }))
+          carrying = set()
+          for d in workloads(out):
+              name = d["metadata"]["name"]
+              pod = d["spec"]["template"]["spec"]
+              vols = [v for v in pod.get("volumes", []) if v.get("name") == "seaweedfs-license"]
+              if not vols:
+                  continue
+              carrying.add(name)
+              secret = vols[0].get("secret", {})
+              if secret.get("secretName") != "lic":
+                  failed.append(f"{name}: license volume points at {secret.get('secretName')!r}, not the configured Secret")
+              items = [i.get("key") for i in secret.get("items", [])]
+              if items != ["seaweed-license.json"]:
+                  failed.append(f"{name}: license volume projects {items}, expected only the license key")
+              for c in pod.get("containers", []):
+                  mounts = [m for m in c.get("volumeMounts", []) if m["name"] == "seaweedfs-license"]
+                  if not mounts:
+                      failed.append(f"{name}/{c['name']}: license volume not mounted")
+                      continue
+                  # subPath would freeze the file at container start.
+                  if any("subPath" in m for m in mounts):
+                      failed.append(f"{name}/{c['name']}: license mount uses subPath (renewals would not propagate)")
+                  if not all(m.get("readOnly") for m in mounts):
+                      failed.append(f"{name}/{c['name']}: license mount is not readOnly")
+                  env = {e["name"]: e.get("value") for e in c.get("env", [])}
+                  if env.get("SEAWEED_LICENSE") != LICENSE_PATH:
+                      failed.append(f"{name}/{c['name']}: SEAWEED_LICENSE not set to the mounted file")
+          if carrying != {"test-seaweedfs-master"}:
+              failed.append(f"license: expected only the master to carry it, got {sorted(carrying)}")
+          else:
+              print("license: master only, key-scoped, readOnly, no subPath, SEAWEED_LICENSE set")
+
+          # all-in-one runs `weed server -master`, so it needs the license too.
+          out = render({
+              "allInOne.enabled": "true",
+              "master.enabled": "false",
+              "volume.enabled": "false",
+              "filer.enabled": "false",
+              "global.seaweedfs.license.existingSecret": "lic",
+          })
+          aio = [d for d in workloads(out) if d["metadata"]["name"].endswith("-all-in-one")]
+          if len(aio) != 1:
+              failed.append(f"all-in-one: expected 1 workload, got {len(aio)}")
+          else:
+              pod = aio[0]["spec"]["template"]["spec"]
+              if not any(v.get("name") == "seaweedfs-license" for v in pod.get("volumes", [])):
+                  failed.append("all-in-one: missing the license volume")
+              else:
+                  print("all-in-one: carries the license")
+
+          # SEAWEED_LICENSE is reserved on both env paths.
+          out = render({
+              "global.seaweedfs.license.existingSecret": "lic",
+              "global.seaweedfs.extraEnvironmentVars.SEAWEED_LICENSE": "/tmp/bogus.json",
+          })
+          for d in workloads(out):
+              if not d["metadata"]["name"].endswith("-master"):
+                  continue
+              for c in d["spec"]["template"]["spec"].get("containers", []):
+                  names = [e["name"] for e in c.get("env", [])]
+                  if names.count("SEAWEED_LICENSE") != 1:
+                      failed.append(f"SEAWEED_LICENSE rendered {names.count('SEAWEED_LICENSE')} times")
+                  else:
+                      value = next(e.get("value") for e in c["env"] if e["name"] == "SEAWEED_LICENSE")
+                      if value != LICENSE_PATH:
+                          failed.append(f"SEAWEED_LICENSE overridden to {value!r} by extraEnvironmentVars")
+                      else:
+                          print("SEAWEED_LICENSE: reserved, rendered once, points at the mount")
+
+          # secretExtraEnvironmentVars is rendered outside the merge helper.
+          out = render({
+              "allInOne.enabled": "true",
+              "master.enabled": "false",
+              "volume.enabled": "false",
+              "filer.enabled": "false",
+              "global.seaweedfs.license.existingSecret": "lic",
+              "allInOne.secretExtraEnvironmentVars.SEAWEED_LICENSE.secretKeyRef.name": "x",
+              "allInOne.secretExtraEnvironmentVars.SEAWEED_LICENSE.secretKeyRef.key": "y",
+          })
+          for d in workloads(out):
+              if not d["metadata"]["name"].endswith("-all-in-one"):
+                  continue
+              for c in d["spec"]["template"]["spec"].get("containers", []):
+                  names = [e["name"] for e in c.get("env", [])]
+                  if names.count("SEAWEED_LICENSE") != 1:
+                      failed.append(f"all-in-one: SEAWEED_LICENSE rendered {names.count('SEAWEED_LICENSE')} times via secretExtraEnvironmentVars")
+                  elif next(e.get("value") for e in c["env"] if e["name"] == "SEAWEED_LICENSE") != LICENSE_PATH:
+                      failed.append("all-in-one: secretExtraEnvironmentVars overrode SEAWEED_LICENSE")
+                  else:
+                      print("all-in-one: SEAWEED_LICENSE reserved on the secret env path too")
+
+          # Case 3: the default stays hostPath. volumeClaimTemplates is immutable,
+          # so growing one here would break helm upgrade on existing releases.
+          masters = [d for d in workloads(render({})) if d["metadata"]["name"].endswith("-master")]
+          if len(masters) != 1:
+              failed.append(f"master: expected 1 StatefulSet by default, got {len(masters)}")
+          else:
+              d = masters[0]
+              claims = [c["metadata"]["name"] for c in d["spec"].get("volumeClaimTemplates", [])]
+              if any(c.startswith("data-") for c in claims):
+                  failed.append(f"master: default grew a data volumeClaimTemplate ({claims}); "
+                                "that breaks helm upgrade on existing releases")
+              data_host = [v["name"] for v in d["spec"]["template"]["spec"].get("volumes", [])
+                           if v.get("hostPath") and v["name"].startswith("data-")]
+              if not data_host:
+                  failed.append("master: default no longer renders a hostPath data volume")
+              else:
+                  print("master: default still hostPath (upgrade-compatible)")
+
+          # Case 4: opting into a claim renders one, with the requested size.
+          masters = [d for d in workloads(render({"master.data.type": "persistentVolumeClaim"}))
+                     if d["metadata"]["name"].endswith("-master")]
+          if len(masters) != 1:
+              failed.append(f"master.data.type=persistentVolumeClaim: expected 1 StatefulSet, got {len(masters)}")
+          else:
+              d = masters[0]
+              claims = {c["metadata"]["name"]: c["spec"]["resources"]["requests"]["storage"]
+                        for c in d["spec"].get("volumeClaimTemplates", [])}
+              data = {k: v for k, v in claims.items() if k.startswith("data-")}
+              if not data:
+                  failed.append(f"master.data.type=persistentVolumeClaim: no data claim rendered ({claims})")
+              elif set(data.values()) != {"1Gi"}:
+                  failed.append(f"master.data.type=persistentVolumeClaim: unexpected size {data}")
+              else:
+                  print(f"master.data.type=persistentVolumeClaim: renders {sorted(data)} at 1Gi")
+              if any(v.get("hostPath") and v["name"].startswith("data-")
+                     for v in d["spec"]["template"]["spec"].get("volumes", [])):
+                  failed.append("master.data.type=persistentVolumeClaim: data still on a hostPath")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "License + master persistence tests passed"
+
+          echo "All template rendering tests passed!"
+
+      - name: Resolve an image tag that is published
+        run: |
+          set -e
+          # A release bumps appVersion on master ~40 minutes before the container
+          # build publishes that tag, and this workflow runs on the bump commit.
+          # Install the last released image for the length of that window instead
+          # of failing on ImagePullBackOff.
+          IMAGE=$(helm template test k8s/charts/seaweedfs \
+            -s templates/master/master-statefulset.yaml | awk '$1 == "image:" {print $2; exit}')
+          REPO=${IMAGE%:*}
+          TAG=${IMAGE##*:}
+          # Anything but a published tag installs latest, which between releases
+          # is the same digest as the chart's own appVersion, so a registry blip
+          # costs nothing while failing the job on one would cost a red build.
+          STATUS=$(curl -sSL --connect-timeout 5 --max-time 15 -o /dev/null \
+            -w '%{http_code}' "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG" || true)
+          if [ "$STATUS" = 200 ]; then
+            echo "installing $IMAGE"
+          else
+            echo "$IMAGE is unavailable (HTTP ${STATUS:-none}), installing $REPO:latest"
+            TAG=latest
+          fi
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.13.0
+        uses: helm/kind-action@v1.15.1
+
+      - name: Verify volume resize hook security contexts
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="resize-hook-security"
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: data1-resize-seaweedfs-volume-0
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+          EOF
+
+          helm template resize "$CHART_DIR" -n "$NS" --dry-run=server \
+            --set volume.dataDirs[0].name=data1 \
+            --set volume.dataDirs[0].type=persistentVolumeClaim \
+            --set volume.dataDirs[0].size=2Gi \
+            --set volume.podSecurityContext.enabled=true \
+            --set volume.podSecurityContext.seccompProfile.type=RuntimeDefault \
+            --set volume.containerSecurityContext.enabled=true \
+            --set volume.containerSecurityContext.privileged=false \
+            --set volume.containerSecurityContext.allowPrivilegeEscalation=false \
+            --set volume.containerSecurityContext.readOnlyRootFilesystem=true \
+            --set volume.containerSecurityContext.capabilities.drop[0]=ALL \
+            --set volume.containerSecurityContext.seccompProfile.type=RuntimeDefault \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi \
+            > /tmp/security-context-resize-hook.yaml
+
+          python3 - /tmp/security-context-resize-hook.yaml <<'PYEOF'
+          import sys
+
+          import yaml
+
+          with open(sys.argv[1]) as stream:
+              documents = [document for document in yaml.safe_load_all(stream) if document]
+
+          jobs = [
+              document for document in documents
+              if document.get("kind") == "Job"
+              and document["metadata"]["name"].endswith("-volume-resize-hook")
+          ]
+          if len(jobs) != 1:
+              raise AssertionError(f"expected one volume resize hook Job, got {len(jobs)}")
+
+          pod = jobs[0]["spec"]["template"]["spec"]
+          assert pod["securityContext"] == {
+              "seccompProfile": {"type": "RuntimeDefault"},
+          }
+          assert len(pod["containers"]) == 1
+          assert pod["containers"][0]["securityContext"] == {
+              "allowPrivilegeEscalation": False,
+              "capabilities": {"drop": ["ALL"]},
+              "privileged": False,
+              "readOnlyRootFilesystem": True,
+              "seccompProfile": {"type": "RuntimeDefault"},
+          }
+          assert pod["containers"][0]["volumeMounts"] == [
+              {"mountPath": "/tmp", "name": "seaweedfs-tmp"},
+          ]
+          assert pod["volumes"] == [
+              {"emptyDir": {"sizeLimit": "64Mi"}, "name": "seaweedfs-tmp"},
+          ]
+          PYEOF
+          kubectl delete namespace "$NS"
+          echo "Volume resize hook security contexts render correctly"
 
       - name: Run chart-testing (install)
-        run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
+        run: |
+          ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts \
+            --helm-extra-set-args "--set=image.tag=$IMAGE_TAG"
+
+      - name: Verify SFTP host key secret lifecycle
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="sftp-hostkey"
+          SECRET="hk-seaweedfs-sftp-ssh-secret"
+          SFTP_ARGS="--set image.tag=$IMAGE_TAG --set sftp.enabled=true --set master.enabled=false --set volume.enabled=false --set filer.enabled=false"
+          kubectl create namespace "$NS"
+
+          echo "=== install generates a host key, upgrade keeps it ==="
+          helm install hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          KEY1=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}')
+          [ -n "$KEY1" ] || { echo "FAIL: install did not create a host key"; exit 1; }
+          echo "$KEY1" | base64 -d | grep -q "BEGIN PRIVATE KEY" || { echo "FAIL: host key is not a PEM private key"; exit 1; }
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          KEY2=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}')
+          [ "$KEY1" = "$KEY2" ] || { echo "FAIL: host key changed across upgrade"; exit 1; }
+          echo "host key survives upgrade"
+
+          echo "=== the key the chart used to bundle is replaced ==="
+          kubectl delete secret "$SECRET" -n "$NS"
+          kubectl create secret generic "$SECRET" -n "$NS" \
+            --from-literal=ssh_host_ed25519_key="stand-in H4McwcDphteXVullu6q7ephEN1N60z stand-in"
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          ROTATED=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}' | base64 -d)
+          case "$ROTATED" in
+            *H4McwcDphteXVullu6q7ephEN1N60z*) echo "FAIL: bundled key survived the upgrade"; exit 1;;
+          esac
+          echo "$ROTATED" | grep -q "BEGIN PRIVATE KEY" || { echo "FAIL: replacement is not a generated key"; exit 1; }
+          echo "bundled key rotated to a generated one"
+
+          echo "=== operator-managed keys are kept as-is ==="
+          kubectl delete secret "$SECRET" -n "$NS"
+          ssh-keygen -q -t ed25519 -N "" -C "" -f /tmp/operator_key
+          kubectl create secret generic "$SECRET" -n "$NS" --from-file=my_key=/tmp/operator_key
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.my_key}' | base64 -d | cmp -s - /tmp/operator_key \
+            || { echo "FAIL: operator key was modified"; exit 1; }
+          NKEYS=$(kubectl get secret "$SECRET" -n "$NS" -o json | jq '.data | length')
+          [ "$NKEYS" = "1" ] || { echo "FAIL: expected only the operator key, found $NKEYS entries"; exit 1; }
+          echo "operator key kept, no extra key generated"
+
+          kubectl delete namespace "$NS"
+          echo "SFTP host key lifecycle tests passed"
+
+      - name: Verify JWT signing key persistence across upgrades
+        run: |
+          # chart-testing puts its pip-less venv first on PATH; use setup-python.
+          PYTHON="$pythonLocation/bin/python3"
+          "$PYTHON" -m pip install tomli==2.2.1
+          CONTEXT=$(kubectl config current-context)
+          "$PYTHON" .github/scripts/helm_jwt_keys.py --context "$CONTEXT"
+          "$PYTHON" .github/scripts/helm_jwt_keys.py --helm "$HELM_LEGACY" \
+            --reference-helm helm --context "$CONTEXT"
+
+      - name: Verify install into a default-deny namespace
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="netpol"
+
+          # kind enforces NetworkPolicy out of the box since v0.24 (kindnetd
+          # runs sigs.k8s.io/kube-network-policies), so the cluster created for
+          # chart-testing above is enough and no extra CNI is needed. The two
+          # probes at the end fail loudly if that ever stops being true, rather
+          # than letting this pass vacuously.
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: default-deny
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]
+          EOF
+
+          # The backend address, not the kubernetes service ClusterIP: kube-proxy
+          # rewrites the destination, so an ipBlock has to name the real endpoint.
+          APISERVER=$(kubectl get endpointslice kubernetes \
+            -o jsonpath='{.endpoints[0].addresses[0]}' 2>/dev/null || true)
+          if [ -z "$APISERVER" ]; then
+            APISERVER=$(kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+          fi
+          echo "kube-apiserver at $APISERVER"
+
+          echo "=== install with the policies on ==="
+          # Without them this hangs: the components cannot resolve or reach each
+          # other, and the post-install bucket hook waits on master and filer
+          # until it gives up. --wait covers the components, and helm fails the
+          # release if the hook Job does not finish, so a clean install is the
+          # assertion.
+          helm install np $CHART_DIR -n "$NS" --wait --timeout 8m \
+            --set image.tag=$IMAGE_TAG \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=testbucket \
+            --set networkPolicy.enabled=true \
+            --set networkPolicy.egress.enabled=true \
+            --set networkPolicy.egress.kubeApiServer.cidrs[0]="$APISERVER/32"
+          echo "release came up and the bucket hook finished under default-deny"
+
+          FILER_IP=$(kubectl get pod -n "$NS" -l app.kubernetes.io/component=filer \
+            -o jsonpath='{.items[0].status.podIP}')
+          echo "filer pod at $FILER_IP"
+
+          # Both probes get their own all-egress policy, so the namespace-wide
+          # default-deny is not what decides the outcome: the only thing left in
+          # the way is the filer's own policy, which admits release pods only.
+          # Probing the pod IP keeps DNS out of it.
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: probe-egress
+          spec:
+            podSelector:
+              matchExpressions:
+                - key: probe
+                  operator: Exists
+            policyTypes: [Egress]
+            egress:
+              - {}
+          EOF
+
+          # Only the marker line, so a probe that never produced one cannot be
+          # mistaken for a verdict: "pod/x created" on stdout would read as
+          # "not exit=0", which is how the denied case passes. busybox wget
+          # reports a timeout on stderr even under -q and kubectl logs returns
+          # both streams, so the marker has to be picked out rather than taken
+          # as the whole log. Empty output stays empty - the callers fail on it.
+          probe() {
+            local name=$1
+            local labels=$2
+            kubectl run "$name" -n "$NS" --image=busybox:1.36 --restart=Never \
+              --labels="probe=$name,$labels" --command -- \
+              sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?" >/dev/null
+            kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Succeeded \
+              "pod/$name" --timeout=120s >/dev/null
+            kubectl logs -n "$NS" "$name" | grep '^exit=' || true
+          }
+
+          # A pod carrying the release labels is what the filer's policy allows.
+          # This has to succeed, otherwise the policies are blocking traffic they
+          # are supposed to permit - or nothing is enforced and the next probe
+          # would be meaningless.
+          ALLOWED=$(probe probe-allowed "app.kubernetes.io/name=seaweedfs,app.kubernetes.io/instance=np")
+          echo "labelled probe: $ALLOWED"
+          case "$ALLOWED" in
+            exit=0) echo "a pod with the release labels reaches the filer";;
+            *) echo "FAIL: the filer policy rejects a pod carrying the release labels"; exit 1;;
+          esac
+
+          # The same probe without those labels must not get through. Assert the
+          # wget failure rather than the absence of a success, so an empty log
+          # fails the job instead of reading as a denial.
+          DENIED=$(probe probe-denied "role=outsider")
+          echo "unlabelled probe: $DENIED"
+          case "$DENIED" in
+            exit=0) echo "FAIL: a pod outside the release reached the filer; the policy over-allows"; exit 1;;
+            exit=*) echo "the filer policy refuses a pod outside the release";;
+            *) echo "FAIL: the probe produced no result, so nothing was tested: '$DENIED'"; exit 1;;
+          esac
+
+          kubectl delete namespace "$NS" --wait=false
+          echo "default-deny namespace tests passed"

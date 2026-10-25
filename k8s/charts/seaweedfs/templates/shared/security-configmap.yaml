@@ -1,4 +1,5 @@
-{{- if .Values.global.enableSecurity }}
+{{- include "seaweedfs.compat" . -}}
+{{- if include "seaweedfs.securityConfigEnabled" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,43 +18,60 @@ data:
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
   {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
   {{- end }}
-  {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
+  {{- $existingToml := dig "data" "security.toml" "" $existing }}
+  {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}
+  {{- $jwtSigning := $securityConfigValues.jwtSigning | default dict }}
+  {{- $expiresAfterSeconds := $jwtSigning.expiresAfterSeconds | default dict }}
   security.toml: |-
     # this file is read by master, volume server, and filer
 
-    {{- if .Values.global.securityConfig.jwtSigning.volumeWrite }}
+    {{- if $jwtSigning.volumeWrite }}
     # the jwt signing key is read by master and volume server
-    # a jwt expires in 10 seconds
+    # the jwt defaults to expire after 10 seconds
     [jwt.signing]
-    key = "{{ dig "jwt" "signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    {{- if gt (int $expiresAfterSeconds.volumeWrite) 0 }}
+    expires_after_seconds = {{ int $expiresAfterSeconds.volumeWrite }}
+    {{- end }}
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.volumeRead }}
+    {{- if $jwtSigning.volumeRead }}
     # this jwt signing key is read by master and volume server, and it is used for read operations:
     # - the Master server generates the JWT, which can be used to read a certain file on a volume server
     # - the Volume server validates the JWT on reading
+    # the jwt defaults to expire after 60 seconds
     [jwt.signing.read]
-    key = "{{ dig "jwt" "signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    {{- if gt (int $expiresAfterSeconds.volumeRead) 0 }}
+    expires_after_seconds = {{ int $expiresAfterSeconds.volumeRead }}
+    {{- end }}
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.filerWrite }}
+    {{- if $jwtSigning.filerWrite }}
     # If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
     # - the Filer server validates the JWT on writing
-    # the jwt defaults to expire after 10 seconds.
+    # the jwt defaults to expire after 10 seconds
     [jwt.filer_signing]
-    key = "{{ dig "jwt" "filer_signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    {{- if gt (int $expiresAfterSeconds.filerWrite) 0 }}
+    expires_after_seconds = {{ int $expiresAfterSeconds.filerWrite }}
+    {{- end }}
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.filerRead }}
+    {{- if $jwtSigning.filerRead }}
     # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
     # - the Filer server validates the JWT on reading
-    # the jwt defaults to expire after 10 seconds.
+    # the jwt defaults to expire after 60 seconds
     [jwt.filer_signing.read]
-    key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    {{- if gt (int $expiresAfterSeconds.filerRead) 0 }}
+    expires_after_seconds = {{ int $expiresAfterSeconds.filerRead }}
+    {{- end }}
     {{- end }}
 
+    {{- if .Values.global.seaweedfs.enableSecurity }}
     # all grpc tls authentications are mutual
     # the values for the following ca, cert, and key are paths to the PERM files.
     [grpc]
@@ -79,6 +97,19 @@ data:
     cert = "/usr/local/share/ca-certificates/worker/tls.crt"
     key  = "/usr/local/share/ca-certificates/worker/tls.key"
 
+    {{- /* S3 gRPC server identity (weed s3 -port.grpc, default httpPort+10000).
+      Without this section, LoadServerTLS("grpc.s3") returns nil and the S3
+      server serves its internal gRPC (IAM cache propagation, s3 lifecycle
+      delete RPCs) as plaintext, while peers dial it with mTLS credentials:
+      "tls: first record does not look like a TLS handshake".
+      Always uses the internal CA-signed client certificate (already mounted
+      on s3 pods by s3-deployment.yaml). Deliberately NOT s3.tlsSecret: that
+      secret is for the public HTTPS listener and may be issued by a public
+      CA which internal gRPC peers (trusting only grpc.ca) would reject. */}}
+    [grpc.s3]
+    cert = "/usr/local/share/ca-certificates/client/tls.crt"
+    key  = "/usr/local/share/ca-certificates/client/tls.key"
+
     # use this for any place needs a grpc client
     # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
     [grpc.client]
@@ -93,4 +124,5 @@ data:
     [https.volume]
     cert = ""
     key  = ""
+    {{- end }}
 {{- end }}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
@@ -40,33 +41,67 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 	}
 	defer ecxFile.Close()
 
-	idxFile, openErr := os.OpenFile(baseFileName+".idx", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// Write to a temp file and atomically rename into place, so a crash mid-write
+	// never leaves a partial .idx at the final name beside the source shards.
+	idxFileName := baseFileName + ".idx"
+	tmpFileName := idxFileName + ".tmp"
+	idxFile, openErr := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open %s.idx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open %s: %v", tmpFileName, openErr)
 	}
-	defer idxFile.Close()
+	committed := false
+	defer func() {
+		idxFile.Close()
+		if !committed {
+			os.Remove(tmpFileName)
+		}
+	}()
 
-	io.Copy(idxFile, ecxFile)
+	if _, err = io.Copy(idxFile, ecxFile); err != nil {
+		return fmt.Errorf("copy ecx to idx for %s: %v", baseFileName, err)
+	}
 
 	err = iterateEcjFile(baseFileName, func(key types.NeedleId) error {
-
 		bytes := needle_map.ToBytes(key, types.Offset{}, types.TombstoneFileSize)
-		idxFile.Write(bytes)
-
+		if _, writeErr := idxFile.Write(bytes); writeErr != nil {
+			return writeErr
+		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// fsync, rename, then fsync the dir so the decoded .idx is durable and
+	// atomically published before the caller deletes the source shards.
+	if err = idxFile.Sync(); err != nil {
+		return fmt.Errorf("sync idx for %s: %v", baseFileName, err)
+	}
+	if err = idxFile.Close(); err != nil {
+		return fmt.Errorf("close idx for %s: %v", baseFileName, err)
+	}
+	if err = os.Rename(tmpFileName, idxFileName); err != nil {
+		return fmt.Errorf("rename idx for %s: %v", baseFileName, err)
+	}
+	if err = util.FsyncDir(filepath.Dir(idxFileName)); err != nil {
+		return fmt.Errorf("fsync dir for %s: %v", baseFileName, err)
+	}
+	committed = true
+	return nil
 }
 
 // FindDatFileSize calculate .dat file size from max offset entry
 // there may be extra deletions after that entry
 // but they are deletions anyway
-func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64, err error) {
+// shard0FileName is the actual path of the .ec00 shard file, which on a
+// multi-disk server may sit on a different disk than the EcVolume's own base
+// path — the store registers shards per disk, so the caller must pass the
+// path CollectEcShards resolved rather than deriving it from a base name.
+func FindDatFileSize(shard0FileName, indexBaseFileName string) (datSize int64, err error) {
 
-	version, err := readEcVolumeVersion(dataBaseFileName)
+	version, err := readEcVolumeVersion(shard0FileName)
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s version: %v", shard0FileName, err)
 	}
 
 	// Safety: ensure datSize is at least SuperBlockSize. While the caller typically
@@ -91,19 +126,37 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 	return
 }
 
-func readEcVolumeVersion(baseFileName string) (version needle.Version, err error) {
+// VerifyDecodedDatFile checks that a reconstructed .dat is long enough to hold
+// every needle its index references. datFileSize is the extent the EC index
+// describes (see FindDatFileSize), so a shorter file cannot serve the needles
+// past the cut -- and the caller is about to delete the shards that are their
+// only other copy, which turns a short write into data loss rather than a
+// failed decode.
+func VerifyDecodedDatFile(dataBaseFileName string, datFileSize int64) error {
+	datPath := dataBaseFileName + ".dat"
+	stat, err := os.Stat(datPath)
+	if err != nil {
+		return fmt.Errorf("stat decoded %s: %w", datPath, err)
+	}
+	if stat.Size() < datFileSize {
+		return fmt.Errorf("decoded %s is %d bytes, short of the %d its ec index references", datPath, stat.Size(), datFileSize)
+	}
+	return nil
+}
+
+func readEcVolumeVersion(shard0FileName string) (version needle.Version, err error) {
 
 	// find volume version
-	datFile, err := os.OpenFile(baseFileName+".ec00", os.O_RDONLY, 0644)
+	datFile, err := os.OpenFile(shard0FileName, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, fmt.Errorf("open ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("open ec volume %s superblock: %v", shard0FileName, err)
 	}
 	datBackend := backend.NewDiskFile(datFile)
 
 	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	datBackend.Close()
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s superblock: %v", shard0FileName, err)
 	}
 
 	return superBlock.Version, nil
@@ -119,12 +172,13 @@ func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 	buf := make([]byte, types.NeedleMapEntrySize)
 	for {
-		n, err := ecxFile.Read(buf)
-		if n != types.NeedleMapEntrySize {
-			if err == io.EOF {
-				return nil
-			}
-			return err
+		// .ecx is a sealed index: a partial trailing record means corruption, not a torn append.
+		_, err := io.ReadFull(ecxFile, buf)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read ecx %s.ecx: %w", baseFileName, err)
 		}
 		key, offset, size := idx.IdxFileEntry(buf)
 		if processNeedleFn != nil {
@@ -172,45 +226,98 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 }
 
-// WriteDatFile generates .dat from .ec00 ~ .ec09 files
-func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
+// WriteDatFile generates .dat from EC shard files (e.g., .ec00 ~ .ec09 for 10+4).
+// datFileSize is the number of bytes to write, i.e. the live data extent from
+// FindDatFileSize. encodedDatFileSize is the .dat size at encode time, which
+// fixed the shard block layout: deletions can move the live extent below the
+// large-block row boundary, and deriving the layout from the shrunk extent
+// would read the shards in the wrong block order. Pass zero when the .vif does
+// not record the encode-time size to infer the layout from the shard size.
+// largeBlockSize/smallBlockSize are the volume's shard block layout, e.g.
+// ctx.LargeBlockSize()/ctx.SmallBlockSize() from its .vif EC config.
+func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, largeBlockSize, smallBlockSize)
+}
 
-	datFile, openErr := os.OpenFile(baseFileName+".dat", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if openErr != nil {
-		return fmt.Errorf("cannot write volume %s.dat: %v", baseFileName, openErr)
+func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+
+	if len(shardFileNames) == 0 {
+		return fmt.Errorf("no data shard files")
 	}
-	defer datFile.Close()
 
-	inputFiles := make([]*os.File, DataShardsCount)
+	// Write to a temp file and atomically rename into place, so a crash mid-write
+	// never leaves a partial .dat at the final name beside the source shards.
+	datFileName := baseFileName + ".dat"
+	tmpFileName := datFileName + ".tmp"
+	datFile, openErr := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if openErr != nil {
+		return fmt.Errorf("cannot write volume %s: %v", tmpFileName, openErr)
+	}
 
+	// Use the actual number of data shards passed in rather than the global
+	// constant, so the de-striping matches the caller's shard set.
+	dataShards := len(shardFileNames)
+	inputFiles := make([]*os.File, dataShards)
+
+	committed := false
 	defer func() {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
+		datFile.Close()
+		for shardId := 0; shardId < dataShards; shardId++ {
 			if inputFiles[shardId] != nil {
 				inputFiles[shardId].Close()
 			}
 		}
+		if !committed {
+			os.Remove(tmpFileName)
+		}
 	}()
 
-	for shardId := 0; shardId < DataShardsCount; shardId++ {
+	for shardId := 0; shardId < dataShards; shardId++ {
 		inputFiles[shardId], openErr = os.OpenFile(shardFileNames[shardId], os.O_RDONLY, 0)
 		if openErr != nil {
 			return openErr
 		}
 	}
 
-	for datFileSize >= DataShardsCount*ErasureCodingLargeBlockSize {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
-			w, err := io.CopyN(datFile, inputFiles[shardId], ErasureCodingLargeBlockSize)
-			if w != ErasureCodingLargeBlockSize {
+	if encodedDatFileSize <= 0 {
+		// .vif without the encode-time size: infer the padded layout from the
+		// physical shard size, which reads the shards in the same block order.
+		shardFileInfo, statErr := inputFiles[0].Stat()
+		if statErr != nil {
+			return fmt.Errorf("stat %s: %v", shardFileNames[0], statErr)
+		}
+		shardSize := shardFileInfo.Size()
+		// A shard size that is an exact multiple of the large block size is
+		// ambiguous: N large rows, or N-1 large rows plus a full small-block
+		// region. The two layouts only agree below the last large row.
+		// A uniform layout has no such ambiguity — its large and small blocks
+		// are the same size, so every reading of the shard is the same one, and
+		// without this precondition the check fires on every volume.
+		if largeBlockSize != smallBlockSize &&
+			shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
+			return fmt.Errorf("shard size %d of %s does not identify the block layout; re-encode to record the dat size in .vif", shardSize, baseFileName)
+		}
+		encodedDatFileSize = int64(dataShards) * shardSize
+	}
+	if datFileSize > encodedDatFileSize {
+		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)
+	}
+
+	for encodedDatFileSize >= int64(dataShards)*largeBlockSize && datFileSize > 0 {
+		for shardId := 0; shardId < dataShards && datFileSize > 0; shardId++ {
+			toRead := min(datFileSize, largeBlockSize)
+			w, err := io.CopyN(datFile, inputFiles[shardId], toRead)
+			if w != toRead {
 				return fmt.Errorf("copy %s large block on shardId %d: %v", baseFileName, shardId, err)
 			}
-			datFileSize -= ErasureCodingLargeBlockSize
+			datFileSize -= toRead
 		}
+		encodedDatFileSize -= int64(dataShards) * largeBlockSize
 	}
 
 	for datFileSize > 0 {
-		for shardId := 0; shardId < DataShardsCount; shardId++ {
-			toRead := min(datFileSize, ErasureCodingSmallBlockSize)
+		for shardId := 0; shardId < dataShards && datFileSize > 0; shardId++ {
+			toRead := min(datFileSize, smallBlockSize)
 			w, err := io.CopyN(datFile, inputFiles[shardId], toRead)
 			if w != toRead {
 				return fmt.Errorf("copy %s small block %d: %v", baseFileName, shardId, err)
@@ -219,6 +326,21 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		}
 	}
 
+	// fsync, rename, then fsync the dir so the decoded .dat is durable and
+	// atomically published before the caller deletes the source shards.
+	if err := datFile.Sync(); err != nil {
+		return fmt.Errorf("sync dat for %s: %v", baseFileName, err)
+	}
+	if err := datFile.Close(); err != nil {
+		return fmt.Errorf("close dat for %s: %v", baseFileName, err)
+	}
+	if err := os.Rename(tmpFileName, datFileName); err != nil {
+		return fmt.Errorf("rename dat for %s: %v", baseFileName, err)
+	}
+	if err := util.FsyncDir(filepath.Dir(datFileName)); err != nil {
+		return fmt.Errorf("fsync dir for %s: %v", baseFileName, err)
+	}
+	committed = true
 	return nil
 }
 

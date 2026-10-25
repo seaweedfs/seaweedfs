@@ -148,7 +148,7 @@ func TestFlushOffsetGap_ReproduceDataLoss(t *testing.T) {
 		for testOffset := int64(0); testOffset < currentOffset; testOffset += 10 {
 			// Try to read from buffer
 			requestPosition := NewMessagePositionFromOffset(testOffset)
-			buf, _, err := logBuffer.ReadFromBuffer(requestPosition)
+			buf, _, _, err := logBuffer.ReadFromBuffer(requestPosition)
 
 			isReadable := (buf != nil && len(buf.Bytes()) > 0) || err == ResumeFromDiskError
 			status := "OK"

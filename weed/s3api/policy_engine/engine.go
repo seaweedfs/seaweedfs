@@ -2,14 +2,18 @@ package policy_engine
 
 import (
 	"fmt"
-	"net"
+	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -26,13 +30,13 @@ type PolicyEvaluationContext struct {
 	bucketName string
 	policy     *CompiledPolicy
 	cache      *PolicyCache
-	mutex      sync.RWMutex
 }
 
 // PolicyEngine is the main policy evaluation engine
 type PolicyEngine struct {
-	contexts map[string]*PolicyEvaluationContext
-	mutex    sync.RWMutex
+	contexts       map[string]*PolicyEvaluationContext
+	mutex          sync.RWMutex
+	trustedProxies atomic.Pointer[TrustedProxies]
 }
 
 // NewPolicyEngine creates a new policy evaluation engine
@@ -40,6 +44,12 @@ func NewPolicyEngine() *PolicyEngine {
 	return &PolicyEngine{
 		contexts: make(map[string]*PolicyEvaluationContext),
 	}
+}
+
+// SetTrustedProxies configures the allowlist used to decide whether
+// forwarded headers are honored when extracting aws:SourceIp.
+func (engine *PolicyEngine) SetTrustedProxies(tp *TrustedProxies) {
+	engine.trustedProxies.Store(tp)
 }
 
 // SetBucketPolicy sets the policy for a bucket
@@ -162,6 +172,16 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	if !matchedAction {
 		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
 	}
+	// Multipart upload actions (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, etc.)
+	// are implicitly allowed by s3:PutObject, since multipart upload is an implementation
+	// detail of putting objects. Check if this is a multipart action and the statement
+	// grants s3:PutObject.
+	if !matchedAction && multipartActionSet[args.Action] {
+		matchedAction = engine.matchesPatterns(stmt.ActionPatterns, "s3:PutObject")
+		if !matchedAction {
+			matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, "s3:PutObject", args)
+		}
+	}
 	if !matchedAction {
 		return false
 	}
@@ -208,9 +228,32 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 		}
 	}
 
+	// Check NotPrincipal (statement applies to everyone EXCEPT these principals)
+	if len(stmt.NotPrincipalPatterns) > 0 || len(stmt.DynamicNotPrincipalPatterns) > 0 {
+		matchedNotPrincipal := engine.matchesPatterns(stmt.NotPrincipalPatterns, args.Principal)
+		if !matchedNotPrincipal {
+			matchedNotPrincipal = engine.matchesDynamicPatterns(stmt.DynamicNotPrincipalPatterns, args.Principal, args)
+		}
+		if matchedNotPrincipal {
+			return false
+		}
+	}
+
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		match := EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims)
+		condCtx := args.Conditions
+		// Multipart continuation actions (UploadPart, UploadPartCopy) inherit SSE
+		// from CreateMultipartUpload and do not carry their own SSE header.
+		// Inject the real inherited algorithm so Null/StringEquals conditions
+		// evaluate against the value that was set at upload initiation.
+		if IsMultipartContinuationAction(args.Action) {
+			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
+		}
+		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		// Preserve positive string denies on the original complete list; allows, negative conditions, and variables remain canonical.
+		if !match && stmt.Statement.Effect == PolicyEffectDeny && len(args.OriginalGrantConditions) != 0 {
+			match = evaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims, args.OriginalGrantConditions)
+		}
 		if !match {
 			return false
 		}
@@ -377,11 +420,11 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 }
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
-func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
+func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	values["aws:SourceIp"] = []string{extractSourceIP(r)}
+	values["aws:SourceIp"] = []string{engine.extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -399,6 +442,13 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 
 	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
 	// passed to EvaluatePolicy, not extracted from the request.
+
+	if tags := requestObjectTags(r); len(tags) > 0 {
+		for key, value := range tags {
+			values[RequestObjectTagPrefix+key] = []string{value}
+		}
+		values[RequestObjectTagKeys] = slices.Sorted(maps.Keys(tags))
+	}
 
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
@@ -427,109 +477,163 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	// HTTP method
 	values["s3:RequestMethod"] = []string{r.Method}
 
-	// Extract custom headers
+	// Extract custom headers with s3: prefix for AWS-compatible condition keys
 	for key, headerValues := range r.Header {
-		if strings.HasPrefix(strings.ToLower(key), "x-amz-") {
-			values[strings.ToLower(key)] = headerValues
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-") {
+			values["s3:"+lowerKey] = headerValues
 		}
+	}
+
+	// Normalize s3:x-amz-server-side-encryption value to canonical form.
+	// AWS accepts "AES256" case-insensitively; normalise so that policy
+	// StringEquals conditions work regardless of client capitalisation.
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if sseVals, ok := values[sseKey]; ok {
+		normalized := make([]string, len(sseVals))
+		for i, v := range sseVals {
+			switch strings.ToUpper(v) {
+			case "AES256":
+				normalized[i] = "AES256"
+			case "AWS:KMS":
+				normalized[i] = "aws:kms"
+			default:
+				normalized[i] = v
+			}
+		}
+		values[sseKey] = normalized
 	}
 
 	return values
 }
 
-// extractSourceIP returns the best-effort client IP address for condition evaluation.
-// Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
-// IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
-// When the service is exposed directly, clients can spoof aws:SourceIp unless a
-// reverse proxy overwrites these headers.
-
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or RFC1918 private ranges.
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or private ranges.
-func isPrivateIP(ip net.IP) bool {
-	if ip == nil {
-		return false
+// requestObjectTags returns the tags that X-Amz-Tagging will store on the
+// object, or nil when the handler ignores the header — otherwise a tag
+// attached to a read or to a write that never stores it would satisfy a
+// tag-conditioned policy the object cannot meet.
+func requestObjectTags(r *http.Request) map[string]string {
+	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
+	if tagging == "" {
+		return nil
 	}
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate()
+	if !storesRequestObjectTags(r) {
+		return nil
+	}
+	// Parse the same non-empty segments the tag handlers store: url.ParseQuery
+	// caps at 10,000 parameters, so a header padded with "&" segments would
+	// hide stored tag keys from every s3:RequestObjectTag* condition. A
+	// malformed pair is rejected by the handler with InvalidTag.
+	tags := make(map[string]string)
+	for _, segment := range strings.Split(tagging, "&") {
+		if segment == "" {
+			continue
+		}
+		rawKey, rawValue, _ := strings.Cut(segment, "=")
+		key, errKey := url.QueryUnescape(rawKey)
+		value, errValue := url.QueryUnescape(rawValue)
+		if errKey != nil || errValue != nil {
+			return nil
+		}
+		// putToFiler rejects a repeated key, but CopyObject stores its last
+		// value, so that is the one the policy has to see.
+		tags[key] = value
+	}
+	return tags
 }
 
-func extractSourceIP(r *http.Request) string {
-	if r == nil {
-		return ""
+// storesRequestObjectTags reports whether the request's handler saves the
+// X-Amz-Tagging header on the object: PutObject, a copy under
+// X-Amz-Tagging-Directive: REPLACE, and CreateMultipartUpload do; every
+// other operation — reads, deletes, part uploads, completion, tagging
+// subresources — does not.
+func storesRequestObjectTags(r *http.Request) bool {
+	query := r.URL.Query()
+	if r.Method == http.MethodPost {
+		return query.Has("uploads") && !query.Has("uploadId")
 	}
-
-	remoteAddr := strings.TrimSpace(r.RemoteAddr)
-	if remoteAddr == "" {
-		return ""
+	if r.Method != http.MethodPut {
+		return false
 	}
-
-	// Fall back to unix socket markers or other non-IP placeholders.
-	if remoteAddr == "@" {
-		return remoteAddr
+	// A numeric partNumber together with uploadId routes to the part
+	// handlers — with or without a copy source — which never read
+	// X-Amz-Tagging.
+	if query.Has("partNumber") && query.Has("uploadId") && isDigits(query.Get("partNumber")) {
+		return false
 	}
-
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-
-	remoteIP := net.ParseIP(host)
-	if remoteIP == nil {
-		// Do not return DNS names or unparseable values.
-		return ""
-	}
-
-	// Only trust forwarding headers when the connection appears to come from
-	// a trusted proxy (e.g., private/loopback address).
-	if isPrivateIP(remoteIP) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Iterate right-to-left to find the first non-trusted (public) IP
-			entries := strings.Split(xff, ",")
-			for i := len(entries) - 1; i >= 0; i-- {
-				candidate := strings.TrimSpace(entries[i])
-				if candidate == "" {
-					continue
-				}
-
-				ip := net.ParseIP(candidate)
-				if ip == nil {
-					continue
-				}
-
-				// If the IP is trusted/private, we treat it as another proxy in the chain and continue
-				if isPrivateIP(ip) {
-					continue
-				}
-
-				// Found a public/non-trusted IP, return it as the client IP
-				return ip.String()
-			}
-
-			// If we exhausted the list (all were private/trusted) or found no valid IPs,
-			// fallback related logic could go here.
-			// For now, if all are private, we continue to check X-Real-Ip or return RemoteIP?
-			// The prompt implies we should prefer the extracted IP.
-			// If all in XFF are private, likely the original client IS private (internal network).
-			// The best guess for "original client" in a fully trusted chain is the left-most valid IP.
-			for _, candidate := range entries {
-				candidate = strings.TrimSpace(candidate)
-				if ip := net.ParseIP(candidate); ip != nil {
-					return ip.String()
-				}
-			}
-		}
-
-		if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
-			if ip := net.ParseIP(xRealIP); ip != nil {
-				return ip.String()
-			}
+	// The PUT subresources route before CopyObject and never read
+	// X-Amz-Tagging; any other query key — presign parameters included —
+	// still reaches the object PUT handlers.
+	for _, subresource := range []string{"tagging", "renameObject", "acl", "retention", "legal-hold"} {
+		if query.Has(subresource) {
+			return false
 		}
 	}
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		return r.Header.Get(s3_constants.AmzObjectTaggingDirective) == "REPLACE"
+	}
+	if query.Has("partNumber") || query.Has("uploadId") {
+		return false
+	}
+	// An explicit directory-marker PUT stores no tags.
+	if strings.HasSuffix(r.URL.Path, "/") && r.ContentLength <= 1024 {
+		return false
+	}
+	return true
+}
 
-	// Default to the actual peer IP when no trusted proxy is detected or the
-	// forwarding headers are absent/invalid.
-	return remoteIP.String()
+// isDigits reports whether s is non-empty and all ASCII digits, matching the
+// partNumber route constraint.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// IsMultipartContinuationAction returns true for actions that do not carry
+// their own SSE header because SSE is inherited from CreateMultipartUpload.
+func IsMultipartContinuationAction(action string) bool {
+	return action == "s3:UploadPart" || action == "s3:UploadPartCopy"
+}
+
+// injectSSEForMultipart returns a condition context augmented with the
+// inherited SSE algorithm for multipart continuation actions.
+//
+// UploadPart and UploadPartCopy do not re-send the SSE header because
+// encryption is set once at CreateMultipartUpload. The caller supplies
+// inheritedSSE (the canonical algorithm, e.g. "AES256" or "aws:kms") so
+// that Null/StringEquals conditions on s3:x-amz-server-side-encryption
+// evaluate against the real value.
+//
+// If inheritedSSE is empty (no SSE was requested at initiation), the
+// conditions map is returned unchanged so Null("true") will correctly
+// match and deny the request.
+func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) map[string][]string {
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if inheritedSSE == "" {
+		return conditions // no SSE at upload initiation; let Null("true") fire
+	}
+	if _, exists := conditions[sseKey]; exists {
+		return conditions // SSE header was actually sent on this request
+	}
+	modified := make(map[string][]string, len(conditions)+1)
+	for k, v := range conditions {
+		modified[k] = v
+	}
+	modified[sseKey] = []string{inheritedSSE}
+	return modified
+}
+
+// extractSourceIP returns the client IP for aws:SourceIp condition
+// evaluation, honoring forwarded headers only when the direct TCP peer is in
+// the configured trusted-proxy allowlist (see SetTrustedProxies).
+func (engine *PolicyEngine) extractSourceIP(r *http.Request) string {
+	return engine.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
@@ -548,92 +652,6 @@ func BuildActionName(action string) string {
 	return fmt.Sprintf("s3:%s", action)
 }
 
-// IsReadAction checks if an action is a read action
-func IsReadAction(action string) bool {
-	readActions := []string{
-		"s3:GetObject",
-		"s3:GetObjectVersion",
-		"s3:GetObjectAcl",
-		"s3:GetObjectVersionAcl",
-		"s3:GetObjectTagging",
-		"s3:GetObjectVersionTagging",
-		"s3:ListBucket",
-		"s3:ListBucketVersions",
-		"s3:GetBucketLocation",
-		"s3:GetBucketVersioning",
-		"s3:GetBucketAcl",
-		"s3:GetBucketCors",
-		"s3:GetBucketPolicy",
-		"s3:GetBucketTagging",
-		"s3:GetBucketNotification",
-		"s3:GetBucketObjectLockConfiguration",
-		"s3:GetObjectRetention",
-		"s3:GetObjectLegalHold",
-	}
-
-	for _, readAction := range readActions {
-		if action == readAction {
-			return true
-		}
-	}
-	return false
-}
-
-// IsWriteAction checks if an action is a write action
-func IsWriteAction(action string) bool {
-	writeActions := []string{
-		"s3:PutObject",
-		"s3:PutObjectAcl",
-		"s3:PutObjectTagging",
-		"s3:DeleteObject",
-		"s3:DeleteObjectVersion",
-		"s3:DeleteObjectTagging",
-		"s3:AbortMultipartUpload",
-		"s3:ListMultipartUploads",
-		"s3:ListParts",
-		"s3:PutBucketAcl",
-		"s3:PutBucketCors",
-		"s3:PutBucketPolicy",
-		"s3:PutBucketTagging",
-		"s3:PutBucketNotification",
-		"s3:PutBucketVersioning",
-		"s3:DeleteBucketPolicy",
-		"s3:DeleteBucketTagging",
-		"s3:DeleteBucketCors",
-		"s3:PutBucketObjectLockConfiguration",
-		"s3:PutObjectRetention",
-		"s3:PutObjectLegalHold",
-		"s3:BypassGovernanceRetention",
-	}
-
-	for _, writeAction := range writeActions {
-		if action == writeAction {
-			return true
-		}
-	}
-	return false
-}
-
-// GetBucketNameFromArn extracts bucket name from ARN
-func GetBucketNameFromArn(arn string) string {
-	if strings.HasPrefix(arn, "arn:aws:s3:::") {
-		parts := strings.SplitN(arn[13:], "/", 2)
-		return parts[0]
-	}
-	return ""
-}
-
-// GetObjectNameFromArn extracts object name from ARN
-func GetObjectNameFromArn(arn string) string {
-	if strings.HasPrefix(arn, "arn:aws:s3:::") {
-		parts := strings.SplitN(arn[13:], "/", 2)
-		if len(parts) > 1 {
-			return parts[1]
-		}
-	}
-	return ""
-}
-
 // GetPolicyStatements returns all policy statements for a bucket
 func (engine *PolicyEngine) GetPolicyStatements(bucketName string) []PolicyStatement {
 	engine.mutex.RLock()
@@ -645,6 +663,46 @@ func (engine *PolicyEngine) GetPolicyStatements(bucketName string) []PolicyState
 	}
 
 	return context.policy.Document.Statement
+}
+
+// BucketsAllowedForAction returns the buckets a policy names in the Allow
+// statements that can match the action, and whether those names cover every
+// bucket the policy can allow it on. A statement reaching buckets it does not
+// name -- a wildcard resource, a policy variable, a NotResource -- leaves the
+// set incomplete, as does an unknown policy name.
+func (engine *PolicyEngine) BucketsAllowedForAction(policyName string, action string) (buckets []string, complete bool) {
+	engine.mutex.RLock()
+	context, exists := engine.contexts[policyName]
+	engine.mutex.RUnlock()
+
+	if !exists {
+		return nil, false
+	}
+
+	for _, statement := range context.policy.Document.Statement {
+		// A Deny only narrows what an Allow named.
+		if statement.Effect != PolicyEffectAllow || !statementMayAllowAction(statement.Action.Strings(), action) {
+			continue
+		}
+		if statement.Resource == nil || statement.NotResource != nil {
+			return nil, false
+		}
+		resources := statement.Resource.Strings()
+		if len(resources) == 0 {
+			return nil, false
+		}
+		for _, resource := range resources {
+			if PolicyVariableRegex.MatchString(resource) {
+				return nil, false
+			}
+			bucket := GetBucketFromResource(resource)
+			if bucket == "" || strings.ContainsAny(bucket, "*?") {
+				return nil, false
+			}
+			buckets = append(buckets, bucket)
+		}
+	}
+	return buckets, true
 }
 
 // ValidatePolicyForBucket validates if a policy is valid for a bucket
@@ -694,7 +752,7 @@ func (engine *PolicyEngine) GetAllBucketsWithPolicies() []string {
 func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, action, principal string, r *http.Request) PolicyEvaluationResult {
 	resource := BuildResourceArn(bucketName, objectName)
 	actionName := BuildActionName(action)
-	conditions := ExtractConditionValuesFromRequest(r)
+	conditions := engine.ExtractConditionValuesFromRequest(r)
 
 	// Extract principal information for variables
 	principalVars := ExtractPrincipalVariables(principal)

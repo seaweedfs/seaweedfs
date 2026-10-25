@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -40,6 +42,13 @@ func (c *commandFsConfigure) Help() string {
 	# apply the changes
 	fs.configure -locationPrefix=/my/folder -collection=abc -apply
 
+	# example: unlock a bucket that quota enforcement made read-only
+	fs.configure -locationPrefix=/buckets/my_bucket/ -readOnly=false -apply
+
+	# example: keep one directory writable under a worm-protected tree
+	fs.configure -locationPrefix=/buckets/my_bucket/ -worm -apply
+	fs.configure -locationPrefix=/buckets/my_bucket/scratch/ -worm=false -apply
+
 	# delete the changes
 	fs.configure -locationPrefix=/my/folder -delete -apply
 
@@ -58,9 +67,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl (e.g., 1m, 1h, 1d, 1w, 1y)")
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
-	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
+	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes; unset inherits from the parent path")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
-	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly")
+	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly; unset inherits from the parent path")
 	wormGracePeriod := fsConfigureCommand.Uint64("wormGracePeriod", 0, "grace period before worm is enforced, in seconds")
 	wormRetentionTime := fsConfigureCommand.Uint64("wormRetentionTime", 0, "retention time for a worm enforced file, in seconds")
 	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
@@ -74,19 +83,24 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
+	fc, err := filer.ReadFilerConf(commandEnv.FilerAddress(), commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
 	if err != nil {
 		return err
 	}
 
 	if *locationPrefix != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
+		// A path rule cannot express "the collection with no name": an empty
+		// Collection means "unset" and merges as inherit, so the keyword would
+		// be silently ignored.
+		if *collection == CollectionDefault {
+			return fmt.Errorf("path rules cannot select the collection with no name; omit -collection to inherit")
+		}
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix:           *locationPrefix,
 			Collection:               *collection,
 			Replication:              *replication,
 			Ttl:                      *ttl,
-			Fsync:                    *fsync,
 			MaxFileNameLength:        uint32(*maxFileNameLength),
 			DiskType:                 *diskType,
 			VolumeGrowthCount:        uint32(*volumeGrowthCount),
@@ -94,10 +108,20 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DataCenter:               *dataCenter,
 			Rack:                     *rack,
 			DataNode:                 *dataNode,
-			Worm:                     *worm,
 			WormGracePeriodSeconds:   *wormGracePeriod,
 			WormRetentionTimeSeconds: *wormRetentionTime,
 		}
+
+		// fsync and worm are only carried when the flag is passed, so a rule that
+		// says nothing about them keeps inheriting from the enclosing path
+		fsConfigureCommand.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "fsync":
+				locConf.Fsync = proto.Bool(*fsync)
+			case "worm":
+				locConf.Worm = proto.Bool(*worm)
+			}
+		})
 
 		// check collection
 		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
@@ -130,6 +154,18 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			fc.DeleteLocationConf(*locationPrefix)
 		} else {
 			fc.AddLocationConf(locConf)
+			// AddLocationConf merges this boolean field with OR, which can never
+			// turn it off; let an explicitly passed false win, e.g. -readOnly=false
+			// to reopen a bucket that quota enforcement locked. fsync and worm do
+			// not belong here: they merge on presence, so the values set above
+			// already win.
+			if mergedConf, found := fc.GetLocationConf(*locationPrefix); found {
+				fsConfigureCommand.Visit(func(f *flag.Flag) {
+					if f.Name == "readOnly" {
+						mergedConf.ReadOnly = *isReadOnly
+					}
+				})
+			}
 		}
 	}
 
@@ -142,7 +178,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	if *apply {
 
 		if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
+			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
 		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}

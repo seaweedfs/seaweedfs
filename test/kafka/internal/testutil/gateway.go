@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -109,6 +110,31 @@ func (g *GatewayTestServer) CleanupAndClose() {
 	if err := g.Close(); err != nil {
 		g.t.Errorf("Failed to close gateway: %v", err)
 	}
+}
+
+// LogConsumerGroupSnapshot dumps the gateway's current view of a consumer group.
+func (g *GatewayTestServer) LogConsumerGroupSnapshot(groupID string) {
+	g.t.Helper()
+
+	handler := g.GetHandler()
+	if handler == nil {
+		g.t.Logf("Consumer group snapshot for %s unavailable: handler is nil", groupID)
+		return
+	}
+
+	snapshot := handler.DebugGroupSnapshot(groupID)
+	if snapshot == nil {
+		g.t.Logf("Consumer group snapshot for %s unavailable", groupID)
+		return
+	}
+
+	payload, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		g.t.Logf("Consumer group snapshot for %s could not be marshaled: %v", groupID, err)
+		return
+	}
+
+	g.t.Logf("Consumer group snapshot for %s:\n%s", groupID, string(payload))
 }
 
 // SMQAvailabilityMode indicates whether SeaweedMQ is available for testing

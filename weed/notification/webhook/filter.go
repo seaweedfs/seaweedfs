@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type filter struct {
@@ -40,25 +41,37 @@ func newFilter(cfg *config) *filter {
 }
 
 func (f *filter) shouldPublish(key string, notification *filer_pb.EventNotification) bool {
-	if !f.matchesPath(key) {
+	if !f.matchesPath(key, notification) {
 		return false
 	}
 
-	eventType := detectEventType(notification)
+	eventType := detectEventType(key, notification)
 
 	return f.eventTypes[eventType]
 }
 
-func (f *filter) matchesPath(key string) bool {
+func (f *filter) matchesPath(key string, notification *filer_pb.EventNotification) bool {
 	if len(f.pathPrefixes) == 0 {
 		return true
 	}
 
+	if f.matchesAnyPathPrefix(key) {
+		return true
+	}
+
+	if notification != nil && notification.NewEntry != nil && notification.NewParentPath != "" {
+		newKey := string(util.FullPath(notification.NewParentPath).Child(notification.NewEntry.Name))
+		return f.matchesAnyPathPrefix(newKey)
+	}
+
+	return false
+}
+
+func (f *filter) matchesAnyPathPrefix(key string) bool {
 	for _, prefix := range f.pathPrefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
 		}
 	}
-
 	return false
 }

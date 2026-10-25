@@ -3,24 +3,148 @@ package filer
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/protobuf/proto"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type LogFileEntry struct {
 	TsNs      int64
 	FileEntry *Entry
+}
+
+// logFileMayContainAfter reports whether the log file named for fileTsNs can
+// hold any entry past startTsNs. The following file's name is not the bound: a
+// file is named for the start of the window it holds, minute-truncated, and the
+// window runs up to a flush interval longer, so "12-30" can hold 12:31:20 while
+// "12-31" exists alongside it. Comparing against the next name dropped exactly
+// the spanning file a mid-window cursor needs.
+func logFileMayContainAfter(fileTsNs, startTsNs int64) bool {
+	return fileTsNs+int64(time.Minute)+int64(LogFlushInterval) > startTsNs
+}
+
+// persistedLogScanStart backs a read position off by one flush interval before
+// choosing which log files to open. A log file is named for the start of the
+// window it holds and a window spans up to flushInterval, so a file whose name
+// sorts before the cursor's own minute can still hold entries after it -- a
+// window sealed at 12:30:59 and ending 12:31:58 lives in "12-30". Entries are
+// filtered against the exact cursor afterwards, so widening the file scan only
+// costs a little extra reading and never re-delivers.
+func persistedLogScanStart(t time.Time) time.Time {
+	return t.Add(-LogFlushInterval)
+}
+
+// LastShippedLogEntryTsNsForFiler mirrors the client's reader across one
+// filer's shipped files, in ship order: a file that fails mid-read still
+// delivers its readable prefix and later files still deliver after it, so the
+// newest file with readable content answers. answeredFileTsNs names that file
+// so the caller can roll back the sent state of everything newer - refs the
+// cursor did not reach must re-ship, or a transient probe failure leaves the
+// cursor behind them for the life of the connection.
+// complete reports whether the answering file was read through to its end: a
+// prefix-limited answer means the ref's unread suffix must re-ship too, or a
+// transient mid-file failure abandons it for the life of the connection.
+func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef) (tsNs int64, answeredFileTsNs int64, ok bool, complete bool) {
+	for i := len(refs) - 1; i >= 0; i-- {
+		if tsNs, ok, complete = f.lastShippedLogEntryTsNs(refs[i].Chunks); ok {
+			return tsNs, refs[i].FileTsNs, ok, complete
+		}
+	}
+	return 0, 0, false, false
+}
+
+// lookupLogChunkFn reports whether a chunk still resolves to a live volume.
+// Swapped in tests.
+var lookupLogChunkFn = func(f *Filer, fileId string) error {
+	_, err := f.MasterClient.GetLookupFileIdFunction()(context.Background(), fileId)
+	return err
+}
+
+// lastShippedLogEntryTsNs mirrors the client's read of one shipped file: a
+// sequential scan of exactly these chunks that ends at the first unreadable
+// one, so a marker built from it never claims content the client will not
+// apply. Unreadable includes transient failures - understating the marker
+// only re-ships, overstating loses events - and no error escapes: a probe
+// failure must never block the transition the client is waiting on.
+//
+// Readability is judged where the client reads - the volumes - not by the
+// decoded-chunk cache: a chunk this server decoded an hour ago may sit on a
+// volume that has since died, and the direct-reading client stops there no
+// matter how well the cache still remembers the bytes.
+func (f *Filer) lastShippedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, complete bool) {
+	for _, chunk := range chunks {
+		if lookupErr := lookupLogChunkFn(f, chunk.GetFileIdString()); lookupErr != nil {
+			return tsNs, ok, false
+		}
+		entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
+			return loadLogFileEntriesFn(f.MasterClient, chunk)
+		})
+		if errors.Is(loadErr, errLogChunkIncomplete) {
+			// Records span chunks; the client streams such a file whole.
+			if streamTsNs, streamOk, streamComplete := f.lastStreamedLogEntryTsNs(chunks); streamOk {
+				return streamTsNs, true, streamComplete
+			}
+			return tsNs, ok, false
+		}
+		if loadErr != nil {
+			return tsNs, ok, false // prefix ends here, like the client's reader
+		}
+		if len(entries) > 0 {
+			tsNs, ok = entries[len(entries)-1].TsNs, true
+		}
+	}
+	return tsNs, ok, true
+}
+
+// lastStreamedLogEntryTsNs scans the chunk list as one byte stream, ending
+// where the client's reader ends: a clean or torn tail, a missing chunk, or
+// undecodable bytes all terminate the scan with the progress made.
+func (f *Filer) lastStreamedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, complete bool) {
+	r := newLogFileStreamReader(f.MasterClient, chunks)
+	if closer, isCloser := r.(io.Closer); isCloser {
+		defer closer.Close()
+	}
+	sizeBuf := make([]byte, 4)
+	for {
+		if _, readErr := io.ReadFull(r, sizeBuf); readErr != nil {
+			// A clean or torn tail is where the client's read ends too; only a
+			// mid-stream failure leaves an unread remainder worth re-shipping.
+			ended := readErr == io.EOF || readErr == io.ErrUnexpectedEOF
+			return tsNs, ok, ended
+		}
+		size := util.BytesToUint32(sizeBuf)
+		if size > maxLogEntrySize {
+			return tsNs, ok, false
+		}
+		data := make([]byte, size)
+		if _, readErr := io.ReadFull(r, data); readErr != nil {
+			return tsNs, ok, false
+		}
+		logEntry := &filer_pb.LogEntry{}
+		if unmarshalErr := logEntry.UnmarshalVT(data); unmarshalErr != nil {
+			return tsNs, ok, false
+		}
+		tsNs, ok = logEntry.TsNs, true
+	}
+}
+
+// PersistedLogScanStartTsNs is the oldest file-name timestamp a scan from t
+// can still list. File names are minute-truncated, and the collector compares
+// names at minute granularity, so the bound must truncate too: an exact-ns
+// bound sits inside the boundary file's minute and disowns a file the next
+// collection will still return.
+func PersistedLogScanStartTsNs(t time.Time) int64 {
+	return persistedLogScanStart(t).Truncate(time.Minute).UnixNano()
 }
 
 func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64) (v *OrderedLogVisitor, err error) {
@@ -29,7 +153,8 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 		return nil, io.EOF
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
@@ -38,6 +163,90 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 
 	return NewOrderedLogVisitor(f, startPosition, stopTsNs, dayEntries)
 
+}
+
+// CollectLogFileRefs lists persisted log files and returns their chunk references
+// without reading any data from volume servers. The client can use the returned
+// fids to read log file data directly from volume servers in parallel.
+func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer.MessagePosition, stopTsNs int64) (refs []*filer_pb.LogFileChunkRef, lastTsNs int64, err error) {
+	if stopTsNs != 0 && startPosition.Time.UnixNano() > stopTsNs {
+		return nil, 0, nil
+	}
+
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", scanFrom.Hour(), scanFrom.Minute())
+	var stopDate, stopHourMinute string
+	if stopTsNs != 0 {
+		stopTime := time.Unix(0, stopTsNs).UTC()
+		stopDate = fmt.Sprintf("%04d-%02d-%02d", stopTime.Year(), stopTime.Month(), stopTime.Day())
+		stopHourMinute = fmt.Sprintf("%02d-%02d", stopTime.Hour(), stopTime.Minute())
+	}
+
+	dayEntries, _, listDayErr := f.ListDirectoryEntries(ctx, SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
+	if listDayErr != nil {
+		return nil, 0, fmt.Errorf("fail to list log by day: %w", listDayErr)
+	}
+
+	for _, dayEntry := range dayEntries {
+		if stopDate != "" && strings.Compare(dayEntry.Name(), stopDate) > 0 {
+			break
+		}
+
+		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+		if listErr != nil {
+			return nil, 0, fmt.Errorf("fail to list log %s: %w", dayEntry.Name(), listErr)
+		}
+
+		for _, hmEntry := range hourMinuteEntries {
+			hourMinute := util.FileNameBase(hmEntry.Name())
+			if dayEntry.Name() == startDate && strings.Compare(hourMinute, startHourMinute) < 0 {
+				continue
+			}
+			if dayEntry.Name() == stopDate && stopHourMinute != "" && strings.Compare(hourMinute, stopHourMinute) > 0 {
+				break
+			}
+
+			tsMinute := fmt.Sprintf("%s-%s", dayEntry.Name(), hourMinute)
+			t, parseErr := time.Parse("2006-01-02-15-04", tsMinute)
+			if parseErr != nil {
+				glog.Errorf("failed to parse %s: %v", tsMinute, parseErr)
+				continue
+			}
+			filerId := getFilerId(hmEntry.Name())
+			if filerId == "" {
+				continue
+			}
+
+			chunks := hmEntry.GetChunks()
+			if len(chunks) == 0 {
+				continue
+			}
+
+			refs = append(refs, &filer_pb.LogFileChunkRef{
+				Chunks:   chunks,
+				FileTsNs: t.UnixNano(),
+				FilerId:  filerId,
+			})
+			lastTsNs = t.UnixNano()
+		}
+	}
+	lastTsNs = clampLogRefsCursor(lastTsNs, startPosition.Time.UnixNano())
+	return
+}
+
+// clampLogRefsCursor keeps a chunk-ref read from moving the subscriber's cursor
+// backwards. Refs are named for the minute their window starts in, so the last
+// one routinely sorts before the position that was asked for -- always, now
+// that the scan reaches back a flush interval to pick up a spanning file. The
+// caller makes this value the new read position, and rewinding it would replay
+// memory from before the client's own SinceNs and re-send what the chunk reader
+// has already been handed.
+func clampLogRefsCursor(lastTsNs, startTsNs int64) int64 {
+	if lastTsNs < startTsNs {
+		return startTsNs
+	}
+	return lastTsNs
 }
 
 func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {
@@ -129,6 +338,15 @@ func (o *OrderedLogVisitor) GetNext() (logEntry *filer_pb.LogEntry, err error) {
 	return item.Entry, nil
 }
 
+// Close releases any log file readers still open across the per-filer
+// iterators, e.g. when a subscription stops before reaching the end. Safe to
+// call more than once.
+func (o *OrderedLogVisitor) Close() {
+	for _, it := range o.perFilerIteratorMap {
+		it.Close()
+	}
+}
+
 func getFilerId(name string) string {
 	idx := strings.LastIndex(name, ".")
 	if idx < 0 {
@@ -157,8 +375,9 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 		// println("enqueue day entry", dayEntry.Name())
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Time.Hour(), startPosition.Time.Minute())
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", scanFrom.Hour(), scanFrom.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
 		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Second)).UTC()
@@ -176,10 +395,6 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 		stopDate:        stopDate,
 		stopHourMinute:  stopHourMinute,
 	}
-}
-
-func (c *LogFileEntryCollector) hasMore() bool {
-	return c.dayEntryQueue.Len() > 0
 }
 
 func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
@@ -227,7 +442,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		}
 		iter, found := v.perFilerIteratorMap[filerId]
 		if !found {
-			iter = newLogFileQueueIterator(c.f.MasterClient, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
+			iter = newLogFileQueueIterator(c.f.MasterClient, c.f.persistedLogCache, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
 			v.perFilerIteratorMap[filerId] = iter
 			freshFilerIds[filerId] = hourMinuteEntry.Name()
 		}
@@ -265,37 +480,67 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 // ----------
 
 type LogFileQueueIterator struct {
-	q              *util.Queue[*LogFileEntry]
-	masterClient   *wdclient.MasterClient
-	startTsNs      int64
-	stopTsNs       int64
-	pendingEntries []*filer_pb.LogEntry
-	pendingIndex   int
+	q                   *util.Queue[*LogFileEntry]
+	masterClient        *wdclient.MasterClient
+	cache               *persistedLogCache
+	startTsNs           int64
+	stopTsNs            int64
+	currentFileIterator *LogFileIterator
 }
 
-func newLogFileQueueIterator(masterClient *wdclient.MasterClient, q *util.Queue[*LogFileEntry], startTsNs, stopTsNs int64) *LogFileQueueIterator {
+func newLogFileQueueIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, q *util.Queue[*LogFileEntry], startTsNs, stopTsNs int64) *LogFileQueueIterator {
 	return &LogFileQueueIterator{
 		q:            q,
 		masterClient: masterClient,
+		cache:        cache,
 		startTsNs:    startTsNs,
 		stopTsNs:     stopTsNs,
 	}
 }
 
-// getNext will return io.EOF when done
+// Close releases the current log file reader, if any. Safe to call more than once.
+func (iter *LogFileQueueIterator) Close() {
+	if iter.currentFileIterator != nil {
+		if err := iter.currentFileIterator.Close(); err != nil {
+			glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, err)
+		}
+		iter.currentFileIterator = nil
+	}
+}
+
+// getNext yields one log entry at a time from the current file, advancing to
+// the next file as each is exhausted. It returns io.EOF when done. Entries are
+// decoded one chunk at a time and shared across subscribers, so per-subscriber
+// memory stays bounded regardless of log file size.
 func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer_pb.LogEntry, err error) {
 	for {
-		// return pending entries first
-		if iter.pendingIndex < len(iter.pendingEntries) {
-			logEntry = iter.pendingEntries[iter.pendingIndex]
-			iter.pendingIndex++
-			return logEntry, nil
+		if iter.currentFileIterator != nil {
+			logEntry, err = iter.currentFileIterator.getNext()
+			if err == nil {
+				return logEntry, nil
+			}
+			// The current file is done (io.EOF), its volume was deleted, or it is
+			// unreadable. Close it on every path so the reader is not left alive
+			// until GC; only a genuine read error is propagated.
+			readErr := err
+			switch {
+			case readErr == io.EOF:
+				readErr = nil
+			case isChunkNotFoundError(readErr):
+				// Volume or chunk was deleted, skip the rest of this log file
+				glog.Warningf("skipping rest of %s: %v", iter.currentFileIterator.filePath, readErr)
+				readErr = nil
+			}
+			if closeErr := iter.currentFileIterator.Close(); closeErr != nil {
+				glog.Warningf("close log file %s: %v", iter.currentFileIterator.filePath, closeErr)
+			}
+			iter.currentFileIterator = nil
+			if readErr != nil {
+				return nil, readErr
+			}
 		}
-		// reset for next file
-		iter.pendingEntries = nil
-		iter.pendingIndex = 0
 
-		// read entries from next file
+		// advance to the next file
 		if iter.q.Len() == 0 {
 			return nil, io.EOF
 		}
@@ -307,55 +552,32 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 		if iter.stopTsNs != 0 && t.TsNs > iter.stopTsNs {
 			return nil, io.EOF
 		}
-		next := iter.q.Peek()
-		if next == nil {
+		if iter.q.Peek() == nil {
 			if collectErr := v.logFileEntryCollector.collectMore(v); collectErr != nil && collectErr != io.EOF {
 				return nil, collectErr
 			}
-			next = iter.q.Peek() // Re-peek after collectMore
 		}
-		// skip the file if the next entry is before the startTsNs
-		if next != nil && next.TsNs <= iter.startTsNs {
+		if !logFileMayContainAfter(t.TsNs, iter.startTsNs) {
 			continue
 		}
-
-		// read all entries from this file
-		iter.pendingEntries, err = iter.readFileEntries(t.FileEntry)
-		if err != nil {
-			return nil, err
-		}
-	}
-}
-
-// readFileEntries reads all log entries from a single file
-func (iter *LogFileQueueIterator) readFileEntries(fileEntry *Entry) (entries []*filer_pb.LogEntry, err error) {
-	fileIterator := newLogFileIterator(iter.masterClient, fileEntry, iter.startTsNs, iter.stopTsNs)
-	defer func() {
-		if closeErr := fileIterator.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-	}()
-
-	for {
-		logEntry, err := fileIterator.getNext()
-		if err == io.EOF {
-			return entries, nil
-		}
-		if err != nil {
-			if isChunkNotFoundError(err) {
-				// Volume or chunk was deleted, skip the rest of this log file
-				glog.Warningf("skipping rest of %s: %v", fileIterator.filePath, err)
-				return entries, nil
-			}
-			return nil, err
-		}
-		entries = append(entries, logEntry)
+		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, iter.startTsNs, iter.stopTsNs)
 	}
 }
 
 // ----------
 
 type LogFileIterator struct {
+	// cached mode: each immutable chunk is decoded once and shared read-only
+	// across subscribers via the persisted-log cache.
+	masterClient *wdclient.MasterClient
+	cache        *persistedLogCache
+	chunks       []*filer_pb.FileChunk
+	chunkIdx     int
+	cur          []*filer_pb.LogEntry
+	curPos       int
+	lastTsNs     int64
+	// streaming mode: the whole file as one byte stream, the fallback when a
+	// chunk does not decode standalone (records spanning chunk boundaries).
 	r         io.Reader
 	sizeBuf   []byte
 	startTsNs int64
@@ -363,14 +585,40 @@ type LogFileIterator struct {
 	filePath  string
 }
 
-func newLogFileIterator(masterClient *wdclient.MasterClient, fileEntry *Entry, startTsNs, stopTsNs int64) *LogFileIterator {
-	return &LogFileIterator{
-		r:         NewChunkStreamReaderFromFiler(context.Background(), masterClient, fileEntry.Chunks),
-		sizeBuf:   make([]byte, 4),
+// swapped in tests
+var loadLogFileEntriesFn = loadLogFileEntries
+var newLogFileStreamReader = func(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) io.Reader {
+	return NewChunkStreamReaderFromFiler(context.Background(), masterClient, chunks)
+}
+
+func newLogFileIterator(masterClient *wdclient.MasterClient, cache *persistedLogCache, fileEntry *Entry, startTsNs, stopTsNs int64) *LogFileIterator {
+	iter := &LogFileIterator{
+		masterClient: masterClient,
+		cache:        cache,
+		// sort a copy, leaving the listed entry's chunk order alone
+		chunks:    append([]*filer_pb.FileChunk(nil), fileEntry.GetChunks()...),
 		startTsNs: startTsNs,
 		stopTsNs:  stopTsNs,
 		filePath:  string(fileEntry.FullPath),
 	}
+	sort.SliceStable(iter.chunks, func(i, j int) bool {
+		return iter.chunks[i].Offset < iter.chunks[j].Offset
+	})
+	if cache == nil {
+		iter.startStreaming()
+	}
+	return iter
+}
+
+// startStreaming switches to the byte-stream fallback, resuming after the last
+// yielded entry.
+func (iter *LogFileIterator) startStreaming() {
+	if iter.lastTsNs > iter.startTsNs {
+		iter.startTsNs = iter.lastTsNs
+	}
+	iter.r = newLogFileStreamReader(iter.masterClient, iter.chunks)
+	iter.sizeBuf = make([]byte, 4)
+	iter.cur, iter.curPos = nil, 0
 }
 
 func (iter *LogFileIterator) Close() error {
@@ -382,6 +630,9 @@ func (iter *LogFileIterator) Close() error {
 
 // getNext will return io.EOF when done
 func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) {
+	if iter.r == nil {
+		return iter.getNextCached()
+	}
 	var n int
 	for {
 		n, err = iter.r.Read(iter.sizeBuf)
@@ -392,7 +643,9 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 			return nil, fmt.Errorf("size %d bytes, expected 4 bytes", n)
 		}
 		size := util.BytesToUint32(iter.sizeBuf)
-		// println("entry size", size)
+		if size > maxLogEntrySize {
+			return nil, fmt.Errorf("%s entry size %d exceeds %d", iter.filePath, size, maxLogEntrySize)
+		}
 		entryData := make([]byte, size)
 		n, err = iter.r.Read(entryData)
 		if err != nil {
@@ -402,7 +655,7 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 			return nil, fmt.Errorf("entry data %d bytes, expected %d bytes", n, size)
 		}
 		logEntry = &filer_pb.LogEntry{}
-		if err = proto.Unmarshal(entryData, logEntry); err != nil {
+		if err = logEntry.UnmarshalVT(entryData); err != nil {
 			return
 		}
 		if logEntry.TsNs <= iter.startTsNs {
@@ -412,5 +665,47 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 			return nil, io.EOF
 		}
 		return
+	}
+}
+
+// getNextCached yields from shared per-chunk decoded slices, loading chunks
+// lazily and in order.
+func (iter *LogFileIterator) getNextCached() (logEntry *filer_pb.LogEntry, err error) {
+	for {
+		for iter.curPos < len(iter.cur) {
+			logEntry = iter.cur[iter.curPos]
+			iter.curPos++
+			if logEntry.TsNs <= iter.startTsNs {
+				continue
+			}
+			if iter.stopTsNs != 0 && logEntry.TsNs > iter.stopTsNs {
+				return nil, io.EOF
+			}
+			iter.lastTsNs = logEntry.TsNs
+			return logEntry, nil
+		}
+		if iter.chunkIdx >= len(iter.chunks) {
+			return nil, io.EOF
+		}
+		chunk := iter.chunks[iter.chunkIdx]
+		iter.chunkIdx++
+		// the flush upload time upper-bounds every record ts in the chunk; the
+		// margin tolerates a wall-clock retreat between stamping and upload
+		if chunk.ModifiedTsNs > 0 && chunk.ModifiedTsNs+int64(LogFlushInterval) <= iter.startTsNs {
+			continue
+		}
+		entries, loadErr := iter.cache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
+			return loadLogFileEntriesFn(iter.masterClient, chunk)
+		})
+		if loadErr != nil {
+			if errors.Is(loadErr, errLogChunkIncomplete) {
+				glog.V(1).Infof("log file %s chunk %s does not decode standalone, streaming the file", iter.filePath, chunk.GetFileIdString())
+				iter.startStreaming()
+				return iter.getNext()
+			}
+			return nil, loadErr
+		}
+		iter.cur = entries
+		iter.curPos = sort.Search(len(entries), func(i int) bool { return entries[i].TsNs > iter.startTsNs })
 	}
 }

@@ -18,13 +18,26 @@ type statsCache struct {
 	lastChecked int64 // unix time in seconds
 }
 
+// diskSizes reports the sizes df and the quota work from. By default that is
+// the space the cluster gives up to the data, counting every replica and every
+// EC shard. Under -df.logical it is the data itself, with the free space
+// converted to how much more of it the mount's replication setting allows.
+func (wfs *WFS) diskSizes() (totalSize, usedSize uint64) {
+	// a filer older than the logical sizes sends zeros, so keep reporting the
+	// raw ones rather than an empty filesystem
+	if wfs.option.LogicalDiskUsage && wfs.stats.LogicalTotalSize > 0 {
+		return wfs.stats.LogicalTotalSize, wfs.stats.LogicalUsedSize
+	}
+	return wfs.stats.TotalSize, wfs.stats.UsedSize
+}
+
 func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
 	// glog.V(4).Infof("reading fs stats")
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,
@@ -34,7 +47,7 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 			}
 
 			glog.V(4).Infof("reading filer stats: %+v", request)
-			resp, err := client.Statistics(context.Background(), request)
+			resp, err := client.Statistics(ctx, request)
 			if err != nil {
 				glog.V(0).Infof("reading filer stats %v: %v", request, err)
 				return err
@@ -43,19 +56,20 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize
+			wfs.stats.LogicalTotalSize = resp.LogicalTotalSize
+			wfs.stats.LogicalUsedSize = resp.LogicalUsedSize
 			wfs.stats.FileCount = resp.FileCount
 			wfs.stats.lastChecked = time.Now().Unix()
 
 			return nil
 		})
 		if err != nil {
+			// the last known sizes beat the empty filesystem a bare return reports
 			glog.V(0).Infof("filer Statistics: %v", err)
-			return fuse.OK
 		}
 	}
 
-	totalDiskSize := wfs.stats.TotalSize
-	usedDiskSize := wfs.stats.UsedSize
+	totalDiskSize, usedDiskSize := wfs.diskSizes()
 	actualFileCount := wfs.stats.FileCount
 
 	if wfs.option.Quota > 0 && totalDiskSize > uint64(wfs.option.Quota) {
@@ -109,7 +123,7 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 	out.Ffree = math.MaxInt64 - actualFileCount
 
 	// Report the maximum length of a name and the minimum fragment size
-	out.NameLen = 1024
+	out.NameLen = 255
 	out.Frsize = uint32(blockSize)
 
 	return fuse.OK

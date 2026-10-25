@@ -277,3 +277,80 @@ print(f"Count at snapshot: {count}")
 
 	t.Logf(">>> Time travel test passed")
 }
+
+// TestSparkMultiLevelNamespace tests that multi-level namespaces produce correct
+// S3 paths (dot-separated) so that Spark can read back the data it writes.
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/8959
+func TestSparkMultiLevelNamespace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env, _, _ := setupSparkTestEnv(t)
+
+	// Use a two-level namespace like "analytics.daily"
+	nsLevel1 := "analytics_" + randomString(4)
+	nsLevel2 := "daily_" + randomString(4)
+	multiNs := fmt.Sprintf("%s.%s", nsLevel1, nsLevel2)
+	tableName := "events_" + randomString(4)
+
+	// Create multi-level namespace
+	t.Logf(">>> Creating multi-level namespace: %s", multiNs)
+	createNsSQL := fmt.Sprintf(`
+spark.sql("CREATE NAMESPACE iceberg.%s")
+print("Namespace created")
+`, multiNs)
+	output := runSparkPySQL(t, env.sparkContainer, createNsSQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Namespace created") {
+		t.Fatalf("multi-level namespace creation failed, output: %s", output)
+	}
+
+	// Create table under multi-level namespace
+	t.Logf(">>> Creating table under multi-level namespace")
+	createTableSQL := fmt.Sprintf(`
+spark.sql("""
+CREATE TABLE iceberg.%s.%s (
+    id INT,
+    event STRING,
+    ts TIMESTAMP
+)
+USING iceberg
+""")
+print("Table created")
+`, multiNs, tableName)
+	output = runSparkPySQL(t, env.sparkContainer, createTableSQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Table created") {
+		t.Fatalf("table creation under multi-level namespace failed, output: %s", output)
+	}
+
+	// Insert data
+	t.Logf(">>> Inserting data into multi-level namespace table")
+	insertSQL := fmt.Sprintf(`
+spark.sql("""
+INSERT INTO iceberg.%s.%s VALUES
+    (1, 'click', TIMESTAMP '2025-01-01 00:00:00'),
+    (2, 'view',  TIMESTAMP '2025-01-01 01:00:00'),
+    (3, 'click', TIMESTAMP '2025-01-02 00:00:00')
+""")
+print("Data inserted")
+`, multiNs, tableName)
+	output = runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Data inserted") {
+		t.Fatalf("data insertion failed, output: %s", output)
+	}
+
+	// Query data back — this is the key test: if the namespace path separator
+	// was wrong (\x1F instead of "."), Spark would not find the data files.
+	t.Logf(">>> Querying data from multi-level namespace table")
+	querySQL := fmt.Sprintf(`
+result = spark.sql("SELECT COUNT(*) as count FROM iceberg.%s.%s")
+count = result.collect()[0]['count']
+print(f"Row count: {count}")
+`, multiNs, tableName)
+	output = runSparkPySQL(t, env.sparkContainer, querySQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Row count: 3") {
+		t.Errorf("expected row count 3 from multi-level namespace table, got output: %s", output)
+	}
+
+	t.Logf(">>> Multi-level namespace test passed")
+}

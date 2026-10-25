@@ -64,7 +64,7 @@ func moveToNextBlock(blockIndex int, isLargeBlock bool, nLargeBlockRows int64) (
 
 func locateOffset(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {
 	largeRowSize := largeBlockLength * DataShardsCount
-	nLargeBlockRows = (shardDatSize - 1) / largeBlockLength
+	nLargeBlockRows = shardDatSize / largeBlockLength
 
 	// if offset is within the large block area
 	if offset < nLargeBlockRows*largeRowSize {

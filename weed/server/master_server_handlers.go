@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +54,17 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		httpStatus = http.StatusNotFound
+		if location.NotFound && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+			httpStatus = http.StatusServiceUnavailable
+			remaining := ms.Topo.RemainingWarmupDuration()
+			if remaining < time.Second {
+				remaining = time.Second
+			}
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
+			location.Error = "service warming up, please retry"
+		} else {
+			httpStatus = http.StatusNotFound
+		}
 	} else {
 		forRead := r.FormValue("read")
 		isRead := forRead == "yes"
@@ -70,36 +81,37 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 	if ms.Topo.IsLeader() {
 		volumeId, newVolumeIdErr := needle.NewVolumeId(vid)
 		if newVolumeIdErr != nil {
-			err = fmt.Errorf("Unknown volume id %s", vid)
+			err = fmt.Errorf("unknown volume id %s", vid)
 		} else {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
-				locations = append(locations, operation.Location{
-					Url:        loc.Url(),
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.GetDataCenterId(),
-					GrpcPort:   loc.GrpcPort,
-				})
+				locations = append(locations, topologyLocation(loc, volumeId))
 			}
 		}
 	} else {
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
 			locations = append(locations, operation.Location{
-				Url:        loc.Url,
-				PublicUrl:  loc.PublicUrl,
-				DataCenter: loc.DataCenter,
-				GrpcPort:   loc.GrpcPort,
+				Url:               loc.Url,
+				PublicUrl:         loc.PublicUrl,
+				DataCenter:        loc.DataCenter,
+				GrpcPort:          loc.GrpcPort,
+				DataInRemote:      loc.DataInRemote,
+				ReadOnly:          loc.ReadOnly,
+				ReadOnlyCanDelete: loc.ReadOnlyCanDelete,
 			})
 		}
 		err = getVidLocationsErr
 	}
+	notFound := false
 	if len(locations) == 0 && err == nil {
 		err = fmt.Errorf("volume id %s not found", vid)
+		notFound = true
 	}
 	ret := operation.LookupResult{
 		VolumeOrFileId: vid,
 		Locations:      locations,
+		NotFound:       notFound,
 	}
 	if err != nil {
 		ret.Error = err.Error()
@@ -107,7 +119,39 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 	return ret
 }
 
+// topologyLocation describes one node holding vid. A node that answers for an
+// EC volume holds shards rather than a volume record, so an absent record means
+// the read is local, never that the node should be left out of the answer.
+func topologyLocation(dn *topology.DataNode, vid needle.VolumeId) operation.Location {
+	dataInRemote, readOnly, readOnlyCanDelete := false, false, false
+	if volInfo, lookupErr := dn.GetVolumesById(vid); lookupErr == nil {
+		dataInRemote = volInfo.IsRemote()
+		readOnly = volInfo.ReadOnly
+		readOnlyCanDelete = volInfo.ReadOnlyCanDelete
+	}
+	return operation.Location{
+		Url:               dn.Url(),
+		PublicUrl:         dn.PublicUrl,
+		DataCenter:        dn.GetDataCenterId(),
+		GrpcPort:          dn.GrpcPort,
+		DataInRemote:      dataInRemote,
+		ReadOnly:          readOnly,
+		ReadOnlyCanDelete: readOnlyCanDelete,
+	}
+}
+
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
+	if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		remaining := ms.Topo.RemainingWarmupDuration()
+		if remaining < time.Second {
+			remaining = time.Second
+		}
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
+		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+			Error: "master is warming up, topology is still loading",
+		})
+		return
+	}
 	stats.AssignRequest()
 	requestedCount, e := strconv.ParseUint(r.FormValue("count"), 10, 64)
 	if e != nil || requestedCount == 0 {
@@ -119,6 +163,11 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		writableVolumeCount = 0
 	}
 
+	expectedDataSize, e := strconv.ParseUint(r.FormValue("dataSize"), 10, 64)
+	if e != nil {
+		expectedDataSize = 0
+	}
+
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
@@ -128,9 +177,11 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 	var (
-		lastErr    error
-		maxTimeout = time.Second * 10
-		startTime  = time.Now()
+		lastErr           error
+		maxTimeout        = time.Second * 10
+		startTime         = time.Now()
+		initiatedGrow     bool
+		repickedAfterGrow bool
 	)
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
@@ -139,15 +190,31 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	if !ms.Topo.RackExists(option.DataCenter, option.Rack) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("rack %v not found in topology", option.Rack),
+		})
+		return
+	}
+	if !ms.Topo.DataNodeExists(option.DataCenter, option.Rack, option.DataNode) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("data node %v not found in topology", option.DataNode),
+		})
+		return
+	}
+
+	// As in gRPC Assign: the periodic growth scan keeps this layout topped up
+	// to the writableVolumeCount clients ask for. 0 (not sent) is ignored.
+	vl.SetLastGrowCount(uint32(writableVolumeCount))
 
 	for time.Since(startTime) < maxTimeout {
-		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
-		if shouldGrow && !vl.HasGrowRequest() && !ms.option.VolumeGrowthDisabled {
+		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize)
+		if shouldGrow && !initiatedGrow && !ms.option.VolumeGrowthDisabled && vl.AddGrowRequestIfAbsent() {
+			initiatedGrow = true
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
 				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
-			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  uint32(writableVolumeCount),
@@ -157,7 +224,31 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
-			time.Sleep(200 * time.Millisecond)
+			if shouldGrow {
+				if ms.Topo.AvailableSpaceFor(option) <= 0 {
+					break // out of space: surface the real error (406 below)
+				}
+				// See Assign: only the initiator waits, and only while the
+				// growth it triggered is still pending.
+				if initiatedGrow != vl.HasGrowRequest() {
+					// See Assign: re-pick once after the growth concludes before
+					// shedding — the failed pick may predate the conclusion.
+					if initiatedGrow && !repickedAfterGrow {
+						repickedAfterGrow = true
+						continue
+					}
+					w.Header().Set("Retry-After", "1")
+					writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+						Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),
+					})
+					return
+				}
+			}
+			select {
+			case <-r.Context().Done():
+				return // client gone
+			case <-time.After(200 * time.Millisecond):
+			}
 			continue
 		} else {
 			ms.maybeAddJwtAuthorization(w, fid, true)
@@ -170,6 +261,14 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// See Assign: initiator that timed out with growth still pending stays retryable.
+	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
+		w.Header().Set("Retry-After", "1")
+		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+			Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),
+		})
+		return
+	}
 	if lastErr != nil {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: lastErr.Error()})
 	} else {
@@ -183,13 +282,13 @@ func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId s
 	}
 	var encodedJwt security.EncodedJwt
 	if isWrite {
-		encodedJwt = security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), fileId)
 	} else {
-		encodedJwt = security.GenJwtForVolumeServer(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.ReadSigningKey(), ms.guard.ReadExpiresAfterSec(), fileId)
 	}
 	if encodedJwt == "" {
 		return
 	}
 
-	w.Header().Set("Authorization", "BEARER "+string(encodedJwt))
+	w.Header().Set("Authorization", security.BearerPrefix+string(encodedJwt))
 }

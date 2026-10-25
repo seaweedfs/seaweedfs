@@ -1,21 +1,25 @@
 package weed_server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
-
-	"golang.org/x/net/context"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -23,13 +27,83 @@ import (
 )
 
 func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
+	return vs.getCurrentMaster()
+}
+
+// lookupRaftLeaderMaster resolves the raft leader for topology mutations via
+// GetMasterConfiguration on configured peers. It does not update currentMaster;
+// the heartbeat loop owns that field and reconnects when the stream reports a
+// different leader than the connected peer.
+func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAddress, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	leader, err := operation.LookupRaftLeaderMaster(ctx, vs.SeedMasterNodes, vs.grpcDialOption)
+	if err != nil {
+		if isContextDoneErr(err) {
+			glog.V(1).Infof("volume server %s:%d: raft leader lookup: %v", vs.store.Ip, vs.store.Port, err)
+		} else {
+			glog.V(0).Infof("volume server %s:%d: raft leader lookup: %v", vs.store.Ip, vs.store.Port, err)
+		}
+		return "", err
+	}
+	current := vs.getCurrentMaster()
+	if !leader.Equals(current) {
+		glog.V(1).Infof("volume server %s:%d: raft leader %v (heartbeat peer %v)", vs.store.Ip, vs.store.Port, leader, current)
+	}
+	return leader, nil
+}
+
+// refreshLeaderFromPeers publishes the leader the configured masters report,
+// so lookups stop going to a master the heartbeat just lost while the loop
+// retries. Without an answer within timeout no leader is published: the lost
+// master is dead or no longer leader, and a follower answers lookups from its
+// own cache rather than refusing them, so failing fast is the safer answer.
+func (vs *VolumeServer) refreshLeaderFromPeers(timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	leader, err := vs.lookupRaftLeaderMaster(ctx)
+	if err != nil {
+		vs.setCurrentMaster("")
+		return
+	}
+	vs.setCurrentMaster(leader)
+}
+
+func isContextDoneErr(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if st, ok := status.FromError(err); ok {
+		return st.Code() == codes.Canceled || st.Code() == codes.DeadlineExceeded
+	}
+	return false
+}
+
+// getCurrentMaster returns vs.currentMaster under a read lock so callers
+// (e.g. Ping admission) do not race with the heartbeat goroutine that
+// rewrites it on leader changes.
+func (vs *VolumeServer) getCurrentMaster() pb.ServerAddress {
+	vs.currentMasterLock.RLock()
+	defer vs.currentMasterLock.RUnlock()
 	return vs.currentMaster
+}
+
+// setCurrentMaster updates vs.currentMaster under a write lock. The
+// heartbeat goroutine calls this only with a master known to be the leader:
+// one that answered a heartbeat as leader, or the one a follower named, on
+// the heartbeat stream or, after the stream failed, in its configuration.
+// After a failed stream with no leader named, it is cleared to "".
+func (vs *VolumeServer) setCurrentMaster(master pb.ServerAddress) {
+	vs.currentMasterLock.Lock()
+	vs.currentMaster = master
+	vs.currentMasterLock.Unlock()
 }
 
 func (vs *VolumeServer) checkWithMaster() (err error) {
 	for {
 		for _, master := range vs.SeedMasterNodes {
-			err = operation.WithMasterServerClient(false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			err = operation.WithMasterServerClient(context.Background(), false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)
@@ -67,7 +141,6 @@ func (vs *VolumeServer) heartbeat() {
 				time.Sleep(3 * time.Second)
 				master = newLeader
 			}
-			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
 			if err != nil {
 				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
@@ -81,11 +154,15 @@ func (vs *VolumeServer) heartbeat() {
 				} else {
 					// Regular error, reset duplicate retry count
 					duplicateRetryCount = 0
-					time.Sleep(vs.pulsePeriod)
+					// The lookup spends part of the retry delay rather than
+					// adding to it.
+					retryAt := time.Now().Add(vs.pulsePeriod)
+					vs.refreshLeaderFromPeers(vs.pulsePeriod)
+					time.Sleep(time.Until(retryAt))
 				}
 
+				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
 				newLeader = ""
-				vs.store.MasterAddress = ""
 			} else {
 				// Successful connection, reset retry count
 				duplicateRetryCount = 0
@@ -106,10 +183,6 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 	return false
 }
 
-func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
-	return vs.doHeartbeatWithRetry(masterAddress, grpcDialOption, sleepInterval, 0)
-}
-
 func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration, duplicateRetryCount int) (newLeader pb.ServerAddress, err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,16 +201,41 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		return "", err
 	}
 	glog.V(0).Infof("Heartbeat to: %v", masterAddress)
-	vs.currentMaster = masterAddress
 
 	doneChan := make(chan error, 1)
+	// The receiver asks for a fresh heartbeat here rather than sending it,
+	// since a gRPC stream allows only one sender at a time.
+	resendChan := make(chan struct{}, 1)
 
 	go func() {
+		confirmedLeader := false
 		for {
 			in, err := stream.Recv()
 			if err != nil {
 				doneChan <- err
 				return
+			}
+			// A reply names the leader or comes from it, so it settles where
+			// lookups go before anything else on the reply is handled: a
+			// follower reply carries no other fields, and a leader stays the
+			// lookup target even when it rejects this registration.
+			if in.GetLeader() != "" {
+				// Only a follower names the leader. Publish the named leader right
+				// away, so lookups stop landing on this follower while the loop
+				// reconnects.
+				leader := pb.ServerAddress(in.GetLeader())
+				if !masterAddress.Equals(leader) {
+					glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", leader, masterAddress)
+					vs.setCurrentMaster(leader)
+					newLeader = leader
+					doneChan <- nil
+					return
+				}
+			} else if !confirmedLeader {
+				// The leader answers every new heartbeat stream without naming a
+				// leader, so this peer is the one lookups should go to.
+				confirmedLeader = true
+				vs.setCurrentMaster(masterAddress)
 			}
 			if len(in.DuplicatedUuids) > 0 {
 				var duplicateDir []string
@@ -166,6 +264,8 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					os.Exit(1)
 				}
 			}
+			vs.store.UpdateMaxVolumeIdSeen(needle.VolumeId(in.MaxVolumeId))
+			vs.store.UpdateLastSeenTopologyId(in.TopologyId)
 			volumeOptsChanged := false
 			if vs.store.GetPreallocate() != in.GetPreallocate() {
 				vs.store.SetPreallocate(in.GetPreallocate())
@@ -177,20 +277,25 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 			if volumeOptsChanged {
 				if vs.store.MaybeAdjustVolumeMax() {
-					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
-						return
+					select {
+					case resendChan <- struct{}{}:
+					default:
 					}
 				}
 			}
-			if in.GetLeader() != "" && string(vs.currentMaster) != in.GetLeader() {
-				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
-				newLeader = pb.ServerAddress(in.GetLeader())
-				doneChan <- nil
-				return
+			if in.GetVolumeDigestSupported() {
+				vs.store.AcceptVolumeChanges()
+			}
+			if in.GetResendFullVolumeList() {
+				glog.V(0).Infof("master %s asked for the full volume list", masterAddress)
+				vs.store.RequestFullVolumeList()
 			}
 		}
 	}()
+
+	// This master may know nothing about this server, and has not yet said
+	// whether it understands digests, so start from the whole list.
+	vs.store.ResetVolumeReporting()
 
 	if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
@@ -225,66 +330,75 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				glog.V(0).Infof("Volume Server Failed to update state to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case volumeMessage := <-vs.store.NewVolumesChan:
+		case first := <-vs.store.NewVolumesChan:
+			volumes := util.DrainChannel(vs.store.NewVolumesChan, first)
 			deltaBeat := &master_pb.Heartbeat{
 				Ip:         ip,
 				Port:       port,
 				DataCenter: dataCenter,
 				Rack:       rack,
-				NewVolumes: []*master_pb.VolumeShortInformationMessage{
-					&volumeMessage, // volumeMessage is already a copy from the channel receive
-				},
+				NewVolumes: volumes,
 			}
-			glog.V(0).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
+			for _, v := range volumes {
+				glog.V(0).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, v.Id)
+			}
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case ecShardMessage := <-vs.store.NewEcShardsChan:
+		case first := <-vs.store.NewEcShardsChan:
+			shards := util.DrainChannel(vs.store.NewEcShardsChan, first)
 			deltaBeat := &master_pb.Heartbeat{
-				Ip:         ip,
-				Port:       port,
-				DataCenter: dataCenter,
-				Rack:       rack,
-				NewEcShards: []*master_pb.VolumeEcShardInformationMessage{
-					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
-				},
+				Ip:          ip,
+				Port:        port,
+				DataCenter:  dataCenter,
+				Rack:        rack,
+				NewEcShards: shards,
 			}
-			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
-			glog.V(0).Infof("volume server %s:%d adds ec shards to %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
+			for _, s := range shards {
+				si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(s)
+				glog.V(0).Infof("volume server %s:%d adds ec shards to %d [%s]", vs.store.Ip, vs.store.Port, s.Id, si.String())
+			}
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case volumeMessage := <-vs.store.DeletedVolumesChan:
+		case first := <-vs.store.DeletedVolumesChan:
+			volumes := util.DrainChannel(vs.store.DeletedVolumesChan, first)
 			deltaBeat := &master_pb.Heartbeat{
-				Ip:         ip,
-				Port:       port,
-				DataCenter: dataCenter,
-				Rack:       rack,
-				DeletedVolumes: []*master_pb.VolumeShortInformationMessage{
-					&volumeMessage, // volumeMessage is already a copy from the channel receive
-				},
+				Ip:             ip,
+				Port:           port,
+				DataCenter:     dataCenter,
+				Rack:           rack,
+				DeletedVolumes: volumes,
 			}
-			glog.V(0).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
+			for _, v := range volumes {
+				glog.V(0).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, v.Id)
+			}
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case ecShardMessage := <-vs.store.DeletedEcShardsChan:
+		case first := <-vs.store.DeletedEcShardsChan:
+			shards := util.DrainChannel(vs.store.DeletedEcShardsChan, first)
 			deltaBeat := &master_pb.Heartbeat{
-				Ip:         ip,
-				Port:       port,
-				DataCenter: dataCenter,
-				Rack:       rack,
-				DeletedEcShards: []*master_pb.VolumeEcShardInformationMessage{
-					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
-				},
+				Ip:              ip,
+				Port:            port,
+				DataCenter:      dataCenter,
+				Rack:            rack,
+				DeletedEcShards: shards,
 			}
-			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
-			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
+			for _, s := range shards {
+				glog.V(0).Infof("volume server %s:%d deletes ec shard %d:%s", vs.store.Ip, vs.store.Port, s.Id,
+					erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(s).String())
+			}
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				return "", err
+			}
+		case <-resendChan:
+			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case <-volumeTickChan.C:

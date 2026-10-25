@@ -6,8 +6,14 @@ import (
 )
 
 var (
-	PolicyNamePattern       = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	ServiceAccountIdPattern = regexp.MustCompile(`^sa:[A-Za-z0-9_-]+:[a-z0-9-]+$`)
+	PolicyNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	// ServiceAccountIdPattern matches sa:<parent-user>:<uuid>. The parent-user
+	// segment accepts every character allowed in an AWS IAM username
+	// (`[\w+=,.@-]+` per
+	// https://docs.aws.amazon.com/IAM/latest/APIReference/API_User.html)
+	// so service accounts created for users with e.g. `user@example.com`
+	// don't fail validation at the persistence layer.
+	ServiceAccountIdPattern = regexp.MustCompile(`^sa:[A-Za-z0-9_+=,.@-]+:[a-z0-9-]+$`)
 )
 
 func ValidatePolicyName(name string) error {

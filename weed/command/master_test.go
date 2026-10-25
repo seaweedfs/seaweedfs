@@ -4,9 +4,26 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func TestIsTheFirstOneIgnoresGrpcPort(t *testing.T) {
+func TestDefaultVolumeSizeLimitAlignsWithErasureCodingRows(t *testing.T) {
+	if got := *m.volumeSizeLimitMB; got != util.DefaultVolumeSizeLimitMB {
+		t.Fatalf("master volume size default = %d MiB, want %d MiB", got, util.DefaultVolumeSizeLimitMB)
+	}
+	if got := *masterOptions.volumeSizeLimitMB; got != util.DefaultVolumeSizeLimitMB {
+		t.Fatalf("server master volume size default = %d MiB, want %d MiB", got, util.DefaultVolumeSizeLimitMB)
+	}
+
+	defaultSize := int64(util.DefaultVolumeSizeLimitMB) * util.MiByte
+	largeRowSize := int64(erasure_coding.DataShardsCount) * erasure_coding.ErasureCodingLargeBlockSize
+	if remainder := defaultSize % largeRowSize; remainder != 0 {
+		t.Fatalf("default volume size leaves %d bytes outside complete EC large-block rows", remainder)
+	}
+}
+
+func TestPeerIndexIgnoresGrpcPort(t *testing.T) {
 	self := pb.ServerAddress("127.0.0.1:9000.19000")
 	peers := []pb.ServerAddress{
 		"127.0.0.1:9000",
@@ -14,8 +31,8 @@ func TestIsTheFirstOneIgnoresGrpcPort(t *testing.T) {
 		"127.0.0.1:9003.19003",
 	}
 
-	if !isTheFirstOne(self, peers) {
-		t.Fatalf("expected first peer match by HTTP address between %q and %+v", self, peers)
+	if idx := peerIndex(self, peers); idx != 0 {
+		t.Fatalf("expected peer index 0 for %q among %+v, got %d", self, peers, idx)
 	}
 }
 

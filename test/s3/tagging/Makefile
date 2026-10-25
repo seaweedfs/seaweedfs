@@ -12,6 +12,9 @@ FILER_PORT := 8893
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestObjectTaggingOnUpload|TestPutObjectTaggingAPI|TestDeleteObjectTagging|TestTag
 
+# Let the tests force-drop collections at the master they actually run against
+export MASTER_ENDPOINT ?= http://127.0.0.1:$(MASTER_PORT)
+
 # Default target
 help:
 	@echo "S3 Object Tagging Tests Makefile"

@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -50,23 +51,37 @@ type StoragePreference struct {
 
 type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
+// submitUploadWorkers bounds how many files one SubmitFiles call uploads at
+// once; the batch assign above already fetched all their file ids.
+const submitUploadWorkers = 4
+
 func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*FilePart, pref StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
+	var totalBytes int64
 	for index, file := range files {
 		results[index].FileName = file.FileName
+		totalBytes += file.FileSize
+	}
+	var avgBytes uint64
+	if n := len(files); n > 0 {
+		avgBytes = uint64((totalBytes + int64(n) - 1) / int64(n))
 	}
 	ar := &VolumeAssignRequest{
-		Count:       uint64(len(files)),
-		Replication: pref.Replication,
-		Collection:  pref.Collection,
-		DataCenter:  pref.DataCenter,
-		Ttl:         pref.Ttl,
-		DiskType:    pref.DiskType,
+		Count:            uint64(len(files)),
+		Replication:      pref.Replication,
+		Collection:       pref.Collection,
+		DataCenter:       pref.DataCenter,
+		Ttl:              pref.Ttl,
+		DiskType:         pref.DiskType,
+		ExpectedDataSize: avgBytes,
 	}
 	ret, err := Assign(context.Background(), masterFn, grpcDialOption, ar)
 	if err != nil {
-		for index := range files {
+		for index, file := range files {
 			results[index].Error = err.Error()
+			if closer, ok := file.Reader.(io.Closer); ok {
+				closer.Close()
+			}
 		}
 		return results, err
 	}
@@ -80,14 +95,35 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*
 			file.Server = ret.PublicUrl
 		}
 		file.Pref = pref
-		results[index].Size, err = file.Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
-		if err != nil {
-			results[index].Error = err.Error()
-		}
 		results[index].Fid = file.Fid
 		results[index].FileUrl = ret.PublicUrl + "/" + file.Fid
 	}
-	return results, nil
+
+	var wg sync.WaitGroup
+	var lastErrLock sync.Mutex
+	jobs := make(chan int)
+	for w := 0; w < min(submitUploadWorkers, len(files)); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				size, uploadErr := files[index].Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
+				results[index].Size = size
+				if uploadErr != nil {
+					results[index].Error = uploadErr.Error()
+					lastErrLock.Lock()
+					err = uploadErr
+					lastErrLock.Unlock()
+				}
+			}
+		}()
+	}
+	for index := range files {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	return results, err
 }
 
 func NewFileParts(fullPathFilenames []string) (ret []*FilePart, err error) {
@@ -111,6 +147,8 @@ func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
 		glog.V(0).Info("Failed to stat file:", fullPathFilename)
+		fh.Close()
+		ret.Reader = nil
 		return ret, fiErr
 	}
 	ret.ModTime = fi.ModTime().UTC().Unix()
@@ -150,11 +188,12 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 		var id string
 		if fi.Pref.DataCenter != "" {
 			ar := &VolumeAssignRequest{
-				Count:       uint64(chunks),
-				Replication: fi.Pref.Replication,
-				Collection:  fi.Pref.Collection,
-				Ttl:         fi.Pref.Ttl,
-				DiskType:    fi.Pref.DiskType,
+				Count:            uint64(chunks),
+				Replication:      fi.Pref.Replication,
+				Collection:       fi.Pref.Collection,
+				Ttl:              fi.Pref.Ttl,
+				DiskType:         fi.Pref.DiskType,
+				ExpectedDataSize: uint64(chunkSize),
 			}
 			ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 			if err != nil {
@@ -163,12 +202,18 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 		}
 		for i := int64(0); i < chunks; i++ {
 			if fi.Pref.DataCenter == "" {
+				remaining := fi.FileSize - i*chunkSize
+				thisChunk := chunkSize
+				if remaining < thisChunk {
+					thisChunk = remaining
+				}
 				ar := &VolumeAssignRequest{
-					Count:       1,
-					Replication: fi.Pref.Replication,
-					Collection:  fi.Pref.Collection,
-					Ttl:         fi.Pref.Ttl,
-					DiskType:    fi.Pref.DiskType,
+					Count:            1,
+					Replication:      fi.Pref.Replication,
+					Collection:       fi.Pref.Collection,
+					Ttl:              fi.Pref.Ttl,
+					DiskType:         fi.Pref.DiskType,
+					ExpectedDataSize: uint64(thisChunk),
 				}
 				ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 				if err != nil {

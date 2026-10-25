@@ -53,30 +53,40 @@ func FromTags(tags map[string]string) (t *Tagging) {
 func parseTagsHeader(tags string) (map[string]string, error) {
 	parsedTags := make(map[string]string)
 	for _, v := range util.StringSplit(tags, "&") {
-		tag := strings.Split(v, "=")
-		if len(tag) == 2 {
-			// URL decode both key and value
-			decodedKey, err := url.QueryUnescape(tag[0])
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag key '%s': %w", tag[0], err)
-			}
-			decodedValue, err := url.QueryUnescape(tag[1])
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag value '%s': %w", tag[1], err)
-			}
-			parsedTags[decodedKey] = decodedValue
-		} else if len(tag) == 1 {
-			// URL decode key for empty value tags
-			decodedKey, err := url.QueryUnescape(tag[0])
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode tag key '%s': %w", tag[0], err)
-			}
-			parsedTags[decodedKey] = ""
+		// url.ParseQuery skips empty segments too, so a copy stores the
+		// same tag keys that PutObject and bucket policies see.
+		if v == "" {
+			continue
 		}
+		key, value, hasValue := strings.Cut(v, "=")
+		decodedKey, err := url.QueryUnescape(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode tag key '%s': %w", key, err)
+		}
+		if _, exists := parsedTags[decodedKey]; exists {
+			return nil, fmt.Errorf("duplicate tag key '%s'", decodedKey)
+		}
+		if !hasValue {
+			parsedTags[decodedKey] = ""
+			continue
+		}
+		decodedValue, err := url.QueryUnescape(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode tag value '%s': %w", value, err)
+		}
+		parsedTags[decodedKey] = decodedValue
 	}
 	return parsedTags, nil
 }
 
 func ValidateTags(tags map[string]string) error {
 	return s3tables.ValidateTags(tags)
+}
+
+// maxBucketTags is how many tags a bucket's tag set can hold; an object's
+// tag set holds 10.
+const maxBucketTags = 50
+
+func ValidateBucketTags(tags map[string]string) error {
+	return s3tables.ValidateTagsWithLimit(tags, maxBucketTags)
 }

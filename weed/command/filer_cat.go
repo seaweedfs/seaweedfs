@@ -60,6 +60,7 @@ var cmdFilerCat = &Command{
 
 func runFilerCat(cmd *Command, args []string) bool {
 
+	*filerCat.output = util.ResolvePath(*filerCat.output)
 	util.LoadSecurityConfiguration()
 
 	if len(args) == 0 {

@@ -3,12 +3,24 @@ name: "End to End"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'docker/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/**'
+      - 'docker/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/e2e
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -23,20 +35,26 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
-
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
+
+    - name: Configure Docker Hub mirror
+      run: |
+        echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart docker
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
       
     - name: Cache Docker layers
-      uses: actions/cache@v5
+      if: runner.environment == 'github-hosted'
+      uses: actions/cache@v6
       with:
         path: /tmp/.buildx-cache
         key: ${{ runner.os }}-buildx-e2e-${{ github.sha }}
@@ -45,25 +63,22 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # Use faster mirrors and install with timeout
         sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
-        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
-        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-        
-        sudo apt-get update --fix-missing
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fuse
+        # Same helper the e2e image installs through: the runner's own list is
+        # azure-only too, and an outage there fails this step outright.
+        sudo ./apt-install fuse
         
         # Verify FUSE installation
         echo "FUSE version: $(fusermount --version 2>&1 || echo 'fusermount not found')"
         echo "FUSE device: $(ls -la /dev/fuse 2>&1 || echo '/dev/fuse not found')"
 
     - name: Start SeaweedFS
-      timeout-minutes: 10
+      timeout-minutes: 15
       run: |
         # Enable Docker buildkit for better caching
         export DOCKER_BUILDKIT=1
         export COMPOSE_DOCKER_CLI_BUILD=1
-        
+
         # Build with retry logic
         for i in {1..3}; do
           echo "Build attempt $i/3"
@@ -78,9 +93,17 @@ jobs:
             sleep 30
           fi
         done
-        
+
         # Start services with wait
         docker compose -f ./compose/e2e-mount.yml up --wait
+
+    - name: Rotate buildx cache
+      if: always()
+      run: |
+        # Without this, --cache-to writes to .buildx-cache-new but actions/cache only
+        # uploads .buildx-cache, so layers (notably the slow apt RUN) never persist.
+        rm -rf /tmp/.buildx-cache
+        if [ -d /tmp/.buildx-cache-new ]; then mv /tmp/.buildx-cache-new /tmp/.buildx-cache; fi
 
     - name: Run FIO 4k
       timeout-minutes: 15
@@ -135,7 +158,7 @@ jobs:
 
     - name: Archive logs
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: output-logs
         path: docker/output.log

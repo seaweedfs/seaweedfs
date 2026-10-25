@@ -1,7 +1,6 @@
 package needle
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -82,28 +81,4 @@ func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, 
 
 	return
 
-}
-
-// prepareNeedleWrite encapsulates the common beginning logic for all versioned writeNeedle functions.
-func prepareNeedleWrite(w backend.BackendStorageFile, n *Needle) (offset uint64, bytesBuffer *bytes.Buffer, cleanup func(err error), err error) {
-	end, _, e := w.GetStat()
-	if e != nil {
-		err = fmt.Errorf("Cannot Read Current Volume Position: %w", e)
-		return
-	}
-	offset = uint64(end)
-	if offset >= MaxPossibleVolumeSize && len(n.Data) != 0 {
-		err = fmt.Errorf("Volume Size %d Exceeded %d", offset, MaxPossibleVolumeSize)
-		return
-	}
-	bytesBuffer = buffer_pool.SyncPoolGetBuffer()
-	cleanup = func(err error) {
-		if err != nil {
-			if te := w.Truncate(end); te != nil {
-				// handle error or log
-			}
-		}
-		buffer_pool.SyncPoolPutBuffer(bytesBuffer)
-	}
-	return
 }

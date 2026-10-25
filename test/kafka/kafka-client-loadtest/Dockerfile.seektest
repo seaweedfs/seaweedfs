@@ -1,7 +1,8 @@
-FROM openjdk:11-jdk-slim
-
-# Install Maven
-RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+# Use the official Eclipse Temurin + Maven image so we don't depend on
+# Debian apt mirrors, which intermittently refuse connections from
+# GitHub Actions runners and fail the CI build. This image already has
+# JDK 11 and Maven installed.
+FROM maven:3.9-eclipse-temurin-11
 
 WORKDIR /app
 

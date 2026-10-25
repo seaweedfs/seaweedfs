@@ -53,6 +53,10 @@ func (pw *PageWriter) FlushData() error {
 	return pw.randomWriter.FlushData()
 }
 
+func (pw *PageWriter) HasWrites() bool {
+	return pw.randomWriter.HasWrites()
+}
+
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64, tsNs int64) (maxStop int64) {
 	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.inode, offset, offset+int64(len(data)))
 
@@ -79,6 +83,14 @@ func (pw *PageWriter) UnlockForRead(startOffset, stopOffset int64) {
 
 func (pw *PageWriter) Destroy() {
 	pw.randomWriter.Destroy()
+}
+
+func (pw *PageWriter) EvictOneWritableChunk() bool {
+	return pw.randomWriter.EvictOneWritableChunk()
+}
+
+func (pw *PageWriter) ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int, isSequential bool) bool {
+	return pw.randomWriter.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, frontierLag, isSequential)
 }
 
 func max(x, y int64) int64 {

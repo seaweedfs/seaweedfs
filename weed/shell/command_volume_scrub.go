@@ -50,8 +50,10 @@ func (c *commandVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer io
 	volScrubCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	nodesStr := volScrubCommand.String("node", "", "comma-separated list of volume server <host>:<port> (optional)")
 	volumeIDsStr := volScrubCommand.String("volumeId", "", "comma-separated volume IDs to process (optional)")
-	mode := volScrubCommand.String("mode", "full", "scrubbing mode (index/local/full)")
+	mode := volScrubCommand.String("mode", "full", "scrubbing mode (index/local/full/reads)")
+	markBrokenReadonly := volScrubCommand.Bool("markBrokenReadonly", false, "whether to flag volumes with scrub failures as read-only")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
+	showDetails := volScrubCommand.Bool("details", false, "display scrub result details, if available")
 
 	if err = volScrubCommand.Parse(args); err != nil {
 		return err
@@ -97,16 +99,19 @@ func (c *commandVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer io
 		c.mode = volume_server_pb.VolumeScrubMode_LOCAL
 	case "FULL":
 		c.mode = volume_server_pb.VolumeScrubMode_FULL
+	case "READS":
+		// only meaningful for EC volumes; accepted here so one mode name works on both commands
+		c.mode = volume_server_pb.VolumeScrubMode_READS
 	default:
 		return fmt.Errorf("unsupported scrubbing mode %q", *mode)
 	}
 	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
 	c.env = commandEnv
 
-	return c.scrubVolumes(writer, *maxParallelization)
+	return c.scrubVolumes(writer, *maxParallelization, *markBrokenReadonly, *showDetails)
 }
 
-func (c *commandVolumeScrub) scrubVolumes(writer io.Writer, maxParallelization int) error {
+func (c *commandVolumeScrub) scrubVolumes(writer io.Writer, maxParallelization int, markBrokenReadonly bool, showDetails bool) error {
 	var brokenVolumesStr []string
 	var details []string
 	var totalVolumes, brokenVolumes, totalFiles uint64
@@ -123,8 +128,9 @@ func (c *commandVolumeScrub) scrubVolumes(writer io.Writer, maxParallelization i
 
 			err := operation.WithVolumeServerClient(false, addr, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				res, err := volumeServerClient.ScrubVolume(context.Background(), &volume_server_pb.ScrubVolumeRequest{
-					Mode:      c.mode,
-					VolumeIds: c.volumeIDs,
+					Mode:                      c.mode,
+					VolumeIds:                 c.volumeIDs,
+					MarkBrokenVolumesReadonly: markBrokenReadonly,
 				})
 				if err != nil {
 					return err
@@ -156,7 +162,7 @@ func (c *commandVolumeScrub) scrubVolumes(writer io.Writer, maxParallelization i
 	if brokenVolumes != 0 {
 		fmt.Fprintf(writer, "\nGot scrub failures on %d volumes :(\n", brokenVolumes)
 		fmt.Fprintf(writer, "Affected volumes: %s\n", strings.Join(brokenVolumesStr, ", "))
-		if len(details) != 0 {
+		if showDetails && len(details) != 0 {
 			fmt.Fprintf(writer, "Details:\n\t%s\n", strings.Join(details, "\n\t"))
 		}
 	}

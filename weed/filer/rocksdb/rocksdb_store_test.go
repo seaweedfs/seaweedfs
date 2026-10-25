@@ -35,7 +35,7 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := testFiler.CreateEntry(ctx, entry1, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+	if err := testFiler.CreateEntry(ctx, entry1, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}
@@ -149,7 +149,7 @@ func TestListDirectoryWithPrefix(t *testing.T) {
 				Gid:  1,
 			},
 		}
-		if err := testFiler.CreateEntry(ctx, entry, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		if err := testFiler.CreateEntry(ctx, entry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
 			t.Fatalf("Failed to create entry %s: %v", fullpath, err)
 		}
 	}

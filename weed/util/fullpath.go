@@ -1,12 +1,38 @@
 package util
 
 import (
+	"math"
 	"path"
-	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type FullPath string
+
+// invalidUTF8Replacement is the single-byte replacement used everywhere a name
+// or path from an untrusted source (kernel FUSE input, external clients, store
+// imports) may contain bytes that are not valid UTF-8. Proto3 `string` fields
+// require valid UTF-8, so any such bytes must be substituted before the value
+// enters a gRPC request; otherwise marshaling fails for the whole RPC.
+//
+// '_' is URL-safe: these sanitized strings also flow into HTTP URLs
+// (volume-server uploads, filer HTTP API, S3/WebDAV gateways). Using '?'
+// would cause it to be interpreted as the query-string delimiter the first
+// time the name lands in a URL and split the path.
+const invalidUTF8Replacement = "_"
+
+// SanitizeUTF8Name replaces every invalid-UTF-8 byte in s with
+// invalidUTF8Replacement. For the common, valid-UTF-8 case the input is
+// returned unchanged with no allocation. Use this for any byte sequence
+// that will be assigned to a proto string field (names, paths) from an
+// untrusted source; centralising the replacement keeps the chosen character
+// consistent across the codebase.
+func SanitizeUTF8Name(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, invalidUTF8Replacement)
+}
 
 func NewFullPath(dir, name string) FullPath {
 	name = strings.TrimSuffix(name, "/")
@@ -14,8 +40,8 @@ func NewFullPath(dir, name string) FullPath {
 }
 
 func (fp FullPath) DirAndName() (string, string) {
-	dir, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
+	dir, name := path.Split(string(fp))
+	name = SanitizeUTF8Name(name)
 	if dir == "/" {
 		return dir, name
 	}
@@ -25,10 +51,22 @@ func (fp FullPath) DirAndName() (string, string) {
 	return dir[:len(dir)-1], name
 }
 
+// Name returns the last path component, with any invalid-UTF-8 bytes replaced
+// via SanitizeUTF8Name so the result is always safe to place in a proto
+// string field or HTTP URL.
 func (fp FullPath) Name() string {
-	_, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
-	return name
+	_, name := path.Split(string(fp))
+	return SanitizeUTF8Name(name)
+}
+
+// Sanitized returns the full path with every invalid-UTF-8 byte — in any
+// component, not just the last — replaced via SanitizeUTF8Name. Use this
+// before assigning the path to a proto string field (e.g. Directory,
+// AssignVolumeRequest.Path) when the path may have been produced from
+// sources that do not enforce UTF-8 (cache populated from an external
+// store, legacy metadata, shell traversals of existing filer entries).
+func (fp FullPath) Sanitized() string {
+	return SanitizeUTF8Name(string(fp))
 }
 
 func (fp FullPath) IsLongerFileName(maxFilenameLength uint32) bool {
@@ -50,11 +88,26 @@ func (fp FullPath) Child(name string) FullPath {
 	return FullPath(dir + "/" + noPrefix)
 }
 
+// NormalizeInode folds a derived inode into the positive signed 64-bit range
+// by dropping the sign bit. Every filer store has to persist the value as-is,
+// and some of them serialize it as a signed 64-bit integer: the Elasticsearch
+// store indexes Entry.Attr.Inode as a `long`, so a value above math.MaxInt64
+// is rejected with HTTP 400 and the whole entry is lost. HashStringToLong is
+// uniform over int64, so roughly half of the derived inodes used to land above
+// that limit and failed to be written.
+//
+// Masking keeps the remaining 63 hash bits, so distinct paths still derive
+// distinct inodes; subtracting or folding into a smaller modulus would only
+// spread the same collisions more thinly.
+func NormalizeInode(inode uint64) uint64 {
+	return inode & math.MaxInt64
+}
+
 // AsInode an in-memory only inode representation
 func (fp FullPath) AsInode(unixTime int64) uint64 {
 	inode := uint64(HashStringToLong(string(fp)))
 	inode = inode + uint64(unixTime)*37
-	return inode
+	return NormalizeInode(inode)
 }
 
 // split, but skipping the root
@@ -66,7 +119,7 @@ func (fp FullPath) Split() []string {
 }
 
 func Join(names ...string) string {
-	return filepath.ToSlash(filepath.Join(names...))
+	return path.Join(names...)
 }
 
 func JoinPath(names ...string) FullPath {
@@ -78,6 +131,31 @@ func (fp FullPath) IsUnder(other FullPath) bool {
 		return true
 	}
 	return strings.HasPrefix(string(fp), string(other)+"/")
+}
+
+// IsEqualOrUnder reports whether candidate is equal to or a descendant of
+// other using proper directory boundaries (not a plain string prefix check).
+// Empty strings always return false.
+func IsEqualOrUnder(candidate, other string) bool {
+	candidatePath := NormalizePath(candidate)
+	otherPath := NormalizePath(other)
+	if candidatePath == "" || otherPath == "" {
+		return false
+	}
+	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
+}
+
+// NormalizePath trims a trailing slash and returns a FullPath.
+// Empty input returns "" (callers should treat this as "no path").
+func NormalizePath(p string) FullPath {
+	if p == "" {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return FullPath(trimmed)
 }
 
 func StringSplit(separatedValues string, sep string) []string {

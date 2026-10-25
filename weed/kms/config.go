@@ -128,6 +128,7 @@ func InitializeGlobalKMS(config *KMSConfig) error {
 	if err != nil {
 		return err
 	}
+	provider = wrapWithCacheIfEnabled(provider, config)
 
 	globalKMSMutex.Lock()
 	defer globalKMSMutex.Unlock()
@@ -223,6 +224,10 @@ func (km *KMSManager) AddKMSProvider(name string, config *KMSConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to create KMS provider %s: %w", name, err)
 	}
+
+	// Wrap with a decrypted-data-key cache when enabled so repeated reads of
+	// the same SSE-KMS object avoid a KMS round-trip per read.
+	provider = wrapWithCacheIfEnabled(provider, config)
 
 	// Store provider and configuration
 	km.providers[name] = provider

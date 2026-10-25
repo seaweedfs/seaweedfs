@@ -38,56 +38,79 @@ func (i *FileHandleToInode) FindFileHandle(inode uint64) (fh *FileHandle, found 
 	return
 }
 
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
+// MarkInodeRenamed sets isRenamed on any file handle associated with the
+// given inode.  This prevents the async flush from recreating a renamed
+// file's metadata under its old path.
+func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
+	i.RLock()
+	defer i.RUnlock()
+	if fh, ok := i.inode2fh[inode]; ok {
+		fh.isRenamed = true
+	}
+}
+
+// AcquireFileHandle fully initializes a handle — entry and the log position it
+// reflects — before exposing it in the map, and reports whether one already
+// existed. An existing handle only gets its counter bumped: its entry belongs
+// to whoever holds the handle lock, so callers install there (AcquireHandle)
+// rather than under this one.
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.entryVersionTsNs.Store(versionTsNs)
+		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
-	} else {
-		fh.counter++
+		return fh, false
 	}
-	if fh.GetEntry().GetEntry() != entry {
-		fh.SetEntry(entry)
-	}
-	return fh
+	fh.counter++
+	return fh, true
 }
 
-func (i *FileHandleToInode) ReleaseByInode(inode uint64) {
-	i.Lock()
-	defer i.Unlock()
-	fh, found := i.inode2fh[inode]
-	if found {
-		fh.counter--
-		if fh.counter <= 0 {
-			delete(i.inode2fh, inode)
-			delete(i.fh2inode, fh.fh)
-			fh.ReleaseHandle()
-		}
-	}
-}
-
-func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) {
+func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 	i.Lock()
 	defer i.Unlock()
 
 	inode, found := i.fh2inode[fh]
 	if !found {
-		return // Handle already released or invalid
+		return nil
 	}
 
 	fhHandle, fhFound := i.inode2fh[inode]
 	if !fhFound {
 		delete(i.fh2inode, fh)
-		return
+		return nil
+	}
+
+	// If the counter is already <= 0, a prior Release already started the
+	// drain.  Return nil to prevent double-processing.
+	if fhHandle.counter <= 0 {
+		return nil
 	}
 
 	fhHandle.counter--
 	if fhHandle.counter <= 0 {
+		if fhHandle.asyncFlushPending {
+			// Handle stays in fhMap so rename/unlink can still find it
+			// via FindFileHandle during the background drain.
+			return fhHandle
+		}
 		delete(i.inode2fh, inode)
 		delete(i.fh2inode, fhHandle.fh)
-		fhHandle.ReleaseHandle()
+		return fhHandle
 	}
+	return nil
+}
+
+// RemoveFileHandle removes a handle from both maps.  Called after an async
+// drain completes to clean up the handle that was intentionally kept in the
+// maps during the flush.
+func (i *FileHandleToInode) RemoveFileHandle(fh FileHandleId, inode uint64) {
+	i.Lock()
+	defer i.Unlock()
+	delete(i.inode2fh, inode)
+	delete(i.fh2inode, fh)
 }

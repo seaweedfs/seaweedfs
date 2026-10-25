@@ -3,13 +3,13 @@ package s3api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // GetObjectAclHandler Get object ACL
@@ -30,6 +30,10 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -89,6 +93,15 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	action := s3_constants.S3_ACTION_GET_OBJECT_ACL
+	if versionId != "" {
+		action = s3_constants.S3_ACTION_GET_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, "GetObjectAclHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get object owner from metadata, fallback to request account
 	var objectOwner string
 	var objectOwnerDisplayName string
@@ -107,53 +120,13 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	objectOwnerDisplayName = s3a.iam.GetAccountNameById(objectOwner)
 
-	// Build ACL response
+	// Build ACL response from stored ACL metadata (or the owner's default grant).
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
 			ID:          objectOwner,
 			DisplayName: objectOwnerDisplayName,
 		},
-	}
-
-	// Get grants from stored ACL metadata
-	grants := GetAcpGrants(entry.Extended)
-	if len(grants) > 0 {
-		// Convert AWS SDK grants to local Grant format
-		for _, grant := range grants {
-			localGrant := Grant{
-				Permission: Permission(*grant.Permission),
-			}
-
-			if grant.Grantee != nil {
-				localGrant.Grantee = Grantee{
-					Type:   *grant.Grantee.Type,
-					XMLXSI: "CanonicalUser",
-					XMLNS:  "http://www.w3.org/2001/XMLSchema-instance",
-				}
-
-				if grant.Grantee.ID != nil {
-					localGrant.Grantee.ID = *grant.Grantee.ID
-					localGrant.Grantee.DisplayName = s3a.iam.GetAccountNameById(*grant.Grantee.ID)
-				}
-
-				if grant.Grantee.URI != nil {
-					localGrant.Grantee.URI = *grant.Grantee.URI
-				}
-			}
-
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, localGrant)
-		}
-	} else {
-		// Fallback to default full control for object owner
-		response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-			Grantee: Grantee{
-				ID:          objectOwner,
-				DisplayName: objectOwnerDisplayName,
-				Type:        "CanonicalUser",
-				XMLXSI:      "CanonicalUser",
-				XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-			Permission: Permission(s3_constants.PermissionFullControl),
-		})
+		AccessControlList: buildAccessControlList(s3a.iam, GetAcpGrants(entry.Extended), objectOwner, objectOwnerDisplayName),
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -177,6 +150,10 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
@@ -236,6 +213,15 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	putAction := s3_constants.S3_ACTION_PUT_OBJECT_ACL
+	if versionId != "" {
+		putAction = s3_constants.S3_ACTION_PUT_OBJECT_VERSION_ACL
+	}
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, putAction, entry.Extended, "PutObjectAclHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Get current object owner from metadata
 	var objectOwner string
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -246,15 +232,27 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// **PERMISSION CHECKS**
+
+	isAdmin := s3a.isUserAdmin(r)
+
+	// Without stored owner metadata there is no way to prove a non-admin
+	// caller owns this object, so they must not modify its ACL or claim it.
+	// Admins keep the fallback below to take over ownerless objects, which
+	// can be produced by non-S3 filer writes.
+	if objectOwner == "" && !isAdmin {
+		glog.V(3).Infof("PutObjectAclHandler: Access denied - object %s/%s has no owner metadata", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
 	// Fallback to current account if no owner stored
 	if objectOwner == "" {
 		objectOwner = amzAccountId
 	}
 
-	// **PERMISSION CHECKS**
-
 	// 1. Check if user is admin (admins can modify any ACL)
-	if !s3a.isUserAdmin(r) {
+	if !isAdmin {
 		// 2. Check object ownership - only object owner can modify ACL (unless admin)
 		if objectOwner != amzAccountId {
 			glog.V(3).Infof("PutObjectAclHandler: Access denied - user %s is not owner of object %s/%s (owner: %s)",
@@ -263,19 +261,13 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		// 3. Check object-level WRITE_ACP permission
-		// Create the specific action for this object
-		writeAcpAction := Action(fmt.Sprintf("WriteAcp:%s/%s", bucket, object))
-		identity, errCode := s3a.iam.authRequest(r, writeAcpAction)
+		// 3. Check object-level WRITE_ACP permission. The unified auth path
+		// scopes the base action to the request's bucket/object for both
+		// legacy Actions and IAM/bucket policies; embedding the resource path
+		// in the action here would scope it twice.
+		_, errCode := s3a.iam.authRequest(r, Action(s3_constants.ACTION_WRITE_ACP))
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("PutObjectAclHandler: Auth failed for WriteAcp action on %s/%s: %v", bucket, object, errCode)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
-
-		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
-		if identity == nil || !identity.CanDo(writeAcpAction, bucket, object) {
-			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
@@ -308,35 +300,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Calculate the correct directory for ACL update
-	var updateDirectory string
-
-	if versioningConfigured {
-		if versionId != "" && versionId != "null" {
-			// Versioned object - update the specific version file in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		} else {
-			// Latest version in versioned bucket - could be null version or versioned object
-			// Extract version ID from the entry to determine where it's stored
-			var actualVersionId string
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					actualVersionId = string(versionIdBytes)
-				}
-			}
-
-			if actualVersionId == "null" || actualVersionId == "" {
-				// Null version (pre-versioning object) - stored as regular file
-				updateDirectory = s3a.bucketDir(bucket)
-			} else {
-				// Versioned object - stored in .versions directory
-				updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-			}
-		}
-	} else {
-		// Non-versioned object - stored as regular file
-		updateDirectory = s3a.bucketDir(bucket)
-	}
+	updateDirectory := s3a.objectMetadataUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
 
 	// Update the object with new ACL metadata
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -359,4 +323,27 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	glog.V(3).Infof("PutObjectAclHandler: Successfully updated ACL for %s/%s by user %s", bucket, object, amzAccountId)
 	writeSuccessResponseEmpty(w, r)
+}
+
+// objectMetadataUpdateDirectory returns the filer directory holding the entry an in-place
+// metadata update (ACL or tags) must target. A regular object lives under its full key's
+// parent directory, so a nested key must not fall back to the bucket root, which would
+// rewrite a different object sharing the same basename.
+func (s3a *S3ApiServer) objectMetadataUpdateDirectory(bucket, object string, versioningConfigured bool, versionId string, entry *filer_pb.Entry) string {
+	if versioningConfigured {
+		if versionId != "" && versionId != "null" {
+			return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+		}
+		var actualVersionId string
+		if entry.Extended != nil {
+			if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+				actualVersionId = string(versionIdBytes)
+			}
+		}
+		if actualVersionId != "null" && actualVersionId != "" {
+			return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+		}
+	}
+	dir, _ := util.NewFullPath(s3a.bucketDir(bucket), object).DirAndName()
+	return dir
 }

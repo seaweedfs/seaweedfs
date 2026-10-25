@@ -47,11 +47,13 @@ func TestFilerStore(t *testing.T, store filer.FilerStore) {
 	err := store.KvPut(ctx, testKey, testValue1)
 	assert.Nil(t, err, "KV put")
 	value, err := store.KvGet(ctx, testKey)
+	assert.NoError(t, err)
 	assert.Equal(t, value, testValue1, "KV get")
 
 	err = store.KvPut(ctx, testKey, testValue2)
 	assert.Nil(t, err, "KV update")
 	value, err = store.KvGet(ctx, testKey)
+	assert.NoError(t, err)
 	assert.Equal(t, value, testValue2, "KV get after update")
 }
 

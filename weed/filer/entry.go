@@ -2,6 +2,7 @@ package filer
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -12,6 +13,8 @@ import (
 type Attr struct {
 	Mtime         time.Time   // time of last modification
 	Crtime        time.Time   // time of creation (OS X only)
+	Ctime         time.Time   // time of last inode change
+	Atime         time.Time   // time of last access
 	Mode          os.FileMode // file mode
 	Uid           uint32      // owner uid
 	Gid           uint32      // group gid
@@ -155,6 +158,61 @@ func (entry *Entry) IsExpireS3Enabled() (exist bool) {
 		_, exist = entry.Extended[s3_constants.SeaweedFSExpiresS3]
 	}
 	return exist
+}
+
+func (entry *Entry) isS3Entry() bool {
+	if entry.Extended == nil {
+		return false
+	}
+
+	if _, found := entry.Extended[s3_constants.ExtAmzOwnerKey]; found {
+		return true
+	}
+
+	if _, found := entry.Extended[s3_constants.ExtETagKey]; found {
+		return true
+	}
+
+	for key := range entry.Extended {
+		if strings.HasPrefix(key, s3_constants.ExtAmzPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyStorageTtl stamps the TTL the entry's data was placed with. Remote
+// entries never expire locally; the remote storage owns their lifecycle.
+func (entry *Entry) ApplyStorageTtl(ttlSec int32) {
+	if entry.Remote != nil {
+		ttlSec = 0
+	}
+	entry.TtlSec = ttlSec
+	entry.ApplyS3ExpiryMetadata()
+}
+
+func (entry *Entry) ApplyS3ExpiryMetadata() {
+	if entry.TtlSec == 0 {
+		return
+	}
+
+	if _, found := entry.Extended[s3_constants.SeaweedFSExpiresS3]; found {
+		return
+	}
+
+	// The s3 expiry path skips versioned entries, so stamping one would drop its
+	// expiry entirely instead of moving it onto mtime.
+	if entry.IsS3Versioning() {
+		return
+	}
+
+	if !entry.isS3Entry() {
+		return
+	}
+
+	entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+
+	return
 }
 
 func (entry *Entry) IsS3Versioning() (exist bool) {

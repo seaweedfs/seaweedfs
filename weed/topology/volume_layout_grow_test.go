@@ -1,0 +1,386 @@
+package topology
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+)
+
+// Reproduces https://github.com/seaweedfs/seaweedfs/issues/8986
+//
+// Topology: 1 DC with 3 racks, replication "010" (different-rack).
+// Each volume has replicas on 2 of the 3 racks.
+// The third rack has no replica, so ShouldGrowVolumesByDcAndRack
+// incorrectly returns true for that rack, causing endless volume creation
+// even though the DC already has plenty of non-crowded writable volumes.
+var topologyLayout3Racks = `
+{
+  "dc_edge":{
+    "rack1":{
+      "server1":{
+        "ip":"10.0.0.1",
+        "volumes":[
+          {"id":1, "size":12312, "replication":"010"},
+          {"id":2, "size":12312, "replication":"010"}
+        ],
+        "limit":30
+      }
+    },
+    "rack2":{
+      "server2":{
+        "ip":"10.0.0.2",
+        "volumes":[
+          {"id":1, "size":12312, "replication":"010"},
+          {"id":2, "size":12312, "replication":"010"}
+        ],
+        "limit":30
+      }
+    },
+    "rack3":{
+      "server3":{
+        "ip":"10.0.0.3",
+        "volumes":[],
+        "limit":30
+      }
+    }
+  }
+}
+`
+
+func TestShouldGrowVolumesByDcAndRack_Issue8986(t *testing.T) {
+	topo := setup(topologyLayout3Racks)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("010")
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	writables := vl.CloneWritableVolumes()
+	if len(writables) != 2 {
+		t.Fatalf("expected 2 writable volumes, got %d", len(writables))
+	}
+
+	// rack1 and rack2 each have replicas of the writable volumes.
+	// ShouldGrowVolumesByDcAndRack should return false for them.
+	if vl.ShouldGrowVolumesByDcAndRack(&writables, "dc_edge", "rack1") {
+		t.Error("rack1 should NOT need growth — it has writable volumes")
+	}
+	if vl.ShouldGrowVolumesByDcAndRack(&writables, "dc_edge", "rack2") {
+		t.Error("rack2 should NOT need growth — it has writable volumes")
+	}
+
+	// rack3 has no replicas. With the old logic, this returns true (should grow),
+	// but since the DC already has non-crowded writable volumes with "010"
+	// replication, growing a new volume is unnecessary — the existing volumes
+	// can serve any write request that doesn't pin to a specific rack.
+	if vl.ShouldGrowVolumesByDcAndRack(&writables, "dc_edge", "rack3") {
+		t.Error("rack3 should NOT need growth — the DC already has non-crowded writable volumes that can serve writes")
+	}
+}
+
+// Topology from https://github.com/seaweedfs/seaweedfs/issues/9832
+// 1 DC, 2 racks, 1 server each, replication 010, one crowded volume (28.65 GB)
+// near the 30 GB size limit.
+var topologyLayout9832 = `
+{
+  "datacenter1":{
+    "rack1":{
+      "node-a":{
+        "ip":"10.0.0.1",
+        "volumes":[ {"id":12, "size":28650, "replication":"010", "collection":"bucket-nexus"} ],
+        "limit":30
+      }
+    },
+    "rack2":{
+      "node-b":{
+        "ip":"10.0.0.2",
+        "volumes":[ {"id":12, "size":28650, "replication":"010", "collection":"bucket-nexus"} ],
+        "limit":30
+      }
+    }
+  }
+}
+`
+
+// Reproduces https://github.com/seaweedfs/seaweedfs/issues/9832
+//
+// A crowded "010" volume made the periodic rack-aware scan return true for
+// every rack in the DC, so it grew once per rack with a hardcoded step of 2 —
+// 2 racks × 2 = 4 logical volumes (8 physical) — and ignored a lowered
+// master.volume_growth.copy_2. PlanRackAwareGrowth now plans a single DC-wide
+// grow capped at copy_N.
+func TestPlanRackAwareGrowth_Issue9832(t *testing.T) {
+	defer restoreCopyCounts(VolumeGrowStrategy.Copy1Count, VolumeGrowStrategy.Copy2Count)
+	VolumeGrowStrategy.Copy2Count = 1 // user's master.volume_growth.copy_2
+
+	topo := setupWithLimit(t, topologyLayout9832, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("010")
+	vl := topo.GetVolumeLayout("bucket-nexus", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	if writables := vl.CloneWritableVolumes(); len(writables) != 1 {
+		t.Fatalf("expected 1 writable volume, got %d", len(writables))
+	}
+
+	// The crowded volume makes both racks report "should grow" — the source of
+	// the old per-rack multiplication.
+	writables := vl.CloneWritableVolumes()
+	if !vl.ShouldGrowVolumesByDcAndRack(&writables, "datacenter1", "rack1") ||
+		!vl.ShouldGrowVolumesByDcAndRack(&writables, "datacenter1", "rack2") {
+		t.Fatal("expected both racks to report should-grow for the crowded volume")
+	}
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2)
+	if len(plans) != 1 {
+		t.Fatalf("expected 1 DC-wide grow, got %d: %+v", len(plans), plans)
+	}
+	if plans[0].Rack != "" {
+		t.Errorf("expected DC-wide grow (empty rack), got rack %q", plans[0].Rack)
+	}
+	if plans[0].WritableVolumeCount != 1 {
+		t.Errorf("expected copy_2=1 logical volume, got %d", plans[0].WritableVolumeCount)
+	}
+}
+
+// With the default copy_2 the per-event step is preserved (not increased): the
+// fix only removes the per-rack multiplication.
+func TestPlanRackAwareGrowth_DefaultStepNotMultiplied(t *testing.T) {
+	defer restoreCopyCounts(VolumeGrowStrategy.Copy1Count, VolumeGrowStrategy.Copy2Count)
+	VolumeGrowStrategy.Copy2Count = 6 // default
+
+	topo := setupWithLimit(t, topologyLayout9832, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("010")
+	vl := topo.GetVolumeLayout("bucket-nexus", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2)
+	if len(plans) != 1 {
+		t.Fatalf("expected 1 DC-wide grow, got %d: %+v", len(plans), plans)
+	}
+	if plans[0].WritableVolumeCount != 2 {
+		t.Errorf("expected step count 2 (min of step 2 and copy_2 6), got %d", plans[0].WritableVolumeCount)
+	}
+}
+
+// A non-crowded "010" volume needs no growth at all.
+func TestPlanRackAwareGrowth_NotCrowdedNoGrowth(t *testing.T) {
+	layout := `
+{
+  "datacenter1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":12, "size":1000, "replication":"010", "collection":"c"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":12, "size":1000, "replication":"010", "collection":"c"} ], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("010")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	if plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2); len(plans) != 0 {
+		t.Fatalf("expected no growth for non-crowded volume, got %+v", plans)
+	}
+}
+
+// Non-rack-spanning replication ("000") still grows per rack: a rack without a
+// writable volume gets its own grow.
+func TestPlanRackAwareGrowth_PerRackForNonRackSpanning(t *testing.T) {
+	layout := `
+{
+  "datacenter1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":1000, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2)
+	if len(plans) != 1 {
+		t.Fatalf("expected 1 per-rack grow, got %d: %+v", len(plans), plans)
+	}
+	if plans[0].Rack != "rack2" {
+		t.Errorf("expected grow pinned to empty rack2, got %q", plans[0].Rack)
+	}
+}
+
+// lastGrowCount is spread evenly across all grow targets even when DCs have
+// different rack counts: each crowded "000" rack gets ceilDiv(lastGrowCount,
+// totalRacks), so the total matches the request rather than over-growing per DC.
+func TestPlanRackAwareGrowth_EvenDistributionAcrossUnevenDCs(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } }
+  },
+  "dc2":{
+    "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[ {"id":3, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[ {"id":4, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } },
+    "rack5":{ "node-e":{ "ip":"10.0.0.5", "volumes":[ {"id":5, "size":28650, "replication":"000", "collection":"c"} ], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 10, 2)
+	if len(plans) != 5 {
+		t.Fatalf("expected a grow per crowded rack (5), got %d: %+v", len(plans), plans)
+	}
+	total := uint32(0)
+	for _, p := range plans {
+		if p.WritableVolumeCount != 2 { // ceilDiv(10, 5 racks)
+			t.Errorf("expected even per-rack count 2, got %d for %s/%s", p.WritableVolumeCount, p.DataCenter, p.Rack)
+		}
+		total += p.WritableVolumeCount
+	}
+	if total != 10 {
+		t.Errorf("expected total grow 10, got %d", total)
+	}
+}
+
+// A collection pinned to one data center (fs.configure -dataCenter) lives only
+// there, yet the scan used to plan growth for every data center in the
+// topology, spreading the collection's volumes across all of them. Data
+// centers hosting none of the layout's volumes are not the scan's to fill.
+func TestPlanRackAwareGrowth_SkipsDataCentersWithoutLayoutVolumes(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":%d, "replication":"000", "collection":"pinned"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[], "limit":30 } } },
+  "dc3":{ "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[], "limit":30 } } },
+  "dc4":{ "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[], "limit":30 } } }
+}
+`
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	topo := setupWithLimit(t, fmt.Sprintf(layout, 1000), 30000)
+	vl := topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+	if plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2); len(plans) != 0 {
+		t.Fatalf("healthy dc1 volume: expected no growth, got %+v", plans)
+	}
+
+	topo = setupWithLimit(t, fmt.Sprintf(layout, 28650), 30000)
+	vl = topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2)
+	if len(plans) != 1 {
+		t.Fatalf("crowded dc1 volume: expected 1 grow, got %d: %+v", len(plans), plans)
+	}
+	if plans[0].DataCenter != "dc1" || plans[0].Rack != "rack1" {
+		t.Errorf("expected grow pinned to dc1/rack1, got %s/%s", plans[0].DataCenter, plans[0].Rack)
+	}
+}
+
+// The lastGrowCount divisor counts only the racks the scan can actually plan
+// for; racks of skipped data centers would dilute every grow.
+func TestPlanRackAwareGrowth_DivisorCountsOnlyHostingRacks(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":28650, "replication":"000", "collection":"pinned"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":28650, "replication":"000", "collection":"pinned"} ], "limit":30 } }
+  },
+  "dc2":{
+    "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[], "limit":30 } },
+    "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 4, 2)
+	if len(plans) != 2 {
+		t.Fatalf("expected a grow per crowded dc1 rack, got %d: %+v", len(plans), plans)
+	}
+	for _, p := range plans {
+		if p.DataCenter != "dc1" {
+			t.Errorf("expected grows pinned to dc1, got %s/%s", p.DataCenter, p.Rack)
+		}
+		if p.WritableVolumeCount != 2 { // ceilDiv(4, 2 hosting racks), not ceilDiv(4, 4)
+			t.Errorf("expected per-rack count 2, got %d", p.WritableVolumeCount)
+		}
+	}
+}
+
+// The periodic must-grow and crowded growth paths build their request from
+// ToVolumeGrowRequest. For a layout living in exactly one data center the
+// request carries that DC, so those paths do not scatter a pinned collection
+// either; a layout spanning DCs keeps unconstrained growth.
+func TestToVolumeGrowRequest_SingleDataCenterLayout(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":1000, "replication":"000", "collection":"pinned"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":1000, "replication":"000", "collection":"spread"} ], "limit":30 } } },
+  "dc3":{ "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[ {"id":3, "size":1000, "replication":"000", "collection":"spread"} ], "limit":30 } } }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	pinned := &VolumeLayoutCollection{"pinned", topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := pinned.ToVolumeGrowRequest(); vgr.DataCenter != "dc1" {
+		t.Errorf("expected growth pinned to dc1, got %q", vgr.DataCenter)
+	}
+
+	spread := &VolumeLayoutCollection{"spread", topo.GetVolumeLayout("spread", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := spread.ToVolumeGrowRequest(); vgr.DataCenter != "" {
+		t.Errorf("expected unconstrained growth for a multi-DC layout, got %q", vgr.DataCenter)
+	}
+}
+
+// Cross-DC replication can never legitimately live in one data center: a
+// single hosting DC there means the other DCs are down, and pinning growth to
+// the survivor would encode the outage as a placement constraint.
+func TestToVolumeGrowRequest_CrossDCReplicationNeverPinned(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":1000, "replication":"100", "collection":"c"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[], "limit":30 } } }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("100")
+
+	vlc := &VolumeLayoutCollection{"c", topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := vlc.ToVolumeGrowRequest(); vgr.DataCenter != "" {
+		t.Errorf("expected unconstrained growth for cross-DC replication, got %q", vgr.DataCenter)
+	}
+}
+
+// Volumes packed to capacity (e.g. by fs.mergeVolumes) go crowded and then
+// unwritable, but stay in the crowded map. ShouldGrowVolumes must count only
+// writable crowded volumes, or those leftovers keep writable <= crowded true
+// forever and every assign-path grow request passes the gate.
+func TestShouldGrowVolumes_UnwritableCrowdedVolumes(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := NewVolumeLayout(rp, needle.EMPTY_TTL, types.HardDriveType, 30000, false)
+
+	vl.accessLock.Lock()
+	vl.setVolumeWritable(1)
+	vl.setVolumeWritable(2)
+	vl.accessLock.Unlock()
+
+	vl.SetVolumeCrowded(1)
+	vl.SetVolumeCapacityFull(1)
+
+	if _, crowded := vl.GetWritableVolumeCount(); crowded != 0 {
+		t.Fatalf("expected 0 writable crowded volumes, got %d", crowded)
+	}
+	if vl.ShouldGrowVolumes() {
+		t.Fatal("volume 2 still has room, growth is not needed")
+	}
+
+	vl.SetVolumeCrowded(2)
+	if !vl.ShouldGrowVolumes() {
+		t.Fatal("every writable volume is crowded, growth is needed")
+	}
+}
+
+func restoreCopyCounts(copy1, copy2 uint32) {
+	VolumeGrowStrategy.Copy1Count = copy1
+	VolumeGrowStrategy.Copy2Count = copy2
+}

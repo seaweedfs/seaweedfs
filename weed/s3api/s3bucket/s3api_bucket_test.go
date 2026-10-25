@@ -17,6 +17,7 @@ func Test_verifyBucketName(t *testing.T) {
 		"grehtrry-",
 		"----------",
 		"x@fdsgr032",
+		"filemeta",
 	}
 	for _, invalidName := range invalidS3BucketNames {
 		err := VerifyS3BucketName(invalidName)

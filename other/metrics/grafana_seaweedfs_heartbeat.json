@@ -754,7 +754,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total[$__interval])) by (bucket)",
+              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total[$__rate_interval])) by (bucket)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -835,7 +835,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total[$__interval])) by (bucket)",
+              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total[$__rate_interval])) by (bucket)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -914,7 +914,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(SeaweedFS_s3_request_total[$__interval])) by (bucket)",
+              "expr": "sum(rate(SeaweedFS_s3_request_total[$__rate_interval])) by (bucket)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,

@@ -115,6 +115,13 @@ func (df *DiskFile) Name() string {
 	return df.fullFilePath
 }
 
+func (df *DiskFile) Fd() uintptr {
+	if df.File == nil {
+		return ^uintptr(0)
+	}
+	return df.File.Fd()
+}
+
 func (df *DiskFile) Sync() error {
 	if df.File == nil {
 		return os.ErrClosed

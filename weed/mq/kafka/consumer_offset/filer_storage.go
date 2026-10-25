@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
@@ -192,10 +191,6 @@ func (f *FilerStorage) getOffsetPath(group, topic string, partition int32) strin
 	return fmt.Sprintf("%s/offset", f.getPartitionPath(group, topic, partition))
 }
 
-func (f *FilerStorage) getMetadataPath(group, topic string, partition int32) string {
-	return fmt.Sprintf("%s/metadata", f.getPartitionPath(group, topic, partition))
-}
-
 func (f *FilerStorage) writeFile(path string, data []byte) error {
 	fullPath := util.FullPath(path)
 	dir, name := fullPath.DirAndName()
@@ -285,7 +280,7 @@ func (f *FilerStorage) listDirectory(path string) ([]string, error) {
 				return err
 			}
 
-			if resp.Entry.IsDirectory {
+			if resp.Entry != nil && resp.Entry.IsDirectory {
 				entries = append(entries, resp.Entry.Name)
 			}
 		}
@@ -301,26 +296,6 @@ func (f *FilerStorage) deleteDirectory(path string) error {
 	dir, name := fullPath.DirAndName()
 
 	return f.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            dir,
-			Name:                 name,
-			IsDeleteData:         true,
-			IsRecursive:          true,
-			IgnoreRecursiveError: true,
-		})
-		return err
+		return filer_pb.DoRemove(context.Background(), client, dir, name, true, true, true, false, nil)
 	})
-}
-
-// normalizePath removes leading/trailing slashes and collapses multiple slashes
-func normalizePath(path string) string {
-	path = strings.Trim(path, "/")
-	parts := strings.Split(path, "/")
-	normalized := []string{}
-	for _, part := range parts {
-		if part != "" {
-			normalized = append(normalized, part)
-		}
-	}
-	return "/" + strings.Join(normalized, "/")
 }

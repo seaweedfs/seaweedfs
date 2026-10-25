@@ -2,6 +2,7 @@ package B2Sink
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/kurin/blazer/b2"
@@ -31,6 +32,10 @@ func (g *B2Sink) GetName() string {
 
 func (g *B2Sink) GetSinkToDirectory() string {
 	return g.dir
+}
+
+func (g *B2Sink) GetDestinationIdentity() string {
+	return g.bucket + "\x00" + g.dir
 }
 
 func (g *B2Sink) IsIncremental() bool {
@@ -99,7 +104,10 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
+	}
 
 	bucket, err := g.client.Bucket(context.Background(), g.bucket)
 	if err != nil {
@@ -116,10 +124,14 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	}
 
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		content, err := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if err != nil {
+			return fmt.Errorf("decrypt inline SSE content: %w", err)
+		}
+		return writeFunc(content)
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry); err != nil {
 		return err
 	}
 

@@ -1,0 +1,8 @@
+# Known pjdfstest failures for SeaweedFS FUSE mount.
+#
+# Tests listed here are skipped during CI runs. Each entry must be a path
+# relative to the pjdfstest root (e.g. tests/chmod/02.t).
+#
+# A failure in any test NOT listed here will cause the CI job to fail,
+# catching regressions immediately.
+

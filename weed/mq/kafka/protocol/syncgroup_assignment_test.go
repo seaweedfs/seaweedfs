@@ -1,7 +1,11 @@
 package protocol
 
 import (
+	"bytes"
+	"encoding/binary"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
 // TestSyncGroup_RaceCondition_BugDocumentation documents the original race condition bug
@@ -122,4 +126,137 @@ func TestSyncGroup_FixVerification(t *testing.T) {
 				tc.description, tc.isLeader, tc.hasAssignments, tc.shouldWait)
 		})
 	}
+}
+
+func TestParseSyncGroupRequestV5SkipsProtocolFields(t *testing.T) {
+	memberID := "consumer-schema-registry"
+	requestBody := buildSyncGroupV5Request("schema-registry", 12, memberID, "consumer", "range", []GroupAssignment{
+		{MemberID: memberID, Assignment: []byte(`{"version":1,"error":0}`)},
+	})
+
+	request, err := (&Handler{}).parseSyncGroupRequest(requestBody, 5)
+	if err != nil {
+		t.Fatalf("parseSyncGroupRequest failed: %v", err)
+	}
+
+	if request.GroupID != "schema-registry" {
+		t.Fatalf("GroupID = %q, want schema-registry", request.GroupID)
+	}
+	if request.GenerationID != 12 {
+		t.Fatalf("GenerationID = %d, want 12", request.GenerationID)
+	}
+	if request.MemberID != memberID {
+		t.Fatalf("MemberID = %q, want %q", request.MemberID, memberID)
+	}
+	if request.ProtocolType != "consumer" {
+		t.Fatalf("ProtocolType = %q, want consumer", request.ProtocolType)
+	}
+	if request.ProtocolName != "range" {
+		t.Fatalf("ProtocolName = %q, want range", request.ProtocolName)
+	}
+	if len(request.GroupAssignments) != 1 {
+		t.Fatalf("len(GroupAssignments) = %d, want 1", len(request.GroupAssignments))
+	}
+	if request.GroupAssignments[0].MemberID != memberID {
+		t.Fatalf("assignment member = %q, want %q", request.GroupAssignments[0].MemberID, memberID)
+	}
+	if string(request.GroupAssignments[0].Assignment) != `{"version":1,"error":0}` {
+		t.Fatalf("assignment payload = %q", string(request.GroupAssignments[0].Assignment))
+	}
+}
+
+func TestSyncGroupSchemaRegistryV5LeaderAssignmentDoesNotRebalance(t *testing.T) {
+	memberID := "consumer-schema-registry"
+	handler := &Handler{
+		groupCoordinator:  consumer.NewGroupCoordinator(),
+		defaultPartitions: 1,
+	}
+	t.Cleanup(handler.groupCoordinator.Close)
+
+	group := handler.groupCoordinator.GetOrCreateGroup("schema-registry")
+	group.Mu.Lock()
+	group.State = consumer.GroupStateCompletingRebalance
+	group.Generation = 7
+	group.Protocol = consumer.ProtocolNameRange
+	group.Leader = memberID
+	group.Members[memberID] = &consumer.GroupMember{
+		ID:    memberID,
+		State: consumer.MemberStatePending,
+		Metadata: []byte(`{
+			"host":"schema-registry",
+			"port":8081,
+			"scheme":"http",
+			"version":1,
+			"master_eligibility":true
+		}`),
+	}
+	group.Mu.Unlock()
+
+	requestBody := buildSyncGroupV5Request("schema-registry", 7, memberID, "consumer", "range", []GroupAssignment{
+		{MemberID: memberID, Assignment: []byte(`{"version":1,"error":0}`)},
+	})
+
+	response, err := handler.handleSyncGroup(99, 5, requestBody)
+	if err != nil {
+		t.Fatalf("handleSyncGroup failed: %v", err)
+	}
+	if code := syncGroupResponseErrorCode(t, response, 5); code != ErrorCodeNone {
+		t.Fatalf("SyncGroup error code = %d, want %d", code, ErrorCodeNone)
+	}
+	if !bytes.Contains(response, []byte(`"master":"`+memberID+`"`)) {
+		t.Fatalf("Schema Registry assignment response does not name leader %q: %q", memberID, string(response))
+	}
+
+	group.Mu.RLock()
+	defer group.Mu.RUnlock()
+	if group.Generation != 7 {
+		t.Fatalf("group generation = %d, want 7", group.Generation)
+	}
+	if group.State != consumer.GroupStateStable {
+		t.Fatalf("group state = %s, want Stable", group.State)
+	}
+	if group.Members[memberID].State != consumer.MemberStateStable {
+		t.Fatalf("member state = %s, want Stable", group.Members[memberID].State)
+	}
+}
+
+func buildSyncGroupV5Request(groupID string, generation int32, memberID, protocolType, protocolName string, assignments []GroupAssignment) []byte {
+	var data []byte
+	data = appendCompactString(data, groupID)
+
+	var generationBytes [4]byte
+	binary.BigEndian.PutUint32(generationBytes[:], uint32(generation))
+	data = append(data, generationBytes[:]...)
+
+	data = appendCompactString(data, memberID)
+	data = append(data, 0) // group_instance_id = null
+	data = appendCompactString(data, protocolType)
+	data = appendCompactString(data, protocolName)
+
+	data = append(data, CompactArrayLength(uint32(len(assignments)))...)
+	for _, assignment := range assignments {
+		data = appendCompactString(data, assignment.MemberID)
+		data = append(data, CompactStringLength(len(assignment.Assignment))...)
+		data = append(data, assignment.Assignment...)
+		data = append(data, 0) // assignment tagged fields
+	}
+	data = append(data, 0) // request tagged fields
+	return data
+}
+
+func appendCompactString(data []byte, value string) []byte {
+	data = append(data, CompactStringLength(len(value))...)
+	return append(data, value...)
+}
+
+func syncGroupResponseErrorCode(t *testing.T, response []byte, apiVersion uint16) int16 {
+	t.Helper()
+	offset := 0
+	if apiVersion >= 1 {
+		offset += 4
+	}
+	if len(response) < offset+2 {
+		t.Fatalf("SyncGroup response too short: %d bytes", len(response))
+	}
+	return int16(binary.BigEndian.Uint16(response[offset : offset+2]))
 }

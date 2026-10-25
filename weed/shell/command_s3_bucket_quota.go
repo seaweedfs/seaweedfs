@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -25,6 +26,9 @@ func (c *commandS3BucketQuota) Help() string {
 
 	Example:
 		s3.bucket.quota -name=<bucket_name> -op=set -sizeMB=1024
+
+	Removing or disabling the quota also clears the read-only flag that
+	s3.bucket.quota.enforce may have set on the bucket.
 `
 }
 
@@ -65,6 +69,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 		bucketEntry := lookupResp.Entry
 
+		clearReadOnly := false
 		switch *operationName {
 		case "set":
 			bucketEntry.Quota = *sizeMB * 1024 * 1024
@@ -73,6 +78,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 			return nil
 		case "remove":
 			bucketEntry.Quota = 0
+			clearReadOnly = true
 		case "enable":
 			if bucketEntry.Quota < 0 {
 				bucketEntry.Quota = -bucketEntry.Quota
@@ -81,6 +87,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 			if bucketEntry.Quota > 0 {
 				bucketEntry.Quota = -bucketEntry.Quota
 			}
+			clearReadOnly = true
 		}
 
 		if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
@@ -91,6 +98,18 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 
 		println("updated quota for bucket", *bucketName)
+
+		if clearReadOnly {
+			// with the quota removed or disabled, s3.bucket.quota.enforce can no
+			// longer clear a read-only flag it turned on, so lift it here
+			cleared, err := filer.ClearBucketReadOnly(ctx, client, filerBucketsPath, *bucketName)
+			if err != nil {
+				return err
+			}
+			if cleared {
+				fmt.Fprintf(writer, "cleared read-only for bucket %s\n", *bucketName)
+			}
+		}
 
 		return nil
 

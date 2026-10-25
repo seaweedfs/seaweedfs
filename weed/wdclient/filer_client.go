@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // UrlPreference controls which URL to use for volume access
@@ -41,9 +43,11 @@ type filerHealth struct {
 type FilerClient struct {
 	*vidMapClient
 	filerAddresses     []pb.ServerAddress
-	filerAddressesMu   sync.RWMutex   // Protects filerAddresses and filerHealth
-	filerIndex         int32          // atomic: current filer index for round-robin
-	filerHealth        []*filerHealth // health status per filer (same order as filerAddresses)
+	filerAddressesMu   sync.RWMutex                  // Protects filerAddresses and filerHealth
+	filerIndex         int32                         // atomic: current filer index for round-robin
+	filerHealth        []*filerHealth                // health status per filer (same order as filerAddresses)
+	peerUpdates        uint64                        // pushed filer updates applied; protected by filerAddressesMu
+	deferredLeaves     map[pb.ServerAddress]struct{} // leaves suppressed while the filer was the last known; protected by filerAddressesMu
 	grpcDialOption     grpc.DialOption
 	urlPreference      UrlPreference
 	grpcTimeout        time.Duration
@@ -334,33 +338,135 @@ func (fc *FilerClient) refreshFilerList() {
 		return
 	}
 
+	generation := fc.peerUpdateGeneration()
+
 	// Query master for filers in our group
-	updates := cluster.ListExistingPeerUpdates(currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
+	updates, err := cluster.ListExistingPeerUpdates(context.Background(), currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
+	if err != nil {
+		glog.V(1).Infof("FilerClient: failed to list filers in group '%s': %v", fc.filerGroup, err)
+		return
+	}
 
 	if len(updates) == 0 {
 		glog.V(2).Infof("FilerClient: no filers found in group '%s'", fc.filerGroup)
 		return
 	}
 
-	// Build new filer address list
-	discoveredFilers := make(map[pb.ServerAddress]bool)
+	// Build new filer address set
+	discoveredFilers := make(map[pb.ServerAddress]struct{}, len(updates))
 	for _, update := range updates {
 		if update.Address != "" {
-			discoveredFilers[pb.ServerAddress(update.Address)] = true
+			discoveredFilers[pb.ServerAddress(update.Address)] = struct{}{}
 		}
 	}
 
-	// Thread-safe update of filer list
+	// Ignore snapshots whose addresses are all empty; reconciling against an
+	// empty set would wipe the in-memory list.
+	if len(discoveredFilers) == 0 {
+		glog.V(1).Infof("FilerClient: discovery snapshot for group '%s' had no usable addresses, keeping existing list", fc.filerGroup)
+		return
+	}
+
+	fc.applyDiscoverySnapshot(discoveredFilers, generation)
+}
+
+func (fc *FilerClient) peerUpdateGeneration() uint64 {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	return fc.peerUpdates
+}
+
+// applyDiscoverySnapshot drops a snapshot requested before a pushed update was
+// applied: the push is newer, and the next poll reconciles anything it missed.
+func (fc *FilerClient) applyDiscoverySnapshot(discoveredFilers map[pb.ServerAddress]struct{}, generation uint64) {
+	fc.filerAddressesMu.Lock()
+	defer fc.filerAddressesMu.Unlock()
+	if fc.peerUpdates != generation {
+		glog.V(1).Infof("FilerClient: discarding discovery snapshot for group '%s' superseded by pushed updates", fc.filerGroup)
+		return
+	}
+	fc.deferredLeaves = nil
+	fc.applyDiscoveredFilersLocked(discoveredFilers)
+}
+
+// applyDiscoveredFilers treats the master snapshot as authoritative: survivors
+// keep their health counters, new addresses get fresh health, addresses missing
+// from the snapshot are pruned so replaced pods (e.g. rolled K8s filer pods
+// with new IPs) don't linger and get retried after the circuit-breaker reset.
+func (fc *FilerClient) applyDiscoveredFilers(discoveredFilers map[pb.ServerAddress]struct{}) {
+	fc.filerAddressesMu.Lock()
+	defer fc.filerAddressesMu.Unlock()
+	fc.applyDiscoveredFilersLocked(discoveredFilers)
+}
+
+// OnPeerUpdate applies a filer join/leave pushed by the master, so the list
+// tracks a rolling restart instead of waiting for the next discovery poll. A
+// leave that would empty the list is deferred until another filer exists to
+// take over: an empty list fails every request, while a stale one still
+// recovers through the poll.
+func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.Time) {
+	if update.NodeType != cluster.FilerType || update.Address == "" {
+		return
+	}
+	addr := pb.ServerAddress(update.Address)
+
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
 
-	// Build a map of existing filers for efficient O(1) lookup
+	filers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses)+1)
+	for _, f := range fc.filerAddresses {
+		filers[f] = struct{}{}
+	}
+
+	changed := false
+	if update.IsAdd {
+		// A rejoin cancels its deferred leave; bumping the generation keeps an
+		// in-flight snapshot that lacks the rejoined filer from pruning it.
+		if _, ok := fc.deferredLeaves[addr]; ok {
+			delete(fc.deferredLeaves, addr)
+			changed = true
+		}
+		if _, ok := filers[addr]; !ok {
+			filers[addr] = struct{}{}
+			changed = true
+		}
+	} else {
+		if _, ok := filers[addr]; ok {
+			delete(filers, addr)
+			changed = true
+			if len(filers) == 0 {
+				filers[addr] = struct{}{}
+				if fc.deferredLeaves == nil {
+					fc.deferredLeaves = make(map[pb.ServerAddress]struct{})
+				}
+				fc.deferredLeaves[addr] = struct{}{}
+			}
+		}
+	}
+
+	// A deferred leave can be honored once another filer exists to take over.
+	for gone := range fc.deferredLeaves {
+		if _, ok := filers[gone]; ok && len(filers) <= 1 {
+			continue
+		}
+		delete(filers, gone)
+		delete(fc.deferredLeaves, gone)
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
+	fc.peerUpdates++
+	fc.applyDiscoveredFilersLocked(filers)
+}
+
+func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.ServerAddress]struct{}) {
 	existingFilers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses))
 	for _, f := range fc.filerAddresses {
 		existingFilers[f] = struct{}{}
 	}
 
-	// Find new filers - O(N+M) instead of O(N*M)
 	var newFilers []pb.ServerAddress
 	for addr := range discoveredFilers {
 		if _, found := existingFilers[addr]; !found {
@@ -368,20 +474,57 @@ func (fc *FilerClient) refreshFilerList() {
 		}
 	}
 
-	// Add new filers
-	if len(newFilers) > 0 {
-		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
-		fc.filerAddresses = append(fc.filerAddresses, newFilers...)
-
-		// Initialize health tracking for new filers
-		for range newFilers {
-			fc.filerHealth = append(fc.filerHealth, &filerHealth{})
+	var removedFilers []pb.ServerAddress
+	for _, f := range fc.filerAddresses {
+		if _, found := discoveredFilers[f]; !found {
+			removedFilers = append(removedFilers, f)
 		}
 	}
 
-	// Optionally, remove filers that are no longer in the cluster
-	// For now, we keep all filers and rely on health checks to avoid dead ones
-	// This prevents removing filers that might be temporarily unavailable
+	if len(newFilers) == 0 && len(removedFilers) == 0 {
+		return
+	}
+
+	// Remember the active filer so the round-robin pointer can follow it across the rebuild.
+	currentIndex := atomic.LoadInt32(&fc.filerIndex)
+	var currentFiler pb.ServerAddress
+	if currentIndex >= 0 && currentIndex < int32(len(fc.filerAddresses)) {
+		currentFiler = fc.filerAddresses[currentIndex]
+	}
+
+	newAddresses := make([]pb.ServerAddress, 0, len(fc.filerAddresses)-len(removedFilers)+len(newFilers))
+	newHealth := make([]*filerHealth, 0, cap(newAddresses))
+	for i, f := range fc.filerAddresses {
+		if _, found := discoveredFilers[f]; found {
+			newAddresses = append(newAddresses, f)
+			newHealth = append(newHealth, fc.filerHealth[i])
+		}
+	}
+	for _, f := range newFilers {
+		newAddresses = append(newAddresses, f)
+		newHealth = append(newHealth, &filerHealth{})
+	}
+
+	fc.filerAddresses = newAddresses
+	fc.filerHealth = newHealth
+
+	var newIndex int32
+	if currentFiler != "" {
+		for i, f := range newAddresses {
+			if f == currentFiler {
+				newIndex = int32(i)
+				break
+			}
+		}
+	}
+	atomic.StoreInt32(&fc.filerIndex, newIndex)
+
+	if len(removedFilers) > 0 {
+		glog.V(0).Infof("FilerClient: removed %d filer(s) no longer in group '%s': %v", len(removedFilers), fc.filerGroup, removedFilers)
+	}
+	if len(newFilers) > 0 {
+		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
+	}
 }
 
 // GetLookupFileIdFunction returns a lookup function with URL preference handling
@@ -418,6 +561,7 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 		// Build URLs with publicUrl preference, and also prefer same DC
 		var sameDcUrls, otherDcUrls []string
+		localUrls := make(map[string]bool)
 		dataCenter := fc.GetDataCenter()
 		for _, loc := range locations {
 			url := loc.PublicUrl
@@ -425,6 +569,10 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 				url = loc.Url
 			}
 			httpUrl := "http://" + url + "/" + fileId
+			glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, url, loc.DataInRemote)
+			if !loc.DataInRemote {
+				localUrls[httpUrl] = true
+			}
 			if dataCenter != "" && dataCenter == loc.DataCenter {
 				sameDcUrls = append(sameDcUrls, httpUrl)
 			} else {
@@ -434,7 +582,13 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 		// Shuffle to distribute load across volume servers
 		rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 		rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
-		// Prefer same data center
+		// Local replicas go first inside each data center, but never ahead of
+		// the data-center preference itself. Mirrors
+		// vidMap.LookupVolumeServerUrl so all client lookup paths agree.
+		if len(localUrls) > 0 {
+			sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
+			otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
+		}
 		fullUrls = append(sameDcUrls, otherDcUrls...)
 		return fullUrls, nil
 	}
@@ -470,12 +624,27 @@ func isRetryableGrpcError(err error) bool {
 		}
 	}
 
-	// Fallback to string matching for non-gRPC errors (e.g., network errors)
-	errStr := err.Error()
-	return strings.Contains(errStr, "transport") ||
+	// Fallback for non-gRPC errors (e.g. network errors). "connection" and
+	// "timeout" are deliberately broader than the shared classifier: a volume
+	// lookup is a cheap read-only call, so leaning towards a retry is fine.
+	errStr := strings.ToLower(err.Error())
+	return util.IsTransientError(err) ||
 		strings.Contains(errStr, "connection") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "unavailable")
+		strings.Contains(errStr, "timeout")
+}
+
+// jitter returns a duration in the range [d/2, d) using equal jitter.
+// This prevents thundering herds when many clients retry simultaneously
+// after a transient failure (e.g., network partition healing).
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
 }
 
 // shouldSkipUnhealthyFiler checks if we should skip a filer based on recent failures
@@ -503,53 +672,15 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 	return true // Skip this unhealthy filer
 }
 
-// Deprecated: Use shouldSkipUnhealthyFilerWithHealth instead
-// This function is kept for backward compatibility but requires array access
-// Note: This function is now thread-safe.
-func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return true // Invalid index - skip
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	return fc.shouldSkipUnhealthyFilerWithHealth(health)
-}
-
 // recordFilerSuccessWithHealth resets failure tracking for a successful filer
 func (fc *FilerClient) recordFilerSuccessWithHealth(health *filerHealth) {
 	atomic.StoreInt32(&health.failureCount, 0)
-}
-
-// recordFilerSuccess resets failure tracking for a successful filer
-func (fc *FilerClient) recordFilerSuccess(index int32) {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return // Invalid index
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	fc.recordFilerSuccessWithHealth(health)
 }
 
 // recordFilerFailureWithHealth increments failure count for an unhealthy filer
 func (fc *FilerClient) recordFilerFailureWithHealth(health *filerHealth) {
 	atomic.AddInt32(&health.failureCount, 1)
 	atomic.StoreInt64(&health.lastFailureTimeNs, time.Now().UnixNano())
-}
-
-// recordFilerFailure increments failure count for an unhealthy filer
-func (fc *FilerClient) recordFilerFailure(index int32) {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return // Invalid index
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	fc.recordFilerFailureWithHealth(health)
 }
 
 // LookupVolumeIds queries the filer for volume locations with automatic failover
@@ -683,9 +814,16 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 		// Transient error - retry if we have attempts left
 		if retry < maxRetries-1 {
+			jitteredWait := jitter(waitTime)
 			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
-				n, retry+1, maxRetries, waitTime, lastErr)
-			time.Sleep(waitTime)
+				n, retry+1, maxRetries, jitteredWait, lastErr)
+			timer := time.NewTimer(jitteredWait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 			waitTime = time.Duration(float64(waitTime) * fc.retryBackoffFactor)
 		}
 	}

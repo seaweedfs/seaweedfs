@@ -179,19 +179,15 @@ func TestCheckGovernanceBypassPermissionIntegrationBehavior(t *testing.T) {
 	// This test documents the expected behavior when checkGovernanceBypassPermission
 	// is called with a full IAM system:
 	//
-	// 1. Function calls s3a.iam.authRequest() with the bypass action
+	// 1. Function calls s3a.iam.authRequest() with the base bypass action;
+	//    authRequest derives the bucket and object resource from the request.
 	// 2. If authRequest returns errCode != s3err.ErrNone, function returns false
-	// 3. If authRequest succeeds, function checks identity.CanDo() with the bypass action
-	// 4. If CanDo() returns true, function returns true
-	// 5. If bypass permission fails, function checks admin action with identity.CanDo()
-	// 6. If admin action succeeds, function returns true and logs admin access
-	// 7. If all checks fail, function returns false
+	// 3. If authRequest succeeds through a legacy action, IAM/STS policy, bucket
+	//    policy, or Admin grant, function returns true without a second legacy check.
 	//
 	// The function correctly uses:
 	// - s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION for bypass permission
-	// - s3_constants.ACTION_ADMIN for admin permission
-	// - Proper resource path generation with bucket/object format
-	// - Trimming of leading slashes from object names
+	// - The normal authRequest resource and Admin semantics
 }
 
 // TestGovernanceBypassPermission was removed because it tested the old

@@ -23,8 +23,8 @@ on:
       - 'test/s3/sse/**'
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-sse-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -44,12 +44,16 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -64,7 +68,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting SSE Tests ==="
           
           # Run tests with automatic server management
@@ -73,8 +77,12 @@ jobs:
             # Quick tests - basic SSE-C and SSE-KMS functionality + Range requests
             make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
           else
-            # Comprehensive tests - SSE-C/KMS functionality, excluding copy operations (pre-existing SSE-C issues)
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
+            # Comprehensive tests - SSE-C/KMS functionality plus cross-SSE copy.
+            # The copy-operation tests (`.*ObjectCopyIntegration`, `TestCrossSSECopy`,
+            # `TestSSEMultipartCopy`) were excluded for a long time as "pre-existing
+            # SSE-C issues" (#9281); fixed and brought back into CI as part of the
+            # same change that fixed them.
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior|.*ObjectCopyIntegration|TestCrossSSECopy|TestSSEMultipartCopy"
           fi
 
       - name: Show server logs on failure
@@ -95,7 +103,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-test-logs-${{ matrix.test-type }}
           path: test/s3/sse/weed-test*.log
@@ -108,12 +116,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -143,7 +152,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-compatibility-logs
           path: test/s3/sse/weed-test*.log
@@ -156,12 +165,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -192,7 +202,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-metadata-persistence-logs
           path: test/s3/sse/weed-test*.log
@@ -205,12 +215,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -241,7 +252,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-copy-operations-logs
           path: test/s3/sse/weed-test*.log
@@ -254,12 +265,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -290,7 +302,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-multipart-logs
           path: test/s3/sse/weed-test*.log
@@ -305,12 +317,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -340,7 +353,7 @@ jobs:
 
       - name: Upload performance test logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-sse-performance-logs
           path: test/s3/sse/weed-test*.log
@@ -353,12 +366,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Install SeaweedFS
@@ -389,7 +403,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-volume-encryption-logs
           path: /tmp/seaweedfs-sse-*.log

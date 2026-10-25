@@ -98,15 +98,15 @@ start-seaweedfs: check-binary
 	# Create S3 configuration with SSE-KMS support
 	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
 	
-	# Start weed mini
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(SEAWEEDFS_BINARY) mini \
+	# Start weed mini (WEED_S3_SSE_KEY enables SSE-S3 encryption)
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) WEED_S3_SSE_KEY=test-sse-s3-key $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-sse-s3.json \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \
@@ -337,8 +337,9 @@ start-seaweedfs-ci: check-binary
 	     s3-config-template.json > /tmp/seaweedfs-s3.json
 	
 	# Start weed mini with embedded S3 using the JSON config (with verbose logging)
+	# WEED_S3_SSE_KEY enables SSE-S3 encryption for testing (KEK derived via HKDF)
 	@echo "Starting weed mini with embedded S3..."
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) WEED_S3_SSE_KEY=test-sse-s3-key GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-s3.json \
@@ -346,7 +347,7 @@ start-seaweedfs-ci: check-binary
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \
@@ -482,7 +483,7 @@ test-volume-encryption: build-weed
 	     -e 's/SECRET_KEY_PLACEHOLDER/$(SECRET_KEY)/g' \
 	     s3-config-template.json > /tmp/seaweedfs-s3.json
 	@echo "Starting weed mini with S3 volume encryption..."
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) WEED_S3_SSE_KEY=test-sse-s3-key GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-s3.json \
@@ -490,7 +491,7 @@ test-volume-encryption: build-weed
 		-ip=127.0.0.1 \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
 			break; \

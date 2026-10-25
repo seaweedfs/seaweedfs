@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // ====================================================================
@@ -214,6 +214,49 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 	return entry, nil
 }
 
+// getObjectEntryForUpdate resolves the entry a metadata update targets and the
+// filer path it is written under. It applies the same version resolution as
+// getSpecificObjectVersion - "null" names the plain pre-versioning entry, not a
+// .versions file - so the write lands on the entry that was read.
+func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string) (entry *filer_pb.Entry, entryPath string, err error) {
+	entryPath = object
+	if versionId != "" {
+		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
+		}
+		if versionId != "null" {
+			entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+		}
+		return entry, entryPath, nil
+	}
+
+	versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
+	if vErr != nil {
+		return nil, "", fmt.Errorf("error checking versioning: %w", vErr)
+	}
+	if !versioningEnabled {
+		entry, err = s3a.fetchObjectEntryRequired(bucket, object)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
+		}
+		return entry, entryPath, nil
+	}
+
+	entry, err = s3a.getLatestObjectVersion(bucket, object)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
+	}
+	if entry.Extended != nil {
+		if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+			if storedVersionId := string(versionIdBytes); storedVersionId != "null" && isValidVersionID(storedVersionId) {
+				entryPath = object + ".versions/" + s3a.getVersionFileName(storedVersionId)
+			}
+		}
+	}
+	return entry, entryPath, nil
+}
+
 // ====================================================================
 // RETENTION OPERATIONS
 // ====================================================================
@@ -255,45 +298,9 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 
 // setObjectRetention sets object retention configuration
 func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, retention *ObjectRetention, bypassGovernance bool) error {
-	var entry *filer_pb.Entry
-	var err error
-	var entryPath string
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
-		}
-		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %w", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
-			}
-			// Extract version ID from entry metadata
-			entryPath = object // default to regular object path
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					versionId = string(versionIdBytes)
-					if versionId != "null" {
-						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-					}
-				}
-			}
-		} else {
-			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
-			}
-			entryPath = object
-		}
+	entry, entryPath, err := s3a.getObjectEntryForUpdate(bucket, object, versionId)
+	if err != nil {
+		return err
 	}
 
 	// Check if object is already under retention
@@ -354,18 +361,15 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 		entry.WormEnforcedAtTsNs = time.Now().UnixNano()
 	}
 
-	// Update the entry
+	// Update the entry in place. UpdateEntry persists the whole fetched entry, so
+	// attributes, inline content, and remote references survive the metadata change
+	// where mkFile's fresh entry would drop them.
 	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
 	// and PutObjectLegalHold update the same object simultaneously, as they might
-	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that mkFile operations are typically serialized at the filer level, but
-	// future implementations might consider using atomic update operations or
-	// entry-level locking for complete safety.
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
-	})
+	// overwrite each other's Extended map changes.
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), entryPath).DirAndName()
+	entry.Name = name
+	return s3a.updateEntry(dir, entry)
 }
 
 // ====================================================================
@@ -398,45 +402,9 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 
 // setObjectLegalHold sets object legal hold configuration
 func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, legalHold *ObjectLegalHold) error {
-	var entry *filer_pb.Entry
-	var err error
-	var entryPath string
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
-		}
-		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %w", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
-			}
-			// Extract version ID from entry metadata
-			entryPath = object // default to regular object path
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					versionId = string(versionIdBytes)
-					if versionId != "null" {
-						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
-					}
-				}
-			}
-		} else {
-			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
-			if err != nil {
-				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
-			}
-			entryPath = object
-		}
+	entry, entryPath, err := s3a.getObjectEntryForUpdate(bucket, object, versionId)
+	if err != nil {
+		return err
 	}
 
 	// Update legal hold metadata
@@ -446,40 +414,14 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 
 	entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold.Status)
 
-	// Update the entry
-	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
-	// and PutObjectLegalHold update the same object simultaneously, as they might
-	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that mkFile operations are typically serialized at the filer level, but
-	// future implementations might consider using atomic update operations or
-	// entry-level locking for complete safety.
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-	})
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), entryPath).DirAndName()
+	entry.Name = name
+	return s3a.updateEntry(dir, entry)
 }
 
 // ====================================================================
 // PROTECTION ENFORCEMENT
 // ====================================================================
-
-// isObjectRetentionActive checks if object has active retention
-func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string) (bool, error) {
-	retention, err := s3a.getObjectRetention(bucket, object, versionId)
-	if err != nil {
-		// If no retention found, object is not under retention
-		if errors.Is(err, ErrNoRetentionConfiguration) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if retention.RetainUntilDate != nil && retention.RetainUntilDate.After(time.Now()) {
-		return true, nil
-	}
-
-	return false, nil
-}
 
 // getRetentionFromEntry extracts retention configuration from filer entry
 func (s3a *S3ApiServer) getRetentionFromEntry(entry *filer_pb.Entry) (*ObjectRetention, bool, error) {
@@ -535,33 +477,26 @@ func (s3a *S3ApiServer) getLegalHoldFromEntry(entry *filer_pb.Entry) (*ObjectLeg
 
 // checkGovernanceBypassPermission checks if user has permission to bypass governance retention
 func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
-	// Use the existing IAM auth system to check the specific permission
-	// Create the governance bypass action with proper bucket/object concatenation
-	// Note: path.Join would drop bucket if object has leading slash, so use explicit formatting
-	resource := fmt.Sprintf("%s/%s", bucket, strings.TrimPrefix(object, "/"))
-	action := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, resource))
+	identity, _ := s3_constants.GetIdentityFromContext(request).(*Identity)
+	if identity == nil {
+		// Most handlers arrive through Auth and carry the authenticated identity
+		// in context. Keep direct callers correct without authorizing against the
+		// request URL, which is bucket-only for DeleteObjects.
+		var errCode s3err.ErrorCode
+		identity, errCode, _ = s3a.iam.authenticateRequestInternal(request)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("IAM authentication failed for governance bypass: %v", errCode)
+			return false
+		}
+	}
 
-	// Use the IAM system to authenticate and authorize this specific action
-	identity, errCode := s3a.iam.authRequest(request, action)
+	errCode := s3a.iam.authorizeObjectKeyAction(request, identity, request.Method,
+		s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, bucket, s3_constants.NormalizeObjectKey(object), request.URL.Query().Get("versionId"))
 	if errCode != s3err.ErrNone {
-		glog.V(3).Infof("IAM auth failed for governance bypass: %v", errCode)
+		glog.V(3).Infof("IAM authorization failed for governance bypass on %s/%s: %v", bucket, object, errCode)
 		return false
 	}
-
-	// Verify that the authenticated identity can perform this action
-	if identity != nil && identity.CanDo(action, bucket, object) {
-		return true
-	}
-
-	// Additional check: allow users with Admin action to bypass governance retention
-	// Use the proper S3 Admin action constant instead of generic isAdmin() method
-	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
-	if identity != nil && identity.CanDo(adminAction, bucket, object) {
-		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
-		return true
-	}
-
-	return false
+	return true
 }
 
 // evaluateGovernanceBypassRequest evaluates if governance bypass is requested and permitted
@@ -626,14 +561,20 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 		return err
 	}
 
-	// Extract retention information from the entry
+	return s3a.enforceObjectLockOnEntry(entry, bucket, object, versionId, governanceBypassAllowed)
+}
+
+// enforceObjectLockOnEntry reports whether a lock recorded on an entry stops the
+// operation. Callers holding the entry already -- one reached without a version id
+// of its own, or the one a write is about to replace -- use it directly, so that
+// the decision lives in one place.
+func (s3a *S3ApiServer) enforceObjectLockOnEntry(entry *filer_pb.Entry, bucket, object, versionId string, governanceBypassAllowed bool) error {
 	retention, retentionActive, err := s3a.getRetentionFromEntry(entry)
 	if err != nil {
 		glog.Warningf("Error parsing retention for %s/%s (versionId: %s): %v", bucket, object, versionId, err)
 		// Continue with legal hold check even if retention parsing fails
 	}
 
-	// Extract legal hold information from the entry
 	_, legalHoldActive, err := s3a.getLegalHoldFromEntry(entry)
 	if err != nil {
 		glog.Warningf("Error parsing legal hold for %s/%s (versionId: %s): %v", bucket, object, versionId, err)

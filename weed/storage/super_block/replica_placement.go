@@ -2,6 +2,8 @@ package super_block
 
 import (
 	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type ReplicaPlacement struct {
@@ -41,8 +43,26 @@ func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {
 	return rp, nil
 }
 
+// replicaPlacementsByByte is one 6KB pointer-free array covering every encoding
+// a byte can hold. The master decodes one per volume in every volume server
+// heartbeat and keeps it for the volume's lifetime, so handing out a shared
+// element keeps that path off fmt and off the heap entirely.
+//
+// Elements are immutable. Callers must not write through the returned pointer.
+var replicaPlacementsByByte [256]ReplicaPlacement
+
+func init() {
+	for b := range replicaPlacementsByByte {
+		replicaPlacementsByByte[b] = ReplicaPlacement{
+			DiffDataCenterCount: b / 100,
+			DiffRackCount:       b / 10 % 10,
+			SameRackCount:       b % 10,
+		}
+	}
+}
+
 func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
-	return NewReplicaPlacementFromString(fmt.Sprintf("%03d", b))
+	return &replicaPlacementsByByte[b], nil
 }
 
 func (rp *ReplicaPlacement) HasReplication() bool {
@@ -67,6 +87,9 @@ func (rp *ReplicaPlacement) Byte() byte {
 }
 
 func (rp *ReplicaPlacement) String() string {
+	if rp == nil {
+		return ""
+	}
 	b := make([]byte, 3)
 	b[0] = byte(rp.DiffDataCenterCount + '0')
 	b[1] = byte(rp.DiffRackCount + '0')
@@ -76,4 +99,28 @@ func (rp *ReplicaPlacement) String() string {
 
 func (rp *ReplicaPlacement) GetCopyCount() int {
 	return rp.DiffDataCenterCount + rp.DiffRackCount + rp.SameRackCount + 1
+}
+
+// ResolveReplicaPlacement picks the EC shard replica placement constraint: an
+// explicit spec wins; otherwise the cluster default (typically the master's
+// configured default replication). A missing, invalid, or zero-replication value
+// yields nil, meaning even spread / no constraint. Shared by EC encode, repair,
+// and balance so the three resolve replica placement identically.
+func ResolveReplicaPlacement(explicitSpec, clusterDefault string) *ReplicaPlacement {
+	spec := explicitSpec
+	if spec == "" {
+		spec = clusterDefault
+	}
+	if spec == "" {
+		return nil
+	}
+	rp, err := NewReplicaPlacementFromString(spec)
+	if err != nil {
+		glog.Warningf("ignoring invalid replica placement %q: %v", spec, err)
+		return nil
+	}
+	if !rp.HasReplication() {
+		return nil
+	}
+	return rp
 }

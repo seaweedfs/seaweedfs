@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// sharedCluster is the single default TestCluster shared across all tests
+// that do not require a specialised cluster configuration.
+// It is initialised by TestMain and must not be modified by individual tests.
+var sharedCluster *TestCluster
+
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
 	t          *testing.T
@@ -46,8 +51,9 @@ func NewS3TablesClient(endpoint, region, accessKey, secretKey string) *S3TablesC
 
 // Test configuration constants
 const (
-	testRegion    = "us-west-2"
-	testAccessKey = "admin"
-	testSecretKey = "admin"
-	testAccountID = "111122223333"
+	testRegion        = "us-west-2"
+	testAccessKey     = "admin"
+	testSecretKey     = "admin"
+	testAccountID     = "111122223333"
+	testIAMSigningKey = "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz"
 )

@@ -56,11 +56,6 @@ func IsBinary(t Type) bool {
 	return int(t)&flagIsBinary == flagIsBinary
 }
 
-// isNumber returns true if the type is any type of number.
-func isNumber(t Type) bool {
-	return IsIntegral(t) || IsFloat(t) || t == Decimal
-}
-
 // IsTemporal returns true if Value is time type.
 func IsTemporal(t Type) bool {
 	switch t {

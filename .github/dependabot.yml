@@ -1,10 +1,14 @@
 version: 2
 updates:
 - package-ecosystem: "github-actions"
-  directory: "/"
+  directories:
+    - "/"
+    - "/.github/actions/sign-image"
   schedule:
       interval: "weekly"
 - package-ecosystem: gomod
   directory: "/"
   schedule:
     interval: weekly
+  ignore:
+    - dependency-name: "github.com/seaweedfs/goexif"

@@ -1,6 +1,7 @@
 package sts
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -91,9 +92,20 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		return nil, fmt.Errorf(ErrIssuerRequired)
 	}
 
-	if clientID, ok := configMap[ConfigFieldClientID].(string); ok {
+	clientIDPresent := false
+	if clientID, ok := configMap[ConfigFieldClientID].(string); ok && clientID != "" {
 		config.ClientID = clientID
-	} else {
+		clientIDPresent = true
+	}
+	// Accept the AWS-compatible plural form. Either field satisfies the
+	// "at least one client id" requirement; both can be set together.
+	if rawList, ok := configMap[ConfigFieldClientIDs]; ok {
+		if list, err := f.convertToStringSlice(rawList); err == nil && len(list) > 0 {
+			config.ClientIDs = list
+			clientIDPresent = true
+		}
+	}
+	if !clientIDPresent {
 		return nil, fmt.Errorf(ErrClientIDRequired)
 	}
 
@@ -123,8 +135,39 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		config.TLSCACert = tlsCaCert
 	}
 
+	if rawThumbprints, ok := configMap[ConfigFieldThumbprints]; ok {
+		if list, err := f.convertToStringSlice(rawThumbprints); err == nil {
+			config.Thumbprints = list
+		}
+	}
+
+	if rawAllowed, ok := configMap[ConfigFieldAllowedPrincipalTagKeys]; ok {
+		if list, err := f.convertToStringSlice(rawAllowed); err == nil {
+			config.AllowedPrincipalTagKeys = list
+		}
+	}
+
+	if policyClaim, ok := configMap[ConfigFieldPolicyClaim].(string); ok {
+		config.PolicyClaim = policyClaim
+	}
+
 	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
 		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
+	}
+
+	if enabled, ok := configMap[ConfigFieldJTIReplayProtectionEnabled].(bool); ok {
+		config.JTIReplayProtectionEnabled = &enabled
+	}
+
+	switch maxSize := configMap[ConfigFieldJTICacheMaxSize].(type) {
+	case float64:
+		config.JTICacheMaxSize = int(maxSize)
+	case int:
+		config.JTICacheMaxSize = maxSize
+	case json.Number:
+		if n, err := maxSize.Int64(); err == nil {
+			config.JTICacheMaxSize = int(n)
+		}
 	}
 
 	// Convert claims mapping
@@ -273,70 +316,4 @@ func (f *ProviderFactory) convertToRoleMapping(value interface{}) (*providers.Ro
 	}
 
 	return roleMapping, nil
-}
-
-// ValidateProviderConfig validates a provider configuration
-func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
-	if config == nil {
-		return fmt.Errorf("provider config cannot be nil")
-	}
-
-	if config.Name == "" {
-		return fmt.Errorf("provider name cannot be empty")
-	}
-
-	if config.Type == "" {
-		return fmt.Errorf("provider type cannot be empty")
-	}
-
-	if config.Config == nil {
-		return fmt.Errorf("provider config cannot be nil")
-	}
-
-	// Type-specific validation
-	switch config.Type {
-	case "oidc":
-		return f.validateOIDCConfig(config.Config)
-	case "ldap":
-		return f.validateLDAPConfig(config.Config)
-	case "saml":
-		return f.validateSAMLConfig(config.Config)
-	default:
-		return fmt.Errorf("unsupported provider type: %s", config.Type)
-	}
-}
-
-// validateOIDCConfig validates OIDC provider configuration
-func (f *ProviderFactory) validateOIDCConfig(config map[string]interface{}) error {
-	if _, ok := config[ConfigFieldIssuer]; !ok {
-		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldIssuer)
-	}
-
-	if _, ok := config[ConfigFieldClientID]; !ok {
-		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldClientID)
-	}
-
-	return nil
-}
-
-// validateLDAPConfig validates LDAP provider configuration
-func (f *ProviderFactory) validateLDAPConfig(config map[string]interface{}) error {
-	if _, ok := config["server"]; !ok {
-		return fmt.Errorf("LDAP provider requires 'server' field")
-	}
-	if _, ok := config["baseDN"]; !ok {
-		return fmt.Errorf("LDAP provider requires 'baseDN' field")
-	}
-	return nil
-}
-
-// validateSAMLConfig validates SAML provider configuration
-func (f *ProviderFactory) validateSAMLConfig(config map[string]interface{}) error {
-	// TODO: Implement when SAML provider is available
-	return nil
-}
-
-// GetSupportedProviderTypes returns list of supported provider types
-func (f *ProviderFactory) GetSupportedProviderTypes() []string {
-	return []string{ProviderTypeOIDC}
 }

@@ -9,12 +9,15 @@ import (
 
 func TestPrintClusterInfo(t *testing.T) {
 	testCases := []struct {
-		topology *master_pb.TopologyInfo
-		humanize bool
-		want     string
+		topology    *master_pb.TopologyInfo
+		humanize    bool
+		lockHeld    bool
+		lockHolder  string
+		lockMessage string
+		want        string
 	}{
 		{
-			testTopology1, true,
+			testTopology1, true, false, "", "",
 			`cluster:
 	id:       test_topo_1
 	status:   unlocked
@@ -24,7 +27,7 @@ func TestPrintClusterInfo(t *testing.T) {
 `,
 		},
 		{
-			testTopology1, false,
+			testTopology1, false, false, "", "",
 			`cluster:
 	id:       test_topo_1
 	status:   unlocked
@@ -33,14 +36,37 @@ func TestPrintClusterInfo(t *testing.T) {
 
 `,
 		},
+		{
+			testTopology1, true, true, "192.168.1.5", "",
+			`cluster:
+	id:       test_topo_1
+	status:   LOCKED by 192.168.1.5
+	nodes:    5
+	topology: 5 DCs, 5 disks on 6 racks
+
+`,
+		},
+		{
+			testTopology1, true, true, "192.168.1.5", "ec.encode",
+			`cluster:
+	id:       test_topo_1
+	status:   LOCKED by 192.168.1.5 (ec.encode)
+	nodes:    5
+	topology: 5 DCs, 5 disks on 6 racks
+
+`,
+		},
 	}
 
 	for _, tc := range testCases {
 		var buf bytes.Buffer
 		sp := &ClusterStatusPrinter{
-			writer:   &buf,
-			humanize: tc.humanize,
-			topology: tc.topology,
+			writer:      &buf,
+			humanize:    tc.humanize,
+			topology:    tc.topology,
+			lockHeld:    tc.lockHeld,
+			lockHolder:  tc.lockHolder,
+			lockMessage: tc.lockMessage,
 		}
 		sp.printClusterInfo()
 		got := buf.String()
@@ -48,6 +74,65 @@ func TestPrintClusterInfo(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("for %v: got %v, want %v", tc.topology.Id, got, tc.want)
 		}
+	}
+}
+
+// TestPrintClusterInfo_multiDiskPerNode covers a node whose several physical
+// disks of the same type collapse into a single DiskInfo on the wire (keyed by
+// disk type), so counting len(DiskInfos) under-reports the physical disk count.
+// Three nodes with six disks each must report 18 disks, not 3.
+func TestPrintClusterInfo_multiDiskPerNode(t *testing.T) {
+	makeNode := func(id string) *master_pb.DataNodeInfo {
+		var ecShardInfos []*master_pb.VolumeEcShardInformationMessage
+		// One EC volume per physical disk, each carrying its own DiskId 0..5.
+		for diskId := uint32(0); diskId < 6; diskId++ {
+			ecShardInfos = append(ecShardInfos, &master_pb.VolumeEcShardInformationMessage{
+				Id:          diskId + 1,
+				DiskId:      diskId,
+				EcIndexBits: 1, // a single shard present
+			})
+		}
+		return &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					Type:           "",
+					MaxVolumeCount: 60,
+					EcShardInfos:   ecShardInfos,
+				},
+			},
+		}
+	}
+	topo := &master_pb.TopologyInfo{
+		Id: "multi_disk_topo",
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					makeNode("node1"), makeNode("node2"), makeNode("node3"),
+				},
+			}},
+		}},
+	}
+
+	var buf bytes.Buffer
+	sp := &ClusterStatusPrinter{
+		writer:   &buf,
+		humanize: true,
+		topology: topo,
+	}
+	sp.printClusterInfo()
+	got := buf.String()
+	want := `cluster:
+	id:       multi_disk_topo
+	status:   unlocked
+	nodes:    3
+	topology: 1 DC, 18 disks on 1 rack
+
+`
+	if got != want {
+		t.Errorf("multi-disk cluster info:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
 

@@ -26,7 +26,7 @@ func (v *Volume) maybeWriteSuperBlock(ver needle.Version) error {
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!
 			var dataFile *os.File
-			if dataFile, e = os.Create(v.DataBackend.Name()); e == nil {
+			if dataFile, e = backend.OpenVolumeFile(v.DataBackend.Name(), os.O_RDWR|os.O_CREATE|os.O_TRUNC); e == nil {
 				v.DataBackend = backend.NewDiskFile(dataFile)
 				if _, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); e == nil {
 					v.noWriteLock.Lock()

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
@@ -324,8 +324,8 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 			}
 
 			// Only process directories that are versions (start with "v")
-			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
-				versionDir := filepath.Join(topicDir, versionResp.Entry.Name)
+			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+				versionDir := path.Join(topicDir, versionResp.Entry.Name)
 
 				// List all partition directories under the version directory (e.g., 0315-0630)
 				partitionStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
@@ -352,7 +352,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 					}
 
 					// Only process directories that are partitions (format: NNNN-NNNN)
-					if partitionResp.Entry.IsDirectory {
+					if partitionResp.Entry != nil && partitionResp.Entry.IsDirectory {
 						// Parse partition range to get partition start ID (e.g., "0315-0630" -> 315)
 						var partitionStart, partitionStop int32
 						if n, err := fmt.Sscanf(partitionResp.Entry.Name, "%04d-%04d", &partitionStart, &partitionStop); n != 2 || err != nil {
@@ -360,7 +360,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 							continue
 						}
 
-						partitionDir := filepath.Join(versionDir, partitionResp.Entry.Name)
+						partitionDir := path.Join(versionDir, partitionResp.Entry.Name)
 
 						// List all .offset files in this partition directory
 						offsetStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
@@ -387,11 +387,11 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 							}
 
 							// Only process .offset files
-							if !offsetResp.Entry.IsDirectory && strings.HasSuffix(offsetResp.Entry.Name, ".offset") {
+							if offsetResp.Entry != nil && !offsetResp.Entry.IsDirectory && strings.HasSuffix(offsetResp.Entry.Name, ".offset") {
 								consumerGroup := strings.TrimSuffix(offsetResp.Entry.Name, ".offset")
 
 								// Read the offset value from the file
-								offsetData, err := filer.ReadInsideFiler(client, partitionDir, offsetResp.Entry.Name)
+								offsetData, err := filer.ReadInsideFiler(context.Background(), client, partitionDir, offsetResp.Entry.Name)
 								if err != nil {
 									glog.Warningf("Failed to read offset file %s: %v", offsetResp.Entry.Name, err)
 									continue
@@ -401,7 +401,10 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 									offset := int64(util.BytesToUint64(offsetData))
 
 									// Get the file modification time
-									lastUpdated := time.Unix(offsetResp.Entry.Attributes.Mtime, 0)
+									var lastUpdated time.Time
+									if offsetResp.Entry.Attributes != nil {
+										lastUpdated = time.Unix(offsetResp.Entry.Attributes.Mtime, 0)
+									}
 
 									offsets = append(offsets, ConsumerGroupOffsetInfo{
 										ConsumerGroup: consumerGroup,
@@ -425,67 +428,6 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 	}
 
 	return offsets, nil
-}
-
-// convertRecordTypeToSchemaFields converts a protobuf RecordType to SchemaFieldInfo slice
-func convertRecordTypeToSchemaFields(recordType *schema_pb.RecordType) []SchemaFieldInfo {
-	var schemaFields []SchemaFieldInfo
-
-	if recordType == nil || recordType.Fields == nil {
-		return schemaFields
-	}
-
-	for _, field := range recordType.Fields {
-		schemaField := SchemaFieldInfo{
-			Name:     field.Name,
-			Type:     getFieldTypeString(field.Type),
-			Required: field.IsRequired,
-		}
-		schemaFields = append(schemaFields, schemaField)
-	}
-
-	return schemaFields
-}
-
-// getFieldTypeString converts a protobuf Type to a human-readable string
-func getFieldTypeString(fieldType *schema_pb.Type) string {
-	if fieldType == nil {
-		return "unknown"
-	}
-
-	switch kind := fieldType.Kind.(type) {
-	case *schema_pb.Type_ScalarType:
-		return getScalarTypeString(kind.ScalarType)
-	case *schema_pb.Type_RecordType:
-		return "record"
-	case *schema_pb.Type_ListType:
-		elementType := getFieldTypeString(kind.ListType.ElementType)
-		return fmt.Sprintf("list<%s>", elementType)
-	default:
-		return "unknown"
-	}
-}
-
-// getScalarTypeString converts a protobuf ScalarType to a string
-func getScalarTypeString(scalarType schema_pb.ScalarType) string {
-	switch scalarType {
-	case schema_pb.ScalarType_BOOL:
-		return "bool"
-	case schema_pb.ScalarType_INT32:
-		return "int32"
-	case schema_pb.ScalarType_INT64:
-		return "int64"
-	case schema_pb.ScalarType_FLOAT:
-		return "float"
-	case schema_pb.ScalarType_DOUBLE:
-		return "double"
-	case schema_pb.ScalarType_BYTES:
-		return "bytes"
-	case schema_pb.ScalarType_STRING:
-		return "string"
-	default:
-		return "unknown"
-	}
 }
 
 // convertTopicPublishers converts protobuf TopicPublisher slice to PublisherInfo slice
@@ -552,9 +494,7 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 	// First, try to find any broker from the cluster
 	var brokers []string
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
@@ -582,7 +522,7 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 
 			// Try to find broker leader
 			_, err := client.FindBrokerLeader(ctx, &mq_pb.FindBrokerLeaderRequest{
-				FilerGroup: "",
+				FilerGroup: s.filerGroup,
 			})
 			if err == nil {
 				return nil // This broker is the leader

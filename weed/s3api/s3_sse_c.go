@@ -119,8 +119,8 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	sum := md5.Sum(keyBytes)
 	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
 
-	// Debug logging for MD5 validation
-	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
+	// Debug logging for MD5 validation (never log key material)
+	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s'", keyMD5, expectedMD5)
 
 	if keyMD5 != expectedMD5 {
 		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s'", keyMD5, expectedMD5)
@@ -132,16 +132,6 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 		Key:       keyBytes,
 		KeyMD5:    keyMD5,
 	}, nil
-}
-
-// ValidateSSECHeaders validates SSE-C headers in the request
-func ValidateSSECHeaders(r *http.Request) error {
-	algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
-	key := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKey)
-	keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
-
-	_, err := validateAndParseSSECHeaders(algorithm, key, keyMD5)
-	return err
 }
 
 // ParseSSECHeaders parses and validates SSE-C headers from the request
@@ -270,19 +260,6 @@ func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint
 		stream.XORKeyStream(dummy, dummy)
 	}
 	return stream
-}
-
-// addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
-func addCounterToIV(iv []byte, counter uint64) {
-	// Use the last 8 bytes as a big-endian counter
-	for i := 7; i >= 0; i-- {
-		carry := counter & 0xff
-		iv[len(iv)-8+i] += byte(carry)
-		if iv[len(iv)-8+i] >= byte(carry) {
-			break // No overflow
-		}
-		counter >>= 8
-	}
 }
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata

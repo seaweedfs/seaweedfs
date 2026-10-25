@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -91,10 +90,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	env.masterPort = mustFreePort(t, "Master")
-	env.filerPort = mustFreePort(t, "Filer")
-	env.s3Port = mustFreePort(t, "S3")
-	env.icebergRestPort = mustFreePort(t, "Iceberg")
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg", "Admin"})
+	env.masterPort = ports[0]
+	env.filerPort = ports[1]
+	env.s3Port = ports[2]
+	env.icebergRestPort = ports[3]
 
 	bindIP := testutil.FindBindIP()
 
@@ -104,8 +104,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
-	env.masterProcess = exec.Command(
-		"weed", "mini",
+	miniArgs := append([]string{"mini",
 		"-ip", bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -114,69 +113,35 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	)
+	}, testutil.MiniAdminArgs(ports[4])...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0")
+	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		"ICEBERG_WAREHOUSE=s3://iceberg-tables",
 		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
+	env.masterProcess.Stdout = os.Stdout
+	env.masterProcess.Stderr = os.Stderr
 	if err := env.masterProcess.Start(); err != nil {
 		t.Fatalf("failed to start weed mini: %v", err)
 	}
 	registerMiniProcess(env.masterProcess)
 
 	// Wait for all services to be ready
-	if !waitForPort(env.masterPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.masterPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - master port %d not listening", env.masterPort)
 	}
-	if !waitForPort(env.filerPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.filerPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - filer port %d not listening", env.filerPort)
 	}
-	if !waitForPort(env.s3Port, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/status", env.s3Port), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - s3 endpoint http://127.0.0.1:%d/status not responding", env.s3Port)
 	}
-	if !waitForPort(env.icebergRestPort, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - iceberg rest port %d not listening", env.icebergRestPort)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/v1/config", env.icebergRestPort), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - iceberg rest endpoint http://127.0.0.1:%d/v1/config not responding", env.icebergRestPort)
 	}
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	for i := 0; i < 200; i++ {
-		port := 20000 + rand.Intn(30000)
-		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
-		if err != nil {
-			continue
-		}
-		listener.Close()
-		grpcPort := port + 10000
-		if grpcPort > 65535 {
-			continue
-		}
-		grpcListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
-		if err != nil {
-			continue
-		}
-		grpcListener.Close()
-		return port
-	}
-	t.Fatalf("failed to get free port for %s", name)
-	return 0
-}
-
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
 }
 
 func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string) string {
@@ -361,8 +326,11 @@ spark = (SparkSession.builder
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	masterGrpcPort := env.masterPort + 10000
-	cmd := exec.Command("weed", "shell",
+	cmd := exec.CommandContext(ctx, "weed", "shell",
 		fmt.Sprintf("-master=localhost:%d.%d", env.masterPort, masterGrpcPort),
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))

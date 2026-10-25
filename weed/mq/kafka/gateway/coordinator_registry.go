@@ -662,7 +662,7 @@ func (cr *CoordinatorRegistry) saveCoordinatorAssignment(consumerGroup string, a
 
 		// Save to individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
-		return filer.SaveInsideFiler(client, CoordinatorAssignmentsDir, fileName, assignmentData)
+		return filer.SaveInsideFiler(context.Background(), client, CoordinatorAssignmentsDir, fileName, assignmentData)
 	})
 }
 
@@ -678,7 +678,7 @@ func (cr *CoordinatorRegistry) loadCoordinatorAssignmentWithClient(consumerGroup
 	err := clientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Load from individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
-		data, err := filer.ReadInsideFiler(client, CoordinatorAssignmentsDir, fileName)
+		data, err := filer.ReadInsideFiler(context.Background(), client, CoordinatorAssignmentsDir, fileName)
 		if err != nil {
 			return fmt.Errorf("assignment file not found for group %s: %w", consumerGroup, err)
 		}
@@ -751,12 +751,7 @@ func (cr *CoordinatorRegistry) deleteCoordinatorAssignment(consumerGroup string)
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
 		filePath := fmt.Sprintf("%s/%s", CoordinatorAssignmentsDir, fileName)
 
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory: CoordinatorAssignmentsDir,
-			Name:      fileName,
-		})
-
-		if err != nil {
+		if err := filer_pb.DoRemove(context.Background(), client, CoordinatorAssignmentsDir, fileName, false, false, false, false, nil); err != nil {
 			return fmt.Errorf("failed to delete assignment file %s: %w", filePath, err)
 		}
 

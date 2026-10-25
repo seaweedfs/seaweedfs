@@ -1,5 +1,4 @@
 //go:build !freebsd
-// +build !freebsd
 
 package mount
 
@@ -9,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	sys "golang.org/x/sys/unix"
 )
 
 const (
@@ -40,7 +38,9 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 		return 0, fuse.EINVAL
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -107,7 +107,9 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -122,21 +124,30 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	oldData, _ := entry.Extended[XATTR_PREFIX+attr]
+	_, exists := entry.Extended[XATTR_PREFIX+attr]
 	switch input.Flags {
-	case sys.XATTR_CREATE:
-		if len(oldData) > 0 {
-			break
+	case xattr_CREATE:
+		if exists {
+			return fuse.Status(syscall.EEXIST)
 		}
-		fallthrough
-	case sys.XATTR_REPLACE:
-		fallthrough
-	default:
-		entry.Extended[XATTR_PREFIX+attr] = data
+	case xattr_REPLACE:
+		if !exists {
+			return fuse.ENODATA
+		}
 	}
+
+	// data aliases the FUSE request's pooled input buffer, which is
+	// recycled once this handler returns. Copy before storing so a
+	// later request reusing the buffer cannot corrupt the value.
+	entry.Extended[XATTR_PREFIX+attr] = append([]byte(nil), data...)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
 		return fuse.OK
 	}
 
@@ -153,7 +164,9 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 		return 0, fuse.Status(syscall.ENOTSUP)
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -190,7 +203,9 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if len(attr) == 0 {
 		return fuse.EINVAL
 	}
-	path, fh, entry, status := wfs.maybeReadEntry(header.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, header.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -212,6 +227,16 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	}
 
 	delete(entry.Extended, XATTR_PREFIX+attr)
+
+	if fh != nil {
+		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(header.NodeId, entry)
+		return fuse.OK
+	}
 
 	return wfs.saveEntry(path, entry)
 }

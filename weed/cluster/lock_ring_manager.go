@@ -1,0 +1,217 @@
+package cluster
+
+import (
+	"sync"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/protobuf/proto"
+)
+
+const LockRingStabilizationInterval = 1 * time.Second
+
+// LockRingRebroadcastInterval is how often the ring is re-sent even when
+// membership has not changed. Broadcasts are otherwise purely event-driven,
+// so a single lost or poisoned update would be permanent without this.
+const LockRingRebroadcastInterval = 30 * time.Second
+
+// LockRingManager tracks filer membership for the distributed lock ring.
+// It batches rapid topology changes (e.g., node drop + join) with a
+// stabilization timer, then broadcasts the complete member list atomically
+// so filers receive a single consistent ring update instead of multiple
+// intermediate states.
+type LockRingManager struct {
+	mu                  sync.Mutex
+	members             map[FilerGroupName]map[pb.ServerAddress]struct{}
+	version             map[FilerGroupName]int64
+	lastBroadcast       map[FilerGroupName]*master_pb.LockRingUpdate
+	pendingTimer        map[FilerGroupName]*time.Timer
+	rebroadcastTimer    map[FilerGroupName]*time.Timer
+	broadcastFn         func(resp *master_pb.KeepConnectedResponse)
+	stabilizeDelay      time.Duration
+	rebroadcastInterval time.Duration
+}
+
+func NewLockRingManager(broadcastFn func(resp *master_pb.KeepConnectedResponse)) *LockRingManager {
+	return &LockRingManager{
+		members:             make(map[FilerGroupName]map[pb.ServerAddress]struct{}),
+		version:             make(map[FilerGroupName]int64),
+		lastBroadcast:       make(map[FilerGroupName]*master_pb.LockRingUpdate),
+		pendingTimer:        make(map[FilerGroupName]*time.Timer),
+		rebroadcastTimer:    make(map[FilerGroupName]*time.Timer),
+		broadcastFn:         broadcastFn,
+		stabilizeDelay:      LockRingStabilizationInterval,
+		rebroadcastInterval: LockRingRebroadcastInterval,
+	}
+}
+
+// AddServer records a filer joining and schedules a batched broadcast.
+func (lrm *LockRingManager) AddServer(filerGroup FilerGroupName, address pb.ServerAddress) {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+
+	if _, ok := lrm.members[filerGroup]; !ok {
+		lrm.members[filerGroup] = make(map[pb.ServerAddress]struct{})
+	}
+	lrm.members[filerGroup][address] = struct{}{}
+	lrm.scheduleBroadcast(filerGroup)
+}
+
+// RemoveServer records a filer leaving and schedules a batched broadcast.
+func (lrm *LockRingManager) RemoveServer(filerGroup FilerGroupName, address pb.ServerAddress) {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+
+	if members, ok := lrm.members[filerGroup]; ok {
+		delete(members, address)
+	}
+	lrm.scheduleBroadcast(filerGroup)
+}
+
+// GetServers returns the current member list for a filer group.
+func (lrm *LockRingManager) GetServers(filerGroup FilerGroupName) []string {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+
+	members, ok := lrm.members[filerGroup]
+	if !ok {
+		return nil
+	}
+	servers := make([]string, 0, len(members))
+	for addr := range members {
+		servers = append(servers, string(addr))
+	}
+	return servers
+}
+
+// GetVersion returns the current version for a filer group.
+func (lrm *LockRingManager) GetVersion(filerGroup FilerGroupName) int64 {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+	return lrm.version[filerGroup]
+}
+
+// GetLastUpdate returns a copy of the most recently broadcast lock-ring snapshot
+// for the filer group. It intentionally does not expose pending, unstabilized changes.
+func (lrm *LockRingManager) GetLastUpdate(filerGroup FilerGroupName) *master_pb.LockRingUpdate {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+
+	update, ok := lrm.lastBroadcast[filerGroup]
+	if !ok || update == nil {
+		return nil
+	}
+	return proto.Clone(update).(*master_pb.LockRingUpdate)
+}
+
+// scheduleBroadcast resets the stabilization timer. If another change arrives
+// before the timer fires, the timer resets, batching the changes.
+// Caller must hold lrm.mu.
+func (lrm *LockRingManager) scheduleBroadcast(filerGroup FilerGroupName) {
+	if timer, ok := lrm.pendingTimer[filerGroup]; ok {
+		if !timer.Stop() {
+			// Timer already fired, callback is running or queued.
+			// It will pick up the latest state from lrm.members, so
+			// just schedule a new one for any further changes.
+		}
+	}
+	lrm.pendingTimer[filerGroup] = time.AfterFunc(lrm.stabilizeDelay, func() {
+		lrm.doBroadcast(filerGroup)
+	})
+}
+
+func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
+	lrm.mu.Lock()
+	delete(lrm.pendingTimer, filerGroup)
+	lrm.mu.Unlock()
+	lrm.emit(filerGroup)
+}
+
+// rebroadcast re-sends the current ring unless a membership broadcast is
+// still stabilizing — emitting mid-window would publish an intermediate
+// topology that the pending timer immediately replaces. The check and the
+// update must sit in one critical section or a membership change can slip
+// a pending timer in between.
+func (lrm *LockRingManager) rebroadcast(filerGroup FilerGroupName) {
+	lrm.mu.Lock()
+	var update *master_pb.LockRingUpdate
+	if _, pending := lrm.pendingTimer[filerGroup]; !pending {
+		update = lrm.nextBroadcastUpdate(filerGroup)
+	}
+	lrm.mu.Unlock()
+	lrm.sendUpdate(filerGroup, update)
+}
+
+func (lrm *LockRingManager) emit(filerGroup FilerGroupName) {
+	lrm.mu.Lock()
+	update := lrm.nextBroadcastUpdate(filerGroup)
+	lrm.mu.Unlock()
+	lrm.sendUpdate(filerGroup, update)
+}
+
+func (lrm *LockRingManager) sendUpdate(filerGroup FilerGroupName, update *master_pb.LockRingUpdate) {
+	if update == nil {
+		return
+	}
+	glog.V(0).Infof("LockRing: broadcasting ring update for group %q version %d: %v", filerGroup, update.Version, update.Servers)
+	if lrm.broadcastFn != nil {
+		lrm.broadcastFn(&master_pb.KeepConnectedResponse{
+			LockRingUpdate: update,
+		})
+	}
+}
+
+// nextBroadcastUpdate stamps the current members into an update and re-arms
+// the periodic rebroadcast. It returns nil for an empty member list: an empty
+// lock ring is never usable, so a late "last member removed" event from a
+// former leader must not propagate and wedge every lock client. The last
+// non-empty broadcast stays in lastBroadcast for reconnecting clients.
+// Caller must hold lrm.mu.
+func (lrm *LockRingManager) nextBroadcastUpdate(filerGroup FilerGroupName) *master_pb.LockRingUpdate {
+	members := lrm.members[filerGroup]
+	if len(members) == 0 {
+		return nil
+	}
+	// Use wall-clock nanoseconds so the version survives master restarts
+	// without persistence — a restarted master produces a version greater
+	// than any pre-restart value (assuming clocks don't jump backward).
+	version := time.Now().UnixNano()
+	lrm.version[filerGroup] = version
+	servers := make([]string, 0, len(members))
+	for addr := range members {
+		servers = append(servers, string(addr))
+	}
+	update := &master_pb.LockRingUpdate{
+		FilerGroup: string(filerGroup),
+		Servers:    append([]string(nil), servers...),
+		Version:    version,
+	}
+	lrm.lastBroadcast[filerGroup] = update
+	if timer, ok := lrm.rebroadcastTimer[filerGroup]; ok {
+		timer.Stop()
+	}
+	lrm.rebroadcastTimer[filerGroup] = time.AfterFunc(lrm.rebroadcastInterval, func() {
+		lrm.rebroadcast(filerGroup)
+	})
+	return update
+}
+
+// FlushPending fires any pending timer immediately (for testing or shutdown).
+func (lrm *LockRingManager) FlushPending(filerGroup FilerGroupName) {
+	lrm.mu.Lock()
+	if timer, ok := lrm.pendingTimer[filerGroup]; ok {
+		if timer.Stop() {
+			// Timer was pending — we stopped it, so we broadcast now
+			delete(lrm.pendingTimer, filerGroup)
+			lrm.mu.Unlock()
+			lrm.doBroadcast(filerGroup)
+		} else {
+			// Timer already fired, callback is running — let it finish
+			lrm.mu.Unlock()
+		}
+	} else {
+		lrm.mu.Unlock()
+	}
+}

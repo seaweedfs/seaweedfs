@@ -24,6 +24,8 @@ import (
 
 type AzureSink struct {
 	client        *azblob.Client
+	accountName   string
+	endpoint      string
 	container     string
 	dir           string
 	filerSource   *source.FilerSource
@@ -42,6 +44,10 @@ func (g *AzureSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
+func (g *AzureSink) GetDestinationIdentity() string {
+	return g.accountName + "\x00" + g.endpoint + "\x00" + g.container + "\x00" + g.dir
+}
+
 func (g *AzureSink) IsIncremental() bool {
 	return g.isIncremental
 }
@@ -51,6 +57,8 @@ func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) 
 	return g.initialize(
 		configuration.GetString(prefix+"account_name"),
 		configuration.GetString(prefix+"account_key"),
+		configuration.GetString(prefix+"client_id"),
+		configuration.GetString(prefix+"endpoint"),
 		configuration.GetString(prefix+"container"),
 		configuration.GetString(prefix+"directory"),
 	)
@@ -60,20 +68,15 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *AzureSink) initialize(accountName, accountKey, container, dir string) error {
+func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, container, dir string) error {
+	g.accountName = accountName
+	g.endpoint = endpoint
 	g.container = container
 	g.dir = dir
 
-	// Create credential and client
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create Azure credential with account name:%s: %w", accountName, err)
-	}
-
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, azure.DefaultAzBlobClientOptions())
-	if err != nil {
-		return fmt.Errorf("failed to create Azure client: %w", err)
+		return err
 	}
 
 	g.client = client
@@ -127,7 +130,10 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
+	}
 
 	// Create append blob client
 	appendBlobClient := g.client.ServiceClient().NewContainerClient(g.container).NewAppendBlobClient(key)
@@ -135,9 +141,10 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	// Try to create the blob first (without access conditions for initial creation)
 	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	defer cancelCreate()
-	_, err := appendBlobClient.Create(ctxCreate, nil)
+	_, err = appendBlobClient.Create(ctxCreate, nil)
 
 	needsWrite := true
+	freshlyCreated := false
 	if err != nil {
 		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
 			// Handle existing blob - check if overwrite is needed and perform it if necessary
@@ -146,14 +153,35 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 			if handleErr != nil {
 				return handleErr
 			}
+			// handleExistingBlob recreates the blob when needsWrite is true
+			freshlyCreated = needsWrite
 		} else {
 			return fmt.Errorf("azure create append blob %s/%s: %w", g.container, key, err)
 		}
+	} else {
+		freshlyCreated = true
 	}
 
 	// If we don't need to write (blob is up-to-date), return early
 	if !needsWrite {
 		return nil
+	}
+
+	// cleanupOnError deletes a freshly created blob when content write fails,
+	// preventing empty blobs from being left behind.
+	cleanupOnError := func(writeErr error) error {
+		if !freshlyCreated {
+			return writeErr
+		}
+		glog.Warningf("azure sink: cleaning up empty blob %s/%s after write failure: %v", g.container, key, writeErr)
+		ctxCleanup, cancelCleanup := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
+		defer cancelCleanup()
+		if _, delErr := appendBlobClient.Delete(ctxCleanup, nil); delErr != nil {
+			if !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
+				glog.Warningf("azure sink: failed to clean up blob %s/%s: %v", g.container, key, delErr)
+			}
+		}
+		return writeErr
 	}
 
 	writeFunc := func(data []byte) error {
@@ -164,11 +192,18 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		content, err := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if err != nil {
+			return cleanupOnError(fmt.Errorf("decrypt inline SSE content: %w", err))
+		}
+		if err := writeFunc(content); err != nil {
+			return cleanupOnError(err)
+		}
+		return nil
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
-		return err
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry); err != nil {
+		return cleanupOnError(err)
 	}
 
 	return nil

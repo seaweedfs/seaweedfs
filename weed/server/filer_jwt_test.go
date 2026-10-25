@@ -114,16 +114,24 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			expectAuthorized: true,
 		},
 		{
-			name:             "root path with prefix restriction",
+			name:             "root listing denied to a prefix restricted token",
 			token:            genToken([]string{"/data"}, nil),
 			method:           "GET",
 			path:             "/",
 			isWrite:          false,
-			expectAuthorized: true,
+			expectAuthorized: false,
 		},
 		{
-			name:             "root path without token",
+			name:             "root listing denied without token",
 			token:            "",
+			method:           "GET",
+			path:             "/",
+			isWrite:          false,
+			expectAuthorized: false,
+		},
+		{
+			name:             "root listing allowed with an unrestricted token",
+			token:            genToken(nil, nil),
 			method:           "GET",
 			path:             "/",
 			isWrite:          false,
@@ -137,6 +145,86 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			isWrite:          false,
 			expectAuthorized: true,
 		},
+		{
+			name:             "tenant prefix does not match sibling tenant",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "GET",
+			path:             "/tenant1234/secret",
+			isWrite:          false,
+			expectAuthorized: false,
+		},
+		{
+			name:             "tenant prefix does not match dashed sibling",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "GET",
+			path:             "/tenant1-old/secret",
+			isWrite:          false,
+			expectAuthorized: false,
+		},
+		{
+			name:             "tenant prefix matches own subtree",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "GET",
+			path:             "/tenant1/ok.txt",
+			isWrite:          false,
+			expectAuthorized: true,
+		},
+		{
+			name:             "tenant prefix with trailing slash matches own subtree",
+			token:            genToken([]string{"/tenant1/"}, nil),
+			method:           "GET",
+			path:             "/tenant1/ok.txt",
+			isWrite:          false,
+			expectAuthorized: true,
+		},
+		{
+			name:             "root prefix matches anywhere",
+			token:            genToken([]string{"/"}, nil),
+			method:           "GET",
+			path:             "/tenant1234/secret",
+			isWrite:          false,
+			expectAuthorized: true,
+		},
+		{
+			name:             "dot-dot cannot escape allowed subtree",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "GET",
+			path:             "/tenant1/../tenant2/secret",
+			isWrite:          false,
+			expectAuthorized: false,
+		},
+		{
+			name:             "copy source within subtree allowed",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant1/src",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "copy source outside subtree denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "copy source dot-dot escape denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/loot?cp.from=/tenant1/../tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "move source outside subtree denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/dst?mv.from=/tenant2/secret",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -147,6 +235,36 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			}
 			if authorized := fs.maybeCheckJwtAuthorization(req, tt.isWrite); authorized != tt.expectAuthorized {
 				t.Errorf("expected authorized=%v, got %v", tt.expectAuthorized, authorized)
+			}
+		})
+	}
+}
+
+func TestPathHasComponentPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		prefix string
+		want   bool
+	}{
+		{"exact match", "/tenant1", "/tenant1", true},
+		{"subtree match", "/tenant1/a/b", "/tenant1", true},
+		{"trailing slash prefix", "/tenant1/a", "/tenant1/", true},
+		{"sibling numeric suffix", "/tenant1234/secret", "/tenant1", false},
+		{"sibling dash suffix", "/tenant1-old/secret", "/tenant1", false},
+		{"sibling dot suffix", "/tenant1.bak/x", "/tenant1", false},
+		{"unrelated tree", "/other/x", "/tenant1", false},
+		{"root prefix matches root", "/", "/", true},
+		{"root prefix matches any", "/tenant1234/secret", "/", true},
+		{"empty prefix denies", "/tenant1/x", "", false},
+		{"dot-dot does not escape", "/tenant1/../tenant2/secret", "/tenant1", false},
+		{"dot-dot stays inside", "/tenant1/a/../b", "/tenant1", true},
+		{"double slashes normalised", "/tenant1//a", "/tenant1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pathHasComponentPrefix(tt.path, tt.prefix); got != tt.want {
+				t.Errorf("pathHasComponentPrefix(%q, %q) = %v, want %v", tt.path, tt.prefix, got, tt.want)
 			}
 		})
 	}

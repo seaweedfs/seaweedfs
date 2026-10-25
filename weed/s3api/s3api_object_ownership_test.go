@@ -139,16 +139,13 @@ func TestSetObjectOwnerFromRequest(t *testing.T) {
 			// Setup bucket registry with mock behavior
 			if !tt.bucketRegistryNil {
 				// Create a minimal BucketRegistry with overridden GetBucketMetadata
-				s3a.bucketRegistry = &BucketRegistry{
-					metadataCache: map[string]*BucketMetaData{},
-					notFound:      map[string]struct{}{},
-				}
+				s3a.bucketRegistry = NewBucketRegistry(nil)
 
 				// Pre-populate the cache with test metadata
 				if tt.bucketMetadata != nil && tt.bucketMetadataError == s3err.ErrNone {
-					s3a.bucketRegistry.metadataCache["test-bucket"] = tt.bucketMetadata
+					s3a.bucketRegistry.metadataCache.Add("test-bucket", tt.bucketMetadata)
 				} else if tt.bucketMetadataError == s3err.ErrNoSuchBucket {
-					s3a.bucketRegistry.notFound["test-bucket"] = struct{}{}
+					s3a.bucketRegistry.notFound.Add("test-bucket", struct{}{})
 				}
 			}
 

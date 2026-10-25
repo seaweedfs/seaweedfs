@@ -1,5 +1,4 @@
 //go:build ydb
-// +build ydb
 
 package ydb
 
@@ -56,7 +55,7 @@ const (
 		
 		SELECT name, meta
 		FROM ` + asql.DEFAULT_TABLE + `
-		WHERE dir_hash = $dir_hash AND directory = $directory and name > $start_name and name LIKE $prefix
+		WHERE dir_hash = $dir_hash AND directory = $directory and name > $start_name and name LIKE $prefix ESCAPE '!'
 		ORDER BY name ASC LIMIT $limit;`
 
 	listInclusiveDirectoryQuery = `
@@ -69,6 +68,6 @@ const (
 		
 		SELECT name, meta
 		FROM ` + asql.DEFAULT_TABLE + `
-		WHERE dir_hash = $dir_hash AND directory = $directory and name >= $start_name and name LIKE $prefix
+		WHERE dir_hash = $dir_hash AND directory = $directory and name >= $start_name and name LIKE $prefix ESCAPE '!'
 		ORDER BY name ASC LIMIT $limit;`
 )

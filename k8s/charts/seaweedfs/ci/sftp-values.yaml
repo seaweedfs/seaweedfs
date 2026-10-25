@@ -1,0 +1,5 @@
+# SFTP install: the pod only becomes ready if the server loads a host key
+# from the generated sftp-ssh-secret, so this exercises the whole path.
+sftp:
+  enabled: true
+  enableAuth: true

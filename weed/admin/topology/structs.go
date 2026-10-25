@@ -43,6 +43,7 @@ type taskState struct {
 // DiskInfo represents a disk with its current state and ongoing tasks (public for external access)
 type DiskInfo struct {
 	NodeID     string              `json:"node_id"`
+	Address    string              `json:"address"` // volume server ip:port; NodeID may be an opaque id, so this is the source for the physical-machine host
 	DiskID     uint32              `json:"disk_id"`
 	DiskType   string              `json:"disk_type"`
 	DataCenter string              `json:"data_center"`
@@ -113,10 +114,13 @@ type MultiDestinationPlan struct {
 	SuccessfulDCs  int                `json:"successful_dcs"`
 }
 
-// VolumeReplica represents a replica location with server and disk information
+// VolumeReplica represents a replica location with server and disk information.
+// ShardIds is populated only by GetECShardLocations — it lists the EC shards
+// the disk holds for the volume.
 type VolumeReplica struct {
-	ServerID   string `json:"server_id"`
-	DiskID     uint32 `json:"disk_id"`
-	DataCenter string `json:"data_center"`
-	Rack       string `json:"rack"`
+	ServerID   string   `json:"server_id"`
+	DiskID     uint32   `json:"disk_id"`
+	DataCenter string   `json:"data_center"`
+	Rack       string   `json:"rack"`
+	ShardIds   []uint32 `json:"shard_ids,omitempty"`
 }

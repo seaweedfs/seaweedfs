@@ -1,0 +1,1047 @@
+package plugin
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                       true,
+			DetectionIntervalMinutes:      30,
+			DetectionTimeoutSeconds:       20,
+			MaxJobsPerDetection:           123,
+			GlobalExecutionConcurrency:    5,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    4,
+			RetryBackoffSeconds:           7,
+			JobTypeMaxRuntimeSeconds:      1800,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+
+	policy, enabled, err := pluginSvc.loadSchedulerPolicy("vacuum")
+	if err != nil {
+		t.Fatalf("loadSchedulerPolicy: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected enabled policy")
+	}
+	if policy.MaxResults != 123 {
+		t.Fatalf("unexpected max results: got=%d", policy.MaxResults)
+	}
+	if policy.ExecutionConcurrency != 5 {
+		t.Fatalf("unexpected global concurrency: got=%d", policy.ExecutionConcurrency)
+	}
+	if policy.PerWorkerConcurrency != 2 {
+		t.Fatalf("unexpected per-worker concurrency: got=%d", policy.PerWorkerConcurrency)
+	}
+	if policy.RetryLimit != 4 {
+		t.Fatalf("unexpected retry limit: got=%d", policy.RetryLimit)
+	}
+	if policy.JobTypeMaxRuntime != 30*time.Minute {
+		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
+	}
+	if policy.LocalQueuePin != defaultLocalQueuePin {
+		t.Fatalf("unexpected local queue pin: got=%d", policy.LocalQueuePin)
+	}
+	if policy.OrphanRehomeGrace != defaultOrphanRehomeGrace {
+		t.Fatalf("unexpected orphan rehome grace: got=%v", policy.OrphanRehomeGrace)
+	}
+}
+
+func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	err = pluginSvc.store.SaveDescriptor("ec", &plugin_pb.JobTypeDescriptor{
+		JobType: "ec",
+		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
+			Enabled:                       true,
+			DetectionIntervalMinutes:      60,
+			DetectionTimeoutSeconds:       25,
+			MaxJobsPerDetection:           30,
+			GlobalExecutionConcurrency:    4,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    3,
+			RetryBackoffSeconds:           6,
+			JobTypeMaxRuntimeSeconds:      1200,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveDescriptor: %v", err)
+	}
+
+	policy, enabled, err := pluginSvc.loadSchedulerPolicy("ec")
+	if err != nil {
+		t.Fatalf("loadSchedulerPolicy: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected enabled policy from descriptor defaults")
+	}
+	if policy.MaxResults != 30 {
+		t.Fatalf("unexpected max results: got=%d", policy.MaxResults)
+	}
+	if policy.ExecutionConcurrency != 4 {
+		t.Fatalf("unexpected global concurrency: got=%d", policy.ExecutionConcurrency)
+	}
+	if policy.PerWorkerConcurrency != 2 {
+		t.Fatalf("unexpected per-worker concurrency: got=%d", policy.PerWorkerConcurrency)
+	}
+	if policy.JobTypeMaxRuntime != 20*time.Minute {
+		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
+	}
+}
+
+func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 2},
+		},
+	})
+
+	policy := schedulerPolicy{
+		PerWorkerConcurrency:   1,
+		ExecutorReserveBackoff: time.Millisecond,
+	}
+
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
+	if err != nil {
+		t.Fatalf("reserve executor 1: %v", err)
+	}
+	defer release1()
+
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
+	if err != nil {
+		t.Fatalf("reserve executor 2: %v", err)
+	}
+	defer release2()
+
+	if executor1.WorkerID == executor2.WorkerID {
+		t.Fatalf("expected different executors due per-worker limit, got same worker %s", executor1.WorkerID)
+	}
+}
+
+func TestFilterScheduledProposalsDedupe(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	proposals := []*plugin_pb.JobProposal{
+		{ProposalId: "p1", DedupeKey: "d1"},
+		{ProposalId: "p2", DedupeKey: "d1"}, // same dedupe key
+		{ProposalId: "p3", DedupeKey: "d3"},
+		{ProposalId: "p3"}, // fallback dedupe by proposal id
+		{ProposalId: "p4"},
+		{ProposalId: "p4"}, // same proposal id, no dedupe key
+	}
+
+	filtered := pluginSvc.filterScheduledProposals(proposals)
+	if len(filtered) != 4 {
+		t.Fatalf("unexpected filtered size: got=%d want=4", len(filtered))
+	}
+
+	filtered2 := pluginSvc.filterScheduledProposals(proposals)
+	if len(filtered2) != 4 {
+		t.Fatalf("expected second run dedupe to be per-run only, got=%d", len(filtered2))
+	}
+}
+
+func TestBuildScheduledJobSpecDoesNotReuseProposalID(t *testing.T) {
+	t.Parallel()
+
+	proposal := &plugin_pb.JobProposal{
+		ProposalId: "vacuum-2",
+		DedupeKey:  "vacuum:2",
+		JobType:    "vacuum",
+	}
+
+	jobA := buildScheduledJobSpec("vacuum", proposal, 0)
+	jobB := buildScheduledJobSpec("vacuum", proposal, 1)
+
+	if jobA.JobId == proposal.ProposalId {
+		t.Fatalf("scheduled job id must not reuse proposal id: %s", jobA.JobId)
+	}
+	if jobB.JobId == proposal.ProposalId {
+		t.Fatalf("scheduled job id must not reuse proposal id: %s", jobB.JobId)
+	}
+	if jobA.JobId == jobB.JobId {
+		t.Fatalf("scheduled job ids must be unique across jobs: %s", jobA.JobId)
+	}
+}
+
+func TestFilterProposalsWithActiveJobs(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-1", "worker-a", &plugin_pb.JobSpec{
+		JobId:     "job-1",
+		JobType:   "vacuum",
+		DedupeKey: "vacuum:k1",
+	}, 1)
+	pluginSvc.trackExecutionStart("req-2", "worker-b", &plugin_pb.JobSpec{
+		JobId:   "job-2",
+		JobType: "vacuum",
+	}, 1)
+	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+		JobId:     "job-3",
+		JobType:   "vacuum",
+		DedupeKey: "vacuum:k4",
+	})
+
+	filtered, skipped := pluginSvc.filterProposalsWithActiveJobs("vacuum", []*plugin_pb.JobProposal{
+		{ProposalId: "proposal-1", JobType: "vacuum", DedupeKey: "vacuum:k1"},
+		{ProposalId: "job-2", JobType: "vacuum"},
+		{ProposalId: "proposal-2b", JobType: "vacuum", DedupeKey: "vacuum:k4"},
+		{ProposalId: "proposal-3", JobType: "vacuum", DedupeKey: "vacuum:k3"},
+		{ProposalId: "proposal-4", JobType: "balance", DedupeKey: "balance:k1"},
+	})
+	if skipped != 3 {
+		t.Fatalf("unexpected skipped count: got=%d want=3", skipped)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("unexpected filtered size: got=%d want=2", len(filtered))
+	}
+	if filtered[0].ProposalId != "proposal-3" || filtered[1].ProposalId != "proposal-4" {
+		t.Fatalf("unexpected filtered proposals: got=%s,%s", filtered[0].ProposalId, filtered[1].ProposalId)
+	}
+}
+
+func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	policy := schedulerPolicy{
+		ExecutionTimeout:       30 * time.Millisecond,
+		ExecutorReserveBackoff: 5 * time.Millisecond,
+		PerWorkerConcurrency:   1,
+	}
+
+	start := time.Now()
+	pluginSvc.Shutdown()
+	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy, nil)
+	if err == nil {
+		t.Fatalf("expected reservation shutdown error")
+	}
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("reservation returned too late after shutdown: duration=%v", time.Since(start))
+	}
+}
+
+func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+
+	policy := schedulerPolicy{
+		ExecutionTimeout:       time.Second,
+		PerWorkerConcurrency:   8,
+		ExecutorReserveBackoff: 5 * time.Millisecond,
+	}
+
+	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
+	if err != nil {
+		t.Fatalf("reserve executor 1: %v", err)
+	}
+	defer release1()
+
+	type reserveResult struct {
+		err error
+	}
+	secondReserveCh := make(chan reserveResult, 1)
+	go func() {
+		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
+		if release2 != nil {
+			release2()
+		}
+		secondReserveCh <- reserveResult{err: reserveErr}
+	}()
+
+	select {
+	case result := <-secondReserveCh:
+		t.Fatalf("expected second reservation to wait for capacity, got=%v", result.err)
+	case <-time.After(25 * time.Millisecond):
+		// Expected: still waiting.
+	}
+
+	release1()
+
+	select {
+	case result := <-secondReserveCh:
+		if result.err != nil {
+			t.Fatalf("second reservation error: %v", result.err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("second reservation did not acquire after capacity release")
+	}
+}
+
+func TestShouldSkipDetectionForWaitingJobs(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency: 2,
+		MaxResults:           100,
+	}
+	threshold := waitingBacklogThreshold(policy)
+	if threshold <= 0 {
+		t.Fatalf("expected positive waiting threshold")
+	}
+
+	for i := 0; i < threshold; i++ {
+		pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+			JobId:     fmt.Sprintf("job-waiting-%d", i),
+			JobType:   "vacuum",
+			DedupeKey: fmt.Sprintf("vacuum:%d", i),
+		})
+	}
+
+	skip, waitingCount, waitingThreshold := pluginSvc.shouldSkipDetectionForWaitingJobs("vacuum", policy)
+	if !skip {
+		t.Fatalf("expected detection to skip when waiting backlog reaches threshold")
+	}
+	if waitingCount != threshold {
+		t.Fatalf("unexpected waiting count: got=%d want=%d", waitingCount, threshold)
+	}
+	if waitingThreshold != threshold {
+		t.Fatalf("unexpected waiting threshold: got=%d want=%d", waitingThreshold, threshold)
+	}
+}
+
+func TestWaitingBacklogThresholdHonorsMaxResultsCap(t *testing.T) {
+	t.Parallel()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency: 8,
+		MaxResults:           6,
+	}
+	threshold := waitingBacklogThreshold(policy)
+	if threshold != 6 {
+		t.Fatalf("expected threshold to be capped by max results, got=%d", threshold)
+	}
+}
+
+func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const jobType = "vacuum"
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: jobType,
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                       true,
+			DetectionIntervalMinutes:      45,
+			DetectionTimeoutSeconds:       30,
+			MaxJobsPerDetection:           80,
+			GlobalExecutionConcurrency:    3,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    1,
+			RetryBackoffSeconds:           9,
+			JobTypeMaxRuntimeSeconds:      900,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanDetect: true, CanExecute: true},
+		},
+	})
+
+	nextDetectionAt := time.Now().UTC().Add(2 * time.Minute).Round(time.Second)
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.nextDetectionAt[jobType] = nextDetectionAt
+	pluginSvc.detectionInFlight[jobType] = true
+	pluginSvc.schedulerMu.Unlock()
+
+	states, err := pluginSvc.ListSchedulerStates()
+	if err != nil {
+		t.Fatalf("ListSchedulerStates: %v", err)
+	}
+
+	state := findSchedulerState(states, jobType)
+	if state == nil {
+		t.Fatalf("missing scheduler state for %s", jobType)
+	}
+	if !state.Enabled {
+		t.Fatalf("expected enabled scheduler state")
+	}
+	if state.PolicyError != "" {
+		t.Fatalf("unexpected policy error: %s", state.PolicyError)
+	}
+	if !state.DetectionInFlight {
+		t.Fatalf("expected detection in flight")
+	}
+	if state.NextDetectionAt == nil {
+		t.Fatalf("expected next detection time")
+	}
+	if state.NextDetectionAt.Unix() != nextDetectionAt.Unix() {
+		t.Fatalf("unexpected next detection time: got=%v want=%v", state.NextDetectionAt, nextDetectionAt)
+	}
+	if state.DetectionIntervalMinutes != 45 {
+		t.Fatalf("unexpected detection interval: got=%d", state.DetectionIntervalMinutes)
+	}
+	if state.DetectionTimeoutSeconds != 30 {
+		t.Fatalf("unexpected detection timeout: got=%d", state.DetectionTimeoutSeconds)
+	}
+	if state.ExecutionTimeoutSeconds != 90 {
+		t.Fatalf("unexpected execution timeout: got=%d", state.ExecutionTimeoutSeconds)
+	}
+	if state.JobTypeMaxRuntimeSeconds != 900 {
+		t.Fatalf("unexpected job type max runtime: got=%d", state.JobTypeMaxRuntimeSeconds)
+	}
+	if state.MaxJobsPerDetection != 80 {
+		t.Fatalf("unexpected max jobs per detection: got=%d", state.MaxJobsPerDetection)
+	}
+	if state.GlobalExecutionConcurrency != 3 {
+		t.Fatalf("unexpected global execution concurrency: got=%d", state.GlobalExecutionConcurrency)
+	}
+	if state.PerWorkerExecutionConcurrency != 2 {
+		t.Fatalf("unexpected per worker execution concurrency: got=%d", state.PerWorkerExecutionConcurrency)
+	}
+	if state.RetryLimit != 1 {
+		t.Fatalf("unexpected retry limit: got=%d", state.RetryLimit)
+	}
+	if state.RetryBackoffSeconds != 9 {
+		t.Fatalf("unexpected retry backoff: got=%d", state.RetryBackoffSeconds)
+	}
+	if !state.DetectorAvailable || state.DetectorWorkerID != "worker-a" {
+		t.Fatalf("unexpected detector assignment: available=%v worker=%s", state.DetectorAvailable, state.DetectorWorkerID)
+	}
+	if state.ExecutorWorkerCount != 1 {
+		t.Fatalf("unexpected executor worker count: got=%d", state.ExecutorWorkerCount)
+	}
+}
+
+func TestListSchedulerStatesShowsDisabledWhenNoPolicy(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const jobType = "balance"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanDetect: true, CanExecute: true},
+		},
+	})
+
+	states, err := pluginSvc.ListSchedulerStates()
+	if err != nil {
+		t.Fatalf("ListSchedulerStates: %v", err)
+	}
+
+	state := findSchedulerState(states, jobType)
+	if state == nil {
+		t.Fatalf("missing scheduler state for %s", jobType)
+	}
+	if state.Enabled {
+		t.Fatalf("expected disabled scheduler state")
+	}
+	if state.PolicyError != "" {
+		t.Fatalf("unexpected policy error: %s", state.PolicyError)
+	}
+	if !state.DetectorAvailable || state.DetectorWorkerID != "worker-b" {
+		t.Fatalf("unexpected detector details: available=%v worker=%s", state.DetectorAvailable, state.DetectorWorkerID)
+	}
+	if state.ExecutorWorkerCount != 1 {
+		t.Fatalf("unexpected executor worker count: got=%d", state.ExecutorWorkerCount)
+	}
+}
+
+func findSchedulerState(states []SchedulerJobTypeState, jobType string) *SchedulerJobTypeState {
+	for i := range states {
+		if states[i].JobType == jobType {
+			return &states[i]
+		}
+	}
+	return nil
+}
+
+func TestPickDetectorPrefersLeasedWorker(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+
+	pluginSvc.setDetectorLease("vacuum", "worker-b")
+
+	detector, err := pluginSvc.pickDetector("vacuum")
+	if err != nil {
+		t.Fatalf("pickDetector: %v", err)
+	}
+	if detector.WorkerID != "worker-b" {
+		t.Fatalf("expected leased detector worker-b, got=%s", detector.WorkerID)
+	}
+}
+
+func TestPickDetectorReassignsWhenLeaseIsStale(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+	pluginSvc.setDetectorLease("vacuum", "worker-stale")
+
+	detector, err := pluginSvc.pickDetector("vacuum")
+	if err != nil {
+		t.Fatalf("pickDetector: %v", err)
+	}
+	if detector.WorkerID != "worker-a" {
+		t.Fatalf("expected reassigned detector worker-a, got=%s", detector.WorkerID)
+	}
+
+	lease := pluginSvc.getDetectorLease("vacuum")
+	if lease != "worker-a" {
+		t.Fatalf("expected detector lease to be updated to worker-a, got=%s", lease)
+	}
+}
+
+// trackingLockManager records whether Acquire was called and how many times.
+type trackingLockManager struct {
+	mu       sync.Mutex
+	acquired int
+}
+
+func (m *trackingLockManager) Acquire(reason string) (func(), error) {
+	m.mu.Lock()
+	m.acquired++
+	m.mu.Unlock()
+	return func() {}, nil
+}
+
+func (m *trackingLockManager) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.acquired
+}
+
+func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		lane     SchedulerLane
+		jobType  string
+		wantLock bool
+	}{
+		{"Default", LaneDefault, "vacuum", true},
+		{"Iceberg", LaneIceberg, "iceberg_maintenance", false},
+		{"Lifecycle", LaneLifecycle, "s3_lifecycle", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			lm := &trackingLockManager{}
+			// Construct without a cluster-context provider so the background
+			// lane loops do not start: they call runLaneSchedulerIteration on
+			// the same lane and would race this test's own manual call,
+			// consuming the due job before it observes the lock. The provider
+			// is set afterward so the manual iteration can still detect.
+			pluginSvc, err := New(Options{LockManager: lm})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer pluginSvc.Shutdown()
+			pluginSvc.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+				return &plugin_pb.ClusterContext{}, nil
+			}
+
+			// Register a detectable worker for the job type.
+			pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a",
+				Capabilities: []*plugin_pb.JobTypeCapability{
+					{JobType: tt.jobType, CanDetect: true},
+				},
+			})
+
+			// Enable the job type so the scheduler picks it up.
+			err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+				JobType: tt.jobType,
+				AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+					Enabled:                  true,
+					DetectionIntervalMinutes: 1,
+				},
+			})
+			if err != nil {
+				t.Fatalf("SaveJobTypeConfig: %v", err)
+			}
+
+			// Make the job type due immediately so the iteration reaches
+			// detection; the lock is only taken around due work now.
+			pluginSvc.schedulerMu.Lock()
+			pluginSvc.nextDetectionAt[tt.jobType] = time.Now().UTC().Add(-time.Second)
+			pluginSvc.schedulerMu.Unlock()
+
+			ls := pluginSvc.lanes[tt.lane]
+			pluginSvc.runLaneSchedulerIteration(ls)
+
+			if got := lm.count(); (got > 0) != tt.wantLock {
+				t.Errorf("lock acquired %d times, wantLock=%v", got, tt.wantLock)
+			}
+		})
+	}
+}
+
+func TestDispatchScheduledProposalsLocksPerJob(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		jobType   string
+		wantLocks int
+	}{
+		{"DefaultLaneLocksEachJob", "volume_balance", 3},
+		{"LifecycleLaneNeedsNoLock", "s3_lifecycle", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			lm := &trackingLockManager{}
+			pluginSvc, err := New(Options{LockManager: lm})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer pluginSvc.Shutdown()
+
+			// The worker has capabilities but no connected session, so each
+			// job reserves capacity, fails to send, and moves on.
+			pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a",
+				Capabilities: []*plugin_pb.JobTypeCapability{
+					{JobType: tt.jobType, CanExecute: true, MaxExecutionConcurrency: 4},
+				},
+			})
+
+			policy := schedulerPolicy{
+				ExecutionConcurrency:   1,
+				PerWorkerConcurrency:   1,
+				ExecutionTimeout:       time.Second,
+				ExecutorReserveBackoff: time.Millisecond,
+			}
+			proposals := []*plugin_pb.JobProposal{
+				{ProposalId: "p1", JobType: tt.jobType, DedupeKey: "k1"},
+				{ProposalId: "p2", JobType: tt.jobType, DedupeKey: "k2"},
+				{ProposalId: "p3", JobType: tt.jobType, DedupeKey: "k3"},
+			}
+
+			success, errors, canceled := pluginSvc.dispatchScheduledProposals(
+				context.Background(), tt.jobType, proposals, &plugin_pb.ClusterContext{}, policy)
+			if success != 0 || canceled != 0 || errors != 3 {
+				t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", success, errors, canceled)
+			}
+			if got := lm.count(); got != tt.wantLocks {
+				t.Fatalf("lock acquired %d times, want %d", got, tt.wantLocks)
+			}
+		})
+	}
+}
+
+func TestScheduledAttemptContextDrainGrace(t *testing.T) {
+	t.Parallel()
+
+	assertDeadline := func(t *testing.T, ctx context.Context, want time.Time) {
+		t.Helper()
+		got, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("expected attempt context to carry a deadline")
+		}
+		if diff := got.Sub(want); diff < -5*time.Second || diff > 5*time.Second {
+			t.Fatalf("unexpected attempt deadline: got=%v want~%v", got, want)
+		}
+	}
+
+	windowEnd := time.Now().Add(time.Minute)
+	window, cancelWindow := context.WithDeadline(context.Background(), windowEnd)
+	defer cancelWindow()
+
+	// Fits inside the window: keeps its own deadline.
+	ctx, cancel := scheduledAttemptContext(window, 30*time.Second, 0)
+	assertDeadline(t, ctx, time.Now().Add(30*time.Second))
+	cancel()
+
+	// Longer: capped at window close plus the grace.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 0)
+	assertDeadline(t, ctx, windowEnd.Add(scheduledExecutionDrainGrace))
+	cancel()
+
+	// Estimated runtime: keeps its full deadline.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 3*time.Hour)
+	assertDeadline(t, ctx, time.Now().Add(3*time.Hour))
+	cancel()
+
+	// An estimate below the timeout floors the drain cap.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 45*time.Minute)
+	assertDeadline(t, ctx, time.Now().Add(45*time.Minute))
+	cancel()
+
+	// No window deadline: the timeout stands alone.
+	ctx, cancel = scheduledAttemptContext(context.Background(), 2*time.Hour, 0)
+	assertDeadline(t, ctx, time.Now().Add(2*time.Hour))
+	cancel()
+}
+
+func TestScheduledEstimatedRuntime(t *testing.T) {
+	t.Parallel()
+
+	estimate := func(v int64) map[string]*plugin_pb.ConfigValue {
+		return map[string]*plugin_pb.ConfigValue{
+			"estimated_runtime_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: v}},
+		}
+	}
+
+	if got := scheduledEstimatedRuntime(nil); got != 0 {
+		t.Fatalf("nil parameters: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(-5)); got != 0 {
+		t.Fatalf("negative estimate: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(600)); got != 10*time.Minute {
+		t.Fatalf("normal estimate: got=%v want=10m", got)
+	}
+	// Oversized seconds cap before the Duration conversion can overflow.
+	if got := scheduledEstimatedRuntime(estimate(math.MaxInt64)); got != maxEstimatedRuntimeCap {
+		t.Fatalf("oversized estimate: got=%v want=%v", got, maxEstimatedRuntimeCap)
+	}
+}
+
+func TestDispatchScheduledProposalsDrainsStartedJobOnWindowClose(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-drain"
+	const jobType = "s3_lifecycle" // lifecycle lane: no admin lock needed
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	windowCtx, closeWindow := context.WithCancel(context.Background())
+	defer closeWindow()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Hour,
+		ExecutorReserveBackoff: time.Millisecond,
+	}
+	proposals := []*plugin_pb.JobProposal{
+		{ProposalId: "p1", JobType: jobType, DedupeKey: "k1"},
+		{ProposalId: "p2", JobType: jobType, DedupeKey: "k2"},
+	}
+
+	resultCh := make(chan [3]int, 1)
+	go func() {
+		success, errCount, canceled := pluginSvc.dispatchScheduledProposals(
+			windowCtx, jobType, proposals, &plugin_pb.ClusterContext{}, policy)
+		resultCh <- [3]int{success, errCount, canceled}
+	}()
+
+	first := <-session.outgoing
+	execReq := first.GetExecuteJobRequest()
+	if execReq == nil {
+		t.Fatalf("expected execute_job_request, got %+v", first)
+	}
+
+	// Close the window mid-job: the job must drain to completion while the
+	// still-queued second proposal is canceled.
+	closeWindow()
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   first.RequestId,
+		JobId:       execReq.Job.JobId,
+		JobType:     jobType,
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	})
+
+	result := <-resultCh
+	if result[0] != 1 || result[1] != 0 || result[2] != 1 {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", result[0], result[1], result[2])
+	}
+
+	select {
+	case unexpected := <-session.outgoing:
+		t.Fatalf("expected no further worker messages (no cancel for the draining job), got %+v", unexpected)
+	default:
+	}
+}
+
+// ---------- lane-scoped prune ----------
+
+func TestPruneSchedulerState_DefaultLaneKeepsForeignLanesAndPrunesOwnStale(t *testing.T) {
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	now := time.Now().UTC()
+	p.schedulerMu.Lock()
+	p.nextDetectionAt["s3_lifecycle"] = now.Add(24 * time.Hour) // lifecycle lane
+	p.nextDetectionAt["vacuum"] = now.Add(time.Minute)          // default lane, active
+	p.nextDetectionAt["ec_balance"] = now.Add(time.Minute)      // default lane, stale
+	p.detectionInFlight["ec_balance"] = true
+	p.schedulerMu.Unlock()
+
+	// Default-lane iteration prunes with only its own active job types.
+	p.pruneSchedulerState(LaneDefault, map[string]struct{}{"vacuum": {}})
+
+	p.schedulerMu.Lock()
+	defer p.schedulerMu.Unlock()
+	if _, ok := p.nextDetectionAt["s3_lifecycle"]; !ok {
+		t.Fatal("default-lane prune must not delete lifecycle-lane nextDetectionAt[s3_lifecycle]")
+	}
+	if _, ok := p.nextDetectionAt["vacuum"]; !ok {
+		t.Fatal("active default-lane job (vacuum) must be kept")
+	}
+	if _, ok := p.nextDetectionAt["ec_balance"]; ok {
+		t.Fatal("stale default-lane job (ec_balance) must still be pruned within its own lane")
+	}
+	if _, ok := p.detectionInFlight["ec_balance"]; ok {
+		t.Fatal("pruned job must also drop its detectionInFlight entry")
+	}
+}
+
+func TestPruneSchedulerState_LifecycleLaneLeavesDefaultLane(t *testing.T) {
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	now := time.Now().UTC()
+	p.schedulerMu.Lock()
+	p.nextDetectionAt["vacuum"] = now.Add(time.Minute)          // default lane
+	p.nextDetectionAt["s3_lifecycle"] = now.Add(24 * time.Hour) // lifecycle lane, active
+	p.schedulerMu.Unlock()
+
+	p.pruneSchedulerState(LaneLifecycle, map[string]struct{}{"s3_lifecycle": {}})
+
+	p.schedulerMu.Lock()
+	defer p.schedulerMu.Unlock()
+	if _, ok := p.nextDetectionAt["vacuum"]; !ok {
+		t.Fatal("lifecycle-lane prune must not delete default-lane nextDetectionAt[vacuum]")
+	}
+	if _, ok := p.nextDetectionAt["s3_lifecycle"]; !ok {
+		t.Fatal("active lifecycle job (s3_lifecycle) must be kept")
+	}
+}
+
+func TestPruneDetectorLeases_IsLaneScoped(t *testing.T) {
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	p.detectorLeaseMu.Lock()
+	p.detectorLeases["s3_lifecycle"] = "worker-a" // lifecycle lane
+	p.detectorLeases["vacuum"] = "worker-b"       // default lane, active
+	p.detectorLeases["ec_balance"] = "worker-c"   // default lane, stale
+	p.detectorLeaseMu.Unlock()
+
+	p.pruneDetectorLeases(LaneDefault, map[string]struct{}{"vacuum": {}})
+
+	p.detectorLeaseMu.Lock()
+	defer p.detectorLeaseMu.Unlock()
+	if _, ok := p.detectorLeases["s3_lifecycle"]; !ok {
+		t.Fatal("default-lane prune must not delete lifecycle-lane detector lease")
+	}
+	if _, ok := p.detectorLeases["vacuum"]; !ok {
+		t.Fatal("active default-lane detector lease (vacuum) must be kept")
+	}
+	if _, ok := p.detectorLeases["ec_balance"]; ok {
+		t.Fatal("stale default-lane detector lease (ec_balance) must still be pruned within its own lane")
+	}
+}
+
+func TestLaneStatus_LifecycleNextDetectionSurvivesDefaultLanePrune(t *testing.T) {
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	now := time.Now().UTC()
+	expected := now.Add(24 * time.Hour)
+	p.schedulerMu.Lock()
+	p.nextDetectionAt["s3_lifecycle"] = expected
+	p.nextDetectionAt["vacuum"] = now.Add(time.Minute)
+	p.schedulerMu.Unlock()
+
+	p.pruneSchedulerState(LaneDefault, map[string]struct{}{"vacuum": {}})
+
+	status := p.GetLaneSchedulerStatus(LaneLifecycle)
+	if status.NextDetectionAt == nil {
+		t.Fatal("lifecycle lane status lost next_detection_at after a default-lane prune")
+	}
+	if !status.NextDetectionAt.Equal(expected) {
+		t.Fatalf("next_detection_at = %v, want %v (must be the 24h schedule, not the idle-sleep fallback)",
+			status.NextDetectionAt, expected)
+	}
+}
+
+func TestReserveWaterfillsPreferredHosts(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	ids := []string{"worker-a", "worker-b", "worker-c", "worker-d"}
+	for _, id := range ids {
+		pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+			WorkerId: id,
+			Address:  "10.0.0.1:9334",
+			Capabilities: []*plugin_pb.JobTypeCapability{
+				{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 8},
+			},
+		})
+	}
+
+	policy := schedulerPolicy{
+		PerWorkerConcurrency:   8,
+		ExecutorReserveBackoff: time.Millisecond,
+		LocalQueuePin:          5,
+	}
+	preferred := []string{"10.0.0.1:8080"}
+
+	seen := map[string]int{}
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		exec, release, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+		if err != nil {
+			t.Fatalf("reserve %d: %v", i, err)
+		}
+		releases = append(releases, release)
+		seen[exec.WorkerID]++
+	}
+	if len(seen) != 4 {
+		t.Fatalf("want one job per worker, got %v", seen)
+	}
+}

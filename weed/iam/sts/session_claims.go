@@ -1,17 +1,65 @@
 package sts
 
 import (
-	"fmt"
+	"crypto/sha256"
+	"encoding/base64"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-// defaultCredentialGenerator is a reusable instance for generating temporary credentials
-// Reusing a single instance across all calls to ToSessionInfo() reduces allocation overhead
-// since this method may be called frequently during signature verification
-var defaultCredentialGenerator = NewCredentialGenerator()
+// ComputeParentUser returns a stable per-identity hash derived from the OIDC
+// (sub, iss) tuple. Only the (sub, iss) pair is guaranteed stable across token
+// refreshes per OpenID Connect Core 1.0 §5.7, so any per-user state (audit
+// logs, quotas) must key off this value rather than the access-key or session
+// id. The hash is base64-rawurl-encoded SHA-256 over "openid:<sub>:<iss>" so
+// it stays filesystem-safe and bounded in length for storage in audit paths.
+func ComputeParentUser(sub, iss string) string {
+	if sub == "" || iss == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte("openid:" + sub + ":" + iss))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+// IsParentUserID reports whether s has the shape ComputeParentUser produces —
+// a base64url-encoded SHA-256 — i.e. an already issuer-scoped id rather than a
+// bare subject string.
+func IsParentUserID(s string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && len(b) == sha256.Size
+}
+
+// identityClaimPriority is the order in which ResolveIdentityClaim looks for a
+// human-readable, authoritative identity attribute in an STS request context.
+// The context is populated at federation time from the validated OIDC token
+// (see AssumeRoleWithWebIdentity), so every entry here is server-asserted and
+// not client-supplied. preferred_username/email/name are conventional OIDC
+// user claims; sub is the always-present stable subject identifier and the
+// final fallback so a federated session never audits as fully anonymous.
+var identityClaimPriority = []string{"preferred_username", "email", "name", "sub"}
+
+// ResolveIdentityClaim returns the most human-readable authoritative identity
+// claim available in ctx, or "" when none is present. ctx is the STS request
+// context (sessionInfo.RequestContext) populated from the validated OIDC token
+// at federation time. Non-string values are skipped so a structured claim
+// never leaks into an audit-facing field. Whitespace-only values are treated
+// as absent so a blank preferred claim does not mask a usable email or sub.
+func ResolveIdentityClaim(ctx map[string]interface{}) string {
+	if len(ctx) == 0 {
+		return ""
+	}
+	for _, key := range identityClaimPriority {
+		if v, ok := ctx[key].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
 
 // STSSessionClaims represents comprehensive session information embedded in JWT tokens
 // This eliminates the need for separate session storage by embedding all session
@@ -25,9 +73,10 @@ type STSSessionClaims struct {
 	TokenType   string `json:"typ"`  // token_type
 
 	// Role information
-	RoleArn     string `json:"role"`      // role_arn
-	AssumedRole string `json:"assumed"`   // assumed_role_user
-	Principal   string `json:"principal"` // principal_arn
+	RoleArn     string `json:"role"`          // role_arn
+	RoleId      string `json:"rid,omitempty"` // unique ID of the assumed role
+	AssumedRole string `json:"assumed"`       // assumed_role_user
+	Principal   string `json:"principal"`     // principal_arn
 
 	// Authorization data
 	Policies []string `json:"pol,omitempty"` // policies (abbreviated)
@@ -45,6 +94,24 @@ type STSSessionClaims struct {
 	// Session metadata
 	AssumedAt   time.Time `json:"assumed_at"`        // when role was assumed
 	MaxDuration int64     `json:"max_dur,omitempty"` // maximum session duration in seconds
+
+	// ParentUser is a stable hash of (sub, iss) for tokens minted from an OIDC
+	// identity. It survives token rotation since only the (sub, iss) tuple is
+	// guaranteed stable per OpenID Connect Core 1.0. Empty for non-federated
+	// session types.
+	ParentUser string `json:"puid,omitempty"`
+
+	// SourceAccessKeyId is the access key the caller authenticated with when
+	// a SeaweedFS service minted the session for it (AssumeRoleForPrincipal);
+	// empty for every other session type.
+	SourceAccessKeyId string `json:"src_ak,omitempty"`
+
+	// BoundAccessKeyId is the stored credential the session is bound to: the
+	// session ends when that key is gone. It is a claim of its own because
+	// tokens minted before the binding existed carry SourceAccessKeyId as an
+	// audit field, never a binding — enforcing those would break them.
+	BoundAccessKeyId          string `json:"bind_ak,omitempty"`
+	BoundAccessKeyFingerprint string `json:"bind_fp,omitempty"`
 }
 
 // NewSTSSessionClaims creates new STS session claims with all required information
@@ -57,6 +124,10 @@ func NewSTSSessionClaims(sessionId, issuer string, expiresAt time.Time) *STSSess
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			NotBefore: jwt.NewNumericDate(now),
+			// jti = sessionId. The session id is already a unique random
+			// identifier, so reusing it as the JWT id avoids a second secret
+			// while still giving the revocation layer a stable lookup key.
+			ID: sessionId,
 		},
 		SessionId: sessionId,
 		TokenType: TokenTypeSession,
@@ -66,27 +137,27 @@ func NewSTSSessionClaims(sessionId, issuer string, expiresAt time.Time) *STSSess
 
 // ToSessionInfo converts JWT claims back to SessionInfo structure
 // This enables seamless integration with existing code expecting SessionInfo
-func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
+func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionInfo {
 	var expiresAt time.Time
 	if c.ExpiresAt != nil {
 		expiresAt = c.ExpiresAt.Time
 	}
 
-	// Generate temporary credentials from the session ID
-	// This is deterministic based on the session ID, so the same credentials are regenerated
-	credentials, err := defaultCredentialGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
-	if err != nil {
-		// Log the error with context - credential generation failure is important for debugging
-		errMsg := fmt.Errorf("generate temporary credentials for session %s: %w", c.SessionId, err)
-		glog.Warningf("Failed to generate credentials for STS session: %v", errMsg)
-		// Return session info without credentials - validation will catch this as invalid
-		credentials = nil
+	var credentials *Credentials
+	if credGen != nil {
+		creds, err := credGen.GenerateTemporaryCredentials(c.SessionId, expiresAt)
+		if err != nil {
+			glog.Warningf("Failed to generate credentials for STS session %s: %v", c.SessionId, err)
+		} else {
+			credentials = creds
+		}
 	}
 
 	return &SessionInfo{
 		SessionId:        c.SessionId,
 		SessionName:      c.SessionName,
 		RoleArn:          c.RoleArn,
+		RoleId:           c.RoleId,
 		AssumedRoleUser:  c.AssumedRole,
 		Principal:        c.Principal,
 		Policies:         c.Policies,
@@ -96,6 +167,12 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		ExternalUserId:   c.ExternalUserId,
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
+		ParentUser:       c.ParentUser,
+		// The access key the session was minted for, if recorded
+		SourceAccessKeyId: c.SourceAccessKeyId,
+		// The stored credential the session is bound to, if any
+		BoundAccessKeyId:          c.BoundAccessKeyId,
+		BoundAccessKeyFingerprint: c.BoundAccessKeyFingerprint,
 		// Provide the Subject (sub) from registered claims
 		Subject:     c.Subject,
 		Credentials: credentials,
@@ -146,6 +223,13 @@ func (c *STSSessionClaims) WithRoleInfo(roleArn, assumedRole, principal string) 
 }
 
 // WithPolicies sets the policies associated with this session
+// WithRoleId binds the session to the assumed role's unique ID. An empty ID
+// leaves the session unbound (roles that predate role IDs).
+func (c *STSSessionClaims) WithRoleId(roleId string) *STSSessionClaims {
+	c.RoleId = roleId
+	return c
+}
+
 func (c *STSSessionClaims) WithPolicies(policies []string) *STSSessionClaims {
 	c.Policies = policies
 	return c
@@ -180,5 +264,26 @@ func (c *STSSessionClaims) WithMaxDuration(duration time.Duration) *STSSessionCl
 // WithSessionName sets the session name
 func (c *STSSessionClaims) WithSessionName(sessionName string) *STSSessionClaims {
 	c.SessionName = sessionName
+	return c
+}
+
+// WithSourceAccessKeyId records the access key the session was minted for.
+func (c *STSSessionClaims) WithSourceAccessKeyId(accessKeyId string) *STSSessionClaims {
+	c.SourceAccessKeyId = accessKeyId
+	return c
+}
+
+// WithBoundAccessKey binds the session to a stored credential: the key id it
+// was vended for and a fingerprint of its secret at mint time.
+func (c *STSSessionClaims) WithBoundAccessKey(accessKeyId, fingerprint string) *STSSessionClaims {
+	c.BoundAccessKeyId = accessKeyId
+	c.BoundAccessKeyFingerprint = fingerprint
+	return c
+}
+
+// WithParentUser sets the stable per-identity hash for the session. See
+// ComputeParentUser for the derivation rule.
+func (c *STSSessionClaims) WithParentUser(parentUser string) *STSSessionClaims {
+	c.ParentUser = parentUser
 	return c
 }

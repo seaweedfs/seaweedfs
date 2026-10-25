@@ -1,0 +1,7468 @@
+//! HTTP handlers for volume server operations.
+//!
+//! Implements GET/HEAD (read), POST/PUT (write), DELETE, /status, /healthz.
+//! Matches Go's volume_server_handlers_read.go, volume_server_handlers_write.go,
+//! volume_server_handlers_admin.go.
+
+use std::collections::HashMap;
+use std::future::Future;
+use std::ops::ControlFlow;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use axum::body::Body;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use serde::{Deserialize, Serialize};
+
+use super::absolute_display_path;
+use super::grpc_client::{GrpcDialOptions, connect_channel, volume_server_client};
+use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
+use crate::config::ReadMode;
+use crate::metrics;
+use crate::pb::volume_server_pb;
+use crate::storage::needle::CRC;
+use crate::storage::needle::needle::Needle;
+use crate::storage::types::*;
+
+/// Slack added over the configured file-size limit when bounding the raw
+/// request body, to allow for multipart/form-data framing overhead. The exact
+/// per-file limit is still enforced on the parsed data after multipart parsing.
+const UPLOAD_BODY_OVERHEAD: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Upper bound on bytes we will materialize in memory for a single request when
+/// expanding stored content (gzip decompression or chunk-manifest assembly).
+/// Guards against gzip bombs and crafted/oversized manifest sizes OOM-killing
+/// the server; legitimate large objects are read via client-side chunk fetches.
+const MAX_EXPANSION_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+/// Why `maybe_decompress_gzip` failed, so callers can distinguish a recoverable
+/// "not valid gzip, use the raw bytes" from "the bomb cap was hit, reject it".
+#[derive(Debug)]
+enum GunzipError {
+    /// Input was not valid gzip / decode failed — callers may fall back to raw.
+    Decode,
+    /// Decompressed output would exceed `MAX_EXPANSION_BYTES` — must be rejected.
+    TooLarge,
+}
+
+// ============================================================================
+// Inflight Throttle Guard
+// ============================================================================
+
+/// RAII guard that subtracts bytes from an atomic counter and notifies waiters on drop.
+struct InflightGuard<'a> {
+    counter: &'a std::sync::atomic::AtomicI64,
+    bytes: i64,
+    notify: &'a tokio::sync::Notify,
+    metric: &'a prometheus::IntGauge,
+}
+
+impl<'a> Drop for InflightGuard<'a> {
+    fn drop(&mut self) {
+        let new_val = self.counter.fetch_sub(self.bytes, Ordering::Relaxed) - self.bytes;
+        self.metric.set(new_val);
+        self.notify.notify_waiters();
+    }
+}
+
+/// Body wrapper that tracks download inflight bytes and releases them when dropped.
+struct TrackedBody {
+    data: Vec<u8>,
+    state: Arc<VolumeServerState>,
+    bytes: i64,
+}
+
+impl http_body::Body for TrackedBody {
+    type Data = bytes::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        if self.data.is_empty() {
+            return std::task::Poll::Ready(None);
+        }
+        let data = std::mem::take(&mut self.data);
+        std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from(data)))))
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.data.len() as u64)
+    }
+}
+
+impl Drop for TrackedBody {
+    fn drop(&mut self) {
+        let new_val = self
+            .state
+            .inflight_download_bytes
+            .fetch_sub(self.bytes, Ordering::Relaxed)
+            - self.bytes;
+        metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+        self.state.download_notify.notify_waiters();
+    }
+}
+
+fn finalize_bytes_response(
+    status: StatusCode,
+    headers: HeaderMap,
+    data: Vec<u8>,
+    state: Option<Arc<VolumeServerState>>,
+) -> Response {
+    if let Some(state) = state {
+        let data_len = data.len() as i64;
+        let new_val = state
+            .inflight_download_bytes
+            .fetch_add(data_len, Ordering::Relaxed)
+            + data_len;
+        metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+        let tracked_body = TrackedBody {
+            data,
+            state,
+            bytes: data_len,
+        };
+        let body = Body::new(tracked_body);
+        let mut resp = Response::new(body);
+        *resp.status_mut() = status;
+        *resp.headers_mut() = headers;
+        resp
+    } else {
+        (status, headers, data).into_response()
+    }
+}
+
+// ============================================================================
+// Streaming Body for Large Files
+// ============================================================================
+
+/// Threshold in bytes above which we stream needle data instead of buffering.
+const STREAMING_THRESHOLD: u32 = 1024 * 1024; // 1 MB
+
+/// Default chunk size for streaming reads from the dat file.
+const DEFAULT_STREAMING_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
+
+/// Whether a GET/HEAD can be answered from the needle meta and the data file.
+#[derive(Clone, Copy)]
+struct SourceReadRequest {
+    is_head: bool,
+    has_range: bool,
+    has_image_ops: bool,
+    bypass_cm: bool,
+}
+
+impl SourceReadRequest {
+    /// The payload can be served as stored.
+    fn direct(&self, n: &Needle) -> bool {
+        !n.is_compressed() && !(n.is_chunk_manifest() && !self.bypass_cm) && !self.has_image_ops
+    }
+
+    /// HEAD, a range, or a stream.
+    fn served_from_source(&self, n: &Needle) -> bool {
+        if self.is_head {
+            // HEAD is meta-only unless the payload is needed to expand a
+            // manifest or to answer an image transform's length.
+            return !self.has_image_ops && !(n.is_chunk_manifest() && !self.bypass_cm);
+        }
+        self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
+    }
+
+    /// Meta first only if the needle could be served from source; its data
+    /// size is below its index size.
+    fn try_meta_first(&self, size: Size) -> bool {
+        if self.has_image_ops {
+            return false;
+        }
+        self.is_head || self.has_range || size.0 > STREAMING_THRESHOLD as i32
+    }
+}
+
+/// Blocking part of a GET/HEAD: the store guard is dropped before any needle
+/// I/O, so a slow or tiered read cannot park store writers. `Ok(None)` is a
+/// cookie mismatch.
+fn read_needle_for_get(
+    state: &VolumeServerState,
+    vid: VolumeId,
+    needle_id: NeedleId,
+    cookie: Cookie,
+    read_deleted: bool,
+    request: SourceReadRequest,
+) -> Result<
+    Option<(Needle, Option<crate::storage::volume::NeedleStreamInfo>)>,
+    crate::storage::volume::VolumeError,
+> {
+    let mut plan = state
+        .store
+        .read()
+        .unwrap()
+        .needle_read_plan(vid, needle_id, read_deleted)?;
+    let blank = || Needle {
+        id: needle_id,
+        cookie,
+        ..Needle::default()
+    };
+    let mut n = blank();
+    if request.try_meta_first(plan.size()) {
+        plan.read_meta(&mut n)?;
+        if n.cookie != cookie {
+            // The meta read answered the request.
+            plan.note_meta_only_success();
+            return Ok(None);
+        }
+        if request.served_from_source(&n) {
+            if request.is_head {
+                // HEAD ends here; no payload read will record the success.
+                plan.note_meta_only_success();
+            }
+            let info = plan.into_stream_info(&n);
+            return Ok(Some((n, Some(info))));
+        }
+        // Compressed or a chunk manifest: the payload is needed after all.
+        n = blank();
+    }
+    plan.read_full(&mut n)?;
+    if n.cookie != cookie {
+        return Ok(None);
+    }
+    Ok(Some((n, None)))
+}
+
+/// A body that streams needle data from the dat file in chunks using pread,
+/// avoiding loading the entire payload into memory at once.
+struct StreamingBody {
+    /// Opened at plan time: it pins the inode the offset was resolved against,
+    /// so a vacuum commit mid-stream moves nothing under it.
+    source: Arc<crate::storage::volume::NeedleStreamSource>,
+    data_offset: u64,
+    data_size: u32,
+    pos: usize,
+    chunk_size: usize,
+    data_file_access_control: Arc<crate::storage::volume::DataFileAccessControl>,
+    hold_read_lock_for_stream: bool,
+    _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
+    io_unavailable: Arc<crate::storage::volume::IoUnavailable>,
+    /// Chunk read failures feed the volume's io-error streak, and finishing
+    /// the stream clears it — Go readNeedleDataInto parity.
+    io_errors: Arc<crate::storage::io_error::IoErrorTracker>,
+    /// Pending chunk read; it hands `buf` back with the result.
+    pending: Option<tokio::task::JoinHandle<(bytes::BytesMut, std::io::Result<bytes::Bytes>)>>,
+    /// Chunk buffer, reclaimed once the previous frame has been written out.
+    buf: bytes::BytesMut,
+    /// For download throttling — released on drop.
+    state: Option<Arc<VolumeServerState>>,
+    tracked_bytes: i64,
+    needle_id: crate::storage::types::NeedleId,
+    /// Checksum stored in the needle tail.
+    expected_checksum: u32,
+    /// Running checksum over the emitted data.
+    crc: CRC,
+}
+
+impl http_body::Body for StreamingBody {
+    type Data = bytes::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        loop {
+            // If we have a pending read, poll it
+            if let Some(ref mut handle) = self.pending {
+                match std::pin::Pin::new(handle).poll(cx) {
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                    std::task::Poll::Ready(result) => {
+                        self.pending = None;
+                        let result = result.map(|(buf, read)| {
+                            self.buf = buf;
+                            read
+                        });
+                        match result {
+                            Ok(Ok(chunk)) => {
+                                let len = chunk.len();
+                                self.crc = self.crc.update(&chunk);
+                                self.pos += len;
+                                // The last frame is held back until the checksum verifies
+                                // (Go parity: readNeedleDataInto). On a mismatch it is
+                                // never emitted, so the response ends short of the declared
+                                // Content-Length and the reader sees a failed transfer.
+                                if self.pos >= self.data_size as usize {
+                                    let ok = self.expected_checksum == self.crc.0
+                                        || self.expected_checksum == self.crc.legacy_value();
+                                    if !ok {
+                                        metrics::HANDLER_COUNTER
+                                            .with_label_values(&[metrics::ERROR_CRC])
+                                            .inc();
+                                        return std::task::Poll::Ready(Some(Err(
+                                            std::io::Error::new(
+                                                std::io::ErrorKind::InvalidData,
+                                                format!(
+                                                    "needle data checksum {} expected {} for needle {}",
+                                                    self.crc.0,
+                                                    self.expected_checksum,
+                                                    self.needle_id
+                                                ),
+                                            ),
+                                        )));
+                                    }
+                                    // Hyper may not poll again once Content-Length is
+                                    // satisfied, so the read's success is recorded here.
+                                    self.io_errors.check_read_write_error(None);
+                                }
+                                return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(
+                                    chunk,
+                                ))));
+                            }
+                            Ok(Err(e)) => {
+                                self.io_errors.check_read_write_error(Some(&e));
+                                return std::task::Poll::Ready(Some(Err(e)));
+                            }
+                            Err(e) => {
+                                return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let total = self.data_size as usize;
+            if self.pos >= total {
+                self.io_errors.check_read_write_error(None);
+                return std::task::Poll::Ready(None);
+            }
+
+            let chunk_len = std::cmp::min(self.chunk_size, total - self.pos);
+            let file_offset = self.data_offset + self.pos as u64;
+            let source = self.source.clone();
+            let data_file_access_control = self.data_file_access_control.clone();
+            let hold_read_lock_for_stream = self.hold_read_lock_for_stream;
+            let io_unavailable = self.io_unavailable.clone();
+            let mut buf = std::mem::take(&mut self.buf);
+
+            let handle = tokio::task::spawn_blocking(move || {
+                let _lease = if hold_read_lock_for_stream {
+                    None
+                } else {
+                    Some(data_file_access_control.read_lock())
+                };
+                // Under the lease: a writer marks the volume holding the write lock.
+                if let Some(e) = io_unavailable.error() {
+                    return (buf, Err(std::io::Error::other(e)));
+                }
+                buf.resize(chunk_len, 0);
+                let read = source
+                    .read_exact_at(&mut buf, file_offset)
+                    .map(|()| buf.split().freeze());
+                (buf, read)
+            });
+
+            self.pending = Some(handle);
+            // Loop back to poll the newly created future
+        }
+    }
+}
+
+impl Drop for StreamingBody {
+    fn drop(&mut self) {
+        if let Some(ref st) = self.state {
+            let new_val = st
+                .inflight_download_bytes
+                .fetch_sub(self.tracked_bytes, Ordering::Relaxed)
+                - self.tracked_bytes;
+            metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+            st.download_notify.notify_waiters();
+        }
+    }
+}
+
+// ============================================================================
+// URL Parsing
+// ============================================================================
+
+/// The pieces a needle URL carries, as Go's `parseURLPath` splits them
+/// (`weed/server/common.go:218-249`). Borrowed from the path so the callers
+/// that only need one field do not allocate.
+///
+/// `fid` keeps any `_delta` suffix, exactly like Go: applying the delta is
+/// `parse_needle_id_cookie`'s job (Go's `needle.ParsePath`), and the JWT check
+/// strips it separately.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NeedlePath<'a> {
+    pub vid: &'a str,
+    pub fid: &'a str,
+    /// Extension including the dot (`.jpg`), or "" when the URL has none.
+    pub ext: &'a str,
+    /// The trailing display name of the `vid/fid/filename.ext` form only.
+    pub filename: Option<&'a str>,
+}
+
+/// Split a needle URL path into volume id, file id, extension and filename.
+///
+/// Dispatches on the slash count like Go's `parseURLPath`, which is what
+/// decides where the extension is taken from:
+/// - `/vid/fid/filename.ext` (Go case 3): the filename carries the extension
+///   and the fid is left intact.
+/// - `/vid/fid.ext` (Go case 2): the extension is split off the fid.
+/// - `/vid,fid.ext` (Go's default): the last path segment is split on its last
+///   comma, then on its last dot.
+///
+/// The leading slash is optional, so chunk manifest entries ("3,01637037d6")
+/// parse through the same function. Returns `None` for a path with no file id
+/// at all — Go's `isVolumeIdOnly` case — since every caller here needs one.
+pub(crate) fn parse_needle_path(path: &str) -> Option<NeedlePath<'_>> {
+    // Go counts one more slash than this because it keeps the leading one.
+    let trimmed = path.trim_start_matches('/');
+    match trimmed.matches('/').count() {
+        2 => {
+            let mut parts = trimmed.splitn(3, '/');
+            let vid = parts.next()?;
+            let fid = parts.next()?;
+            let filename = parts.next()?;
+            // Go uses filepath.Ext here, which has no "dot at index 0" guard.
+            let ext = filename.rfind('.').map_or("", |dot| &filename[dot..]);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: Some(filename),
+            })
+        }
+        1 => {
+            let (vid, fid) = trimmed.split_once('/')?;
+            let (fid, ext) = split_extension(fid);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: None,
+            })
+        }
+        _ => {
+            // Go looks only after the last slash, so a deeper path has no
+            // comma to find and falls out as invalid.
+            let segment = trimmed.rsplit_once('/').map_or(trimmed, |(_, last)| last);
+            let comma = segment.rfind(',')?;
+            let (fid, ext) = split_extension(&segment[comma + 1..]);
+            Some(NeedlePath {
+                vid: &segment[..comma],
+                fid,
+                ext,
+                filename: None,
+            })
+        }
+    }
+}
+
+/// Split a trailing `.ext` off a file id. Go guards this with `dotIndex > 0`,
+/// so a file id that is nothing but an extension keeps it and fails to parse
+/// later instead of becoming empty here.
+fn split_extension(fid: &str) -> (&str, &str) {
+    match fid.rfind('.') {
+        Some(dot) if dot > 0 => (&fid[..dot], &fid[dot..]),
+        _ => (fid, ""),
+    }
+}
+
+/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
+///
+/// Go compares the token's `fid` claim against `vid + "," + fid` for every URL
+/// form, after dropping an `_suffix` (`volume_server_handlers.go:361-364`), so
+/// the comma form is emitted here even when the request used slashes.
+fn extract_file_id(path: &str) -> String {
+    let Some(parsed) = parse_needle_path(path) else {
+        return path.trim_start_matches('/').to_string();
+    };
+    let fid = match parsed.fid.rfind('_') {
+        Some(sep) if sep > 0 => &parsed.fid[..sep],
+        _ => parsed.fid,
+    };
+    format!("{},{}", parsed.vid, fid)
+}
+
+fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
+    std::cmp::min(
+        read_buffer_size_bytes.max(DEFAULT_STREAMING_CHUNK_SIZE),
+        data_size.max(1),
+    )
+}
+
+fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
+    let parsed = parse_needle_path(path)?;
+    let vid = VolumeId::parse(parsed.vid).ok()?;
+    // parse_needle_id_cookie applies an `_delta` suffix itself (Go ParsePath).
+    let (needle_id, cookie) =
+        crate::storage::needle::needle::parse_needle_id_cookie(parsed.fid).ok()?;
+
+    Some((vid, needle_id, cookie))
+}
+
+// ============================================================================
+// Volume Lookup + Proxy/Redirect
+// ============================================================================
+
+/// A volume location returned by master lookup.
+#[derive(Clone, Debug, Deserialize)]
+struct VolumeLocation {
+    url: String,
+    #[serde(rename = "readOnly", default)]
+    read_only: bool,
+    #[serde(rename = "readOnlyCanDelete", default)]
+    read_only_can_delete: bool,
+    // Master often omits publicUrl when it matches url (Go json omitempty).
+    #[serde(rename = "publicUrl", default)]
+    public_url: String,
+    #[serde(rename = "grpcPort", default)]
+    grpc_port: u32,
+}
+
+impl VolumeLocation {
+    fn public_or_url(&self) -> &str {
+        if self.public_url.is_empty() {
+            &self.url
+        } else {
+            &self.public_url
+        }
+    }
+}
+
+/// Master /dir/lookup response.
+#[derive(Debug, Deserialize)]
+struct LookupResult {
+    #[serde(default)]
+    locations: Option<Vec<VolumeLocation>>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Look up volume locations from the master via HTTP /dir/lookup.
+async fn lookup_volume(
+    client: &reqwest::Client,
+    scheme: &str,
+    master_url: &str,
+    volume_id: u32,
+) -> Result<Vec<VolumeLocation>, String> {
+    // master_url may be in SeaweedFS's "host:httpPort.grpcPort" form (mirrors
+    // Go's pb.ServerAddress); strip the gRPC port before building the HTTP URL.
+    let master_http = to_http_address(master_url);
+    let url = normalize_outgoing_http_url(
+        scheme,
+        &format!("{}/dir/lookup?volumeId={}", master_http, volume_id),
+    )?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("lookup request failed: {}", e))?;
+    let result: LookupResult = resp
+        .json()
+        .await
+        .map_err(|e| format!("lookup parse failed: {}", e))?;
+    if let Some(err) = result.error
+        && !err.is_empty()
+    {
+        return Err(err);
+    }
+    Ok(result.locations.unwrap_or_default())
+}
+
+fn grpc_address_for_location(location: &VolumeLocation) -> Result<String, String> {
+    let raw = location
+        .url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+
+    if location.grpc_port > 0 {
+        let (host, _) = raw
+            .rsplit_once(':')
+            .ok_or_else(|| format!("cannot parse address: {}", location.url))?;
+        return Ok(format!("{}:{}", host, location.grpc_port));
+    }
+
+    if let Some(colon_idx) = raw.rfind(':') {
+        let port_part = &raw[colon_idx + 1..];
+        if let Some(dot_idx) = port_part.rfind('.') {
+            let host = &raw[..colon_idx];
+            let grpc_port = &port_part[dot_idx + 1..];
+            grpc_port
+                .parse::<u16>()
+                .map_err(|e| format!("invalid grpc port: {}", e))?;
+            return Ok(format!("{}:{}", host, grpc_port));
+        }
+
+        let port: u16 = port_part
+            .parse()
+            .map_err(|e| format!("invalid port: {}", e))?;
+        let host = &raw[..colon_idx];
+        return Ok(format!("{}:{}", host, port as u32 + 10000));
+    }
+
+    Err(format!("cannot parse address: {}", location.url))
+}
+
+async fn batch_delete_file_ids(
+    state: &VolumeServerState,
+    file_ids: &[String],
+) -> Result<(), String> {
+    let mut lookup_cache: HashMap<u32, Vec<VolumeLocation>> = HashMap::new();
+    let mut server_to_file_ids: HashMap<String, Vec<String>> = HashMap::new();
+
+    for file_id in file_ids {
+        let parsed = crate::storage::needle::needle::FileId::parse(file_id)
+            .map_err(|e| format!("chunk delete {}: {}", file_id, e))?;
+        let volume_id = parsed.volume_id.0;
+
+        let locations = if let Some(locations) = lookup_cache.get(&volume_id) {
+            locations.clone()
+        } else {
+            let locations = lookup_volume(
+                &state.http_client,
+                &state.outgoing_http_scheme,
+                &state.current_master().await,
+                volume_id,
+            )
+            .await
+            .map_err(|e| format!("chunk delete {}: {}", file_id, e))?;
+            if locations.is_empty() {
+                return Err(format!("chunk delete {}: file not found", file_id));
+            }
+            lookup_cache.insert(volume_id, locations.clone());
+            locations
+        };
+
+        for location in locations {
+            let grpc_addr = grpc_address_for_location(&location)
+                .map_err(|e| format!("chunk delete {}: {}", file_id, e))?;
+            server_to_file_ids
+                .entry(grpc_addr)
+                .or_default()
+                .push(file_id.clone());
+        }
+    }
+
+    for (grpc_addr, batch) in server_to_file_ids {
+        // BatchDelete is unary, but `stream()` is still right: this fan-out has
+        // no per-request deadline today, and `unary()` would add a 10 s one.
+        let channel = connect_channel(
+            &grpc_addr,
+            state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+        )
+        .await
+        .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?;
+        let mut client = volume_server_client(channel);
+
+        let response = client
+            .batch_delete(volume_server_pb::BatchDeleteRequest {
+                file_ids: batch.clone(),
+                skip_cookie_check: true,
+            })
+            .await
+            .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?
+            .into_inner();
+
+        for result in response.results {
+            if !result.error.is_empty() {
+                return Err(format!("chunk delete {}: {}", result.file_id, result.error));
+            }
+            if result.status >= 400 {
+                return Err(format!(
+                    "chunk delete {}: status {}",
+                    result.file_id, result.status
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Helper to synchronously replicate a request to peer volume servers.
+async fn do_replicated_request(
+    state: &VolumeServerState,
+    vid: u32,
+    method: axum::http::Method,
+    path: &str,
+    query: &str,
+    headers: &axum::http::HeaderMap,
+    body: Option<bytes::Bytes>,
+) -> Result<(), String> {
+    let locations = lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.current_master().await,
+        vid,
+    )
+    .await
+    .map_err(|e| format!("lookup volume failed: {}", e))?;
+
+    let copy_count = {
+        let store = state.store.read().unwrap();
+        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
+            v.super_block().replica_placement.get_copy_count()
+        })
+    };
+    let allow_delete = method == axum::http::Method::DELETE;
+    let eligible_locations: Vec<_> = locations
+        .into_iter()
+        .filter(|loc| {
+            (!loc.read_only && allow_delete)
+                || (!loc.read_only && !allow_delete)
+                || (allow_delete && loc.read_only_can_delete)
+        })
+        .collect();
+    if eligible_locations.len() < copy_count as usize {
+        return Err(format!(
+            "replicating operations [{}] is less than volume {} replication copy count [{}]",
+            eligible_locations.len(),
+            vid,
+            copy_count
+        ));
+    }
+
+    let self_http = to_http_address(&state.self_url);
+    let remote_locations: Vec<_> = eligible_locations
+        .into_iter()
+        .filter(|loc| {
+            if (!allow_delete && loc.read_only)
+                || (allow_delete && loc.read_only && !loc.read_only_can_delete)
+            {
+                return false;
+            }
+            to_http_address(&loc.url) != self_http
+                && to_http_address(loc.public_or_url()) != self_http
+        })
+        .collect();
+
+    if remote_locations.is_empty() {
+        return Ok(());
+    }
+
+    let new_query = if query.is_empty() {
+        String::from("type=replicate")
+    } else {
+        format!("{}&type=replicate", query)
+    };
+
+    let mut futures = Vec::new();
+    for loc in remote_locations {
+        // Defensively strip a `.grpcPort` suffix in case loc.url carries it
+        // (e.g. from an older master); see lookup_volume for the same fix.
+        let peer_http = to_http_address(&loc.url);
+        let url = normalize_outgoing_http_url(
+            &state.outgoing_http_scheme,
+            &format!("{}{}?{}", peer_http, path, new_query),
+        )?;
+        let client = state.http_client.clone();
+
+        let mut req_builder = client.request(method.clone(), &url);
+
+        // Forward relevant headers
+        if let Some(ct) = headers.get(axum::http::header::CONTENT_TYPE) {
+            req_builder = req_builder.header(axum::http::header::CONTENT_TYPE, ct);
+        }
+        if let Some(ce) = headers.get(axum::http::header::CONTENT_ENCODING) {
+            req_builder = req_builder.header(axum::http::header::CONTENT_ENCODING, ce);
+        }
+        if let Some(md5) = headers.get("Content-MD5") {
+            req_builder = req_builder.header("Content-MD5", md5);
+        }
+        if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
+            req_builder = req_builder.header(axum::http::header::AUTHORIZATION, auth);
+        }
+
+        if let Some(ref b) = body {
+            req_builder = req_builder.body(b.clone());
+        }
+
+        futures.push(async move {
+            match req_builder.send().await {
+                Ok(r) if r.status().is_success() => Ok(()),
+                Ok(r) => {
+                    crate::metrics::UPLOAD_ERROR_COUNTER
+                        .with_label_values(&[&r.status().as_u16().to_string()])
+                        .inc();
+                    Err(format!("{} returned status {}", url, r.status()))
+                }
+                Err(e) => {
+                    crate::metrics::UPLOAD_ERROR_COUNTER
+                        .with_label_values(&["0"])
+                        .inc();
+                    Err(format!("{} failed: {}", url, e))
+                }
+            }
+        });
+    }
+
+    let results = futures::future::join_all(futures).await;
+    let mut errors = Vec::new();
+    for res in results {
+        if let Err(e) = res {
+            errors.push(e);
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(errors.join(", "));
+    }
+
+    Ok(())
+}
+
+/// Extracted request info needed for proxy/redirect (avoids borrowing Request across await).
+struct ProxyRequestInfo {
+    original_headers: HeaderMap,
+    original_query: String,
+    path: String,
+    vid_str: String,
+    fid_str: String,
+}
+
+fn build_proxy_request_info(
+    path: &str,
+    headers: &HeaderMap,
+    query_string: &str,
+) -> Option<ProxyRequestInfo> {
+    // Go redirects to "vid,fid" built from parseURLPath, so the extension must
+    // already be off the fid here (volume_server_handlers_read.go:128-137).
+    let parsed = parse_needle_path(path)?;
+
+    Some(ProxyRequestInfo {
+        original_headers: headers.clone(),
+        original_query: query_string.to_string(),
+        path: path.to_string(),
+        vid_str: parsed.vid.to_string(),
+        fid_str: parsed.fid.to_string(),
+    })
+}
+
+/// Handle proxy or redirect for a non-local volume read.
+async fn proxy_or_redirect_to_target(
+    state: &VolumeServerState,
+    info: ProxyRequestInfo,
+    vid: VolumeId,
+    allow_local_redirect: bool,
+) -> Response {
+    // Look up volume locations from master
+    let locations = match lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.current_master().await,
+        vid.0,
+    )
+    .await
+    {
+        Ok(locs) => locs,
+        Err(e) => {
+            tracing::warn!("volume lookup failed for {}: {}", vid.0, e);
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
+
+    if locations.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Filter out self, then shuffle remaining
+    let mut candidates: Vec<&VolumeLocation> = locations
+        .iter()
+        .filter(|loc| !loc.url.contains(&state.self_url))
+        .collect();
+
+    if candidates.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Shuffle for load balancing
+    if candidates.len() >= 2 {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::rng();
+        candidates.shuffle(&mut rng);
+    }
+
+    let target = candidates[0];
+
+    match state.read_mode {
+        ReadMode::Proxy => proxy_request(state, &info, target).await,
+        ReadMode::Redirect => redirect_request(&info, target, &state.outgoing_http_scheme),
+        ReadMode::Local if allow_local_redirect => {
+            redirect_request(&info, target, &state.outgoing_http_scheme)
+        }
+        ReadMode::Local => unreachable!(),
+    }
+}
+
+/// Proxy the request to the target volume server.
+async fn proxy_request(
+    state: &VolumeServerState,
+    info: &ProxyRequestInfo,
+    target: &VolumeLocation,
+) -> Response {
+    // Build target URL, adding proxied=true query param
+    let path = info.path.trim_start_matches('/');
+    // Defensively strip a `.grpcPort` suffix in case target.url carries it.
+    let target_http = to_http_address(&target.url);
+
+    let raw_target = if info.original_query.is_empty() {
+        format!("{}/{}?proxied=true", target_http, path)
+    } else {
+        format!(
+            "{}/{}?{}&proxied=true",
+            target_http, path, info.original_query
+        )
+    };
+    let target_url = match normalize_outgoing_http_url(&state.outgoing_http_scheme, &raw_target) {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!("proxy target url {} invalid: {}", raw_target, e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    // Build the proxy request
+    let mut req_builder = state.http_client.get(&target_url);
+
+    // Forward all original headers as raw bytes, as Go does.
+    for (name, value) in &info.original_headers {
+        req_builder = req_builder.header(name.clone(), value.clone());
+    }
+
+    let resp = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("proxy request to {} failed: {}", target_url, e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    // Build response, copying headers and body from remote
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut response_headers = HeaderMap::new();
+    for (name, value) in resp.headers() {
+        if name.as_str().eq_ignore_ascii_case("server") {
+            continue;
+        }
+        response_headers.append(name.clone(), value.clone());
+    }
+
+    // Stream the proxy response body instead of buffering it entirely
+    let byte_stream = resp.bytes_stream();
+    let body = Body::from_stream(byte_stream);
+
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    *response.headers_mut() = response_headers;
+    response
+}
+
+/// Return a redirect response to the target volume server.
+fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &str) -> Response {
+    // Build query string: preserve collection, add proxied=true, drop readDeleted (Go parity)
+    let mut query_params = Vec::new();
+    if !info.original_query.is_empty() {
+        for param in info.original_query.split('&') {
+            if let Some((key, value)) = param.split_once('=')
+                && key == "collection"
+            {
+                query_params.push(format!("collection={}", value));
+            }
+            // Intentionally drop readDeleted and other params (Go parity)
+        }
+    }
+    query_params.push("proxied=true".to_string());
+    let query = query_params.join("&");
+
+    // Defensively strip a `.grpcPort` suffix in case target.url carries it.
+    let target_http = to_http_address(&target.url);
+    let raw_target = format!(
+        "{}/{},{}?{}",
+        target_http, info.vid_str, info.fid_str, query
+    );
+    let location = match normalize_outgoing_http_url(scheme, &raw_target) {
+        Ok(url) => url,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header("Location", &location)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(Body::from(format!(
+            "<a href=\"{}\">Moved Permanently</a>.\n\n",
+            location
+        )))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// ============================================================================
+// Query parameters
+// ============================================================================
+
+#[derive(Deserialize, Default)]
+pub struct ReadQueryParams {
+    #[serde(rename = "response-content-type")]
+    pub response_content_type: Option<String>,
+    #[serde(rename = "response-cache-control")]
+    pub response_cache_control: Option<String>,
+    pub dl: Option<String>,
+    #[serde(rename = "readDeleted")]
+    pub read_deleted: Option<String>,
+    /// cm=false disables chunk manifest expansion (returns raw manifest JSON).
+    pub cm: Option<String>,
+    /// Image resize width
+    pub width: Option<u32>,
+    /// Image resize height
+    pub height: Option<u32>,
+    /// Image resize mode: "fit" or "fill"
+    pub mode: Option<String>,
+    /// Image crop parameters
+    pub crop_x1: Option<u32>,
+    pub crop_y1: Option<u32>,
+    pub crop_x2: Option<u32>,
+    pub crop_y2: Option<u32>,
+    /// S3 response passthrough headers
+    #[serde(rename = "response-content-encoding")]
+    pub response_content_encoding: Option<String>,
+    #[serde(rename = "response-expires")]
+    pub response_expires: Option<String>,
+    #[serde(rename = "response-content-language")]
+    pub response_content_language: Option<String>,
+    #[serde(rename = "response-content-disposition")]
+    pub response_content_disposition: Option<String>,
+    /// Pretty print JSON response
+    pub pretty: Option<String>,
+}
+
+// ============================================================================
+// Read Handler (GET/HEAD)
+// ============================================================================
+
+/// Called from the method-dispatching store handler with a full Request.
+pub async fn get_or_head_handler_from_request(
+    State(state): State<Arc<VolumeServerState>>,
+    request: Request<Body>,
+) -> Response {
+    let uri = request.uri().clone();
+    let headers = request.headers().clone();
+
+    // Parse query params manually from URI
+    let query_params: ReadQueryParams = uri
+        .query()
+        .and_then(|q| serde_urlencoded::from_str(q).ok())
+        .unwrap_or_default();
+
+    get_or_head_handler_inner(state, headers, query_params, request).await
+}
+
+pub async fn get_or_head_handler(
+    State(state): State<Arc<VolumeServerState>>,
+    headers: HeaderMap,
+    query: Query<ReadQueryParams>,
+    request: Request<Body>,
+) -> Response {
+    get_or_head_handler_inner(state, headers, query.0, request).await
+}
+
+async fn get_or_head_handler_inner(
+    state: Arc<VolumeServerState>,
+    headers: HeaderMap,
+    query: ReadQueryParams,
+    request: Request<Body>,
+) -> Response {
+    let path = request.uri().path().to_string();
+    let method = request.method().clone();
+
+    if let Some(resp) = reject_read_jwt(&state, &headers, request.uri(), &path) {
+        return resp;
+    }
+
+    let (vid, needle_id, cookie) = match parse_url_path(&path) {
+        Some(parsed) => parsed,
+        None => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    // The RwLockReadGuard must drop before any .await to keep the future Send.
+    let has_volume = state.store.read().unwrap().has_volume(vid);
+    let has_ec_volume = state.store.read().unwrap().has_ec_volume(vid);
+
+    if !has_volume && !has_ec_volume {
+        return proxy_missing_volume(&state, request.uri(), request.headers(), &path, vid).await;
+    }
+
+    let track_download =
+        match check_download_limit(&state, request.uri(), request.headers(), &path, vid).await {
+            ControlFlow::Continue(track_download) => track_download,
+            ControlFlow::Break(resp) => return resp,
+        };
+
+    let read_deleted = query.read_deleted.as_deref() == Some("true");
+    // Go reads Range once and ignores an empty value; a non-UTF-8 byte fails its parse.
+    let range = headers
+        .get(header::RANGE)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()))
+        .filter(|r| !r.is_empty());
+    let (ext, request_kind) = parse_read_request(&path, range.is_some(), &query, &method);
+
+    // EC volumes always do a full read (no streaming/meta-only).
+    let plan = if has_ec_volume && !has_volume {
+        read_ec_shard_needle(&state, vid, needle_id, cookie).await
+    } else {
+        read_volume_needle(&state, vid, needle_id, cookie, read_deleted, request_kind).await
+    };
+    let ReadPlan {
+        needle: n,
+        strategy,
+    } = match plan {
+        ControlFlow::Continue(plan) => plan,
+        ControlFlow::Break(resp) => return resp,
+    };
+
+    let (etag, last_modified_str) = etag_and_last_modified(&n);
+    if let Some(resp) = not_modified_response(&n, &headers, &etag, &last_modified_str) {
+        // A request that ends here was answered by the meta read alone.
+        if let Some(io_errors) = strategy.io_errors() {
+            io_errors.check_read_write_error(None);
+        }
+        return resp;
+    }
+
+    // Chunk manifest expansion needs the full data.
+    if n.is_chunk_manifest()
+        && !request_kind.bypass_cm
+        && let Some(expanded) = try_expand_chunk_manifest(
+            &state,
+            &n,
+            &path,
+            &query,
+            range.as_deref().filter(|_| method == Method::GET),
+            &method,
+        )
+        .await
+    {
+        // HEAD, and a Range the manifest path did not answer, apply to the assembled object.
+        return match expanded {
+            ControlFlow::Continue((data, response_headers)) => buffered_response(
+                &state,
+                range.as_deref(),
+                &method,
+                data,
+                response_headers,
+                track_download,
+            ),
+            ControlFlow::Break(resp) => resp,
+        };
+    }
+    // If manifest expansion fails (invalid JSON etc.), fall through to raw data
+
+    let (mut response_headers, ext) =
+        read_response_headers(&n, &path, &query, &etag, &last_modified_str, ext);
+
+    match strategy {
+        ReadStrategy::Stream(info) => {
+            return stream_response(&state, info, response_headers, track_download);
+        }
+        ReadStrategy::HeadFromMeta(info) => {
+            return head_from_meta_response(&info, response_headers);
+        }
+        ReadStrategy::RangeFromSource(info) => {
+            return range_from_source_response(
+                &state,
+                range.as_deref().unwrap_or_default(),
+                info,
+                response_headers,
+                track_download,
+            )
+            .await;
+        }
+        ReadStrategy::Buffered => {}
+    }
+
+    let data = match buffered_payload(
+        n,
+        &headers,
+        &query,
+        &ext,
+        request_kind.has_image_ops,
+        &mut response_headers,
+    ) {
+        ControlFlow::Continue(data) => data,
+        ControlFlow::Break(resp) => return resp,
+    };
+    buffered_response(
+        &state,
+        range.as_deref(),
+        &method,
+        data,
+        response_headers,
+        track_download,
+    )
+}
+
+/// How a GET/HEAD reply is produced once the needle is read.
+enum ReadStrategy {
+    /// Large, served as stored, no range: streamed from the data file.
+    Stream(crate::storage::volume::NeedleStreamInfo),
+    /// HEAD: answered from the needle meta.
+    HeadFromMeta(crate::storage::volume::NeedleStreamInfo),
+    /// A range over a payload served as stored: read from the data file.
+    RangeFromSource(crate::storage::volume::NeedleStreamInfo),
+    /// Everything else, from the needle data in memory.
+    Buffered,
+}
+
+/// The needle a GET/HEAD resolved to, and how its reply is produced.
+struct ReadPlan {
+    needle: Needle,
+    strategy: ReadStrategy,
+}
+
+impl ReadStrategy {
+    /// The tracker a terminal meta read reports success to, when the reply
+    /// is served from the data file.
+    fn io_errors(&self) -> Option<&Arc<crate::storage::io_error::IoErrorTracker>> {
+        match self {
+            ReadStrategy::Stream(info)
+            | ReadStrategy::HeadFromMeta(info)
+            | ReadStrategy::RangeFromSource(info) => Some(&info.io_errors),
+            ReadStrategy::Buffered => None,
+        }
+    }
+}
+
+/// The 401 reply for a bad read JWT; Go checks it before NewVolumeId, so a
+/// bad path with JWT enabled is a 401, not a 400.
+fn reject_read_jwt(
+    state: &VolumeServerState,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    path: &str,
+) -> Option<Response> {
+    let file_id = extract_file_id(path);
+    let token = extract_jwt(headers, uri);
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, false)
+        .is_err()
+    {
+        let body = serde_json::json!({"error": "wrong jwt"});
+        return Some(
+            Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        );
+    }
+    None
+}
+
+/// The volume is not here: 404, or proxy/redirect to a holder per read_mode.
+async fn proxy_missing_volume(
+    state: &Arc<VolumeServerState>,
+    uri: &axum::http::Uri,
+    request_headers: &HeaderMap,
+    path: &str,
+    vid: VolumeId,
+) -> Response {
+    let query_string = uri.query().unwrap_or("").to_string();
+    if is_proxied_query(&query_string)
+        || state.read_mode == ReadMode::Local
+        || state.current_master().await.is_empty()
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // For redirect, fid must be stripped of extension (Go parity: parseURLPath returns raw fid).
+    let info = match build_proxy_request_info(path, request_headers, &query_string) {
+        Some(info) => info,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    proxy_or_redirect_to_target(state, info, vid, false).await
+}
+
+/// Go's `proxied` query param check (loop prevention).
+fn is_proxied_query(query_string: &str) -> bool {
+    query_string.split('&').any(|kv| kv == "proxied=true")
+}
+
+/// Download throttling — Go's checkDownloadLimit + waitForDownloadSlot.
+/// `Continue(true)` when the reply must count toward the inflight download bytes.
+async fn check_download_limit(
+    state: &Arc<VolumeServerState>,
+    uri: &axum::http::Uri,
+    request_headers: &HeaderMap,
+    path: &str,
+    vid: VolumeId,
+) -> ControlFlow<Response, bool> {
+    if state.concurrent_download_limit <= 0 {
+        return ControlFlow::Continue(false);
+    }
+    let timeout = state.inflight_download_data_timeout;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let query_string = uri.query().unwrap_or("").to_string();
+
+    let current = state.inflight_download_bytes.load(Ordering::Relaxed);
+    if current > state.concurrent_download_limit {
+        metrics::HANDLER_COUNTER
+            .with_label_values(&[metrics::DOWNLOAD_LIMIT_COND])
+            .inc();
+
+        // Go tries proxy to replica once before the wait loop
+        // (checkDownloadLimit); it does not retry on each wakeup.
+        let should_try_replica =
+            !is_proxied_query(&query_string) && !state.current_master().await.is_empty() && {
+                let store = state.store.read().unwrap();
+                store
+                    .find_volume(vid)
+                    .is_some_and(|(_, vol)| vol.super_block().replica_placement.has_replication())
+            };
+        if should_try_replica
+            && let Some(info) = build_proxy_request_info(path, request_headers, &query_string)
+        {
+            return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid, true).await);
+        }
+
+        // Blocking wait loop (Go's waitForDownloadSlot)
+        loop {
+            if tokio::time::timeout_at(deadline, state.download_notify.notified())
+                .await
+                .is_err()
+            {
+                return ControlFlow::Break(json_error_with_query(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "download limit exceeded",
+                    uri.query(),
+                ));
+            }
+            let current = state.inflight_download_bytes.load(Ordering::Relaxed);
+            if current <= state.concurrent_download_limit {
+                break;
+            }
+        }
+    }
+    ControlFlow::Continue(true)
+}
+
+/// The URL extension, and how the reply may be served.
+fn parse_read_request(
+    path: &str,
+    has_range: bool,
+    query: &ReadQueryParams,
+    method: &Method,
+) -> (String, SourceReadRequest) {
+    let ext = extract_extension_from_path(path);
+    // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
+    let request_kind = SourceReadRequest {
+        is_head: method == Method::HEAD,
+        has_range,
+        has_image_ops: has_image_ops(&ext, query),
+        bypass_cm: query.cm.as_deref() == Some("false"),
+    };
+    (ext, request_kind)
+}
+
+/// Full read from an EC volume; there is no streaming for EC.
+async fn read_ec_shard_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+    cookie: Cookie,
+) -> ControlFlow<Response, ReadPlan> {
+    // The distributed read does a local-first pass in its Snapshot phase, so
+    // calling it directly covers both the all-local fast case and the
+    // peer-fetch + reconstruct case without reading local intervals twice.
+    let n = match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, needle_id)
+        .await
+    {
+        Ok(Some(ec_needle)) => ec_needle,
+        Ok(None) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                .inc();
+            return ControlFlow::Break(StatusCode::NOT_FOUND.into_response());
+        }
+        Err(e) => {
+            let kind = if e.kind() == std::io::ErrorKind::NotFound {
+                metrics::ERROR_GET_NOT_FOUND
+            } else {
+                metrics::ERROR_GET_INTERNAL
+            };
+            metrics::HANDLER_COUNTER.with_label_values(&[kind]).inc();
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return ControlFlow::Break(StatusCode::NOT_FOUND.into_response());
+            }
+            return ControlFlow::Break(
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("ec read: {}", e)).into_response(),
+            );
+        }
+    };
+
+    // Validate cookie (matches Go behavior after ReadEcShardNeedle)
+    if n.cookie != cookie {
+        return ControlFlow::Break(StatusCode::NOT_FOUND.into_response());
+    }
+    ControlFlow::Continue(ReadPlan {
+        needle: n,
+        strategy: ReadStrategy::Buffered,
+    })
+}
+
+/// Reads a regular volume's needle off the store lock, meta-only when the
+/// reply can be served from the data file.
+async fn read_volume_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+    cookie: Cookie,
+    read_deleted: bool,
+    request_kind: SourceReadRequest,
+) -> ControlFlow<Response, ReadPlan> {
+    let has_range = request_kind.has_range;
+    let is_head = request_kind.is_head;
+
+    let read_state = state.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        read_needle_for_get(
+            &read_state,
+            vid,
+            needle_id,
+            cookie,
+            read_deleted,
+            request_kind,
+        )
+    })
+    .await;
+    let (n, stream_info) = match read {
+        Ok(Ok(Some(found))) => found,
+        // Cookie mismatch
+        Ok(Ok(None)) => return ControlFlow::Break(StatusCode::NOT_FOUND.into_response()),
+        Ok(Err(
+            crate::storage::volume::VolumeError::NotFound
+            | crate::storage::volume::VolumeError::Deleted,
+        )) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                .inc();
+            return ControlFlow::Break(StatusCode::NOT_FOUND.into_response());
+        }
+        Ok(Err(e)) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_INTERNAL])
+                .inc();
+            return ControlFlow::Break(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("read error: {}", e),
+                )
+                    .into_response(),
+            );
+        }
+        Err(e) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_INTERNAL])
+                .inc();
+            return ControlFlow::Break(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("read error: {}", e),
+                )
+                    .into_response(),
+            );
+        }
+    };
+
+    // Stream info is only returned for a reply served from the data file.
+    let can_direct_source_read = stream_info.is_some() && request_kind.direct(&n);
+
+    let can_stream =
+        can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
+    // HEAD is meta-only when served_from_source loaded no payload. A chunk
+    // manifest without cm=false is read in full so expansion can run.
+    let can_handle_head_from_meta = stream_info.is_some() && is_head;
+    let can_handle_range_from_source = can_direct_source_read && has_range;
+
+    let strategy = match stream_info {
+        Some(info) if can_stream => ReadStrategy::Stream(info),
+        Some(info) if can_handle_head_from_meta => ReadStrategy::HeadFromMeta(info),
+        Some(info) if can_handle_range_from_source => ReadStrategy::RangeFromSource(info),
+        _ => ReadStrategy::Buffered,
+    };
+    ControlFlow::Continue(ReadPlan {
+        needle: n,
+        strategy,
+    })
+}
+
+/// The ETag, and Last-Modified in RFC 1123 format.
+fn etag_and_last_modified(n: &Needle) -> (String, Option<String>) {
+    let etag = format!("\"{}\"", n.etag());
+    let last_modified_str = if n.last_modified > 0 {
+        use chrono::{TimeZone, Utc};
+        Utc.timestamp_opt(n.last_modified as i64, 0)
+            .single()
+            .map(|dt| dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+    } else {
+        None
+    };
+    (etag, last_modified_str)
+}
+
+/// The 304 reply, if a conditional header matches.
+fn not_modified_response(
+    n: &Needle,
+    headers: &HeaderMap,
+    etag: &str,
+    last_modified_str: &Option<String>,
+) -> Option<Response> {
+    let not_modified = || {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        resp.headers_mut()
+            .insert(header::ETAG, etag.parse().unwrap());
+        if let Some(lm) = last_modified_str {
+            resp.headers_mut()
+                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+        }
+        resp
+    };
+
+    // If-Modified-Since applies only when there is no If-None-Match (RFC 9110 13.2.2).
+    if headers.contains_key(header::IF_NONE_MATCH) {
+        let inm = headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .map(|v| v.to_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(",");
+        return etag_list_matches(&inm, etag).then(not_modified);
+    }
+
+    if n.last_modified > 0
+        && let Some(ims_str) = headers
+            .get(header::IF_MODIFIED_SINCE)
+            .and_then(|v| v.to_str().ok())
+    {
+        // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
+        if let Ok(ims_time) =
+            chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
+            && (n.last_modified as i64) <= ims_time.and_utc().timestamp()
+        {
+            return Some(not_modified());
+        }
+    }
+    None
+}
+
+/// Weak comparison against "*" or a comma-separated entity-tag list (RFC 9110 13.1.2).
+fn etag_list_matches(header: &str, etag: &str) -> bool {
+    if header.trim() == "*" {
+        return true;
+    }
+    let etag = etag.trim_matches('"');
+    split_etag_list(header).into_iter().any(|tag| {
+        let tag = tag.trim();
+        let tag = tag.strip_prefix("W/").unwrap_or(tag);
+        // Empty list elements are ignored, so padding like a trailing
+        // comma cannot match an empty opaque tag.
+        !tag.is_empty() && tag.trim_matches('"') == etag
+    })
+}
+
+/// Splits an entity-tag list on the commas between tags; a comma inside a
+/// quoted opaque tag does not split.
+fn split_etag_list(header: &str) -> Vec<&str> {
+    let mut tags = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (i, b) in header.bytes().enumerate() {
+        match b {
+            b'"' => quoted = !quoted,
+            b',' if !quoted => {
+                tags.push(&header[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    tags.push(&header[start..]);
+    tags
+}
+
+/// The 200 reply headers, and the extension, which falls back to the stored name's.
+fn read_response_headers(
+    n: &Needle,
+    path: &str,
+    query: &ReadQueryParams,
+    etag: &str,
+    last_modified_str: &Option<String>,
+    ext: String,
+) -> (HeaderMap, String) {
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::ETAG, etag.parse().unwrap());
+
+    // H1: Emit pairs as response headers
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
+            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
+            }
+        }
+    }
+
+    // H8: Use needle stored name when URL path has no filename (only vid,fid)
+    let mut filename = extract_filename_from_path(path);
+    let mut ext = ext;
+    if n.name_size > 0 && filename.is_empty() {
+        filename = String::from_utf8_lossy(&n.name).to_string();
+        if ext.is_empty()
+            && let Some(dot_pos) = filename.rfind('.')
+        {
+            ext = filename[dot_pos..].to_lowercase();
+        }
+    }
+
+    // H6: Determine Content-Type: filter application/octet-stream, use mime_guess
+    // For chunk manifests, skip extension-based MIME override — use stored MIME as-is (Go parity)
+    let content_type = if n.is_chunk_manifest() {
+        // Chunk manifests: use stored MIME but filter application/octet-stream (Go L334)
+        if !n.mime.is_empty() {
+            let mt = String::from_utf8_lossy(&n.mime).to_string();
+            if mt.starts_with("application/octet-stream") {
+                None
+            } else {
+                Some(mt)
+            }
+        } else {
+            None
+        }
+    } else {
+        // Get MIME from needle, but filter out application/octet-stream
+        let needle_mime = if !n.mime.is_empty() {
+            let mt = String::from_utf8_lossy(&n.mime).to_string();
+            if mt.starts_with("application/octet-stream") {
+                String::new()
+            } else {
+                mt
+            }
+        } else {
+            String::new()
+        };
+
+        if !needle_mime.is_empty() {
+            Some(needle_mime)
+        } else {
+            // Fall through to extension-based detection
+            let detect_ext = if !ext.is_empty() {
+                ext.clone()
+            } else if !filename.is_empty() {
+                if let Some(dot_pos) = filename.rfind('.') {
+                    filename[dot_pos..].to_lowercase()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            if !detect_ext.is_empty() {
+                mime_guess::from_ext(detect_ext.trim_start_matches('.'))
+                    .first()
+                    .map(|m| m.to_string())
+            } else {
+                None // Omit Content-Type entirely
+            }
+        }
+    };
+    // Every value below can come straight from the query string, so none of
+    // them may be unwrapped: `?response-cache-control=%0Aevil` decodes to a
+    // value with a newline, `HeaderValue::from_str` rejects it, and the unwrap
+    // would panic the connection task. An invalid `response-content-type`
+    // falls back to the needle MIME rather than dropping Content-Type.
+    if let Some(hval) = query
+        .response_content_type
+        .as_ref()
+        .and_then(|ct| ct.parse::<header::HeaderValue>().ok())
+    {
+        response_headers.insert(header::CONTENT_TYPE, hval);
+    } else if let Some(ref ct) = content_type
+        && let Ok(hval) = ct.parse()
+    {
+        response_headers.insert(header::CONTENT_TYPE, hval);
+    }
+
+    // Cache-Control override from query param
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
+    }
+
+    // S3 response passthrough headers
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
+    }
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
+    }
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
+    }
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
+    }
+
+    // Last-Modified
+    if let Some(lm) = last_modified_str {
+        response_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
+    }
+
+    // H7: Content-Disposition — inline by default, attachment only when dl is truthy
+    // Only set if not already set by response-content-disposition query param
+    if !response_headers.contains_key(header::CONTENT_DISPOSITION) && !filename.is_empty() {
+        let disposition_type = if let Some(ref dl_val) = query.dl {
+            if parse_go_bool(dl_val).unwrap_or(false) {
+                "attachment"
+            } else {
+                "inline"
+            }
+        } else {
+            "inline"
+        };
+        let disposition = format_content_disposition(disposition_type, &filename);
+        if let Ok(hval) = disposition.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
+    }
+    (response_headers, ext)
+}
+
+/// Streaming path: large uncompressed files.
+fn stream_response(
+    state: &Arc<VolumeServerState>,
+    info: crate::storage::volume::NeedleStreamInfo,
+    mut response_headers: HeaderMap,
+    track_download: bool,
+) -> Response {
+    response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        info.data_size.to_string().parse().unwrap(),
+    );
+
+    let tracked_bytes = info.data_size as i64;
+    let tracking_state = if track_download {
+        let new_val = state
+            .inflight_download_bytes
+            .fetch_add(tracked_bytes, Ordering::Relaxed)
+            + tracked_bytes;
+        metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+        Some(state.clone())
+    } else {
+        None
+    };
+
+    let streaming = StreamingBody {
+        source: Arc::new(info.source),
+        data_offset: info.data_file_offset,
+        data_size: info.data_size,
+        pos: 0,
+        chunk_size: streaming_chunk_size(state.read_buffer_size_bytes, info.data_size as usize),
+        _held_read_lease: if state.has_slow_read {
+            None
+        } else {
+            Some(info.data_file_access_control.read_lock())
+        },
+        data_file_access_control: info.data_file_access_control,
+        hold_read_lock_for_stream: !state.has_slow_read,
+        io_unavailable: info.io_unavailable,
+        io_errors: info.io_errors,
+        pending: None,
+        buf: bytes::BytesMut::new(),
+        state: tracking_state,
+        tracked_bytes,
+        needle_id: info.needle_id,
+        expected_checksum: info.checksum,
+        crc: CRC(0),
+    };
+
+    let body = Body::new(streaming);
+    let mut resp = Response::new(body);
+    *resp.status_mut() = StatusCode::OK;
+    *resp.headers_mut() = response_headers;
+    resp
+}
+
+/// HEAD from the needle meta: Content-Length is the stored data size.
+fn head_from_meta_response(
+    info: &crate::storage::volume::NeedleStreamInfo,
+    mut response_headers: HeaderMap,
+) -> Response {
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        info.data_size.to_string().parse().unwrap(),
+    );
+    (StatusCode::OK, response_headers).into_response()
+}
+
+/// A range over a payload served as stored, read from the data file.
+async fn range_from_source_response(
+    state: &Arc<VolumeServerState>,
+    range_str: &str,
+    info: crate::storage::volume::NeedleStreamInfo,
+    response_headers: HeaderMap,
+    track_download: bool,
+) -> Response {
+    let range_str = range_str.to_string();
+    let tracking = track_download.then(|| state.clone());
+    tokio::task::spawn_blocking(move || {
+        handle_range_request_from_source(&range_str, info, response_headers, tracking)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("range read error: {}", e),
+        )
+            .into_response()
+    })
+}
+
+/// The needle data, decompressed and image-processed as the request needs.
+fn buffered_payload(
+    n: Needle,
+    headers: &HeaderMap,
+    query: &ReadQueryParams,
+    ext: &str,
+    needs_image_ops: bool,
+    response_headers: &mut HeaderMap,
+) -> ControlFlow<Response, Vec<u8>> {
+    // Handle compressed data: if needle is compressed, either pass through or decompress
+    let is_compressed = n.is_compressed();
+    let mut data = n.data;
+
+    // Image operations must decompress first regardless of Accept-Encoding.
+    if is_compressed {
+        if needs_image_ops {
+            // Always decompress for image operations (Go decompresses before resize/crop)
+            match maybe_decompress_gzip(&data) {
+                Ok(decompressed) => data = decompressed,
+                Err(GunzipError::TooLarge) => {
+                    return ControlFlow::Break(
+                        (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "compressed object exceeds decompression limit",
+                        )
+                            .into_response(),
+                    );
+                }
+                Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
+            }
+        } else {
+            let accept_encoding = headers
+                .get(header::ACCEPT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if accept_encoding.contains("gzip")
+                && data.len() >= 2
+                && data[0] == 0x1f
+                && data[1] == 0x8b
+            {
+                // Go checks IsGzippedContent (magic bytes 0x1f 0x8b) before
+                // setting Content-Encoding: gzip
+                response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+            } else {
+                // Decompress for client
+                match maybe_decompress_gzip(&data) {
+                    Ok(decompressed) => data = decompressed,
+                    Err(GunzipError::TooLarge) => {
+                        return ControlFlow::Break(
+                            (
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                "compressed object exceeds decompression limit",
+                            )
+                                .into_response(),
+                        );
+                    }
+                    Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
+                }
+            }
+        }
+    }
+
+    // Image crop and resize — Go checks extensions separately per operation.
+    // Crop: .png .jpg .jpeg .gif (no .webp). Resize: .png .jpg .jpeg .gif .webp.
+    if is_image_crop_ext(ext) {
+        data = maybe_crop_image(&data, ext, query);
+    }
+    if is_image_resize_ext(ext) {
+        data = maybe_resize_image(&data, ext, query);
+    }
+    ControlFlow::Continue(data)
+}
+
+/// The buffered reply over the payload, whole or a range.
+fn buffered_response(
+    state: &Arc<VolumeServerState>,
+    range: Option<&str>,
+    method: &Method,
+    data: Vec<u8>,
+    mut response_headers: HeaderMap,
+    track_download: bool,
+) -> Response {
+    response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+
+    // HEAD before Range (Go's writeResponseContent order).
+    if method == Method::HEAD {
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            data.len().to_string().parse().unwrap(),
+        );
+        return (StatusCode::OK, response_headers).into_response();
+    }
+
+    if let Some(range) = range {
+        return handle_range_request(
+            range,
+            &data,
+            response_headers,
+            track_download.then(|| state.clone()),
+        );
+    }
+
+    finalize_bytes_response(
+        StatusCode::OK,
+        response_headers,
+        data,
+        track_download.then(|| state.clone()),
+    )
+}
+
+/// Handle HTTP Range requests. Returns 206 Partial Content or 416 Range Not Satisfiable.
+#[derive(Clone, Copy, Debug)]
+struct HttpRange {
+    start: i64,
+    length: i64,
+}
+
+// Returned when the first-byte-pos of every byte-range-spec is at or past the content size.
+const RANGE_NO_OVERLAP: &str = "invalid range: failed to overlap";
+
+fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str> {
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    const PREFIX: &str = "bytes=";
+    if !s.starts_with(PREFIX) {
+        return Err("invalid range");
+    }
+    let mut ranges = Vec::new();
+    let mut no_overlap = false;
+    for part in s[PREFIX.len()..].split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let Some(pos) = part.find('-') else {
+            return Err("invalid range");
+        };
+        let start_str = part[..pos].trim();
+        let end_str = part[pos + 1..].trim();
+        let mut r = HttpRange {
+            start: 0,
+            length: 0,
+        };
+        if start_str.is_empty() {
+            let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i > size {
+                i = size;
+            }
+            r.start = size - i;
+            r.length = size - r.start;
+        } else {
+            let i = start_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i < 0 {
+                return Err("invalid range");
+            }
+            if i >= size {
+                no_overlap = true;
+                continue;
+            }
+            r.start = i;
+            if end_str.is_empty() {
+                r.length = size - r.start;
+            } else {
+                let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+                if r.start > i {
+                    return Err("invalid range");
+                }
+                if i >= size {
+                    i = size - 1;
+                }
+                r.length = i - r.start + 1;
+            }
+        }
+        ranges.push(r);
+    }
+    if no_overlap && ranges.is_empty() {
+        return Err(RANGE_NO_OVERLAP);
+    }
+    Ok(ranges)
+}
+
+fn sum_ranges_size(ranges: &[HttpRange]) -> i64 {
+    ranges.iter().fold(0i64, |acc, r| {
+        if r.length > 0 {
+            acc.saturating_add(r.length)
+        } else {
+            acc
+        }
+    })
+}
+
+fn range_content_range(r: HttpRange, total: i64) -> String {
+    format!("bytes {}-{}/{}", r.start, r.start + r.length - 1, total)
+}
+
+fn range_error_response(mut headers: HeaderMap, msg: &str) -> Response {
+    // net/http.Error resets Content-Type and sets nosniff even when a
+    // caller already set the object's MIME type.
+    headers.insert(
+        header::CONTENT_TYPE,
+        "text/plain; charset=utf-8".parse().unwrap(),
+    );
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    let mut response = Response::new(Body::from(msg.to_string()));
+    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+    *response.headers_mut() = headers;
+    response
+}
+
+fn handle_range_request(
+    range_str: &str,
+    data: &[u8],
+    headers: HeaderMap,
+    state: Option<Arc<VolumeServerState>>,
+) -> Response {
+    handle_range_request_with(
+        range_str,
+        data.len() as i64,
+        |buf, start, end| buf.extend_from_slice(&data[start..end]),
+        headers,
+        state,
+    )
+}
+
+/// Range reply over an object of `total` bytes; `read` appends `[start, end)`
+/// of it and is called only for the ranges actually served.
+fn handle_range_request_with(
+    range_str: &str,
+    total: i64,
+    read: impl Fn(&mut Vec<u8>, usize, usize),
+    mut headers: HeaderMap,
+    state: Option<Arc<VolumeServerState>>,
+) -> Response {
+    let ranges = match parse_range_header(range_str, total) {
+        Ok(r) => r,
+        Err(msg) => {
+            if msg == RANGE_NO_OVERLAP {
+                headers.insert(
+                    "Content-Range",
+                    format!("bytes */{}", total).parse().unwrap(),
+                );
+            }
+            return range_error_response(headers, msg);
+        }
+    };
+
+    // Go's ProcessRangeRequest returns nil (empty body) for empty or oversized ranges
+    if ranges.is_empty() {
+        return (StatusCode::OK, headers).into_response();
+    }
+
+    if sum_ranges_size(&ranges) > total {
+        return (StatusCode::OK, headers).into_response();
+    }
+
+    if ranges.len() == 1 {
+        let r = ranges[0];
+        headers.insert(
+            "Content-Range",
+            range_content_range(r, total).parse().unwrap(),
+        );
+        headers.insert(
+            header::CONTENT_LENGTH,
+            r.length.max(0).to_string().parse().unwrap(),
+        );
+        if r.length <= 0 {
+            return (StatusCode::PARTIAL_CONTENT, headers).into_response();
+        }
+        let mut slice = Vec::with_capacity(r.length as usize);
+        read(&mut slice, r.start as usize, (r.start + r.length) as usize);
+        finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, slice, state)
+    } else {
+        // Multi-range: build multipart/byteranges response
+        let boundary = "SeaweedFSBoundary";
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let mut body = Vec::new();
+        for (i, r) in ranges.iter().enumerate() {
+            // First boundary has no leading CRLF per RFC 2046
+            if i == 0 {
+                body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            } else {
+                body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
+            }
+            body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
+            body.extend_from_slice(
+                format!("Content-Range: {}\r\n\r\n", range_content_range(*r, total)).as_bytes(),
+            );
+            if r.length > 0 {
+                read(&mut body, r.start as usize, (r.start + r.length) as usize);
+            }
+        }
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+        headers.insert(
+            header::CONTENT_TYPE,
+            format!("multipart/byteranges; boundary={}", boundary)
+                .parse()
+                .unwrap(),
+        );
+        if !headers.contains_key(header::CONTENT_ENCODING) {
+            headers.insert(
+                header::CONTENT_LENGTH,
+                body.len().to_string().parse().unwrap(),
+            );
+        }
+        finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, body, state)
+    }
+}
+
+fn handle_range_request_from_source(
+    range_str: &str,
+    info: crate::storage::volume::NeedleStreamInfo,
+    mut headers: HeaderMap,
+    state: Option<Arc<VolumeServerState>>,
+) -> Response {
+    let total = info.data_size as i64;
+    let ranges = match parse_range_header(range_str, total) {
+        Ok(r) => r,
+        Err(msg) => {
+            if msg == RANGE_NO_OVERLAP {
+                headers.insert(
+                    "Content-Range",
+                    format!("bytes */{}", total).parse().unwrap(),
+                );
+            }
+            return range_error_response(headers, msg);
+        }
+    };
+
+    if ranges.is_empty() {
+        return (StatusCode::OK, headers).into_response();
+    }
+
+    if sum_ranges_size(&ranges) > total {
+        return (StatusCode::OK, headers).into_response();
+    }
+
+    let read_slice = |start: i64, length: i64| -> Result<Vec<u8>, std::io::Error> {
+        if length <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut buf = vec![0u8; length as usize];
+        match info
+            .source
+            .read_exact_at(&mut buf, info.data_file_offset + start as u64)
+        {
+            // A finished range read clears the streak a failed meta read
+            // counted, like readNeedleDataInto's terminal report.
+            Ok(()) => {
+                info.io_errors.check_read_write_error(None);
+                Ok(buf)
+            }
+            Err(e) => {
+                info.io_errors.check_read_write_error(Some(&e));
+                Err(e)
+            }
+        }
+    };
+
+    if ranges.len() == 1 {
+        let r = ranges[0];
+        let slice = match read_slice(r.start, r.length) {
+            Ok(slice) => slice,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("range read error: {}", err),
+                )
+                    .into_response();
+            }
+        };
+        headers.insert(
+            "Content-Range",
+            range_content_range(r, total).parse().unwrap(),
+        );
+        headers.insert(
+            header::CONTENT_LENGTH,
+            slice.len().to_string().parse().unwrap(),
+        );
+        return finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, slice, state);
+    }
+
+    let boundary = "SeaweedFSBoundary";
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let mut body = Vec::new();
+    for (i, r) in ranges.iter().enumerate() {
+        let slice = match read_slice(r.start, r.length) {
+            Ok(slice) => slice,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("range read error: {}", err),
+                )
+                    .into_response();
+            }
+        };
+        if i == 0 {
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        } else {
+            body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
+        }
+        body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
+        body.extend_from_slice(
+            format!("Content-Range: {}\r\n\r\n", range_content_range(*r, total)).as_bytes(),
+        );
+        body.extend_from_slice(&slice);
+    }
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    headers.insert(
+        header::CONTENT_TYPE,
+        format!("multipart/byteranges; boundary={}", boundary)
+            .parse()
+            .unwrap(),
+    );
+    if !headers.contains_key(header::CONTENT_ENCODING) {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            body.len().to_string().parse().unwrap(),
+        );
+    }
+    finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, body, state)
+}
+
+/// Extract filename from URL path like "/vid/fid/filename.ext"
+fn extract_filename_from_path(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 3 {
+        parts[2].to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn has_image_ops(ext: &str, query: &ReadQueryParams) -> bool {
+    let resize =
+        is_image_resize_ext(ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
+    let crop = is_image_crop_ext(ext) && {
+        let x1 = query.crop_x1.unwrap_or(0);
+        let y1 = query.crop_y1.unwrap_or(0);
+        let x2 = query.crop_x2.unwrap_or(0);
+        let y2 = query.crop_y2.unwrap_or(0);
+        x2 > x1 && y2 > y1
+    };
+    resize || crop
+}
+
+fn path_base(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    trimmed
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn parse_go_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "t" | "T" | "TRUE" | "True" | "true" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "False" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Format Content-Disposition header value per RFC 6266.
+///
+/// Matches Go's `mime.FormatMediaType(dispositionType, map[string]string{"filename": filename})`:
+/// - Simple ASCII names (alphanumeric, hyphen, underscore, dot): `attachment; filename=file.txt`
+/// - ASCII names with spaces/special chars: `attachment; filename="my file.txt"`
+/// - Non-ASCII names: `attachment; filename*=utf-8''percent-encoded-name`
+fn format_content_disposition(disposition_type: &str, filename: &str) -> String {
+    let is_ascii = filename.bytes().all(|b| b.is_ascii());
+    if is_ascii {
+        // Check if the filename is a simple "token" (no quoting needed).
+        // RFC 2616 token chars: any CHAR except CTLs or separators.
+        // Go's mime.FormatMediaType uses needsQuoting which checks for non-token chars.
+        let is_token = !filename.is_empty()
+            && filename.bytes().all(|b| {
+                b > 0x20
+                    && b < 0x7f
+                    && !matches!(
+                        b,
+                        b'(' | b')'
+                            | b'<'
+                            | b'>'
+                            | b'@'
+                            | b','
+                            | b';'
+                            | b':'
+                            | b'\\'
+                            | b'"'
+                            | b'/'
+                            | b'['
+                            | b']'
+                            | b'?'
+                            | b'='
+                            | b' '
+                    )
+            });
+        if is_token {
+            format!("{}; filename={}", disposition_type, filename)
+        } else {
+            // Quote the filename, escaping backslashes and quotes
+            let escaped = filename.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{}; filename=\"{}\"", disposition_type, escaped)
+        }
+    } else {
+        // Non-ASCII: use RFC 2231 encoding with filename* parameter
+        let encoded = percent_encode_rfc2231(filename);
+        format!("{}; filename*=utf-8''{}", disposition_type, encoded)
+    }
+}
+
+/// Percent-encode a string for RFC 2231 filename* parameter.
+/// Encodes all bytes except unreserved chars (ALPHA / DIGIT / "-" / "." / "_" / "~").
+fn percent_encode_rfc2231(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(char::from(HEX_UPPER[byte as usize >> 4]));
+            out.push(char::from(HEX_UPPER[byte as usize & 0x0f]));
+        }
+    }
+    out
+}
+
+const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
+
+// ============================================================================
+// Image processing helpers
+// ============================================================================
+
+fn is_image_resize_ext(ext: &str) -> bool {
+    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp")
+}
+
+/// Go's shouldCropImages only supports these four formats (no .webp).
+fn is_image_crop_ext(ext: &str) -> bool {
+    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif")
+}
+
+fn extract_extension_from_path(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 3 {
+        // 3-segment path: /vid/fid/filename.ext
+        let filename = parts[2];
+        if let Some(dot_pos) = filename.rfind('.') {
+            return filename[dot_pos..].to_lowercase();
+        }
+    } else if !parts.is_empty() {
+        // 2-segment path: /vid,fid.ext or /vid/fid.ext
+        // Go's parseURLPath extracts ext from the full path for all formats
+        let last = parts[parts.len() - 1];
+        if let Some(dot_pos) = last.rfind('.') {
+            return last[dot_pos..].to_lowercase();
+        }
+    }
+    String::new()
+}
+
+fn maybe_resize_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8> {
+    let width = query.width.unwrap_or(0);
+    let height = query.height.unwrap_or(0);
+    if width == 0 && height == 0 {
+        return data.to_vec();
+    }
+
+    let img = match image::load_from_memory(data) {
+        Ok(img) => img,
+        Err(_) => return data.to_vec(),
+    };
+
+    let (src_w, src_h) = (img.width(), img.height());
+    // Only resize if source is larger than target
+    if (width == 0 || src_w <= width) && (height == 0 || src_h <= height) {
+        return data.to_vec();
+    }
+
+    let mode = query.mode.as_deref().unwrap_or("");
+    let resized = match mode {
+        "fit" => img.resize(width, height, image::imageops::FilterType::Lanczos3),
+        "fill" => img.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3),
+        _ => {
+            if width > 0 && height > 0 && width == height && src_w != src_h {
+                img.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3)
+            } else {
+                img.resize(width, height, image::imageops::FilterType::Lanczos3)
+            }
+        }
+    };
+
+    encode_image(&resized, ext).unwrap_or_else(|| data.to_vec())
+}
+
+fn maybe_crop_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8> {
+    let (x1, y1, x2, y2) = match (query.crop_x2, query.crop_y2) {
+        (Some(x2), Some(y2)) => {
+            let x1 = query.crop_x1.unwrap_or(0);
+            let y1 = query.crop_y1.unwrap_or(0);
+            if x2 > x1 && y2 > y1 {
+                (x1, y1, x2, y2)
+            } else {
+                return data.to_vec();
+            }
+        }
+        _ => return data.to_vec(),
+    };
+
+    let img = match image::load_from_memory(data) {
+        Ok(img) => img,
+        Err(_) => return data.to_vec(),
+    };
+
+    let (src_w, src_h) = (img.width(), img.height());
+    if x2 > src_w || y2 > src_h {
+        return data.to_vec();
+    }
+
+    let cropped = img.crop_imm(x1, y1, x2 - x1, y2 - y1);
+    encode_image(&cropped, ext).unwrap_or_else(|| data.to_vec())
+}
+
+fn encode_image(img: &image::DynamicImage, ext: &str) -> Option<Vec<u8>> {
+    use std::io::Cursor;
+    let mut buf = Cursor::new(Vec::new());
+    let format = match ext {
+        ".png" => image::ImageFormat::Png,
+        ".jpg" | ".jpeg" => image::ImageFormat::Jpeg,
+        ".gif" => image::ImageFormat::Gif,
+        ".webp" => image::ImageFormat::WebP,
+        _ => return None,
+    };
+    img.write_to(&mut buf, format).ok()?;
+    Some(buf.into_inner())
+}
+
+// ============================================================================
+// Write Handler (POST/PUT)
+// ============================================================================
+
+#[derive(Serialize)]
+struct UploadResult {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    name: String,
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    size: u32,
+    #[serde(rename = "eTag", skip_serializing_if = "String::is_empty")]
+    etag: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    mime: String,
+    #[serde(rename = "contentMd5", skip_serializing_if = "Option::is_none")]
+    content_md5: Option<String>,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// Store an uploaded needle on the local volume — durable (fsync) uploads
+/// through the per-volume write queue, the rest synchronously — and then
+/// replicate it if the volume's placement calls for more copies.
+pub async fn post_handler(
+    State(state): State<Arc<VolumeServerState>>,
+    request: Request<Body>,
+) -> Response {
+    let path = request.uri().path().to_string();
+    let query = request.uri().query().unwrap_or("").to_string();
+    let method = request.method().clone();
+    let headers = request.headers().clone();
+    let query_fields: Vec<(String, String)> = match serde_urlencoded::from_str(&query) {
+        Ok(fields) => fields,
+        Err(e) => {
+            // Go's r.ParseForm() returns 400 on malformed query strings
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                format!("form parse error: {}", e),
+                Some(&query),
+            );
+        }
+    };
+
+    let (vid, needle_id, cookie) = match parse_url_path(&path) {
+        Some(parsed) => parsed,
+        None => {
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                "invalid URL path",
+                Some(&query),
+            );
+        }
+    };
+
+    // JWT check for writes
+    let file_id = extract_file_id(&path);
+    let token = extract_jwt(&headers, request.uri());
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
+    {
+        return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
+    }
+
+    // Upload throttling: check inflight bytes against limit
+    let is_replicate = query.split('&').any(|p| p == "type=replicate");
+    let content_length = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    if !is_replicate && state.concurrent_upload_limit > 0 {
+        // Wait for inflight bytes to drop below limit, or timeout
+        let timeout = if state.inflight_upload_data_timeout.is_zero() {
+            std::time::Duration::from_secs(2)
+        } else {
+            state.inflight_upload_data_timeout
+        };
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let current = state.inflight_upload_bytes.load(Ordering::Relaxed);
+            if current <= state.concurrent_upload_limit {
+                break;
+            }
+            // Go increments UploadLimitCond on every loop iteration (L184),
+            // not just on timeout.
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
+                .inc();
+            // Wait for notification or timeout
+            if tokio::time::timeout_at(deadline, state.upload_notify.notified())
+                .await
+                .is_err()
+            {
+                return json_error_with_query(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "upload limit exceeded",
+                    Some(&query),
+                );
+            }
+        }
+        let new_val = state
+            .inflight_upload_bytes
+            .fetch_add(content_length, Ordering::Relaxed)
+            + content_length;
+        metrics::INFLIGHT_UPLOAD_SIZE.set(new_val);
+    }
+
+    // RAII guard to release upload throttle on any exit path
+    let _upload_guard = if !is_replicate && state.concurrent_upload_limit > 0 {
+        Some(InflightGuard {
+            counter: &state.inflight_upload_bytes,
+            bytes: content_length,
+            notify: &state.upload_notify,
+            metric: &metrics::INFLIGHT_UPLOAD_SIZE,
+        })
+    } else {
+        None
+    };
+
+    let content_type_str = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    // Go only parses multipart form-data for POST requests with form-data content type.
+    let should_parse_multipart = method == Method::POST && content_type_str.contains("form-data");
+
+    // Validate multipart/form-data has a boundary
+    if should_parse_multipart && !content_type_str.contains("boundary=") {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            "no multipart boundary param in Content-Type",
+            Some(&query),
+        );
+    }
+
+    let content_md5 = headers
+        .get("Content-MD5")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Read body, bounded by the configured file-size limit so a single upload
+    // cannot buffer unbounded memory and OOM-kill the server (mirrors Go's
+    // io.LimitReader(r.Body, sizeLimit+1)). A margin covers multipart framing;
+    // the exact per-file limit is still enforced on the parsed data below.
+    let body_limit = if state.file_size_limit_bytes > 0 {
+        // try_from (not `as usize`) so a >usize::MAX limit on 32-bit caps at
+        // usize::MAX instead of silently truncating/wrapping to a tiny value.
+        usize::try_from(state.file_size_limit_bytes)
+            .unwrap_or(usize::MAX)
+            .saturating_add(UPLOAD_BODY_OVERHEAD)
+    } else {
+        usize::MAX
+    };
+    let body = match axum::body::to_bytes(request.into_body(), body_limit).await {
+        Ok(b) => b,
+        Err(e) => {
+            // With a limit configured, an error here means the body exceeded it
+            // before we buffered the whole thing; report it like the size check.
+            let msg = if state.file_size_limit_bytes > 0 {
+                format!(
+                    "file over the limited {} bytes",
+                    state.file_size_limit_bytes
+                )
+            } else {
+                format!("read body: {}", e)
+            };
+            return json_error_with_query(StatusCode::BAD_REQUEST, msg, Some(&query));
+        }
+    };
+
+    // H5: Multipart form-data parsing
+    let (
+        body_data_raw,
+        parsed_filename,
+        parsed_content_type,
+        parsed_content_encoding,
+        parsed_content_md5,
+        multipart_form_fields,
+    ) = if should_parse_multipart {
+        // Extract boundary from Content-Type
+        let boundary = content_type_str
+            .split(';')
+            .find_map(|part| {
+                let part = part.trim();
+                part.strip_prefix("boundary=")
+                    .map(|val| val.trim_matches('"').to_string())
+            })
+            .unwrap_or_default();
+
+        let mut multipart = multer::Multipart::new(
+            futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }),
+            boundary,
+        );
+
+        let mut file_data: Option<Vec<u8>> = None;
+        let mut first_part_data: Option<Vec<u8>> = None;
+        let mut file_name: Option<String> = None;
+        let mut file_content_type: Option<String> = None;
+        let mut file_content_encoding: Option<String> = None;
+        let mut file_content_md5: Option<String> = None;
+        let mut form_fields = std::collections::HashMap::new();
+
+        while let Ok(Some(field)) = multipart.next_field().await {
+            let field_name = field.name().map(|s| s.to_string());
+            let fname = field.file_name().map(clean_windows_path_base);
+            let fct = field.content_type().map(|m| m.to_string());
+            let field_headers = field.headers().clone();
+            let fce = field_headers
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let fmd5 = field_headers
+                .get("Content-MD5")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            if let Ok(data) = field.bytes().await {
+                // Go reads the first part's data unconditionally, then looks for
+                // a part with a filename. If no part has a filename, Go uses the
+                // first part's data (with empty filename).
+                if first_part_data.is_none() {
+                    first_part_data = Some(data.to_vec());
+                }
+                if file_data.is_none() && fname.is_some() {
+                    // Found a file field — use this part's data
+                    file_data = Some(data.to_vec());
+                    file_name = fname;
+                    file_content_type = fct;
+                    file_content_encoding = fce;
+                    file_content_md5 = fmd5;
+                } else if let Some(name) = field_name {
+                    form_fields
+                        .entry(name)
+                        .or_insert_with(|| String::from_utf8_lossy(&data).to_string());
+                }
+            }
+        }
+
+        if let Some(data) = file_data {
+            (
+                data,
+                file_name.unwrap_or_default(),
+                file_content_type,
+                file_content_encoding,
+                file_content_md5,
+                form_fields,
+            )
+        } else if let Some(data) = first_part_data {
+            // No file field found, use first part's data (matching Go behavior)
+            (data, String::new(), None, None, None, form_fields)
+        } else {
+            // No parts at all
+            (Vec::new(), String::new(), None, None, None, form_fields)
+        }
+    } else {
+        (
+            body.to_vec(),
+            String::new(),
+            None,
+            None,
+            None,
+            std::collections::HashMap::new(),
+        )
+    };
+
+    let form_value = |name: &str| {
+        query_fields
+            .iter()
+            .find_map(|(k, v)| if k == name { Some(v.clone()) } else { None })
+            .or_else(|| multipart_form_fields.get(name).cloned())
+    };
+
+    // Check for chunk manifest flag.
+    // Go uses r.FormValue("cm"), which falls back to multipart fields when present.
+    let is_chunk_manifest = matches!(
+        form_value("cm").as_deref(),
+        Some("1" | "t" | "T" | "TRUE" | "True" | "true")
+    );
+
+    // Check file size limit (matches Go: "file over the limited %d bytes")
+    if state.file_size_limit_bytes > 0 && body_data_raw.len() as i64 > state.file_size_limit_bytes {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "file over the limited {} bytes",
+                state.file_size_limit_bytes
+            ),
+            Some(&query),
+        );
+    }
+
+    // Check if upload is pre-compressed
+    let is_gzipped = if should_parse_multipart {
+        parsed_content_encoding.as_deref() == Some("gzip")
+    } else {
+        headers
+            .get(header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s == "gzip")
+            .unwrap_or(false)
+    };
+
+    let uncompressed_data = if is_gzipped {
+        match maybe_decompress_gzip(&body_data_raw) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return json_error_with_query(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "compressed object exceeds decompression limit",
+                    Some(&query),
+                );
+            }
+            Err(GunzipError::Decode) => body_data_raw.clone(),
+        }
+    } else {
+        body_data_raw.clone()
+    };
+    let original_data_size = uncompressed_data.len() as u32;
+
+    // Only compute and validate Content-MD5 when the client provided one
+    // (Go only computes MD5 when Content-MD5 header/field is present)
+    let content_md5 = content_md5.or(parsed_content_md5);
+    let original_content_md5 = if content_md5.is_some() {
+        Some(compute_md5_base64(&uncompressed_data))
+    } else {
+        None
+    };
+    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5)
+        && expected_md5 != actual_md5
+    {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
+                expected_md5, actual_md5, original_data_size
+            ),
+            Some(&query),
+        );
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Parse custom timestamp from query param
+    let ts_str = form_value("ts").unwrap_or_default();
+    let last_modified = if !ts_str.is_empty() {
+        ts_str.parse::<u64>().unwrap_or(now)
+    } else {
+        now
+    };
+
+    // Prefer the multipart filename before deriving MIME and other metadata.
+    let filename = if !parsed_filename.is_empty() {
+        parsed_filename
+    } else if !should_parse_multipart {
+        headers
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_content_disposition_filename)
+            .unwrap_or_else(|| path_base(&path))
+    } else {
+        extract_filename_from_path(&path)
+    };
+
+    // Extract MIME type: prefer multipart-parsed content type, else from Content-Type header
+    let mime_type = if let Some(ref pct) = parsed_content_type {
+        pct.clone()
+    } else {
+        let multipart_fallback =
+            if should_parse_multipart && !filename.is_empty() && !is_chunk_manifest {
+                mime_guess::from_path(&filename)
+                    .first()
+                    .map(|m| m.to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| {
+                if should_parse_multipart && ct.starts_with("multipart/") {
+                    multipart_fallback.clone()
+                } else {
+                    ct.to_string()
+                }
+            })
+            .unwrap_or(multipart_fallback)
+    };
+
+    // Parse TTL from query param (matches Go's r.FormValue("ttl"))
+    let ttl_str = form_value("ttl").unwrap_or_default();
+    let ttl = if !ttl_str.is_empty() {
+        crate::storage::needle::TTL::read(&ttl_str).ok()
+    } else {
+        None
+    };
+
+    // Extract Seaweed-* custom metadata headers (pairs)
+    // Go's net/http canonicalizes header names to Title-Case, so after stripping
+    // the "Seaweed-" prefix, keys are Title-Case (e.g., "Foo-Bar"). Rust's http
+    // crate lowercases all header names, so we must convert the stripped key to
+    // Title-Case to match Go's behavior.
+    fn to_title_case(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut capitalize_next = true;
+        for c in s.chars() {
+            if c == '-' {
+                result.push('-');
+                capitalize_next = true;
+            } else if capitalize_next {
+                for uc in c.to_uppercase() {
+                    result.push(uc);
+                }
+                capitalize_next = false;
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+    let pair_map: std::collections::HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            let key = k.as_str();
+            if key.len() > 8 && key[..8].eq_ignore_ascii_case("seaweed-") {
+                if let Ok(val) = v.to_str() {
+                    // Store with the prefix stripped and Title-Cased (matching Go's trimmedPairMap)
+                    Some((to_title_case(&key[8..]), val.to_string()))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
+    let body_data = if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &path) {
+        crate::images::fix_jpg_orientation(&body_data_raw)
+    } else {
+        body_data_raw
+    };
+
+    // Auto-compress compressible file types (matches Go's IsCompressableFileType).
+    // Only compress if not already gzipped and compression saves >10%.
+    // Go uses filepath.Base(pu.FileName) for extension detection (not the URL path).
+    let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
+        let ext = {
+            let dot_pos = filename.rfind('.');
+            dot_pos
+                .map(|p| filename[p..].to_lowercase())
+                .unwrap_or_default()
+        };
+        if is_compressible_file_type(&ext, &mime_type) {
+            if let Some(compressed) = try_gzip_data(&body_data) {
+                if compressed.len() * 10 < body_data.len() * 9 {
+                    (compressed, true)
+                } else {
+                    (body_data, false)
+                }
+            } else {
+                (body_data, false)
+            }
+        } else {
+            (body_data, false)
+        }
+    } else {
+        (body_data, is_gzipped)
+    };
+
+    let mut n = Needle {
+        id: needle_id,
+        cookie,
+        data_size: final_data.len() as u32,
+        data: final_data,
+        last_modified,
+        ..Needle::default()
+    };
+    n.set_has_last_modified_date();
+    if is_chunk_manifest {
+        n.set_is_chunk_manifest();
+    }
+    if final_is_gzipped {
+        n.set_is_compressed();
+    }
+
+    // Go sets HasMime even for empty MIME types: if len(pu.MimeType) < 256
+    if mime_type.len() < 256 {
+        n.mime = mime_type.as_bytes().to_vec();
+        n.set_has_mime();
+    }
+
+    // Set TTL on needle
+    if let Some(ref t) = ttl
+        && !t.is_empty()
+    {
+        n.ttl = Some(*t);
+        n.set_has_ttl();
+    }
+
+    // Set pairs on needle
+    if !pair_map.is_empty()
+        && let Ok(pairs_json) = serde_json::to_vec(&pair_map)
+        && pairs_json.len() < 65536
+    {
+        n.pairs_size = pairs_json.len() as u16;
+        n.pairs = pairs_json;
+        n.set_has_pairs();
+    }
+
+    // Set filename on needle (matches Go: if len(pu.FileName) < 256)
+    // Go sets HasName even for empty filenames
+    if filename.len() < 256 {
+        n.name = filename.as_bytes().to_vec();
+        n.name_size = filename.len() as u8;
+        n.set_has_name();
+    }
+
+    // A durable write flushes before it is acked. Read it the way Go's
+    // r.FormValue does, off the decoded fields, so a percent-encoded value is
+    // honored here too. ReplicatedWrite forwards the parameter, so a replica
+    // sees it the same way the primary did.
+    let fsync = form_value("fsync").as_deref() == Some("true");
+
+    // Go computes the checksum while building the needle (CreateNeedleFromRequest).
+    // The write queue takes the needle away, so the response fields that come
+    // from it are read here, before the write, rather than from a copy.
+    n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
+    let needle_etag = n.etag();
+    let needle_has_name = n.has_name();
+
+    // Replicate to remote volume servers if this volume has replicas.
+    // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
+    let needs_replication = !is_replicate && {
+        let store = state.store.read().unwrap();
+        store
+            .find_volume(vid)
+            .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
+    };
+
+    // The fan-out runs concurrently with the local needle write, like Go's
+    // ReplicatedWrite: it reads the already-buffered request body, so the two
+    // sides share no mutable state. The ack still waits for both.
+    let replication = if needs_replication {
+        let state_clone = state.clone();
+        let path_clone = path.clone();
+        let query_clone = query.clone();
+        let headers_clone = headers.clone();
+        let body_clone = body.clone();
+        Some(tokio::spawn(async move {
+            do_replicated_request(
+                &state_clone,
+                vid.0,
+                Method::POST,
+                &path_clone,
+                &query_clone,
+                &headers_clone,
+                Some(body_clone),
+            )
+            .await
+        }))
+    } else {
+        None
+    };
+
+    let write_result = write_upload_needle(&state, vid, n, fsync).await;
+
+    // No leader-known gate: when the lookup cannot run, the write must fail
+    // rather than be acknowledged on fewer copies than required. The local
+    // write result takes precedence, matching Go's error ordering.
+    let replication_result = match replication {
+        Some(task) => Some(
+            task.await
+                .map_err(|e| format!("replication task failed: {}", e))
+                .flatten(),
+        ),
+        None => None,
+    };
+    if write_result.is_ok()
+        && let Some(Err(e)) = replication_result
+    {
+        tracing::error!("replicated write failed: {}", e);
+        return json_error_with_query(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("replication failed: {}", e),
+            Some(&query),
+        );
+    }
+
+    let resp = match write_result {
+        Ok((_offset, _size, is_unchanged)) => {
+            if is_unchanged {
+                let etag = format!("\"{}\"", needle_etag);
+                (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
+            } else {
+                // Go only includes contentMd5 when the client provided Content-MD5
+                let result = UploadResult {
+                    name: if needle_has_name {
+                        filename.clone()
+                    } else {
+                        String::new()
+                    },
+                    size: original_data_size, // H3: use original size, not compressed
+                    etag: needle_etag.clone(),
+                    mime: mime_type.clone(),
+                    content_md5: original_content_md5.clone(),
+                };
+                let etag = needle_etag;
+                let etag_header = if etag.starts_with('"') {
+                    etag.clone()
+                } else {
+                    format!("\"{}\"", etag)
+                };
+                let mut resp = json_result_with_query(StatusCode::CREATED, &result, &query);
+                resp.headers_mut()
+                    .insert(header::ETAG, etag_header.parse().unwrap());
+                if let Some(ref md5_value) = original_content_md5 {
+                    resp.headers_mut()
+                        .insert("Content-MD5", md5_value.parse().unwrap());
+                }
+                resp
+            }
+        }
+        Err(e) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_WRITE_TO_LOCAL_DISK])
+                .inc();
+            json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{}", e),
+                Some(&query),
+            )
+        }
+    };
+
+    // _upload_guard drops here, releasing inflight bytes
+    resp
+}
+
+/// Append an uploaded needle the way Go's `writeNeedle2` does: a durable
+/// write goes to the volume's batching worker, which group-commits the
+/// batch's .dat/.idx syncs, while anything else — a non-durable write, or a
+/// durable one landing while the server is stopping and the workers are
+/// winding down — takes the synchronous path and fsyncs inline.
+async fn write_upload_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    mut n: Needle,
+    fsync: bool,
+) -> Result<(u64, Size, bool), crate::storage::volume::VolumeError> {
+    let queued = fsync && !*state.is_stopping.read().unwrap();
+    if queued && let Some(wq) = state.write_queue.get() {
+        return wq.submit(vid, n, fsync).await;
+    }
+    let vol = {
+        let store = state.store.read().unwrap();
+        store.writable_volume(vid)
+    };
+    vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
+}
+
+// ============================================================================
+// Delete Handler
+// ============================================================================
+
+#[derive(Serialize)]
+struct DeleteResult {
+    size: i64,
+}
+
+/// Read option for deletes: read only the needle's header and trailer.
+///
+/// A delete needs to know that the needle exists, what its cookie is, and
+/// whether it is a chunk manifest. None of that requires the payload. If the
+/// needle turns out to be a chunk manifest, the read loads its data as well,
+/// because the delete needs the manifest to delete the chunks.
+pub(crate) fn delete_read_option() -> ReadOption {
+    ReadOption {
+        attempt_meta_only: true,
+        must_meta_only: true,
+        ..ReadOption::default()
+    }
+}
+
+pub async fn delete_handler(
+    State(state): State<Arc<VolumeServerState>>,
+    request: Request<Body>,
+) -> Response {
+    let path = request.uri().path().to_string();
+    let del_query = request.uri().query().unwrap_or("").to_string();
+    let del_params: ReadQueryParams = serde_urlencoded::from_str(&del_query).unwrap_or_default();
+    let headers = request.headers().clone();
+
+    let (vid, needle_id, cookie) = match parse_url_path(&path) {
+        Some(parsed) => parsed,
+        None => {
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                "invalid URL path",
+                Some(&del_query),
+            );
+        }
+    };
+
+    // JWT check for writes (deletes use write key)
+    let file_id = extract_file_id(&path);
+    let token = extract_jwt(&headers, request.uri());
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
+    {
+        return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&del_query));
+    }
+
+    // Check for EC volume first (Go checks hasEcVolume before regular volume in DeleteHandler).
+    // Go's flow: FindEcVolume -> DeleteEcShardNeedle(ecVolume, n, cookie) -> writeDeleteResult
+    // DeleteEcShardNeedle: reads needle (for size + cookie validation), validates cookie, journals delete.
+    {
+        let has_ec = state.store.read().unwrap().has_ec_volume(vid);
+        if has_ec {
+            // Step 1: Read the EC needle to get its size and validate cookie.
+            //
+            // This must go through the *distributed* reader, as the GET path
+            // does. The local-only `EcVolume::read_ec_shard_needle` errors
+            // "ec shard N not available locally" for any interval that lives on
+            // a peer, so on a standard 10+4 spread every HTTP DELETE of an EC
+            // needle failed 500 and never appended to `.ecj`. The distributed
+            // reader does a local-first pass in its snapshot phase, so the
+            // all-shards-local case costs the same as before.
+            //
+            // No store guard is held across this call: the reader takes and
+            // releases its own, and `RwLockReadGuard` is `!Send`.
+            let ec_read_result =
+                crate::server::store_ec::read_ec_shard_needle_distributed(&state, vid, needle_id)
+                    .await;
+            match ec_read_result {
+                Ok(Some(ec_needle)) => {
+                    // Step 2: Validate cookie (Go: cookie != 0 && cookie != n.Cookie)
+                    if cookie.0 != 0 && ec_needle.cookie != cookie {
+                        return json_error_with_query(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Deletion Failed: unexpected cookie {:x}", cookie.0),
+                            Some(&del_query),
+                        );
+                    }
+                    let count = ec_needle.data_size as i64;
+                    // Step 3: Journal the delete on a holder of the needle's
+                    // primary data shard — Go's DeleteEcShardNeedle forwards a
+                    // VolumeEcBlobDelete there rather than journaling locally,
+                    // so exactly one node carries the tombstone and
+                    // delete_count stays consistent across replicas.
+                    match crate::server::store_ec::delete_ec_shard_needle_distributed(
+                        &state, vid, needle_id,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let result = DeleteResult { size: count };
+                            return json_response_with_params(
+                                StatusCode::ACCEPTED,
+                                &result,
+                                Some(&del_params),
+                            );
+                        }
+                        // Unmounted between the read and the append, or the
+                        // needle went away in the same window: nothing was
+                        // journalled, so answering 202 would lose the delete
+                        // while reporting success.
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            let result = DeleteResult { size: 0 };
+                            return json_response_with_params(
+                                StatusCode::NOT_FOUND,
+                                &result,
+                                Some(&del_params),
+                            );
+                        }
+                        Err(e) => {
+                            return json_error_with_query(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Deletion Failed: {}", e),
+                                Some(&del_query),
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Needle not in the EC index, or the volume disappeared
+                    // between the `has_ec` check and the snapshot — the
+                    // distributed reader reports both as `Ok(None)`, and both
+                    // mean the same thing to a deleter.
+                    let result = DeleteResult { size: 0 };
+                    return json_response_with_params(
+                        StatusCode::NOT_FOUND,
+                        &result,
+                        Some(&del_params),
+                    );
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // A shard or interval the read needed is gone rather than
+                    // merely remote. The GET path answers 404 here; answering
+                    // 500 (as this handler did for every error) told callers to
+                    // retry a delete that can never succeed.
+                    let result = DeleteResult { size: 0 };
+                    return json_response_with_params(
+                        StatusCode::NOT_FOUND,
+                        &result,
+                        Some(&del_params),
+                    );
+                }
+                Err(e) => {
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Deletion Failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
+            }
+        }
+    }
+
+    // H9: Parse custom timestamp from query param; default to now (not 0)
+    let del_ts_str = del_query
+        .split('&')
+        .find_map(|p| p.strip_prefix("ts="))
+        .unwrap_or("");
+    let del_last_modified = if !del_ts_str.is_empty() {
+        del_ts_str.parse::<u64>().unwrap_or_else(|_| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        })
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    };
+
+    let mut n = Needle {
+        id: needle_id,
+        cookie,
+        ..Needle::default()
+    };
+
+    // Read needle first to validate cookie (matching Go behavior)
+    let original_cookie = cookie;
+    {
+        let vol = {
+            let store = state.store.read().unwrap();
+            store.find_volume(vid).map(|(_, vol)| vol)
+        };
+        match vol
+            .ok_or(crate::storage::volume::VolumeError::NotFound)
+            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()))
+        {
+            Ok(_) => {}
+            Err(_) => {
+                let result = DeleteResult { size: 0 };
+                return json_response_with_params(
+                    StatusCode::NOT_FOUND,
+                    &result,
+                    Some(&del_params),
+                );
+            }
+        }
+    }
+    if n.cookie != original_cookie {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            "File Random Cookie does not match.",
+            Some(&del_query),
+        );
+    }
+
+    // Apply custom timestamp (always set — defaults to now per H9)
+    n.last_modified = del_last_modified;
+    n.set_has_last_modified_date();
+
+    let mut delete_size_override = None;
+
+    // If this is a chunk manifest, delete child chunks first
+    if n.is_chunk_manifest() {
+        let manifest_data = if n.is_compressed() {
+            match maybe_decompress_gzip(&n.data) {
+                Ok(d) => d,
+                Err(GunzipError::TooLarge) => {
+                    return json_error_with_query(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                        Some(&del_query),
+                    );
+                }
+                Err(GunzipError::Decode) => n.data.clone(),
+            }
+        } else {
+            n.data.clone()
+        };
+
+        let manifest = match serde_json::from_slice::<ChunkManifest>(&manifest_data) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                return json_error_with_query(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Load chunks manifest error: {}", e),
+                    Some(&del_query),
+                );
+            }
+        };
+
+        let child_fids: Vec<String> = manifest
+            .chunks
+            .iter()
+            .map(|chunk| chunk.fid.clone())
+            .collect();
+        if let Err(e) = batch_delete_file_ids(&state, &child_fids).await {
+            return json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Delete chunks error: {}", e),
+                Some(&del_query),
+            );
+        }
+        delete_size_override = Some(manifest.size as i64);
+    }
+
+    let delete_result = {
+        let vol = {
+            let store = state.store.read().unwrap();
+            store
+                .find_volume(vid)
+                .map(|(_, vol)| vol)
+                .ok_or(crate::storage::volume::VolumeError::NotFound)
+        };
+        match vol {
+            Err(e) => Err(e),
+            // Matches Store::delete_volume_needle: noWriteOrDelete rejects first.
+            Ok(vol) if vol.is_no_write_or_delete() => {
+                Err(crate::storage::volume::VolumeError::ReadOnly(vid))
+            }
+            Ok(vol) => vol.delete_needle(&mut n),
+        }
+    };
+
+    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
+    if !is_replicate && delete_result.is_ok() {
+        let needs_replication = {
+            let store = state.store.read().unwrap();
+            store
+                .find_volume(vid)
+                .is_some_and(|(_, v)| v.super_block().replica_placement.get_copy_count() > 1)
+        };
+        if needs_replication
+            && let Err(e) = do_replicated_request(
+                &state,
+                vid.0,
+                Method::DELETE,
+                &path,
+                &del_query,
+                &headers,
+                None,
+            )
+            .await
+        {
+            tracing::error!("replicated delete failed: {}", e);
+            return json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("replication failed: {}", e),
+                Some(&del_query),
+            );
+        }
+    }
+
+    match delete_result {
+        Ok(size) => {
+            let result = DeleteResult {
+                size: delete_size_override.unwrap_or(size.0 as i64),
+            };
+            json_response_with_params(StatusCode::ACCEPTED, &result, Some(&del_params))
+        }
+        Err(crate::storage::volume::VolumeError::NotFound) => {
+            let result = DeleteResult { size: 0 };
+            json_response_with_params(StatusCode::NOT_FOUND, &result, Some(&del_params))
+        }
+        Err(e) => json_error_with_query(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Deletion Failed: {}", e),
+            Some(&del_query),
+        ),
+    }
+}
+
+// ============================================================================
+// Status Handler
+// ============================================================================
+
+pub async fn status_handler(
+    Query(params): Query<ReadQueryParams>,
+    State(state): State<Arc<VolumeServerState>>,
+) -> Response {
+    let store = state.store.read().unwrap();
+    let mut volumes = Vec::new();
+
+    for loc in &store.locations {
+        for (_vid, vol) in loc.volumes() {
+            let mut vol_info = serde_json::Map::new();
+            vol_info.insert("Id".to_string(), serde_json::Value::from(vol.id.0));
+            vol_info.insert(
+                "Collection".to_string(),
+                serde_json::Value::from(vol.collection.clone()),
+            );
+            vol_info.insert(
+                "Size".to_string(),
+                serde_json::Value::from(vol.content_size()),
+            );
+            vol_info.insert(
+                "FileCount".to_string(),
+                serde_json::Value::from(vol.file_count()),
+            );
+            vol_info.insert(
+                "DeleteCount".to_string(),
+                serde_json::Value::from(vol.deleted_count()),
+            );
+            vol_info.insert(
+                "DeletedByteCount".to_string(),
+                serde_json::Value::from(vol.deleted_size()),
+            );
+            vol_info.insert(
+                "ReadOnly".to_string(),
+                serde_json::Value::from(vol.is_read_only()),
+            );
+            vol_info.insert(
+                "Version".to_string(),
+                serde_json::Value::from(vol.version().0),
+            );
+            vol_info.insert(
+                "CompactRevision".to_string(),
+                serde_json::Value::from(vol.super_block().compaction_revision),
+            );
+            vol_info.insert(
+                "ModifiedAtSecond".to_string(),
+                serde_json::Value::from(vol.last_modified_ts()),
+            );
+            vol_info.insert(
+                "DiskType".to_string(),
+                serde_json::Value::from(loc.disk_type.to_string()),
+            );
+
+            let replica = &vol.super_block().replica_placement;
+            let mut replica_value = serde_json::Map::new();
+            if replica.diff_data_center_count > 0 {
+                replica_value.insert(
+                    "dc".to_string(),
+                    serde_json::Value::from(replica.diff_data_center_count),
+                );
+            }
+            if replica.diff_rack_count > 0 {
+                replica_value.insert(
+                    "rack".to_string(),
+                    serde_json::Value::from(replica.diff_rack_count),
+                );
+            }
+            if replica.same_rack_count > 0 {
+                replica_value.insert(
+                    "node".to_string(),
+                    serde_json::Value::from(replica.same_rack_count),
+                );
+            }
+            vol_info.insert(
+                "ReplicaPlacement".to_string(),
+                serde_json::Value::Object(replica_value),
+            );
+
+            let ttl = vol.super_block().ttl;
+            let mut ttl_value = serde_json::Map::new();
+            if ttl.count > 0 {
+                ttl_value.insert("Count".to_string(), serde_json::Value::from(ttl.count));
+            }
+            if ttl.unit > 0 {
+                ttl_value.insert("Unit".to_string(), serde_json::Value::from(ttl.unit));
+            }
+            vol_info.insert("Ttl".to_string(), serde_json::Value::Object(ttl_value));
+
+            let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
+            vol_info.insert(
+                "RemoteStorageName".to_string(),
+                serde_json::Value::from(remote_storage_name),
+            );
+            vol_info.insert(
+                "RemoteStorageKey".to_string(),
+                serde_json::Value::from(remote_storage_key),
+            );
+            volumes.push(serde_json::Value::Object(vol_info));
+        }
+    }
+    volumes.sort_by(|a, b| {
+        let left = a.get("Id").and_then(|v| v.as_u64()).unwrap_or_default();
+        let right = b.get("Id").and_then(|v| v.as_u64()).unwrap_or_default();
+        left.cmp(&right)
+    });
+
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "Version".to_string(),
+        serde_json::Value::from(crate::version::version()),
+    );
+    m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
+    m.insert(
+        "DiskStatuses".to_string(),
+        serde_json::Value::Array(build_disk_statuses(&store)),
+    );
+    json_response_with_params(StatusCode::OK, &serde_json::Value::Object(m), Some(&params))
+}
+
+// ============================================================================
+// Health Check Handler
+// ============================================================================
+
+pub async fn healthz_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
+    // Go's healthzHandler returns only status codes with no body text.
+    let is_stopping = *state.is_stopping.read().unwrap();
+    if is_stopping {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    // If not heartbeating, return 503 (matches Go health check behavior)
+    if !state.is_heartbeating.load(Ordering::Relaxed) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    // A server with quarantined local replicas has faulty storage media;
+    // report degraded so a load balancer can drain it.
+    if state.store.read().unwrap().has_io_quarantine() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    StatusCode::OK.into_response()
+}
+
+// ============================================================================
+// Metrics Handler
+// ============================================================================
+
+pub async fn metrics_handler() -> Response {
+    let body = metrics::gather_metrics();
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
+}
+
+// ============================================================================
+// Stats Handlers
+// ============================================================================
+
+pub async fn stats_counter_handler(Query(params): Query<ReadQueryParams>) -> Response {
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
+        "Counters": super::server_stats::snapshot(),
+    });
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
+}
+
+pub async fn stats_memory_handler(Query(params): Query<ReadQueryParams>) -> Response {
+    let mem = super::memory_status::collect_mem_status();
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
+        "Memory": {
+            "goroutines": mem.goroutines,
+            "all": mem.all,
+            "used": mem.used,
+            "free": mem.free,
+            "self": mem.self_,
+            "heap": mem.heap,
+            "stack": mem.stack,
+        },
+    });
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
+}
+
+pub async fn stats_disk_handler(
+    Query(params): Query<ReadQueryParams>,
+    State(state): State<Arc<VolumeServerState>>,
+) -> Response {
+    let store = state.store.read().unwrap();
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
+        "DiskStatuses": build_disk_statuses(&store),
+    });
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
+}
+
+// ============================================================================
+// Static Asset Handlers
+// ============================================================================
+
+pub async fn favicon_handler() -> Response {
+    let asset = super::ui::favicon_asset();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, asset.content_type)],
+        asset.bytes,
+    )
+        .into_response()
+}
+
+pub async fn static_asset_handler(Path(path): Path<String>) -> Response {
+    match super::ui::lookup_static_asset(&path) {
+        Some(asset) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, asset.content_type)],
+            asset.bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+pub async fn ui_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
+    let html = super::ui::render_volume_server_html(&state);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
+// ============================================================================
+// Chunk Manifest
+// ============================================================================
+
+#[derive(Deserialize)]
+struct ChunkManifest {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    mime: String,
+    #[serde(default)]
+    size: i64,
+    #[serde(default)]
+    chunks: Vec<ChunkInfo>,
+}
+
+#[derive(Deserialize)]
+struct ChunkInfo {
+    fid: String,
+    offset: i64,
+    size: i64,
+}
+
+fn manifest_filename(path: &str, manifest_name: &str) -> String {
+    let mut filename = extract_filename_from_path(path);
+    if filename.is_empty() && !manifest_name.is_empty() {
+        filename = manifest_name.to_string();
+    }
+    filename
+}
+
+fn extension_of(filename: &str) -> String {
+    filename
+        .rfind('.')
+        .map(|dot| filename[dot..].to_lowercase())
+        .unwrap_or_default()
+}
+
+fn reject_bad_chunks(chunks: &[ChunkInfo]) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
+    for chunk in chunks {
+        if chunk.offset < 0 || chunk.size < 0 {
+            return Some(ControlFlow::Break(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("invalid negative chunk offset/size in {}", chunk.fid),
+                )
+                    .into_response(),
+            ));
+        }
+    }
+    None
+}
+
+/// `None` is a u64 overflow or a sum that does not fit in i64.
+fn sum_chunk_sizes(chunks: &[ChunkInfo]) -> Option<i64> {
+    let mut sum: u64 = 0;
+    for chunk in chunks {
+        if chunk.size < 0 {
+            return None;
+        }
+        sum = sum.checked_add(chunk.size as u64)?;
+    }
+    if sum > i64::MAX as u64 {
+        return None;
+    }
+    Some(sum as i64)
+}
+
+fn exceeds_expansion_limit(buffered: u64) -> bool {
+    buffered > MAX_EXPANSION_BYTES
+}
+
+fn manifest_too_large() -> ControlFlow<Response, (Vec<u8>, HeaderMap)> {
+    ControlFlow::Break(
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "chunk manifest exceeds expansion limit",
+        )
+            .into_response(),
+    )
+}
+
+fn chunk_manifest_response_headers(
+    n: &Needle,
+    query: &ReadQueryParams,
+    etag: &str,
+    last_modified_str: &Option<String>,
+    filename: &str,
+    manifest_mime: &str,
+) -> HeaderMap {
+    let content_type = {
+        if !manifest_mime.is_empty() && !manifest_mime.starts_with("application/octet-stream") {
+            manifest_mime.to_string()
+        } else {
+            let ext = extension_of(filename);
+            if !ext.is_empty() {
+                mime_guess::from_ext(ext.trim_start_matches('.'))
+                    .first()
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "application/octet-stream".to_string())
+            } else if !manifest_mime.is_empty() {
+                manifest_mime.to_string()
+            } else {
+                "application/octet-stream".to_string()
+            }
+        }
+    };
+
+    let mut response_headers = HeaderMap::new();
+    if let Ok(etag_val) = etag.parse() {
+        response_headers.insert(header::ETAG, etag_val);
+    }
+    // `mime` is stored JSON; fall back when it is not a legal header value.
+    let content_type_value = content_type
+        .parse()
+        .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream"));
+    response_headers.insert(header::CONTENT_TYPE, content_type_value);
+    response_headers.insert("X-File-Store", "chunked".parse().unwrap());
+
+    if let Some(lm) = last_modified_str
+        && let Ok(hval) = lm.parse()
+    {
+        response_headers.insert(header::LAST_MODIFIED, hval);
+    }
+
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
+            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
+            }
+        }
+    }
+
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
+    }
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
+    }
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
+    }
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
+    }
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
+    }
+
+    if !filename.is_empty() {
+        let disposition_type = if let Some(ref dl_val) = query.dl {
+            if parse_go_bool(dl_val).unwrap_or(false) {
+                "attachment"
+            } else {
+                "inline"
+            }
+        } else {
+            "inline"
+        };
+        let disposition = format_content_disposition(disposition_type, filename);
+        if let Ok(hval) = disposition.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
+    }
+    response_headers
+}
+
+/// Try to expand a chunk manifest needle into its assembled body and reply
+/// headers. The Range of a GET (`get_range`) is answered here from only the
+/// chunks it overlaps. Returns None if manifest can't be parsed.
+async fn try_expand_chunk_manifest(
+    state: &Arc<VolumeServerState>,
+    n: &Needle,
+    path: &str,
+    query: &ReadQueryParams,
+    get_range: Option<&str>,
+    method: &Method,
+) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
+    let data = if n.is_compressed() {
+        match maybe_decompress_gzip(&n.data) {
+            Ok(d) => d,
+            Err(GunzipError::TooLarge) => {
+                return Some(ControlFlow::Break(
+                    (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "compressed manifest exceeds decompression limit",
+                    )
+                        .into_response(),
+                ));
+            }
+            Err(GunzipError::Decode) => return None,
+        }
+    } else {
+        n.data.clone()
+    };
+
+    let manifest: ChunkManifest = match serde_json::from_slice(&data) {
+        Ok(m) => m,
+        Err(_) => return None,
+    };
+
+    if let Some(flow) = reject_bad_chunks(&manifest.chunks) {
+        return Some(flow);
+    }
+
+    let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
+        return Some(manifest_too_large());
+    };
+
+    // Go's tryHandleChunkedFile: ext comes from the URL (including a fid
+    // suffix like /vid,fid.png) and falls back to the resolved filename's.
+    let filename = manifest_filename(path, &manifest.name);
+    let url_ext = extract_extension_from_path(path);
+    let cm_ext = if url_ext.is_empty() {
+        extension_of(&filename)
+    } else {
+        url_ext
+    };
+    let transforms_image = has_image_ops(&cm_ext, query);
+    let (etag, last_modified_str) = etag_and_last_modified(n);
+    let mut response_headers = chunk_manifest_response_headers(
+        n,
+        query,
+        &etag,
+        &last_modified_str,
+        &filename,
+        &manifest.mime,
+    );
+    if *method == Method::HEAD && !transforms_image {
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        response_headers.insert(header::CONTENT_LENGTH, sum.to_string().parse().unwrap());
+        return Some(ControlFlow::Break(
+            (StatusCode::OK, response_headers).into_response(),
+        ));
+    }
+
+    let mut wanted: Option<(&str, Vec<HttpRange>)> = None;
+    if transforms_image {
+        if exceeds_expansion_limit(sum as u64) {
+            return Some(manifest_too_large());
+        }
+    } else if let Some(range) = get_range {
+        let parsed = parse_range_header(range, sum);
+        let fetch = match &parsed {
+            Err(_) => false,
+            Ok(ranges) if ranges.is_empty() || sum_ranges_size(ranges) > sum => false,
+            Ok(ranges) => {
+                let covered = sum_ranges_size(ranges);
+                if covered > 0 && exceeds_expansion_limit(covered as u64) {
+                    return Some(manifest_too_large());
+                }
+                if buffered_span_exceeds_limit(&manifest.chunks, sum, ranges) {
+                    return Some(manifest_too_large());
+                }
+                true
+            }
+        };
+        if !fetch {
+            response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+            return Some(ControlFlow::Break(handle_range_request_with(
+                range,
+                sum,
+                |_buf: &mut Vec<u8>, _, _| {},
+                response_headers,
+                None,
+            )));
+        }
+        wanted = Some((range, parsed.unwrap()));
+    } else if exceeds_expansion_limit(sum as u64) {
+        return Some(manifest_too_large());
+    }
+
+    let size = sum as usize;
+    type Parts = HashMap<(usize, usize), Vec<(usize, Vec<u8>)>>;
+    let mut parts: Parts = HashMap::new();
+    let mut result = if wanted.is_some() {
+        Vec::new()
+    } else {
+        vec![0u8; size]
+    };
+    for chunk in &manifest.chunks {
+        let Some(window) = chunk_window(chunk.offset, chunk.size, sum) else {
+            continue;
+        };
+        let ranges = wanted.as_ref().map(|(_, ranges)| ranges.as_slice());
+        let Some(how) = remote_read_for(chunk.offset, window, ranges) else {
+            continue;
+        };
+        let fetched = match read_chunk_needle(state, &chunk.fid, how).await {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(ControlFlow::Break(
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("read chunk {}: {}", chunk.fid, e),
+                    )
+                        .into_response(),
+                ));
+            }
+        };
+        let offset = chunk.offset as usize;
+        let file_lo = offset + fetched.origin;
+        if file_lo >= size {
+            continue;
+        }
+        let window_end = offset + window as usize;
+        let copy_len = fetched
+            .data
+            .len()
+            .min(window_end.saturating_sub(file_lo))
+            .min(size - file_lo);
+        if let Some((_, ranges)) = &wanted {
+            let file_hi = file_lo + copy_len;
+            let key = |r: &HttpRange| (r.start as usize, (r.start + r.length) as usize);
+            for r in ranges {
+                if r.length <= 0 {
+                    continue;
+                }
+                let rs = r.start as usize;
+                let re = rs + r.length as usize;
+                let lo = rs.max(file_lo);
+                let hi = re.min(file_hi);
+                if lo < hi {
+                    parts
+                        .entry(key(r))
+                        .or_default()
+                        .push((lo, fetched.data[lo - file_lo..hi - file_lo].to_vec()));
+                }
+            }
+        } else {
+            result[file_lo..file_lo + copy_len].copy_from_slice(&fetched.data[..copy_len]);
+        }
+    }
+
+    if let Some((range, _)) = wanted {
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        let read = |buf: &mut Vec<u8>, start: usize, end: usize| {
+            let base = buf.len();
+            buf.resize(base + end - start, 0);
+            if let Some(range_parts) = parts.get(&(start, end)) {
+                for (offset, data) in range_parts {
+                    let (lo, hi) = (start.max(*offset), end.min(offset + data.len()));
+                    if lo < hi {
+                        buf[base + lo - start..base + hi - start]
+                            .copy_from_slice(&data[lo - offset..hi - offset]);
+                    }
+                }
+            }
+        };
+        return Some(ControlFlow::Break(handle_range_request_with(
+            range,
+            sum,
+            read,
+            response_headers,
+            None,
+        )));
+    }
+
+    if is_image_crop_ext(&cm_ext) {
+        result = maybe_crop_image(&result, &cm_ext, query);
+    }
+    if is_image_resize_ext(&cm_ext) {
+        result = maybe_resize_image(&result, &cm_ext, query);
+    }
+    Some(ControlFlow::Continue((result, response_headers)))
+}
+
+#[derive(Clone, Copy)]
+enum RemoteRead {
+    /// GET with no Range. Keep at most `cap` bytes. Origin 0.
+    Whole { cap: u64 },
+    /// `Range: bytes={lo}-{hi-1}`. The returned bytes start at chunk offset `lo`.
+    Range { lo: u64, hi: u64 },
+}
+
+struct ChunkBytes {
+    /// Chunk offset of `data[0]`.
+    origin: usize,
+    data: Vec<u8>,
+}
+
+fn chunk_window(offset: i64, size: i64, sum: i64) -> Option<i64> {
+    if size <= 0 || offset >= sum {
+        return None;
+    }
+    Some(size.min(sum - offset))
+}
+
+/// Overlap of `[offset, offset+window)` with `ranges`, as chunk-relative `[lo, hi)`.
+fn overlap_span(offset: i64, window: i64, ranges: &[HttpRange]) -> Option<(i64, i64)> {
+    let file_hi = offset + window;
+    let mut lo = i64::MAX;
+    let mut hi = i64::MIN;
+    for r in ranges {
+        if r.length <= 0 {
+            continue;
+        }
+        let start = r.start.max(offset);
+        let end = (r.start + r.length).min(file_hi);
+        if start < end {
+            lo = lo.min(start);
+            hi = hi.max(end);
+        }
+    }
+    if lo < hi {
+        Some((lo - offset, hi - offset))
+    } else {
+        None
+    }
+}
+
+/// One fetched span over `MAX_EXPANSION_BYTES`. The covered-length check does
+/// not see the gap between two ranges on the same chunk.
+fn buffered_span_exceeds_limit(chunks: &[ChunkInfo], sum: i64, ranges: &[HttpRange]) -> bool {
+    chunks.iter().any(|chunk| {
+        let Some(window) = chunk_window(chunk.offset, chunk.size, sum) else {
+            return false;
+        };
+        let Some((lo, hi)) = overlap_span(chunk.offset, window, ranges) else {
+            return false;
+        };
+        exceeds_expansion_limit((hi - lo) as u64)
+    })
+}
+
+fn remote_read_for(offset: i64, window: i64, ranges: Option<&[HttpRange]>) -> Option<RemoteRead> {
+    let (lo, hi) = match ranges {
+        None => (0, window),
+        Some(ranges) => overlap_span(offset, window, ranges)?,
+    };
+    if lo == 0 && hi == window {
+        Some(RemoteRead::Whole { cap: window as u64 })
+    } else {
+        Some(RemoteRead::Range {
+            lo: lo as u64,
+            hi: hi as u64,
+        })
+    }
+}
+
+fn content_range_first_byte(headers: &HeaderMap) -> Option<u64> {
+    let values: Vec<_> = headers.get_all(header::CONTENT_RANGE).iter().collect();
+    if values.len() != 1 {
+        return None;
+    }
+    let value = values[0].to_str().ok()?;
+    let rest = value.trim().strip_prefix("bytes ")?;
+    let (start_end, _) = rest.split_once('/')?;
+    let (start, end) = start_end.split_once('-')?;
+    if start.trim().is_empty() || start.trim() == "*" || end.trim().is_empty() {
+        return None;
+    }
+    start.trim().parse().ok()
+}
+
+async fn read_limited_body(resp: &mut reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    while out.len() < cap {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = cap - out.len();
+                if chunk.len() <= room {
+                    out.extend_from_slice(&chunk);
+                } else {
+                    out.extend_from_slice(&chunk[..room]);
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("read body: {e}")),
+        }
+    }
+    Ok(out)
+}
+
+/// Read one chunk-manifest chunk's final (decompressed) content bytes from
+/// wherever it lives: a local regular volume, a local EC volume
+/// (reconstruct-on-read from surviving shards), or a peer resolved via the
+/// master. Mirrors Go's ChunkedFileReader, which looks every chunk up through
+/// the master instead of assuming a local regular needle.
+async fn read_chunk_needle(
+    state: &Arc<VolumeServerState>,
+    fid: &str,
+    how: RemoteRead,
+) -> Result<ChunkBytes, String> {
+    let (vid, nid, cookie) =
+        parse_url_path(fid).ok_or_else(|| format!("invalid chunk fid: {}", fid))?;
+
+    // Decide where the chunk lives under one store read lock; drop it before any
+    // await (the EC and remote paths are async).
+    enum Placement {
+        Ec,
+        Remote,
+        Local(std::sync::Arc<crate::storage::volume::Volume>),
+    }
+    let placement = {
+        let store = state.store.read().unwrap();
+        if let Some((_, vol)) = store.find_volume(vid) {
+            Placement::Local(vol)
+        } else if store.find_ec_volume(vid).is_some() {
+            Placement::Ec
+        } else {
+            Placement::Remote
+        }
+    };
+
+    match placement {
+        Placement::Local(vol) => {
+            let mut n = Needle {
+                id: nid,
+                cookie,
+                ..Needle::default()
+            };
+            vol.read_needle(&mut n)
+                .map_err(|e| format!("{}", e))
+                .and_then(|_| cookie_checked_chunk(n, cookie))
+                .map(|data| ChunkBytes { origin: 0, data })
+        }
+        Placement::Ec => {
+            match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
+                Ok(Some(n)) => {
+                    cookie_checked_chunk(n, cookie).map(|data| ChunkBytes { origin: 0, data })
+                }
+                Ok(None) => Err("not found".to_string()),
+                Err(e) => Err(format!("{}", e)),
+            }
+        }
+        // The peer serves through its own GET handler, which validates the cookie.
+        Placement::Remote => read_remote_chunk_needle(state, vid, fid, how).await,
+    }
+}
+
+/// Validate a locally-read chunk's cookie against the one in its fid, then return
+/// its content bytes. The main GET paths check the cookie after a read; a chunk
+/// read must do the same so a stale/guessed id can't serve another needle's data.
+fn cookie_checked_chunk(n: Needle, cookie: Cookie) -> Result<Vec<u8>, String> {
+    if n.cookie != cookie {
+        return Err("not found".to_string());
+    }
+    decompress_chunk(n)
+}
+
+/// Return a needle's content bytes, decompressing gzip payloads the way the read
+/// handler does for a client that did not ask for gzip.
+fn decompress_chunk(n: Needle) -> Result<Vec<u8>, String> {
+    if n.is_compressed() {
+        match maybe_decompress_gzip(&n.data) {
+            Ok(d) => Ok(d),
+            Err(GunzipError::TooLarge) => {
+                Err("compressed chunk exceeds decompression limit".to_string())
+            }
+            // Not valid gzip; keep the raw bytes, matching the prior fallback.
+            Err(GunzipError::Decode) => Ok(n.data),
+        }
+    } else {
+        Ok(n.data)
+    }
+}
+
+/// Fetch a chunk that is not hosted locally from a peer volume server. The peer
+/// serves the final (decompressed) bytes whether the chunk is on a regular or EC
+/// volume, so a chunk whose EC shards live elsewhere is still reconstructed on
+/// the holder's side. Mirrors Go's ChunkedFileReader.readChunkNeedle.
+async fn read_remote_chunk_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    fid: &str,
+    how: RemoteRead,
+) -> Result<ChunkBytes, String> {
+    let locations = lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.current_master().await,
+        vid.0,
+    )
+    .await?;
+    if locations.is_empty() {
+        return Err("not found".to_string());
+    }
+
+    let mut last_err = String::new();
+    for loc in &locations {
+        // Skip self: the local paths already ruled this server out.
+        if loc.url.contains(&state.self_url) {
+            continue;
+        }
+        let target_http = to_http_address(&loc.url);
+        let url = match normalize_outgoing_http_url(
+            &state.outgoing_http_scheme,
+            &format!("{}/{}?proxied=true", target_http, fid),
+        ) {
+            Ok(u) => u,
+            Err(e) => {
+                last_err = e;
+                continue;
+            }
+        };
+        let mut req = state.http_client.get(&url);
+        let (origin, cap) = match how {
+            RemoteRead::Whole { cap } => (0usize, cap as usize),
+            RemoteRead::Range { lo, hi } => {
+                req = req.header(header::RANGE, format!("bytes={lo}-{}", hi - 1));
+                (lo as usize, (hi - lo) as usize)
+            }
+        };
+        match req.send().await {
+            Ok(mut resp) => {
+                let status = resp.status();
+                let err = match how {
+                    RemoteRead::Whole { .. } if status.is_success() => None,
+                    RemoteRead::Range { lo, .. }
+                        if status.as_u16() == StatusCode::PARTIAL_CONTENT.as_u16() =>
+                    {
+                        match content_range_first_byte(resp.headers()) {
+                            Some(start) if start == lo => None,
+                            _ => Some(format!("{url} Content-Range does not start at {lo}")),
+                        }
+                    }
+                    _ => Some(format!("{url} returned {status}")),
+                };
+                if let Some(err) = err {
+                    last_err = err;
+                    continue;
+                }
+                match read_limited_body(&mut resp, cap).await {
+                    Ok(data) => return Ok(ChunkBytes { origin, data }),
+                    Err(e) => last_err = format!("read body from {url}: {e}"),
+                }
+            }
+            Err(e) => last_err = format!("request to {url} failed: {e}"),
+        }
+    }
+    Err(if last_err.is_empty() {
+        "not found".to_string()
+    } else {
+        last_err
+    })
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::Value> {
+    let mut disk_statuses = Vec::new();
+    for loc in &store.locations {
+        let resolved_dir = absolute_display_path(&loc.directory);
+        let (all, free) = crate::storage::disk_location::get_disk_stats(&resolved_dir);
+        let used = all.saturating_sub(free);
+        let percent_free = if all > 0 {
+            (free as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+        let percent_used = if all > 0 {
+            (used as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Match Go encoding/json on protobuf struct (snake_case json tags)
+        disk_statuses.push(serde_json::json!({
+            "dir": resolved_dir,
+            "all": all,
+            "used": used,
+            "free": free,
+            "percent_free": percent_free,
+            "percent_used": percent_used,
+            "disk_type": loc.disk_type.to_string(),
+        }));
+    }
+    disk_statuses
+}
+
+/// Serialize to JSON with 1-space indent (matches Go's `json.MarshalIndent(obj, "", " ")`).
+fn to_pretty_json<T: Serialize>(value: &T) -> String {
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value.serialize(&mut ser).unwrap();
+    String::from_utf8(buf).unwrap()
+}
+
+fn json_response_with_params<T: Serialize>(
+    status: StatusCode,
+    body: &T,
+    params: Option<&ReadQueryParams>,
+) -> Response {
+    let is_pretty = params
+        .and_then(|params| params.pretty.as_ref())
+        .is_some_and(|value| !value.is_empty());
+
+    let json_body = if is_pretty {
+        to_pretty_json(body)
+    } else {
+        serde_json::to_string(body).unwrap()
+    };
+
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
+}
+
+/// Return a JSON error response, honoring `?pretty=<any non-empty value>` for pretty-printed JSON.
+pub(super) fn json_error_with_query(
+    status: StatusCode,
+    msg: impl Into<String>,
+    query: Option<&str>,
+) -> Response {
+    let body = serde_json::json!({"error": msg.into()});
+
+    let is_pretty = query.is_some_and(|q| {
+        q.split('&')
+            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len())
+    });
+
+    let json_body = if is_pretty {
+        to_pretty_json(&body)
+    } else {
+        serde_json::to_string(&body).unwrap()
+    };
+
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
+}
+
+/// Return a JSON response honoring `?pretty=<any non-empty value>` from a raw query string.
+fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &str) -> Response {
+    let is_pretty = query
+        .split('&')
+        .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
+
+    let json_body = if is_pretty {
+        to_pretty_json(body)
+    } else {
+        serde_json::to_string(body).unwrap()
+    };
+
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(json_body))
+        .unwrap()
+}
+
+/// Extract JWT token from query param, Authorization header, or Cookie.
+/// Query param takes precedence over header, header over cookie.
+fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
+    // 1. Check ?jwt= query parameter
+    if let Some(query) = uri.query() {
+        for pair in query.split('&') {
+            if let Some(value) = pair.strip_prefix("jwt=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    // 2. Check Authorization: Bearer <token> (case-insensitive prefix)
+    if let Some(auth) = headers.get(header::AUTHORIZATION)
+        && let Ok(auth_str) = auth.to_str()
+        && auth_str.len() > 7
+        && auth_str[..7].eq_ignore_ascii_case("bearer ")
+    {
+        return Some(auth_str[7..].to_string());
+    }
+
+    // 3. Check Cookie
+    if let Some(cookie_header) = headers.get(header::COOKIE)
+        && let Ok(cookie_str) = cookie_header.to_str()
+    {
+        for cookie in cookie_str.split(';') {
+            let cookie = cookie.trim();
+            if let Some(value) = cookie.strip_prefix("AT=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+// ============================================================================
+// Auto-compression helpers (matches Go's util.IsCompressableFileType)
+// ============================================================================
+
+/// Check if a file type should be compressed based on extension and MIME type.
+/// Returns true only when we are sure the type is compressible.
+fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
+    // text/*
+    if mtype.starts_with("text/") {
+        return true;
+    }
+    // Compressible image/audio formats
+    match ext {
+        ".svg" | ".bmp" | ".wav" => return true,
+        _ => {}
+    }
+    // Most image/* formats are already compressed
+    if mtype.starts_with("image/") {
+        return false;
+    }
+    // By file extension
+    match ext {
+        ".zip" | ".rar" | ".gz" | ".bz2" | ".xz" | ".zst" | ".br" => return false,
+        ".pdf" | ".txt" | ".html" | ".htm" | ".css" | ".js" | ".json" => return true,
+        ".php" | ".java" | ".go" | ".rb" | ".c" | ".cpp" | ".h" | ".hpp" => return true,
+        ".png" | ".jpg" | ".jpeg" => return false,
+        _ => {}
+    }
+    // By MIME type
+    if mtype.starts_with("application/") {
+        if mtype.ends_with("zstd") {
+            return false;
+        }
+        if mtype.ends_with("xml") {
+            return true;
+        }
+        if mtype.ends_with("script") {
+            return true;
+        }
+        if mtype.ends_with("vnd.rar") {
+            return false;
+        }
+    }
+    if mtype.starts_with("audio/") {
+        let sub = mtype.strip_prefix("audio/").unwrap_or("");
+        if matches!(sub, "wave" | "wav" | "x-wav" | "x-pn-wav") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Try to gzip data. Returns None on error.
+fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).ok()?;
+    encoder.finish().ok()
+}
+
+fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
+    // OOM the server when decompressed on read or upload. take(limit+1) lets us
+    // tell "exactly at the limit" apart from "over it", which we reject as
+    // TooLarge so callers fail the request instead of silently using raw bytes.
+    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
+    let mut decompressed = Vec::new();
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|_| GunzipError::Decode)?;
+    if decompressed.len() as u64 > MAX_EXPANSION_BYTES {
+        return Err(GunzipError::TooLarge);
+    }
+    Ok(decompressed)
+}
+
+fn compute_md5_base64(data: &[u8]) -> String {
+    use base64::Engine;
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+fn clean_windows_path_base(value: &str) -> String {
+    let cleaned = value.replace('\\', "/");
+    cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
+}
+
+fn parse_content_disposition_filename(value: &str) -> Option<String> {
+    let mut filename: Option<String> = None;
+    let mut name: Option<String> = None;
+
+    for segment in value.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let lower = segment.to_ascii_lowercase();
+        if lower.starts_with("filename=") {
+            let raw = segment[9..].trim();
+            let trimmed = raw
+                .strip_prefix('\"')
+                .and_then(|s| s.strip_suffix('\"'))
+                .unwrap_or(raw);
+            filename = Some(clean_windows_path_base(trimmed));
+        } else if lower.starts_with("name=") {
+            let raw = segment[5..].trim();
+            let trimmed = raw
+                .strip_prefix('\"')
+                .and_then(|s| s.strip_suffix('\"'))
+                .unwrap_or(raw);
+            name = Some(clean_windows_path_base(trimmed));
+        }
+    }
+
+    let candidate = filename.or(name);
+    candidate.filter(|s| !s.is_empty())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The upload handler reads fsync off the decoded query fields rather than
+    /// matching the raw string, because Go's r.FormValue decodes and a raw
+    /// match would silently drop a percent-encoded value.
+    #[test]
+    fn test_encoded_query_field_decodes() {
+        let raw = "fsync=%74rue";
+        assert!(
+            !raw.split('&').any(|p| p == "fsync=true"),
+            "a raw match is exactly what misses this"
+        );
+        let fields: Vec<(String, String)> = serde_urlencoded::from_str(raw).unwrap();
+        assert_eq!(
+            fields
+                .iter()
+                .find(|(k, _)| k == "fsync")
+                .map(|(_, v)| v.as_str()),
+            Some("true")
+        );
+    }
+
+    /// Every URL form the volume server accepts, against what Go's
+    /// `parseURLPath` returns for it (`weed/server/common.go:218-249`):
+    /// the `vid/fid/filename` form leaves the fid alone and takes the
+    /// extension off the filename, the other two take it off the fid, and
+    /// none of them touch an `_delta` suffix.
+    #[test]
+    fn test_parse_needle_path_every_form() {
+        let cases: &[(&str, &str, &str, &str, Option<&str>)] = &[
+            // "vid,fid" — Go's default branch.
+            ("/3,01637037d6", "3", "01637037d6", "", None),
+            ("/3,01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3,01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3,01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid" — Go's case 2.
+            ("/3/01637037d6", "3", "01637037d6", "", None),
+            ("/3/01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3/01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3/01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid/filename" — Go's case 3: the fid stays whole.
+            (
+                "/3/01637037d6/report",
+                "3",
+                "01637037d6",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6/report.txt",
+                "3",
+                "01637037d6",
+                ".txt",
+                Some("report.txt"),
+            ),
+            (
+                "/3/01637037d6_1/report",
+                "3",
+                "01637037d6_1",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6_1/report.txt",
+                "3",
+                "01637037d6_1",
+                ".txt",
+                Some("report.txt"),
+            ),
+            // Mixed forms: the slash count decides, so a comma with a trailing
+            // segment is read as "vid/fid" (Go case 2, and the volume id then
+            // fails to parse) and a comma inside a filename is just part of
+            // the filename (Go case 3).
+            (
+                "/3,01637037d6/name.txt",
+                "3,01637037d6",
+                "name",
+                ".txt",
+                None,
+            ),
+            (
+                "/3/01637037d6/my,file.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some("my,file.jpg"),
+            ),
+            // Go's case 2 guards the extension split with `dotIndex > 0`, so a
+            // file id that is nothing but an extension keeps it and fails to
+            // parse later; filepath.Ext in case 3 has no such guard.
+            ("/3/.jpg", "3", ".jpg", "", None),
+            (
+                "/3/01637037d6/.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some(".jpg"),
+            ),
+        ];
+
+        for &(path, vid, fid, ext, filename) in cases {
+            assert_eq!(
+                parse_needle_path(path),
+                Some(NeedlePath {
+                    vid,
+                    fid,
+                    ext,
+                    filename
+                }),
+                "path {}",
+                path
+            );
+            // Chunk manifest entries arrive without the leading slash.
+            let unrooted = path.trim_start_matches('/');
+            assert_eq!(
+                parse_needle_path(unrooted),
+                parse_needle_path(path),
+                "path {}",
+                unrooted
+            );
+        }
+    }
+
+    /// A path with no file id at all is Go's `isVolumeIdOnly` case; every
+    /// caller here needs a file id, so it has to come back as `None`.
+    #[test]
+    fn test_parse_needle_path_rejects_paths_without_a_file_id() {
+        for path in ["", "/", "/3", "/invalid", "/not/a/valid/volume/path"] {
+            assert_eq!(parse_needle_path(path), None, "path {}", path);
+        }
+    }
+
+    /// Go's `maybeCheckJwtAuthorization` compares the token's `fid` claim
+    /// against `vid + "," + fid` whatever form the URL used
+    /// (volume_server_handlers.go:361-364), so the slash form has to produce
+    /// the comma form too or a JWT-protected read of `/3/01637037d6` can never
+    /// match its own token.
+    #[test]
+    fn test_extract_file_id_normalizes_every_url_form() {
+        for path in [
+            "/3,01637037d6",
+            "/3,01637037d6.jpg",
+            "/3,01637037d6_1",
+            "/3/01637037d6",
+            "/3/01637037d6.jpg",
+            "/3/01637037d6_1.jpg",
+            "/3/01637037d6/report.txt",
+            "/3/01637037d6_1/report.txt",
+        ] {
+            assert_eq!(extract_file_id(path), "3,01637037d6", "path {}", path);
+        }
+    }
+
+    /// Go only drops the `_suffix` when `strings.LastIndex(fid, "_") > 0`
+    /// (volume_server_handlers.go:361-364), so a file id that starts with the
+    /// separator is compared whole rather than becoming empty.
+    #[test]
+    fn test_extract_file_id_keeps_a_leading_underscore() {
+        assert_eq!(extract_file_id("/3,_5"), "3,_5");
+        assert_eq!(extract_file_id("/3/_5"), "3,_5");
+    }
+
+    /// Go checks the JWT before it parses the volume id
+    /// (volume_server_handlers_read.go:142-156), and so does
+    /// get_or_head_handler_inner, which is why an unparsable path still has to
+    /// produce a comparison string: it decides 401 before parse_url_path gets
+    /// to decide 400.
+    #[test]
+    fn test_extract_file_id_falls_back_for_unparsable_paths() {
+        assert_eq!(extract_file_id("/invalid"), "invalid");
+        assert_eq!(extract_file_id("/3"), "3");
+        assert_eq!(
+            extract_file_id("/not/a/valid/volume/path"),
+            "not/a/valid/volume/path"
+        );
+    }
+
+    #[test]
+    fn test_parse_url_path_comma() {
+        let (vid, nid, cookie) = parse_url_path("/3,01637037d6").unwrap();
+        assert_eq!(vid, VolumeId(3));
+        assert_eq!(nid, NeedleId(0x01));
+        assert_eq!(cookie, Cookie(0x637037d6));
+    }
+
+    #[test]
+    fn test_parse_url_path_with_ext() {
+        let (vid, _, _) = parse_url_path("/3,01637037d6.jpg").unwrap();
+        assert_eq!(vid, VolumeId(3));
+    }
+
+    #[test]
+    fn test_parse_url_path_slash() {
+        let result = parse_url_path("3/01637037d6");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_url_path_slash_with_filename() {
+        // A comma in the filename is part of the filename: the slash count
+        // already decided the form, as in Go's case 3.
+        for path in ["3/01637037d6/report.txt", "3/01637037d6/my,file.jpg"] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x01), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
+    }
+
+    /// The `_delta` suffix stays on the fid through the path split and is
+    /// applied by parse_needle_id_cookie, as Go's ParsePath does.
+    #[test]
+    fn test_parse_url_path_applies_delta_suffix() {
+        for path in [
+            "/3,01637037d6_1",
+            "/3/01637037d6_1",
+            "/3/01637037d6_1/a.txt",
+        ] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x02), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
+    }
+
+    #[test]
+    fn test_parse_url_path_invalid() {
+        assert!(parse_url_path("/invalid").is_none());
+        assert!(parse_url_path("").is_none());
+        // Go reads this as case 2 with vid = "3,01637037d6", which NewVolumeId
+        // rejects, so the comma-with-a-trailing-segment form is a 400 here too.
+        assert!(parse_url_path("/3,01637037d6/name.txt").is_none());
+        // Go's `dotIndex > 0` guard leaves ".jpg" as the file id, which then
+        // fails to parse as a needle id.
+        assert!(parse_url_path("/3/.jpg").is_none());
+    }
+
+    #[test]
+    fn test_parse_range_header_no_overlap() {
+        assert_eq!(
+            parse_range_header("bytes=10-", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
+        assert_eq!(
+            parse_range_header("bytes=100-", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
+        // 416 only when every range fails to overlap
+        let ranges = parse_range_header("bytes=10-,0-1", 10).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
+        // an end past the size is clamped, still satisfiable
+        let ranges = parse_range_header("bytes=5-100", 10).unwrap();
+        assert_eq!((ranges[0].start, ranges[0].length), (5, 5));
+    }
+
+    #[test]
+    fn test_extract_jwt_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer abc123".parse().unwrap());
+        let uri: axum::http::Uri = "/test".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_jwt_query_param() {
+        let headers = HeaderMap::new();
+        let uri: axum::http::Uri = "/test?jwt=mytoken".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("mytoken".to_string()));
+    }
+
+    #[test]
+    fn test_extract_jwt_query_over_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer header_token".parse().unwrap(),
+        );
+        let uri: axum::http::Uri = "/test?jwt=query_token".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("query_token".to_string()));
+    }
+
+    #[test]
+    fn test_extract_jwt_none() {
+        let headers = HeaderMap::new();
+        let uri: axum::http::Uri = "/test".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), None);
+    }
+
+    #[test]
+    fn test_handle_range_single() {
+        let data = b"hello world";
+        let headers = HeaderMap::new();
+        let resp = handle_range_request("bytes=0-4", data, headers, None);
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    }
+
+    #[test]
+    fn test_handle_range_invalid() {
+        let data = b"hello";
+        let headers = HeaderMap::new();
+        let resp = handle_range_request("bytes=999-1000", data, headers, None);
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
+
+    #[tokio::test]
+    async fn test_stats_memory_handler_matches_go_memstatus_shape() {
+        let response = stats_memory_handler(Query(ReadQueryParams::default())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let memory = payload.get("Memory").unwrap();
+
+        for key in ["goroutines", "all", "used", "free", "self", "heap", "stack"] {
+            assert!(memory.get(key).is_some(), "missing key {}", key);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stats_counter_handler_matches_go_json_shape() {
+        super::super::server_stats::reset_for_tests();
+        super::super::server_stats::record_read_request();
+
+        let response = stats_counter_handler(Query(ReadQueryParams::default())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(
+            payload.get("Version").and_then(|value| value.as_str()),
+            Some(crate::version::version())
+        );
+        let counters = payload.get("Counters").unwrap();
+        assert!(counters.get("ReadRequests").is_some());
+        assert!(counters.get("Requests").is_some());
+    }
+
+    #[test]
+    fn test_is_compressible_file_type() {
+        // Text types
+        assert!(is_compressible_file_type("", "text/html"));
+        assert!(is_compressible_file_type("", "text/plain"));
+        assert!(is_compressible_file_type("", "text/css"));
+
+        // Compressible by extension
+        assert!(is_compressible_file_type(".svg", ""));
+        assert!(is_compressible_file_type(".bmp", ""));
+        assert!(is_compressible_file_type(".js", ""));
+        assert!(is_compressible_file_type(".json", ""));
+        assert!(is_compressible_file_type(".html", ""));
+        assert!(is_compressible_file_type(".css", ""));
+        assert!(is_compressible_file_type(".c", ""));
+        assert!(is_compressible_file_type(".go", ""));
+
+        // Already compressed — should NOT compress
+        assert!(!is_compressible_file_type(".zip", ""));
+        assert!(!is_compressible_file_type(".gz", ""));
+        assert!(!is_compressible_file_type(".jpg", ""));
+        assert!(!is_compressible_file_type(".png", ""));
+        assert!(!is_compressible_file_type("", "image/jpeg"));
+        assert!(!is_compressible_file_type("", "image/png"));
+
+        // Application subtypes
+        assert!(is_compressible_file_type("", "application/xml"));
+        assert!(is_compressible_file_type("", "application/javascript"));
+        assert!(!is_compressible_file_type("", "application/zstd"));
+        assert!(!is_compressible_file_type("", "application/vnd.rar"));
+
+        // Audio
+        assert!(is_compressible_file_type(".wav", "audio/wav"));
+        assert!(!is_compressible_file_type("", "audio/mpeg"));
+
+        // Unknown
+        assert!(!is_compressible_file_type(
+            ".xyz",
+            "application/octet-stream"
+        ));
+    }
+
+    #[test]
+    fn test_try_gzip_data() {
+        let data = b"hello world hello world hello world";
+        let compressed = try_gzip_data(data);
+        assert!(compressed.is_some());
+        let compressed = compressed.unwrap();
+        // Compressed data should be different from original
+        assert!(!compressed.is_empty());
+
+        // Verify we can decompress it
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_maybe_decompress_gzip() {
+        let data = b"gzip me";
+        let compressed = try_gzip_data(data).unwrap();
+        let decompressed = maybe_decompress_gzip(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+        // Non-gzip input is reported as a decode error (callers fall back to raw).
+        assert!(matches!(
+            maybe_decompress_gzip(data),
+            Err(GunzipError::Decode)
+        ));
+    }
+
+    #[test]
+    fn test_parse_content_disposition_filename() {
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"report.txt\""),
+            Some("report.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("inline; name=\"hello.txt\""),
+            Some("hello.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("name=foo.txt"),
+            Some("foo.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"C:\\\\path\\\\file.jpg\""),
+            Some("file.jpg".to_string())
+        );
+        assert_eq!(parse_content_disposition_filename("inline"), None);
+    }
+
+    #[test]
+    fn test_streaming_chunk_size_respects_configured_read_buffer() {
+        assert_eq!(
+            streaming_chunk_size(4 * 1024 * 1024, 8 * 1024 * 1024),
+            4 * 1024 * 1024
+        );
+        assert_eq!(
+            streaming_chunk_size(32 * 1024, 512 * 1024),
+            DEFAULT_STREAMING_CHUNK_SIZE
+        );
+        assert_eq!(
+            streaming_chunk_size(8 * 1024 * 1024, 128 * 1024),
+            128 * 1024
+        );
+    }
+
+    #[test]
+    fn test_normalize_outgoing_http_url_rewrites_scheme() {
+        let url = normalize_outgoing_http_url(
+            "https",
+            "http://master.example.com:9333/dir/lookup?volumeId=7",
+        )
+        .unwrap();
+        assert_eq!(url, "https://master.example.com:9333/dir/lookup?volumeId=7");
+    }
+
+    #[test]
+    fn test_redirect_request_uses_outgoing_http_scheme() {
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: "collection=photos&readDeleted=true".to_string(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: "volume.internal:8080".to_string(),
+            public_url: "volume.public:8080".to_string(),
+            grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+
+        let response = redirect_request(&info, &target, "https");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "https://volume.internal:8080/3,01637037d6?collection=photos&proxied=true"
+        );
+    }
+
+    /// Defensive coverage for peer-to-peer redirects: if a master ever returns
+    /// `Location.url` already encoded in `host:httpPort.grpcPort` form,
+    /// `redirect_request` must still emit a valid HTTP Location header.
+    #[test]
+    fn test_redirect_request_strips_grpc_port_from_target_url() {
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: String::new(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: "volume.internal:8080.18080".to_string(),
+            public_url: "volume.public:8080.18080".to_string(),
+            grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+
+        let response = redirect_request(&info, &target, "http");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "http://volume.internal:8080/3,01637037d6?proxied=true"
+        );
+    }
+
+    /// Go redirects to `vid,fid` with the extension already stripped: its
+    /// `parseURLPath` case 2 splits `.jpg` off the fid and
+    /// `proxyReqToTargetServer` formats `"%s/%s,%s"` from what is left
+    /// (common.go:224-233, volume_server_handlers_read.go:128-137). Built from
+    /// the real `build_proxy_request_info` so the parse and the Location header
+    /// are covered together.
+    #[test]
+    fn test_redirect_location_drops_extension_for_slash_form() {
+        let info =
+            build_proxy_request_info("/3/01637037d6.jpg", &HeaderMap::new(), "").expect("parses");
+        assert_eq!(info.vid_str, "3");
+        assert_eq!(info.fid_str, "01637037d6");
+
+        let target = VolumeLocation {
+            url: "volume.internal:8080".to_string(),
+            public_url: "volume.public:8080".to_string(),
+            grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let response = redirect_request(&info, &target, "http");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "http://volume.internal:8080/3,01637037d6?proxied=true"
+        );
+    }
+
+    /// Master /dir/lookup often omits publicUrl when empty (Go `json:"publicUrl,omitempty"`).
+    /// Replication must still parse locations or every cross-DC write fails.
+    #[test]
+    fn test_lookup_result_deserializes_without_public_url() {
+        let body = r#"{
+            "volumeOrFileId": "9",
+            "locations": [
+                {"url": "volume-a.example:8080", "dataCenter": "dc-a", "grpcPort": 18080},
+                {"url": "volume-b.example:8080", "dataCenter": "dc-b", "grpcPort": 18080}
+            ]
+        }"#;
+        let result: LookupResult = serde_json::from_str(body).expect("parse lookup JSON");
+        let locations = result.locations.expect("locations");
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].url, "volume-a.example:8080");
+        assert!(locations[0].public_url.is_empty());
+        assert_eq!(locations[0].public_or_url(), "volume-a.example:8080");
+        assert_eq!(locations[0].grpc_port, 18080);
+    }
+
+    /// Regression test for issue #9274.
+    ///
+    /// SeaweedFS encodes a server's gRPC port by appending `.grpcPort` to
+    /// the HTTP port: e.g. `master.local:9333.19333` (mirrors Go's
+    /// `pb.ServerAddress`). When the volume server's `--mserver` flag is
+    /// configured this way, replication writes look up the peer locations
+    /// from the master over HTTP. Prior to the fix, the lookup URL became
+    /// `http://host:9333.19333/dir/lookup?volumeId=...` — an invalid port
+    /// that reqwest rejects with a "builder error", causing every
+    /// replicated write to fail.
+    #[tokio::test]
+    async fn test_lookup_volume_strips_grpc_port_from_master_url() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/dir/lookup",
+            get(
+                |axum::extract::Query(params): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| async move {
+                    assert_eq!(params.get("volumeId").map(String::as_str), Some("31"));
+                    axum::Json(serde_json::json!({
+                        "volumeOrFileId": "31",
+                        "locations": [
+                            {"url": "10.0.0.2:5301", "publicUrl": "10.0.0.2:5301", "grpcPort": 5311}
+                        ]
+                    }))
+                },
+            ),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Mirrors how main.rs receives masters: a `host:httpPort.grpcPort` token.
+        // The grpc-port part is fictitious here (the master is HTTP-only in
+        // this test) — what matters is that the volume server must not pass
+        // it through to reqwest.
+        let master_url = format!("127.0.0.1:{}.{}", addr.port(), 19999);
+        let client = reqwest::Client::new();
+
+        let locations = super::lookup_volume(&client, "http", &master_url, 31)
+            .await
+            .expect("lookup_volume should succeed even when master_url carries a .grpcPort suffix");
+
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].url, "10.0.0.2:5301");
+        assert_eq!(locations[0].grpc_port, 5311);
+
+        server.abort();
+    }
+
+    /// A body streaming `data_size` bytes of `file` from offset 0.
+    fn file_streaming_body(
+        file: &std::fs::File,
+        data_size: usize,
+        chunk_size: usize,
+        expected_checksum: u32,
+    ) -> StreamingBody {
+        StreamingBody {
+            source: Arc::new(crate::storage::volume::NeedleStreamSource::Local(
+                file.try_clone().unwrap(),
+            )),
+            data_offset: 0,
+            data_size: data_size as u32,
+            pos: 0,
+            chunk_size,
+            data_file_access_control: Arc::new(
+                crate::storage::volume::DataFileAccessControl::default(),
+            ),
+            hold_read_lock_for_stream: true,
+            _held_read_lease: None,
+            io_unavailable: Arc::default(),
+            io_errors: Arc::default(),
+            pending: None,
+            buf: bytes::BytesMut::new(),
+            state: None,
+            tracked_bytes: 0,
+            needle_id: NeedleId(7),
+            expected_checksum,
+            crc: CRC(0),
+        }
+    }
+
+    /// Repeated target response headers (e.g. Set-Cookie) must all reach the
+    /// client, as Go's `w.Header().Add` does; only `Server` is dropped.
+    #[tokio::test]
+    async fn test_proxy_request_keeps_repeated_response_headers() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/3,01637037d6",
+            get(|| async {
+                (
+                    axum::response::AppendHeaders([
+                        (header::SET_COOKIE, "a=1"),
+                        (header::SET_COOKIE, "b=2"),
+                        (header::SERVER, "target"),
+                    ]),
+                    "payload",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: String::new(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: String::new(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+
+        let response = proxy_request(&streaming_test_state(), &info, &target).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(cookies, vec!["a=1", "b=2"]);
+        assert!(response.headers().get(header::SERVER).is_none());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"payload");
+
+        server.abort();
+    }
+
+    fn streaming_test_state() -> Arc<VolumeServerState> {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::store::Store;
+        test_state_with_store(Store::new(NeedleMapKind::InMemory))
+    }
+
+    fn test_state_with_store(store: crate::storage::store::Store) -> Arc<VolumeServerState> {
+        use crate::security::{Guard, SigningKey};
+        use crate::server::volume_server::RuntimeMetricsConfig;
+        use std::sync::RwLock;
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
+
+        Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: AtomicBool::new(false),
+            state_version: AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::ZERO,
+            inflight_download_data_timeout: std::time::Duration::ZERO,
+            inflight_upload_bytes: AtomicI64::new(0),
+            inflight_download_bytes: AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
+            is_heartbeating: AtomicBool::new(false),
+            has_master: false,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
+            master_url: String::new(),
+            master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: RwLock::new(RuntimeMetricsConfig::default()),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: false,
+            read_buffer_size_bytes: 4 * 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
+        })
+    }
+
+    /// Go's readNeedleDataInto holds back the last chunk of a whole-needle read
+    /// until the checksum verifies; a streamed needle that fails its CRC must
+    /// likewise end short of the declared length instead of looking complete.
+    #[tokio::test]
+    async fn test_streaming_body_checksum_failure_drops_last_chunk() {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&data).unwrap();
+        let file = tmp.reopen().unwrap();
+
+        let mk_body = |expected_checksum: u32, file: &std::fs::File| {
+            file_streaming_body(file, data.len(), 4096, expected_checksum)
+        };
+
+        // Healthy needle: every byte is delivered.
+        let body = Body::new(mk_body(CRC::new(&data).0, &file));
+        let mut stream = body.into_data_stream();
+        let mut got = 0usize;
+        while let Some(item) = stream.next().await {
+            got += item.expect("healthy stream errored").len();
+        }
+        assert_eq!(got, data.len());
+
+        // Corrupted needle: the last chunk fails the checksum and is never
+        // emitted — the body ends short of the data size.
+        let body = Body::new(mk_body(CRC::new(&data).0 ^ 0xff, &file));
+        let mut stream = body.into_data_stream();
+        let mut got = 0usize;
+        let mut saw_err = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(bytes) => got += bytes.len(),
+                Err(e) => {
+                    assert!(
+                        e.to_string().contains("checksum"),
+                        "unexpected stream error: {e}"
+                    );
+                    saw_err = true;
+                }
+            }
+        }
+        assert!(saw_err, "corrupted stream must fail");
+        assert!(got < data.len(), "delivered {got} of {} bytes", data.len());
+    }
+
+    const TEST_COOKIE: u32 = 0x1234_5678;
+
+    /// State whose store holds volume 1 in `tmp`.
+    fn volume_test_state(tmp: &tempfile::TempDir) -> Arc<VolumeServerState> {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::store::Store;
+        use crate::storage::volume::VolumeSpec;
+
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                crate::config::MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        test_state_with_store(store)
+    }
+
+    /// Write a needle to volume 1 and return its URL path.
+    fn put_test_needle(state: &VolumeServerState, id: u64, data: &[u8]) -> String {
+        put_test_needle_with(state, id, data, |_| {})
+    }
+
+    fn put_test_needle_with(
+        state: &VolumeServerState,
+        id: u64,
+        data: &[u8],
+        prepare: impl FnOnce(&mut Needle),
+    ) -> String {
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(TEST_COOKIE),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        prepare(&mut n);
+        state
+            .store
+            .write()
+            .unwrap()
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
+        format!("/1,{:x}{:08x}", id, TEST_COOKIE)
+    }
+
+    fn watch_reads(
+        ids: &[u64],
+    ) -> (
+        Vec<crate::storage::volume::needle_read_hook::Registration>,
+        std::sync::Arc<[std::sync::atomic::AtomicUsize]>,
+    ) {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::atomic::AtomicUsize;
+        let reads: std::sync::Arc<[AtomicUsize]> = std::sync::Arc::from(
+            std::iter::repeat_with(|| AtomicUsize::new(0))
+                .take(ids.len())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let regs = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let reads = reads.clone();
+                needle_read_hook::register(NeedleId(id), move |_| {
+                    reads[i].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                })
+            })
+            .collect();
+        (regs, reads)
+    }
+
+    fn taken(reads: &std::sync::Arc<[std::sync::atomic::AtomicUsize]>) -> Vec<usize> {
+        use std::sync::atomic::Ordering;
+        reads.iter().map(|c| c.swap(0, Ordering::SeqCst)).collect()
+    }
+
+    fn put_manifest(state: &VolumeServerState, id: u64, json: &str) -> String {
+        put_test_needle_with(state, id, json.as_bytes(), |n| n.set_is_chunk_manifest())
+    }
+
+    fn put_gzip_manifest(state: &VolumeServerState, id: u64, json: &str) -> String {
+        let gz = try_gzip_data(json.as_bytes()).unwrap();
+        put_test_needle_with(state, id, &gz, |n| {
+            n.set_is_chunk_manifest();
+            n.set_is_compressed();
+        })
+    }
+
+    /// Write `data` as a chunk manifest on a fresh EC volume 2. Chunks stay on volume 1.
+    fn put_ec_manifest(
+        state: &VolumeServerState,
+        tmp: &tempfile::TempDir,
+        id: u64,
+        data: &[u8],
+        compressed: bool,
+    ) -> String {
+        use crate::storage::erasure_coding::ec_encoder::write_ec_files;
+        use crate::storage::erasure_coding::ec_shard::ShardId;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::{Volume, VolumeSpec};
+
+        let dir = tmp.path().to_str().unwrap();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(TEST_COOKIE),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        n.set_is_chunk_manifest();
+        if compressed {
+            n.set_is_compressed();
+        }
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+        write_ec_files(dir, dir, "", VolumeId(2), 10, 4).unwrap();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_ec_shards(VolumeId(2), "", &shard_ids)
+            .unwrap();
+        format!("/2,{:x}{:08x}", id, TEST_COOKIE)
+    }
+
+    fn slash_name(stored: &str, name: &str) -> String {
+        let fid = stored.trim_start_matches('/');
+        let (vid, needle) = fid.split_once(',').unwrap();
+        format!("/{vid}/{needle}/{name}")
+    }
+
+    async fn send_read(
+        state: &Arc<VolumeServerState>,
+        method: Method,
+        path: &str,
+        range: Option<&[u8]>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        use tower::ServiceExt;
+        let mut req = Request::builder().method(method).uri(path);
+        if let Some(range) = range {
+            req = req.header(
+                header::RANGE,
+                header::HeaderValue::from_bytes(range).unwrap(),
+            );
+        }
+        let resp = super::super::volume_server::build_public_router(state.clone())
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, headers, body)
+    }
+
+    /// The public router does not accept DELETE requests, so this calls the
+    /// handler directly, the same way the admin router does.
+    async fn send_delete(state: &Arc<VolumeServerState>, path: &str) -> StatusCode {
+        let request = Request::builder()
+            .method(Method::DELETE)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        delete_handler(State(state.clone()), request).await.status()
+    }
+
+    #[test]
+    fn test_not_modified_checks_if_none_match_first() {
+        let n = Needle {
+            last_modified: 1700000000,
+            ..Needle::default()
+        };
+        let (etag, last_modified_str) = etag_and_last_modified(&n);
+        let bare = n.etag();
+        let before = "Tue, 14 Nov 2023 22:12:20 GMT".to_string();
+        let after = "Tue, 14 Nov 2023 22:14:20 GMT".to_string();
+
+        let cases: Vec<(Vec<(axum::http::HeaderName, String)>, bool)> = vec![
+            (vec![(header::IF_NONE_MATCH, format!("\"{bare}\""))], true),
+            (vec![(header::IF_NONE_MATCH, format!("W/\"{bare}\""))], true),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\", \"{bare}\""))],
+                true,
+            ),
+            (vec![(header::IF_NONE_MATCH, "*".into())], true),
+            (vec![(header::IF_NONE_MATCH, "\"x\"".into())], false),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_NONE_MATCH, format!("\"{bare}\"")),
+                ],
+                true,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"{bare},old\""))],
+                false,
+            ),
+            (
+                vec![(header::IF_NONE_MATCH, format!("\"x\",,\"{bare}\""))],
+                true,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "\"x\"".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (
+                vec![
+                    (header::IF_NONE_MATCH, "".into()),
+                    (header::IF_MODIFIED_SINCE, after.clone()),
+                ],
+                false,
+            ),
+            (vec![(header::IF_MODIFIED_SINCE, after)], true),
+            (vec![(header::IF_MODIFIED_SINCE, before)], false),
+        ];
+        for (pairs, want) in cases {
+            let mut headers = HeaderMap::new();
+            for (name, value) in &pairs {
+                headers.append(name, value.parse().unwrap());
+            }
+            assert_eq!(
+                not_modified_response(&n, &headers, &etag, &last_modified_str).is_some(),
+                want,
+                "{pairs:?}"
+            );
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            format!("\"{bare}\"").parse().unwrap(),
+        );
+        let resp = not_modified_response(&n, &headers, &etag, &last_modified_str).unwrap();
+        assert!(resp.headers().contains_key(header::ETAG));
+        assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    }
+
+    /// A GET whose needle read is parked must not hold the store lock: a
+    /// writer, here a real append to the same volume, must get through.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_get_needle_read_runs_off_the_store_lock() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        const ID: u64 = 0x6e7a_0001;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"parked needle".to_vec();
+        let path = put_test_needle(&state, ID, &data);
+
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let _hook = needle_read_hook::register(NeedleId(ID), move |_| {
+            let _ = entered_tx.send(());
+            // Returns once released, or at once when the sender is gone.
+            let _ = release_rx.lock().unwrap().recv();
+        });
+
+        let get = tokio::spawn({
+            let state = state.clone();
+            async move { send_read(&state, Method::GET, &path, None).await }
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(10)))
+            .await
+            .unwrap()
+            .expect("the GET never reached its needle read");
+
+        let try_write_ok = state.store.try_write().is_ok();
+        let (wrote_tx, wrote_rx) = mpsc::channel();
+        std::thread::spawn({
+            let state = state.clone();
+            move || {
+                put_test_needle(&state, ID + 1, b"written meanwhile");
+                let _ = wrote_tx.send(());
+            }
+        });
+        let write_done = tokio::task::spawn_blocking(move || {
+            wrote_rx.recv_timeout(Duration::from_secs(5)).is_ok()
+        })
+        .await
+        .unwrap();
+        drop(release_tx);
+
+        assert!(
+            try_write_ok,
+            "a parked GET read must not hold the store lock"
+        );
+        assert!(write_done, "an append must not wait for a parked GET read");
+        let (status, _, body) = get.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, data);
+    }
+
+    /// A small needle is read from disk once, not once for its meta and
+    /// again in full; a large one never reads its payload before streaming.
+    #[tokio::test]
+    async fn test_get_reads_small_needle_once_and_large_needle_meta_only() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+
+        const SMALL: u64 = 0x6e7a_0101;
+        const LARGE: u64 = 0x6e7a_0102;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let small = b"small needle".to_vec();
+        let large: Vec<u8> = (0..(STREAMING_THRESHOLD as usize + 4096))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let small_path = put_test_needle(&state, SMALL, &small);
+        let large_path = put_test_needle(&state, LARGE, &large);
+
+        let small_reads = Arc::new(Mutex::new(Vec::new()));
+        let large_reads = Arc::new(Mutex::new(Vec::new()));
+        let _small_hook = needle_read_hook::register(NeedleId(SMALL), {
+            let reads = small_reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+        let _large_hook = needle_read_hook::register(NeedleId(LARGE), {
+            let reads = large_reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+
+        let (status, _, body) = send_read(&state, Method::GET, &small_path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, small);
+        let reads = small_reads.lock().unwrap().clone();
+        assert_eq!(reads.len(), 1, "reads of the small needle: {reads:?}");
+
+        let (status, _, body) = send_read(&state, Method::GET, &large_path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, large);
+        let reads = large_reads.lock().unwrap().clone();
+        assert!(
+            !reads.is_empty() && reads.iter().all(|&len| len < 64 * 1024),
+            "the large needle's payload must not be read before streaming: {reads:?}"
+        );
+    }
+
+    /// A delete needs the needle's cookie and its chunk-manifest flag. Both
+    /// are stored in the header and trailer, so the delete must not read the
+    /// payload.
+    #[tokio::test]
+    async fn test_delete_reads_needle_meta_only() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+
+        const ID: u64 = 0x6e7a_0a01;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data: Vec<u8> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+        let path = put_test_needle(&state, ID, &data);
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let _hook = needle_read_hook::register(NeedleId(ID), {
+            let reads = reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+
+        let wrong_cookie = format!("/1,{:x}{:08x}", ID, TEST_COOKIE + 1);
+        assert_eq!(
+            send_delete(&state, &wrong_cookie).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(send_delete(&state, &path).await, StatusCode::ACCEPTED);
+
+        let reads = reads.lock().unwrap().clone();
+        assert!(
+            !reads.is_empty() && reads.iter().all(|&len| len < 4096),
+            "a delete must not read the needle's payload ({} bytes): {reads:?}",
+            data.len()
+        );
+        let (status, _, _) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// HEAD and ranged reads keep answering from the needle meta and the
+    /// data file, and a missing or wrong-cookie needle is still a 404.
+    #[tokio::test]
+    async fn test_get_head_range_and_not_found_after_single_read() {
+        const ID: u64 = 0x6e7a_0201;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let path = put_test_needle(&state, ID, &data);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], data.len().to_string());
+        assert!(headers.contains_key(header::ETAG));
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[10..20]);
+        assert_eq!(
+            headers["Content-Range"],
+            format!("bytes 10-19/{}", data.len())
+        );
+
+        let wrong_cookie = format!("/1,{:x}{:08x}", ID, TEST_COOKIE ^ 1);
+        let (status, _, _) = send_read(&state, Method::GET, &wrong_cookie, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let missing = format!("/1,{:x}{:08x}", ID + 1, TEST_COOKIE);
+        let (status, _, _) = send_read(&state, Method::GET, &missing, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A ranged read served from the data file reports its outcome to the
+    /// io-error streak, like readNeedleDataInto: a finished range clears the
+    /// count a failed meta read left.
+    #[test]
+    fn test_range_from_source_reports_to_io_error_streak() {
+        use std::io::Write;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(tmp.path().join("1.dat"))
+            .unwrap();
+        let data: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        (&file).write_all(&data).unwrap();
+
+        let io_errors = Arc::new(crate::storage::io_error::IoErrorTracker::default());
+        let eio = crate::storage::volume::media_error_for_test();
+        io_errors.check_read_write_error(Some(&eio));
+        io_errors.check_read_write_error(Some(&eio));
+        assert_eq!(io_errors.get_io_error_state().1, 2);
+
+        let info = crate::storage::volume::NeedleStreamInfo {
+            source: crate::storage::volume::NeedleStreamSource::Local(file),
+            data_file_offset: 0,
+            data_size: data.len() as u32,
+            data_file_access_control: Arc::default(),
+            io_unavailable: Arc::default(),
+            io_errors: io_errors.clone(),
+            needle_id: NeedleId(1),
+            checksum: 0,
+        };
+        let resp = handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None);
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(io_errors.get_io_error_state().1, 0);
+    }
+
+    /// Range is read as Go reads it: a byte its parseRange cannot parse is a
+    /// 416, Unicode whitespace around a range is trimmed, an empty value is no
+    /// range, and HEAD ignores it.
+    #[tokio::test]
+    async fn test_get_range_header_is_read_as_go_reads_it() {
+        const PLAIN: u64 = 0x6e7a_0501;
+        const GZIPPED: u64 = 0x6e7a_0502;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"range over a needle".to_vec();
+        let plain_path = put_test_needle(&state, PLAIN, &data);
+        let gz = try_gzip_data(&data).unwrap();
+        let gz_path = put_test_needle_with(&state, GZIPPED, &gz, |n| n.set_is_compressed());
+
+        for path in [&plain_path, &gz_path] {
+            let (status, _, body) =
+                send_read(&state, Method::GET, path, Some(b"bytes=0-1\xff")).await;
+            assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE, "{path}");
+            assert_eq!(body, b"invalid range", "{path}");
+
+            let (status, _, _) =
+                send_read(&state, Method::HEAD, path, Some(b"bytes=0-1\xff")).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+
+            for range in ["bytes=0-1\u{a0}", "bytes=\u{85}0-1"] {
+                let (status, headers, body) =
+                    send_read(&state, Method::GET, path, Some(range.as_bytes())).await;
+                assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{path} {range:?}");
+                assert_eq!(body, &data[..2], "{path} {range:?}");
+                assert_eq!(
+                    headers["Content-Range"],
+                    format!("bytes 0-1/{}", data.len())
+                );
+            }
+
+            let (status, _, body) = send_read(&state, Method::GET, path, Some(b"")).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(body, data, "{path}");
+        }
+    }
+
+    /// An EC needle is served from memory: its GET parses Range like any
+    /// other, and its HEAD ignores it as Go's writeResponseContent does.
+    #[tokio::test]
+    async fn test_ec_needle_range_and_head() {
+        use crate::storage::erasure_coding::ec_encoder::write_ec_files;
+        use crate::storage::erasure_coding::ec_shard::ShardId;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::{Volume, VolumeSpec};
+
+        const ID: u64 = 0x6e7a_0601;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let dir = tmp.path().to_str().unwrap();
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(ID),
+            cookie: Cookie(TEST_COOKIE),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+        write_ec_files(dir, dir, "", VolumeId(2), 10, 4).unwrap();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_ec_shards(VolumeId(2), "", &shard_ids)
+            .unwrap();
+        let path = format!("/2,{:x}{:08x}", ID, TEST_COOKIE);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1\xff")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(body, b"invalid range");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[10..20]);
+
+        for range in [&b"bytes=10-19"[..], b"bytes=0-1\xff"] {
+            let (status, headers, _) = send_read(&state, Method::HEAD, &path, Some(range)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_LENGTH], data.len().to_string());
+        }
+    }
+
+    /// A chunk manifest applies Range to the assembled object. HEAD reports the
+    /// sum of chunk sizes, including when a Range header is present.
+    #[tokio::test]
+    async fn test_chunk_manifest_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"0123456789abcdef";
+        let a = put_test_needle(&state, 0x6e7a_0701, &data[..8]);
+        let b = put_test_needle(&state, 0x6e7a_0702, &data[8..]);
+        let manifest = format!(
+            r#"{{"name":"obj.txt","size":16,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0703, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, data);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=5-12")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[5..13]);
+        assert_eq!(headers["Content-Range"], "bytes 5-12/16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert!(headers.contains_key(header::ETAG));
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-1,14-15")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/byteranges")
+        );
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/16\r\n\r\n01"));
+        assert!(body.contains("Content-Range: bytes 14-15/16\r\n\r\nef"));
+
+        let (status, headers, _) = send_read(&state, Method::GET, &path, Some(b"bytes=16-")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */16");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1\xff")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(body, b"invalid range");
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        let (range_status, range_headers, range_body) =
+            send_read(&state, Method::HEAD, &path, Some(b"bytes=0-9")).await;
+        assert_eq!(range_status, StatusCode::OK);
+        assert!(range_body.is_empty());
+        assert_eq!(range_headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(range_headers["X-File-Store"], "chunked");
+    }
+
+    /// A ranged GET of a chunk manifest fetches only the chunks its ranges
+    /// overlap, as Go's ChunkedFileReader does.
+    #[tokio::test]
+    async fn test_chunk_manifest_range_fetches_only_overlapping_chunks() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const IDS: [u64; 3] = [0x6e7a_0901, 0x6e7a_0902, 0x6e7a_0903];
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"chunk-1:chunk-2:chunk-3:";
+        let fids: Vec<String> = IDS
+            .iter()
+            .zip(data.chunks(8))
+            .map(|(&id, part)| put_test_needle(&state, id, part)[1..].to_string())
+            .collect();
+        let manifest = format!(
+            r#"{{"name":"obj.txt","size":24,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}},{{"fid":"{}","offset":16,"size":8}}]}}"#,
+            fids[0], fids[1], fids[2]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0904, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let reads: Arc<[AtomicUsize; 3]> = Arc::new(Default::default());
+        let _hooks: Vec<_> = IDS
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let reads = reads.clone();
+                needle_read_hook::register(NeedleId(id), move |_| {
+                    reads[i].fetch_add(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        let fetched =
+            || -> [usize; 3] { std::array::from_fn(|i| reads[i].swap(0, Ordering::SeqCst)) };
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, data);
+        assert_eq!(fetched(), [1, 1, 1]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=10-13")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[10..14]);
+        assert_eq!(headers["Content-Range"], "bytes 10-13/24");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert!(headers.contains_key(header::ETAG));
+        assert_eq!(fetched(), [0, 1, 0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=4-11")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[4..12]);
+        assert_eq!(fetched(), [1, 1, 0]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-1,20-23")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/byteranges")
+        );
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/24\r\n\r\nch"));
+        assert!(body.contains("Content-Range: bytes 20-23/24\r\n\r\nk-3:\r\n"));
+        assert_eq!(fetched(), [1, 0, 1]);
+
+        let (status, headers, _) = send_read(&state, Method::GET, &path, Some(b"bytes=24-")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */24");
+        assert_eq!(fetched(), [0, 0, 0]);
+    }
+
+    /// Ranges served from fetched chunks read what assembly would: clamped
+    /// chunks, later ones overwriting earlier ones, and zero-filled gaps.
+    #[tokio::test]
+    async fn test_chunk_manifest_range_matches_assembly() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0905, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0906, b"BBBB");
+        let c = put_test_needle(&state, 0x6e7a_0907, b"CCCC");
+        let manifest = format!(
+            r#"{{"size":12,"chunks":[{{"fid":"{}","offset":0,"size":6}},{{"fid":"{}","offset":4,"size":4}},{{"fid":"{}","offset":10,"size":4}}]}}"#,
+            &a[1..],
+            &b[1..],
+            &c[1..]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0908, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let (status, _, full) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(full, b"AAAABBBB\0\0CCCC");
+        for start in 0..14 {
+            for end in start..14 {
+                let range = format!("bytes={start}-{end}");
+                let (status, _, body) =
+                    send_read(&state, Method::GET, &path, Some(range.as_bytes())).await;
+                assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{range}");
+                assert_eq!(body, &full[start..=end], "{range}");
+            }
+        }
+    }
+
+    /// Regular and EC HEAD of a chunk manifest, plain or gzipped, report the
+    /// sum and do not read chunks. The sum is not the stored needle length.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_sum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a01, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a02, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        assert_ne!(json.len(), 16);
+        let path = put_manifest(&state, 0x6e7a_0a03, &json);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a01, 0x6e7a_0a02]);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let gz_path = put_gzip_manifest(&state, 0x6e7a_0a04, &json);
+        let (status, headers, _) = send_read(&state, Method::HEAD, &gz_path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let cached = format!("{path}?response-cache-control=max-age%3D9");
+        let (status, headers, _) = send_read(&state, Method::HEAD, &cached, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CACHE_CONTROL], "max-age=9");
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        // Regression pins: expansion does not claim these.
+        let raw = put_manifest(&state, 0x6e7a_0a05, "not-json");
+        let (status, headers, body) = send_read(&state, Method::HEAD, &raw, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "8");
+        assert!(!headers.contains_key("X-File-Store"));
+
+        let bypass = format!("{path}?cm=false");
+        let (status, headers, _) = send_read(&state, Method::HEAD, &bypass, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], json.len().to_string());
+        assert!(!headers.contains_key("X-File-Store"));
+    }
+
+    /// An EC manifest used to fetch every chunk on HEAD. It now reports the sum.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_ec() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a11, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a12, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_ec_manifest(&state, &tmp, 0x6e7a_0a13, json.as_bytes(), false);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a11, 0x6e7a_0a12]);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+        drop(_regs);
+
+        // A second mount of volume 2 on the same store fails. Gzip gets its own.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a15, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a16, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let gz = try_gzip_data(json.as_bytes()).unwrap();
+        assert_ne!(gz.len(), 16);
+        let path = put_ec_manifest(&state, &tmp, 0x6e7a_0a17, &gz, true);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a15, 0x6e7a_0a16]);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+    }
+
+    fn solid_png(width: u32, height: u32) -> Vec<u8> {
+        let mut img = image::RgbImage::new(width, height);
+        for px in img.pixels_mut() {
+            *px = image::Rgb([10, 20, 30]);
+        }
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    /// A zero crop is not a transform. A real crop of one PNG still fetches,
+    /// and Range applies to the transformed bytes.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_image() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let first = put_test_needle(&state, 0x6e7a_0a21, b"AAAA");
+        let second = put_test_needle(&state, 0x6e7a_0a22, b"BBBB");
+        let raw = format!(
+            r#"{{"name":"obj.txt","size":8,"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":4,"size":4}}]}}"#,
+            &first[1..],
+            &second[1..]
+        );
+        let stored = put_manifest(&state, 0x6e7a_0a23, &raw);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a21, 0x6e7a_0a22]);
+        for query in ["crop_x2=0&crop_y2=0", "width=0&height=0"] {
+            let url = format!("{}?{query}", slash_name(&stored, "obj.jpg"));
+            let (status, headers, _) = send_read(&state, Method::HEAD, &url, None).await;
+            assert_eq!(status, StatusCode::OK, "{query}");
+            assert_eq!(headers[header::CONTENT_LENGTH], "8", "{query}");
+            assert_eq!(headers["X-File-Store"], "chunked", "{query}");
+            assert_eq!(taken(&reads), vec![0, 0], "{query}");
+        }
+        let partial = format!("{}?crop_x2=0&crop_y2=0", slash_name(&stored, "obj.jpg"));
+        let (status, _, body) = send_read(&state, Method::GET, &partial, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(taken(&reads), vec![1, 0]);
+
+        let png = solid_png(8, 8);
+        let chunk = put_test_needle(&state, 0x6e7a_0a24, &png);
+        let image = format!(
+            r#"{{"name":"obj.txt","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            png.len(),
+            &chunk[1..],
+            png.len()
+        );
+        let stored = put_manifest(&state, 0x6e7a_0a25, &image);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a24]);
+        let crop = format!(
+            "{}?crop_x1=0&crop_y1=0&crop_x2=2&crop_y2=2",
+            slash_name(&stored, "obj.jpg")
+        );
+        let (get_status, _, cropped) = send_read(&state, Method::GET, &crop, None).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_ne!(cropped.len(), png.len(), "the crop must change the length");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::HEAD, &crop, Some(b"bytes=0-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], cropped.len().to_string());
+        assert_eq!(taken(&reads), vec![1]);
+
+        let past = format!("bytes={}-", cropped.len());
+        let (status, _, _) = send_read(&state, Method::GET, &crop, Some(past.as_bytes())).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(taken(&reads), vec![1]);
+    }
+
+    /// A HEAD asking for an image transform needs the payload too: a
+    /// meta-only read could not produce the transformed length.
+    #[tokio::test]
+    async fn test_head_with_image_op_reads_full() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let png = solid_png(8, 8);
+        let stored = put_test_needle(&state, 0x6e7a_0a30, &png);
+        let crop = format!(
+            "{}.png?crop_x1=0&crop_y1=0&crop_x2=2&crop_y2=2",
+            stored
+        );
+
+        let (get_status, _, cropped) = send_read(&state, Method::GET, &crop, None).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_ne!(cropped.len(), png.len(), "the crop must change the length");
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &crop, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], cropped.len().to_string());
+    }
+
+    /// Go takes the transform extension from the URL first — including a fid
+    /// suffix like /vid,fid.png — before the resolved filename's.
+    #[tokio::test]
+    async fn test_chunk_manifest_fid_extension_drives_transform() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let png = solid_png(8, 8);
+        let chunk = put_test_needle(&state, 0x6e7a_0f01, &png);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0f01]);
+        let json = format!(
+            r#"{{"name":"obj","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            png.len(),
+            &chunk[1..],
+            png.len()
+        );
+        let stored = put_manifest(&state, 0x6e7a_0f02, &json);
+        let url = format!("{stored}.png?width=2&height=2");
+        let (status, _, body) = send_read(&state, Method::GET, &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(body.len(), png.len(), "resize must run on the fid suffix");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, headers, head_body) = send_read(&state, Method::HEAD, &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(head_body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], body.len().to_string());
+        assert_eq!(taken(&reads), vec![1]);
+    }
+
+    #[test]
+    fn test_expansion_limit_allows_exactly_two_gib() {
+        assert!(!exceeds_expansion_limit(MAX_EXPANSION_BYTES));
+        assert!(exceeds_expansion_limit(MAX_EXPANSION_BYTES + 1));
+        assert!(!exceeds_expansion_limit(0));
+    }
+
+    #[test]
+    fn test_remote_whole_window_caps_at_visible_window() {
+        let ranges = [HttpRange {
+            start: 100,
+            length: 4,
+        }];
+        let how = remote_read_for(100, 4, Some(&ranges)).unwrap();
+        assert!(matches!(how, RemoteRead::Whole { cap: 4 }));
+        let full = remote_read_for(0, 8, None).unwrap();
+        assert!(matches!(full, RemoteRead::Whole { cap: 8 }));
+        let prefix = remote_read_for(
+            0,
+            8,
+            Some(&[HttpRange {
+                start: 0,
+                length: 4,
+            }]),
+        )
+        .unwrap();
+        assert!(matches!(prefix, RemoteRead::Range { lo: 0, hi: 4 }));
+    }
+
+    #[test]
+    fn test_sum_ranges_size_ignores_non_positive() {
+        let ranges = [
+            HttpRange {
+                start: 0,
+                length: 8,
+            },
+            HttpRange {
+                start: 0,
+                length: 8,
+            },
+            HttpRange {
+                start: 0,
+                length: -1_073_741_824,
+            },
+        ];
+        assert_eq!(sum_ranges_size(&ranges), 16);
+        let over = [
+            HttpRange {
+                start: 0,
+                length: MAX_EXPANSION_BYTES as i64 + 1,
+            },
+            HttpRange {
+                start: 0,
+                length: -1,
+            },
+        ];
+        assert_eq!(sum_ranges_size(&over), MAX_EXPANSION_BYTES as i64 + 1);
+        assert!(exceeds_expansion_limit(sum_ranges_size(&over) as u64));
+    }
+
+    /// `"size"` is not the object length. Holes stay zero. Chunks at or past
+    /// the sum are not read.
+    #[tokio::test]
+    async fn test_chunk_manifest_length_is_sum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+
+        let a = put_test_needle(&state, 0x6e7a_0c01, b"AAAA");
+        let b = put_test_needle(&state, 0x6e7a_0c02, b"BBBB");
+        let omitted = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":4,"size":4}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c03, &omitted);
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAABBBB");
+        assert_eq!(headers[header::CONTENT_LENGTH], "8");
+
+        let padded = format!(
+            r#"{{"size":100,"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &a[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c04, &padded);
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+
+        let gap_b = put_test_needle(&state, 0x6e7a_0c05, b"BBBB");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c01, 0x6e7a_0c05]);
+        let gap = format!(
+            r#"{{"size":100,"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":8,"size":4}}]}}"#,
+            &a[1..],
+            &gap_b[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c06, &gap);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA\0\0\0\0");
+        assert_eq!(taken(&reads), vec![1, 0]);
+
+        let zero = format!(
+            r#"{{"chunks":[{{"fid":"9,0000000a12345678","offset":0,"size":0}},{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &a[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c07, &zero);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+
+        let empty = put_manifest(&state, 0x6e7a_0c08, r#"{"size":5,"chunks":[]}"#);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &empty, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "0");
+        assert!(body.is_empty());
+        let (status, headers, body) = send_read(&state, Method::GET, &empty, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "0");
+        assert!(body.is_empty());
+        let (status, headers, _) = send_read(&state, Method::GET, &empty, Some(b"bytes=0-0")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */0");
+
+        let ten = put_test_needle(&state, 0x6e7a_0c09, b"0123456789");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c09]);
+        let dup = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}}]}}"#,
+            &ten[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c0a, &dup);
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// A negative suffix must not shrink the covered length under the sum.
+    /// Duplicate ranges stay an empty 200 and read nothing.
+    #[tokio::test]
+    async fn test_chunk_manifest_negative_suffix_stays_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let ten = put_test_needle(&state, 0x6e7a_0c41, b"0123456789");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c41]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}}]}}"#,
+            &ten[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c42, &json);
+        let (status, headers, body) = send_read(
+            &state,
+            Method::GET,
+            &path,
+            Some(b"bytes=0-7,0-7,--1073741824"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// A negative field is rejected before any read, including a chunk the
+    /// range does not overlap.
+    #[tokio::test]
+    async fn test_chunk_manifest_negative_reads_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let inside = put_test_needle(&state, 0x6e7a_0c11, b"AAAA");
+        let outside = put_test_needle(&state, 0x6e7a_0c12, b"BBBB");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c11, 0x6e7a_0c12]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":100,"size":4}},{{"fid":"9,0000000b12345678","offset":0,"size":-1}}]}}"#,
+            &inside[1..],
+            &outside[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c13, &json);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let body = String::from_utf8(body).unwrap();
+        assert!(
+            body.contains("invalid negative chunk offset/size"),
+            "{body}"
+        );
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let (status, _, _) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(taken(&reads), vec![0, 0]);
+    }
+
+    /// The cap is the bytes that would be buffered. Exactly 2 GiB is allowed
+    /// by the predicate. This test does not allocate that buffer.
+    #[tokio::test]
+    async fn test_chunk_manifest_cap_is_buffered_bytes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let one = put_test_needle(&state, 0x6e7a_0c21, b"Z");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c21]);
+        let big = MAX_EXPANSION_BYTES + 1;
+        let json = format!(
+            r#"{{"size":1,"chunks":[{{"fid":"{}","offset":0,"size":{big}}}]}}"#,
+            &one[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c22, &json);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], big.to_string());
+        assert!(body.is_empty());
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"Z\0\0\0");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-")).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let overflow = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":1}},{{"fid":"9,0000000c12345678","offset":0,"size":9223372036854775807}},{{"fid":"9,0000000d12345678","offset":0,"size":9223372036854775807}},{{"fid":"9,0000000e12345678","offset":0,"size":9223372036854775807}}]}}"#,
+            &one[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c23, &overflow);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// Two open ranges on an `i64::MAX` object must not wrap the covered
+    /// length. The saturated sum equals the total, which is over the buffer
+    /// cap, so this is 413 and reads nothing.
+    #[tokio::test]
+    async fn test_chunk_manifest_open_ranges_do_not_wrap() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let one = put_test_needle(&state, 0x6e7a_0c31, b"Z");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c31]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            &one[1..],
+            i64::MAX
+        );
+        let path = put_manifest(&state, 0x6e7a_0c32, &json);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-,0-")).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    #[derive(Clone)]
+    enum PeerMode {
+        /// Honor a single `bytes=lo-hi` range. No Range header returns `chunk`.
+        Honor {
+            chunk: Vec<u8>,
+        },
+        Always200 {
+            body: Vec<u8>,
+        },
+        Status(u16),
+        /// 206 whose Content-Range starts at 0, whatever Range was asked.
+        WrongStart {
+            body: Vec<u8>,
+        },
+        /// 206, correct start, body shorter than the asked span.
+        Short {
+            body: Vec<u8>,
+        },
+        /// 206, correct start, body longer than the asked span.
+        Long {
+            body: Vec<u8>,
+        },
+        /// 206 with no Content-Range header.
+        NoContentRange {
+            body: Vec<u8>,
+        },
+    }
+
+    struct PeerHit {
+        range: Option<String>,
+    }
+
+    async fn spawn_chunk_peer(
+        mode: std::sync::Arc<std::sync::Mutex<PeerMode>>,
+        hits: std::sync::Arc<std::sync::Mutex<Vec<PeerHit>>>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        use axum::routing::get;
+        let app = axum::Router::new().route(
+            "/{*rest}",
+            get(move |headers: HeaderMap| {
+                let mode = mode.clone();
+                let hits = hits.clone();
+                async move {
+                    let range = headers
+                        .get(header::RANGE)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string());
+                    hits.lock().unwrap().push(PeerHit {
+                        range: range.clone(),
+                    });
+                    let mode = mode.lock().unwrap().clone();
+                    match mode {
+                        PeerMode::Honor { chunk } => match range {
+                            None => (StatusCode::OK, chunk).into_response(),
+                            Some(spec) => {
+                                let nums = spec.trim_start_matches("bytes=");
+                                let (lo, hi) = nums.split_once('-').unwrap();
+                                let lo: usize = lo.parse().unwrap();
+                                let hi: usize = hi.parse().unwrap();
+                                let body = chunk[lo..=hi].to_vec();
+                                let cr = format!("bytes {lo}-{hi}/{}", chunk.len());
+                                (
+                                    StatusCode::PARTIAL_CONTENT,
+                                    [(header::CONTENT_RANGE, cr)],
+                                    body,
+                                )
+                                    .into_response()
+                            }
+                        },
+                        PeerMode::Always200 { body } => (StatusCode::OK, body).into_response(),
+                        PeerMode::Status(code) => {
+                            StatusCode::from_u16(code).unwrap().into_response()
+                        }
+                        PeerMode::WrongStart { body } => (
+                            StatusCode::PARTIAL_CONTENT,
+                            [(
+                                header::CONTENT_RANGE,
+                                format!("bytes 0-{}/8", body.len().saturating_sub(1)),
+                            )],
+                            body,
+                        )
+                            .into_response(),
+                        PeerMode::Short { body } => {
+                            let spec = range.unwrap();
+                            let nums = spec.trim_start_matches("bytes=");
+                            let (lo, hi) = nums.split_once('-').unwrap();
+                            (
+                                StatusCode::PARTIAL_CONTENT,
+                                [(header::CONTENT_RANGE, format!("bytes {lo}-{hi}/8"))],
+                                body,
+                            )
+                                .into_response()
+                        }
+                        PeerMode::Long { body } => {
+                            let spec = range.unwrap();
+                            let nums = spec.trim_start_matches("bytes=");
+                            let (lo, hi) = nums.split_once('-').unwrap();
+                            (
+                                StatusCode::PARTIAL_CONTENT,
+                                [(header::CONTENT_RANGE, format!("bytes {lo}-{hi}/8"))],
+                                body,
+                            )
+                                .into_response()
+                        }
+                        PeerMode::NoContentRange { body } => {
+                            (StatusCode::PARTIAL_CONTENT, body).into_response()
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (addr, handle)
+    }
+
+    async fn spawn_lookup(peer: std::net::SocketAddr) -> String {
+        use axum::routing::get;
+        let app = axum::Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                axum::Json(serde_json::json!({
+                    "volumeOrFileId": "9",
+                    "locations": [{ "url": peer.to_string() }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    fn remote_manifest_state(
+        tmp: &tempfile::TempDir,
+        master_url: String,
+    ) -> Arc<VolumeServerState> {
+        let mut state = volume_test_state(tmp);
+        let s = Arc::get_mut(&mut state).unwrap();
+        // Empty self_url makes `url.contains(self_url)` true for every peer.
+        s.self_url = "198.51.100.8:8080".to_string();
+        s.master_url = master_url.clone();
+        s.current_master_url = tokio::sync::RwLock::new(master_url);
+        state
+    }
+
+    /// Remote overlap is one bounded Range, indexed from `lo`. Local short
+    /// needles still zero-fill.
+    #[tokio::test]
+    async fn test_chunk_manifest_remote_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mode = std::sync::Arc::new(std::sync::Mutex::new(PeerMode::Honor {
+            chunk: b"ABCDEFGH".to_vec(),
+        }));
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (peer, peer_handle) = spawn_chunk_peer(mode.clone(), hits.clone()).await;
+        let master = spawn_lookup(peer).await;
+        let state = remote_manifest_state(&tmp, master);
+        let local = put_test_needle(&state, 0x6e7a_0d01, b"0123456789");
+        let remote_fid = "9,0000000a12345678";
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}},{{"fid":"{remote_fid}","offset":10,"size":8}}]}}"#,
+            &local[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0d02, &json);
+
+        hits.lock().unwrap().clear();
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=12-15")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"CDEF");
+        assert_eq!(headers["Content-Range"], "bytes 12-15/18");
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].range.as_deref(), Some("bytes=2-5"));
+
+        hits.lock().unwrap().clear();
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=11-12,15-16")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        let text = String::from_utf8(body).unwrap();
+        assert!(
+            text.contains("Content-Range: bytes 11-12/18\r\n\r\nBC"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Content-Range: bytes 15-16/18\r\n\r\nFG"),
+            "{text}"
+        );
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1, "disjoint ranges share one span");
+        assert_eq!(seen[0].range.as_deref(), Some("bytes=1-6"));
+
+        hits.lock().unwrap().clear();
+        let whole = put_manifest(
+            &state,
+            0x6e7a_0d03,
+            &format!(r#"{{"chunks":[{{"fid":"{remote_fid}","offset":0,"size":8}}]}}"#),
+        );
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-7")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCDEFGH");
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].range, None);
+
+        *mode.lock().unwrap() = PeerMode::Short {
+            body: b"AB".to_vec(),
+        };
+        hits.lock().unwrap().clear();
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"AB\0\0");
+
+        *mode.lock().unwrap() = PeerMode::Long {
+            body: b"ABCDEFGH".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCD");
+
+        *mode.lock().unwrap() = PeerMode::WrongStart {
+            body: b"ABCD".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::NoContentRange {
+            body: b"CDEF".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::Always200 {
+            body: b"ABCDEFGH".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::Status(416);
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=1-2")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        peer_handle.abort();
+    }
+
+    /// A local needle shorter than declared zero-fills. The remote 416 above
+    /// is the intentional divergence.
+    #[tokio::test]
+    async fn test_chunk_manifest_local_short_needle_zero_fills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let short = put_test_needle(&state, 0x6e7a_0d11, b"AB");
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &short[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0d12, &json);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=1-2")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"B\0");
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AB\0\0");
+    }
+
+    /// A short range of a huge remote chunk is fetched. The span between two
+    /// distant ranges is not, once it would buffer more than 2 GiB.
+    #[tokio::test]
+    async fn test_chunk_manifest_remote_span_over_cap_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mode = std::sync::Arc::new(std::sync::Mutex::new(PeerMode::Honor {
+            chunk: b"ABCDEFGH".to_vec(),
+        }));
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (peer, peer_handle) = spawn_chunk_peer(mode, hits.clone()).await;
+        let master = spawn_lookup(peer).await;
+        let state = remote_manifest_state(&tmp, master);
+        let big = MAX_EXPANSION_BYTES + 1;
+        let path = put_manifest(
+            &state,
+            0x6e7a_0e01,
+            &format!(r#"{{"chunks":[{{"fid":"9,0000000a12345678","offset":0,"size":{big}}}]}}"#),
+        );
+
+        hits.lock().unwrap().clear();
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCD");
+        assert_eq!(hits.lock().unwrap().len(), 1);
+
+        hits.lock().unwrap().clear();
+        let last = big - 1;
+        let wide = format!("bytes=0-0,{last}-{last}");
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(wide.as_bytes())).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert!(hits.lock().unwrap().is_empty());
+        peer_handle.abort();
+    }
+
+    /// An illegal manifest MIME is not a legal header value. HEAD reaches the
+    /// header builder, so both HEAD and GET fall back instead of panicking.
+    #[tokio::test]
+    async fn test_chunk_manifest_illegal_mime_falls_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let chunk = put_test_needle(&state, 0x6e7a_0e11, b"AAAA");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0e11]);
+        let json = format!(
+            r#"{{"name":"obj.txt","mime":"text/plain\n","size":4,"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &chunk[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0e12, &json);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
+        assert_eq!(taken(&reads), vec![1]);
+    }
+
+    /// A proxied read forwards request headers as raw bytes, as Go does: a
+    /// Range the target cannot parse must reach it and come back as its 416.
+    #[tokio::test]
+    async fn test_proxy_forwards_non_ascii_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target_state = volume_test_state(&tmp);
+        let path = put_test_needle(&target_state, 0x6e7a_0801, b"proxied payload");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = super::super::volume_server::build_public_router(target_state);
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let proxy_state = test_state_with_store(crate::storage::store::Store::new(
+            crate::storage::needle_map::NeedleMapKind::InMemory,
+        ));
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: addr.to_string(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::RANGE,
+            header::HeaderValue::from_bytes(b"bytes=0-1\xff").unwrap(),
+        );
+        let info = build_proxy_request_info(&path, &headers, "").unwrap();
+
+        let resp = proxy_request(&proxy_state, &info, &target).await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"invalid range");
+
+        server.abort();
+    }
+
+    /// A large compressed needle cannot be streamed as stored: its meta is
+    /// read first, then the payload exactly once.
+    #[tokio::test]
+    async fn test_get_large_compressed_needle_reads_payload_once() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+
+        const ID: u64 = 0x6e7a_0301;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        // Incompressible, so the stored gzip stays above the stream threshold.
+        let mut x = 0x2545_f491_u32;
+        let plain: Vec<u8> = (0..(STREAMING_THRESHOLD as usize + 64 * 1024))
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        let gz = try_gzip_data(&plain).unwrap();
+        assert!(gz.len() > STREAMING_THRESHOLD as usize);
+        let path = put_test_needle_with(&state, ID, &gz, |n| n.set_is_compressed());
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let _hook = needle_read_hook::register(NeedleId(ID), {
+            let reads = reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, plain);
+        let reads = reads.lock().unwrap().clone();
+        let full = reads.iter().filter(|&&len| len >= gz.len()).count();
+        assert_eq!(full, 1, "reads: {reads:?}");
+    }
+
+    /// The single full read still verifies the needle checksum.
+    #[tokio::test]
+    async fn test_get_small_needle_with_bad_checksum_fails() {
+        const ID: u64 = 0x6e7a_0401;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"checksummed payload, to be corrupted".to_vec();
+        let path = put_test_needle(&state, ID, &data);
+
+        let dat = tmp.path().join("1.dat");
+        let mut bytes = std::fs::read(&dat).unwrap();
+        let at = bytes
+            .windows(data.len())
+            .position(|w| w == data.as_slice())
+            .unwrap();
+        bytes[at] ^= 0xff;
+        std::fs::write(&dat, bytes).unwrap();
+
+        let (status, _, _) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Each chunk reuses the buffer of the previous frame once that frame has
+    /// been dropped, instead of allocating a new one.
+    #[tokio::test]
+    async fn test_streaming_body_reuses_its_chunk_buffer() {
+        use std::io::Write;
+
+        const CHUNK: usize = 4096;
+        let data: Vec<u8> = (0..3 * CHUNK + 100).map(|i| (i % 251) as u8).collect();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&data).unwrap();
+        let file = tmp.reopen().unwrap();
+        let mut body = file_streaming_body(&file, data.len(), CHUNK, CRC::new(&data).0);
+
+        let mut got = Vec::new();
+        while let Some(frame) = std::future::poll_fn(|cx| {
+            http_body::Body::poll_frame(std::pin::Pin::new(&mut body), cx)
+        })
+        .await
+        {
+            let chunk = frame.unwrap().into_data().unwrap();
+            got.extend_from_slice(&chunk);
+            assert!(
+                !body.buf.try_reclaim(CHUNK),
+                "the buffer must be the one the live frame points into"
+            );
+            drop(chunk);
+            assert!(
+                body.buf.try_reclaim(CHUNK),
+                "the chunk buffer did not come back from the read"
+            );
+        }
+        assert_eq!(got, data);
+    }
+
+    /// Start a GET and return its body unread.
+    async fn open_read(state: &Arc<VolumeServerState>, path: &str) -> Body {
+        use tower::ServiceExt;
+        let resp = super::super::volume_server::build_public_router(state.clone())
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        resp.into_body()
+    }
+
+    /// A needle that streams in several chunks.
+    fn multi_chunk_data() -> Vec<u8> {
+        (0..9 * 1024 * 1024 + 123)
+            .map(|i| (i % 251) as u8)
+            .collect()
+    }
+
+    /// With -hasSlowRead=false a stream holds a data-file lease for its whole
+    /// life, and a writer waits for that lease under store.write(). Producing
+    /// a frame must not need the store lock, or the two wait on each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_streaming_body_progresses_while_a_writer_holds_the_store() {
+        use futures::StreamExt;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        const ID: u64 = 0x6e7a_0501;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        assert!(!state.has_slow_read);
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let mut got = stream.next().await.unwrap().unwrap().to_vec();
+        assert!(
+            got.len() < data.len(),
+            "the needle must span several frames"
+        );
+
+        // The writer takes store.write(), then parks on the stream's lease.
+        let (wrote_tx, wrote_rx) = mpsc::channel();
+        std::thread::spawn({
+            let state = state.clone();
+            move || {
+                put_test_needle(&state, ID + 1, b"written meanwhile");
+                let _ = wrote_tx.send(());
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while state.store.try_read().is_ok() {
+            assert!(Instant::now() < deadline, "the writer never took the store");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        // Drained off the runtime: a frame stuck on the store lock would block
+        // its thread, which a tokio timeout cannot interrupt.
+        let (done_tx, done_rx) = mpsc::channel();
+        let rt = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            let rest = rt.block_on(async move {
+                let mut rest = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    rest.extend_from_slice(&chunk?);
+                }
+                Ok::<_, axum::Error>(rest)
+            });
+            let _ = done_tx.send(rest);
+        });
+        let rest =
+            tokio::task::spawn_blocking(move || done_rx.recv_timeout(Duration::from_secs(10)))
+                .await
+                .unwrap()
+                .expect("the stream stalled behind a writer holding the store");
+        got.extend(rest.unwrap());
+        assert_eq!(got, data);
+
+        let wrote = tokio::task::spawn_blocking(move || {
+            wrote_rx.recv_timeout(Duration::from_secs(10)).is_ok()
+        })
+        .await
+        .unwrap();
+        assert!(wrote, "the writer must get the lease once the stream ends");
+    }
+
+    /// With -hasSlowRead a writer gets the data-file lease between chunks; if
+    /// its failed append leaves the volume unavailable, the stream must stop.
+    #[tokio::test]
+    async fn test_streaming_body_stops_once_the_volume_becomes_unavailable() {
+        use futures::StreamExt;
+
+        const ID: u64 = 0x6e7a_0701;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().has_slow_read = true;
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(
+            first.len() < data.len(),
+            "the needle must span several frames"
+        );
+
+        {
+            let store = state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(true);
+            vol.fail_next_truncate_for_test(true);
+            let mut n = Needle {
+                id: NeedleId(ID + 1),
+                cookie: Cookie(TEST_COOKIE),
+                data: b"never-landed".to_vec(),
+                data_size: 12,
+                ..Needle::default()
+            };
+            store
+                .write_volume_needle(VolumeId(1), &mut n, true)
+                .unwrap_err();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(false);
+            vol.fail_next_truncate_for_test(false);
+            assert!(vol.unavailable_error().is_some());
+        }
+
+        match stream.next().await {
+            Some(Err(err)) => assert!(
+                err.to_string().contains("volume is unavailable"),
+                "unexpected stream error: {err}"
+            ),
+            other => panic!(
+                "the stream kept reading an unavailable volume: {:?}",
+                other.map(|chunk| chunk.map(|c| c.len()))
+            ),
+        }
+    }
+
+    /// A leased stream blocks the compaction commit instead of racing the
+    /// file swap, and still delivers the needle's bytes; the commit goes
+    /// through once the stream releases its read lease.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_streaming_body_survives_a_vacuum_that_moves_the_needle() {
+        use futures::StreamExt;
+
+        const FILLER: u64 = 0x6e7a_0601;
+        const ID: u64 = 0x6e7a_0602;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        put_test_needle(&state, FILLER, &[7u8; 4096]);
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+        let mut filler = Needle {
+            id: NeedleId(FILLER),
+            cookie: Cookie(TEST_COOKIE),
+            ..Needle::default()
+        };
+        state
+            .store
+            .write()
+            .unwrap()
+            .delete_volume_needle(VolumeId(1), &mut filler)
+            .unwrap();
+        let data_offset = || {
+            let mut plan = state
+                .store
+                .read()
+                .unwrap()
+                .needle_read_plan(VolumeId(1), NeedleId(ID), false)
+                .unwrap();
+            let mut n = Needle::default();
+            plan.read_meta(&mut n).unwrap();
+            plan.into_stream_info(&n).data_file_offset
+        };
+        let before = data_offset();
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let mut got = stream.next().await.unwrap().unwrap().to_vec();
+        assert!(
+            got.len() < data.len(),
+            "the needle must span several frames"
+        );
+        {
+            let mut store = state.store.write().unwrap();
+            store.compact_volume(VolumeId(1), 0, 0, |_| true).unwrap();
+            let err = store.commit_compact_volume(VolumeId(1)).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(crate::storage::volume::COMMIT_WAITS_FOR_READS),
+                "the leased stream must hold the commit back: {err}"
+            );
+        }
+
+        while let Some(chunk) = stream.next().await {
+            got.extend_from_slice(&chunk.expect("the stream failed across a vacuum"));
+        }
+        assert_eq!(got, data);
+        drop(stream);
+
+        {
+            let mut store = state.store.write().unwrap();
+            store.commit_compact_volume(VolumeId(1)).unwrap();
+        }
+        assert_ne!(
+            data_offset(),
+            before,
+            "the vacuum moves the needle once the stream drains"
+        );
+    }
+
+    /// Issue #801: an fsync upload takes the per-volume worker so its sync is
+    /// shared across the batch (Go's `writeNeedle2` split); a non-fsync write,
+    /// or an fsync write landing while the server is stopping, takes the
+    /// synchronous path instead.
+    #[tokio::test]
+    async fn test_write_upload_needle_routes_fsync_to_queue() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        assert!(
+            state
+                .write_queue
+                .set(crate::server::write_queue::WriteQueue::new(
+                    state.clone(),
+                    128,
+                    crate::server::write_queue::SyncBatchOption::default(),
+                ))
+                .is_ok()
+        );
+        let queue = state.write_queue.get().unwrap();
+
+        let needle = |id: u64| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                data: vec![id as u8; 8],
+                data_size: 8,
+                ..Needle::default()
+            };
+            n.checksum = CRC::new(&n.data);
+            n
+        };
+
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b01), true)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
+
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b02), false)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
+
+        *state.is_stopping.write().unwrap() = true;
+        write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b03), true)
+            .await
+            .unwrap();
+        assert_eq!(queue.submits_for_test(), 1);
+    }
+}

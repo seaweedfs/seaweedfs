@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -19,12 +18,10 @@ import (
 
 // partitionFetchResult holds the result of fetching from a single partition
 type partitionFetchResult struct {
-	topicIndex     int
-	partitionIndex int
-	recordBatch    []byte
-	highWaterMark  int64
-	errorCode      int16
-	fetchDuration  time.Duration
+	recordBatch   []byte
+	highWaterMark int64
+	errorCode     int16
+	fetchDuration time.Duration
 }
 
 func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -55,7 +52,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			for _, partition := range topic.Partitions {
 				hwm, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
 				if err != nil {
-					continue
+					// HWM lookup failed (e.g. partition deactivated between consumer
+					// sessions). Assume data may be available rather than blocking in
+					// the long-poll loop — the actual fetch will determine the truth.
+					return true
 				}
 				// Normalize fetch offset
 				effectiveOffset := partition.FetchOffset
@@ -880,75 +880,6 @@ type SchematizedRecord struct {
 	Value []byte
 }
 
-// createEmptyRecordBatch creates an empty Kafka record batch using the new parser
-func (h *Handler) createEmptyRecordBatch(baseOffset int64) []byte {
-	// Use the new record batch creation function with no compression
-	emptyRecords := []byte{}
-	batch, err := CreateRecordBatch(baseOffset, emptyRecords, compression.None)
-	if err != nil {
-		// Fallback to manual creation if there's an error
-		return h.createEmptyRecordBatchManual(baseOffset)
-	}
-	return batch
-}
-
-// createEmptyRecordBatchManual creates an empty Kafka record batch manually (fallback)
-func (h *Handler) createEmptyRecordBatchManual(baseOffset int64) []byte {
-	// Create a minimal empty record batch
-	batch := make([]byte, 0, 61) // Standard record batch header size
-
-	// Base offset (8 bytes)
-	baseOffsetBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
-	batch = append(batch, baseOffsetBytes...)
-
-	// Batch length (4 bytes) - will be filled at the end
-	lengthPlaceholder := len(batch)
-	batch = append(batch, 0, 0, 0, 0)
-
-	// Partition leader epoch (4 bytes) - 0 for simplicity
-	batch = append(batch, 0, 0, 0, 0)
-
-	// Magic byte (1 byte) - version 2
-	batch = append(batch, 2)
-
-	// CRC32 (4 bytes) - placeholder, should be calculated
-	batch = append(batch, 0, 0, 0, 0)
-
-	// Attributes (2 bytes) - no compression, no transactional
-	batch = append(batch, 0, 0)
-
-	// Last offset delta (4 bytes) - 0 for empty batch
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
-
-	// First timestamp (8 bytes) - current time
-	timestamp := time.Now().UnixMilli()
-	timestampBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(timestampBytes, uint64(timestamp))
-	batch = append(batch, timestampBytes...)
-
-	// Max timestamp (8 bytes) - same as first for empty batch
-	batch = append(batch, timestampBytes...)
-
-	// Producer ID (8 bytes) - -1 for non-transactional
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
-
-	// Producer Epoch (2 bytes) - -1 for non-transactional
-	batch = append(batch, 0xFF, 0xFF)
-
-	// Base Sequence (4 bytes) - -1 for non-transactional
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
-
-	// Record count (4 bytes) - 0 for empty batch
-	batch = append(batch, 0, 0, 0, 0)
-
-	// Fill in the batch length
-	batchLength := len(batch) - 12 // Exclude base offset and length field itself
-	binary.BigEndian.PutUint32(batch[lengthPlaceholder:lengthPlaceholder+4], uint32(batchLength))
-
-	return batch
-}
-
 // isSchematizedTopic checks if a topic uses schema management
 func (h *Handler) isSchematizedTopic(topicName string) bool {
 	// System topics (_schemas, __consumer_offsets, etc.) should NEVER use schema encoding
@@ -1004,70 +935,7 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 	return false
 }
 
-// getSchemaMetadataForTopic retrieves schema metadata for a topic
-func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string, error) {
-	if !h.IsSchemaEnabled() {
-		return nil, fmt.Errorf("schema management not enabled")
-	}
-
-	// Try multiple approaches to get schema metadata from Schema Registry
-
-	// 1. Try to get schema from registry using topic name as subject
-	metadata, err := h.getSchemaMetadataFromRegistry(topicName)
-	if err == nil {
-		return metadata, nil
-	}
-
-	// 2. Try with -value suffix (common pattern)
-	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-value")
-	if err == nil {
-		return metadata, nil
-	}
-
-	// 3. Try with -key suffix
-	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-key")
-	if err == nil {
-		return metadata, nil
-	}
-
-	return nil, fmt.Errorf("no schema found in registry for topic %s (tried %s, %s-value, %s-key)", topicName, topicName, topicName, topicName)
-}
-
 // getSchemaMetadataFromRegistry retrieves schema metadata from Schema Registry
-func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]string, error) {
-	if h.schemaManager == nil {
-		return nil, fmt.Errorf("schema manager not available")
-	}
-
-	// Get latest schema for the subject
-	cachedSchema, err := h.schemaManager.GetLatestSchema(subject)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get schema for subject %s: %w", subject, err)
-	}
-
-	// Since we retrieved schema from registry, ensure topic config is updated
-	// Extract topic name from subject (remove -key or -value suffix if present)
-	topicName := h.extractTopicFromSubject(subject)
-	if topicName != "" {
-		h.ensureTopicSchemaFromLatestSchema(topicName, cachedSchema)
-	}
-
-	// Build metadata map
-	// Detect format from schema content
-	// Simple format detection - assume Avro for now
-	format := schema.FormatAvro
-
-	metadata := map[string]string{
-		"schema_id":      fmt.Sprintf("%d", cachedSchema.LatestID),
-		"schema_format":  format.String(),
-		"schema_subject": subject,
-		"schema_version": fmt.Sprintf("%d", cachedSchema.Version),
-		"schema_content": cachedSchema.Schema,
-	}
-
-	return metadata, nil
-}
-
 // ensureTopicSchemaFromLatestSchema ensures topic configuration is updated when latest schema is retrieved
 func (h *Handler) ensureTopicSchemaFromLatestSchema(topicName string, latestSchema *schema.CachedSubject) {
 	if latestSchema == nil {
@@ -1087,19 +955,6 @@ func (h *Handler) ensureTopicSchemaFromLatestSchema(topicName string, latestSche
 
 	// Use existing function to handle the schema update
 	h.ensureTopicSchemaFromRegistryCache(topicName, cachedSchema)
-}
-
-// extractTopicFromSubject extracts the topic name from a schema registry subject
-func (h *Handler) extractTopicFromSubject(subject string) string {
-	// Remove common suffixes used in schema registry
-	if strings.HasSuffix(subject, "-value") {
-		return strings.TrimSuffix(subject, "-value")
-	}
-	if strings.HasSuffix(subject, "-key") {
-		return strings.TrimSuffix(subject, "-key")
-	}
-	// If no suffix, assume subject name is the topic name
-	return subject
 }
 
 // ensureTopicKeySchemaFromLatestSchema ensures topic configuration is updated when key schema is retrieved

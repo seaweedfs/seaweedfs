@@ -37,7 +37,7 @@
             "Action": ["sts:AssumeRoleWithWebIdentity"],
             "Condition": {
               "StringEquals": {
-                "roles": "s3-admin"
+                "oidc:roles": "s3-admin"
               }
             }
           }
@@ -60,7 +60,7 @@
             "Action": ["sts:AssumeRoleWithWebIdentity"],
             "Condition": {
               "StringEquals": {
-                "roles": "s3-read-only"
+                "oidc:roles": "s3-read-only"
               }
             }
           }
@@ -83,7 +83,7 @@
             "Action": ["sts:AssumeRoleWithWebIdentity"],
             "Condition": {
               "StringEquals": {
-                "roles": "s3-read-write"
+                "oidc:roles": "s3-read-write"
               }
             }
           }

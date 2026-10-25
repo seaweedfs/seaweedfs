@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testCredGen = NewCredentialGenerator([]byte("test-signing-key"))
+
 // TestSTSSessionClaimsToSessionInfo tests the ToSessionInfo conversion
 func TestSTSSessionClaimsToSessionInfo(t *testing.T) {
 	sessionId := "test-session-123"
@@ -24,7 +26,7 @@ func TestSTSSessionClaimsToSessionInfo(t *testing.T) {
 		WithIdentityProvider("oidc", "user-123", "https://issuer.example.com").
 		WithMaxDuration(time.Hour)
 
-	sessionInfo := claims.ToSessionInfo()
+	sessionInfo := claims.ToSessionInfo(testCredGen)
 
 	// Verify basic claims are converted
 	assert.Equal(t, sessionId, sessionInfo.SessionId)
@@ -52,11 +54,11 @@ func TestSTSSessionClaimsToSessionInfoCredentialGeneration(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Second)
 
 	claims1 := NewSTSSessionClaims(sessionId, issuer, expiresAt)
-	sessionInfo1 := claims1.ToSessionInfo()
+	sessionInfo1 := claims1.ToSessionInfo(testCredGen)
 
 	// Create another claims object with the same session ID and expiration
 	claims2 := NewSTSSessionClaims(sessionId, issuer, expiresAt)
-	sessionInfo2 := claims2.ToSessionInfo()
+	sessionInfo2 := claims2.ToSessionInfo(testCredGen)
 
 	// Verify that both have valid credentials
 	assert.NotNil(t, sessionInfo1.Credentials, "credentials should be populated")
@@ -104,7 +106,7 @@ func TestSTSSessionClaimsToSessionInfoPreservesAllFields(t *testing.T) {
 		WithRequestContext(requestContext).
 		WithMaxDuration(2 * time.Hour)
 
-	sessionInfo := claims.ToSessionInfo()
+	sessionInfo := claims.ToSessionInfo(testCredGen)
 
 	// Verify all fields are preserved
 	assert.Equal(t, sessionId, sessionInfo.SessionId)
@@ -130,7 +132,7 @@ func TestSTSSessionClaimsToSessionInfoEmptyFields(t *testing.T) {
 	// Create claims with minimal fields
 	claims := NewSTSSessionClaims(sessionId, issuer, expiresAt)
 
-	sessionInfo := claims.ToSessionInfo()
+	sessionInfo := claims.ToSessionInfo(testCredGen)
 
 	// Verify basic fields are preserved
 	assert.Equal(t, sessionId, sessionInfo.SessionId)
@@ -177,7 +179,7 @@ func TestSTSSessionClaimsToSessionInfoCredentialExpiration(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			claims := NewSTSSessionClaims(sessionId, issuer, tc.expiresAt)
-			sessionInfo := claims.ToSessionInfo()
+			sessionInfo := claims.ToSessionInfo(testCredGen)
 
 			assert.NotNil(t, sessionInfo.Credentials)
 			// Check expiration within 1 second due to timing precision (symmetric tolerance)
@@ -211,7 +213,7 @@ func TestSessionInfoIntegration(t *testing.T) {
 		WithIdentityProvider("test-provider", "user-id", "https://test.example.com")
 
 	// Convert to SessionInfo
-	sessionInfo := claims.ToSessionInfo()
+	sessionInfo := claims.ToSessionInfo(testCredGen)
 
 	// Verify the session info has valid credentials
 	assert.NotNil(t, sessionInfo.Credentials)
@@ -238,7 +240,7 @@ func TestSecretAccessKeyDeterminism(t *testing.T) {
 	expiration := time.Now().Add(time.Hour)
 
 	// Generate credentials multiple times with the same session ID
-	credGen := NewCredentialGenerator()
+	credGen := testCredGen
 
 	cred1, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
 	assert.NoError(t, err)

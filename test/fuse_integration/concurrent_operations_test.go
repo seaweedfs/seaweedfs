@@ -177,8 +177,10 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 			defer wg.Done()
 
 			for j := 0; j < 10; j++ {
-				_, err := os.ReadFile(mountPath)
-				if err != nil {
+				if err := retryTransientFUSE(func() error {
+					_, e := os.ReadFile(mountPath)
+					return e
+				}); err != nil {
 					addError(fmt.Errorf("reader %d: %v", readerID, err))
 					return
 				}
@@ -196,8 +198,9 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 
 			for j := 0; j < 5; j++ {
 				newData := bytes.Repeat([]byte(fmt.Sprintf("WRITER%d", writerID)), 1000)
-				err := os.WriteFile(mountPath, newData, 0644)
-				if err != nil {
+				if err := retryTransientFUSE(func() error {
+					return os.WriteFile(mountPath, newData, 0644)
+				}); err != nil {
 					addError(fmt.Errorf("writer %d: %v", writerID, err))
 					return
 				}
@@ -211,6 +214,21 @@ func testConcurrentReadWrite(t *testing.T, framework *FuseTestFramework) {
 
 	// Verify file still exists and is readable
 	framework.AssertFileExists(filename)
+}
+
+// retryTransientFUSE retries op a few times before giving up. A concurrent
+// truncating overwrite can leave a short-lived dentry/cache window where the
+// entry is momentarily invisible (ENOENT) to another opener; the last error is
+// returned so a genuine, persistent failure still surfaces.
+func retryTransientFUSE(op func() error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = op(); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
 }
 
 // testConcurrentDirectoryOperations tests concurrent directory operations
@@ -249,11 +267,18 @@ func testConcurrentDirectoryOperations(t *testing.T, framework *FuseTestFramewor
 					return
 				}
 
-				// Create file in subdirectory
+				// Create file in subdirectory with retry for transient FUSE errors
 				testFile := filepath.Join(subDir, "test.txt")
 				content := []byte(fmt.Sprintf("Worker %d, Subdir %d", workerID, i))
-				if err := os.WriteFile(testFile, content, 0644); err != nil {
-					addError(fmt.Errorf("worker %d file %d: %v", workerID, i, err))
+				var writeErr error
+				for attempt := 0; attempt < 3; attempt++ {
+					if writeErr = os.WriteFile(testFile, content, 0644); writeErr == nil {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if writeErr != nil {
+					addError(fmt.Errorf("worker %d file %d: %v", workerID, i, writeErr))
 					return
 				}
 			}
@@ -386,18 +411,20 @@ func testHighFrequencySmallWrites(t *testing.T, framework *FuseTestFramework) {
 	// Perform many small writes
 	numWrites := 1000
 	writeSize := 100
+	totalSize := int64(0)
 
 	for i := 0; i < numWrites; i++ {
 		data := []byte(fmt.Sprintf("Write %04d: %s\n", i, bytes.Repeat([]byte("x"), writeSize-20)))
 		_, err := file.Write(data)
 		require.NoError(t, err)
+		totalSize += int64(len(data))
 	}
 	file.Close()
 
 	// Verify file size
 	info, err := os.Stat(mountPath)
 	require.NoError(t, err)
-	assert.Equal(t, totalSize, info.Size())
+	assert.Equal(t, totalSize, info.Size(), "file size should match total bytes written")
 }
 
 // testManySmallFiles tests creating many small files

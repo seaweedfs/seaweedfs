@@ -64,51 +64,6 @@ func AutoRegisterUI(registerFunc func(*types.UIRegistry)) {
 	glog.V(1).Infof("Auto-registered task UI provider")
 }
 
-// SetDefaultCapabilitiesFromRegistry sets the default worker capabilities
-// based on all registered task types
-func SetDefaultCapabilitiesFromRegistry() {
-	typesRegistry := GetGlobalTypesRegistry()
-
-	var capabilities []types.TaskType
-	for taskType := range typesRegistry.GetAllDetectors() {
-		capabilities = append(capabilities, taskType)
-	}
-
-	// Set the default capabilities in the types package
-	types.SetDefaultCapabilities(capabilities)
-
-	glog.V(1).Infof("Set default worker capabilities from registry: %v", capabilities)
-}
-
-// BuildMaintenancePolicyFromTasks creates a maintenance policy with default configurations
-// from all registered tasks using their UI providers
-func BuildMaintenancePolicyFromTasks() *types.MaintenancePolicy {
-	policy := types.NewMaintenancePolicy()
-
-	// Get all registered task types from the UI registry
-	uiRegistry := GetGlobalUIRegistry()
-
-	for taskType, provider := range uiRegistry.GetAllProviders() {
-		// Get the default configuration from the UI provider
-		defaultConfig := provider.GetCurrentConfig()
-
-		// Set the configuration in the policy
-		policy.SetTaskConfig(taskType, defaultConfig)
-
-		glog.V(3).Infof("Added default config for task type %s to policy", taskType)
-	}
-
-	glog.V(2).Infof("Built maintenance policy with %d task configurations", len(policy.TaskConfigs))
-	return policy
-}
-
-// SetMaintenancePolicyFromTasks sets the default maintenance policy from registered tasks
-func SetMaintenancePolicyFromTasks() {
-	// This function can be called to initialize the policy from registered tasks
-	// For now, we'll just log that this should be called by the integration layer
-	glog.V(1).Infof("SetMaintenancePolicyFromTasks called - policy should be built by the integration layer")
-}
-
 // TaskRegistry manages task factories
 type TaskRegistry struct {
 	factories map[types.TaskType]types.TaskFactory

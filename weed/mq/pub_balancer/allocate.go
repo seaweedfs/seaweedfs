@@ -6,9 +6,29 @@ import (
 
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
+
+// findActiveBroker looks up a broker in activeBrokers, tolerating address
+// encoding differences (plain host:port vs host:port.grpcPort) by falling
+// back to an Equals-based scan when the direct key lookup misses.
+func findActiveBroker(activeBrokers cmap.ConcurrentMap[string, *BrokerStats], addr string) (string, bool) {
+	if addr == "" {
+		return "", false
+	}
+	if _, found := activeBrokers.Get(addr); found {
+		return addr, true
+	}
+	target := pb.ServerAddress(addr)
+	for item := range activeBrokers.IterBuffered() {
+		if pb.ServerAddress(item.Key).Equals(target) {
+			return item.Key, true
+		}
+	}
+	return "", false
+}
 
 func AllocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// divide the ring into partitions
@@ -91,15 +111,21 @@ func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *
 		count := 0
 		if assignment.LeaderBroker == "" {
 			count++
-		} else if _, found := activeBrokers.Get(assignment.LeaderBroker); !found {
+		} else if canonical, found := findActiveBroker(activeBrokers, assignment.LeaderBroker); !found {
 			assignment.LeaderBroker = ""
 			count++
+		} else if canonical != assignment.LeaderBroker {
+			assignment.LeaderBroker = canonical
+			hasChanges = true
 		}
 		if assignment.FollowerBroker == "" {
 			count++
-		} else if _, found := activeBrokers.Get(assignment.FollowerBroker); !found {
+		} else if canonical, found := findActiveBroker(activeBrokers, assignment.FollowerBroker); !found {
 			assignment.FollowerBroker = ""
 			count++
+		} else if canonical != assignment.FollowerBroker {
+			assignment.FollowerBroker = canonical
+			hasChanges = true
 		}
 
 		if count > 0 {

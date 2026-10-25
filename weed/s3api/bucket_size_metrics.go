@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -27,15 +29,20 @@ type CollectionInfo struct {
 	FileCount        float64
 	DeleteCount      float64
 	DeletedByteCount float64
-	Size             float64 // Logical size (deduplicated by volume ID)
+	Size             float64 // Single-copy volume size (deduplicated by volume ID), still counting un-vacuumed garbage
 	PhysicalSize     float64 // Physical size (including all replicas)
 	VolumeCount      int     // Logical volume count (deduplicated by volume ID)
 }
 
-// volumeKey uniquely identifies a volume for deduplication
-type volumeKey struct {
-	collection string
-	volumeId   uint32
+// LogicalSize is the live data size: single-copy volume size minus the
+// un-vacuumed deleted/overwritten bytes. Quota enforcement and the
+// bucket_size_bytes metric use this so vacuum lag never counts against a
+// bucket, matching the usage figure the Admin UI shows.
+func (c *CollectionInfo) LogicalSize() float64 {
+	if c.Size < c.DeletedByteCount {
+		return 0
+	}
+	return c.Size - c.DeletedByteCount
 }
 
 // startBucketSizeMetricsLoop periodically collects bucket size metrics and updates Prometheus gauges.
@@ -92,7 +99,7 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 	}
 
 	// Get list of buckets
-	buckets, err := s3a.listBucketNames(ctx)
+	buckets, err := s3a.listBuckets(ctx)
 	if err != nil {
 		glog.V(2).Infof("Failed to list buckets for size metrics: %v", err)
 		return
@@ -100,15 +107,61 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 
 	// Map collections to buckets and update metrics
 	for _, bucket := range buckets {
-		collection := s3a.getCollectionName(bucket)
+		collection := s3a.getCollectionName(bucket.Name)
 		if info, found := collectionInfos[collection]; found {
-			stats.UpdateBucketSizeMetrics(bucket, info.Size, info.PhysicalSize, info.FileCount)
+			stats.UpdateBucketSizeMetrics(bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
 			glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
-				bucket, info.Size, info.PhysicalSize, info.FileCount)
+				bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
 		} else {
 			// Bucket exists but no collection data (empty bucket)
-			stats.UpdateBucketSizeMetrics(bucket, 0, 0, 0)
+			stats.UpdateBucketSizeMetrics(bucket.Name, 0, 0, 0)
 		}
+	}
+
+	s3a.enforceBucketQuotas(ctx, buckets, collectionInfos)
+}
+
+// enforceBucketQuotas flips each bucket's read-only flag to match its quota,
+// rewriting filer.conf only when a flag changes.
+func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo) {
+	if len(s3a.option.Filers) == 0 {
+		return
+	}
+
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
+		return
+	}
+
+	changed := false
+	for _, bucket := range buckets {
+		var size float64
+		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
+			size = info.LogicalSize()
+		}
+		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
+		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
+		stats.UpdateBucketQuotaMetrics(bucket.Name, float64(bucket.Quota), readOnly)
+		if flipped {
+			changed = true
+			glog.V(0).Infof("bucket %s quota enforcement: readOnly=%v (size=%.0f quota=%d)", bucket.Name, readOnly, size, bucket.Quota)
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := fc.ToText(&buf); err != nil {
+		glog.Errorf("serialize filer.conf for quota enforcement: %v", err)
+		return
+	}
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(ctx, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+	}); err != nil {
+		glog.Errorf("save filer.conf for quota enforcement: %v", err)
 	}
 }
 
@@ -125,18 +178,28 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 		masterMap[string(master)] = master
 	}
 
-	// Connect to any available master and get volume list with topology
+	// Ask the master to summarise. Adding this up here instead would mean
+	// being sent every volume in the cluster once a minute.
 	collectionInfos := make(map[string]*CollectionInfo)
 
 	err := pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, err := client.CollectionStatistics(ctx, &master_pb.CollectionStatisticsRequest{})
 		if err != nil {
-			return fmt.Errorf("failed to get volume list: %w", err)
+			return fmt.Errorf("failed to get collection statistics: %w", err)
 		}
-		if resp == nil || resp.TopologyInfo == nil {
-			return fmt.Errorf("empty topology info from master")
+		if resp == nil {
+			return fmt.Errorf("empty collection statistics from master")
 		}
-		collectCollectionInfoFromTopology(resp.TopologyInfo, collectionInfos)
+		for _, c := range resp.Collections {
+			collectionInfos[c.Collection] = &CollectionInfo{
+				FileCount:        float64(c.FileCount),
+				DeleteCount:      float64(c.DeleteCount),
+				DeletedByteCount: float64(c.DeletedByteCount),
+				Size:             float64(c.Size),
+				PhysicalSize:     float64(c.PhysicalSize),
+				VolumeCount:      int(c.VolumeCount),
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -146,9 +209,9 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 	return collectionInfos, nil
 }
 
-// listBucketNames returns a list of all bucket names using pagination
-func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
-	var buckets []string
+// listBuckets returns all bucket directory entries using pagination.
+func (s3a *S3ApiServer) listBuckets(ctx context.Context) ([]*filer_pb.Entry, error) {
+	var buckets []*filer_pb.Entry
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		lastFileName := ""
@@ -180,7 +243,7 @@ func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
 					if resp.Entry.IsDirectory {
 						// Skip .uploads and other hidden directories
 						if !strings.HasPrefix(resp.Entry.Name, ".") {
-							buckets = append(buckets, resp.Entry.Name)
+							buckets = append(buckets, resp.Entry)
 						}
 					}
 				}
@@ -195,48 +258,4 @@ func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
 	})
 
 	return buckets, err
-}
-
-// collectCollectionInfoFromTopology extracts collection info from topology.
-// Deduplicates by volume ID to correctly handle missing replicas.
-// Unlike dividing by copyCount (which would give wrong results if replicas are missing),
-// we track seen volume IDs and only count each volume once for logical size/count.
-func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
-	// Track which volumes we've already seen to deduplicate by volume ID
-	seenVolumes := make(map[volumeKey]bool)
-
-	for _, dc := range t.DataCenterInfos {
-		for _, r := range dc.RackInfos {
-			for _, dn := range r.DataNodeInfos {
-				for _, diskInfo := range dn.DiskInfos {
-					for _, vi := range diskInfo.VolumeInfos {
-						c := vi.Collection
-						cif, found := collectionInfos[c]
-						if !found {
-							cif = &CollectionInfo{}
-							collectionInfos[c] = cif
-						}
-
-						// Always add to physical size (all replicas)
-						cif.PhysicalSize += float64(vi.Size)
-
-						// Check if we've already counted this volume for logical stats
-						key := volumeKey{collection: c, volumeId: vi.Id}
-						if seenVolumes[key] {
-							// Already counted this volume, skip logical stats
-							continue
-						}
-						seenVolumes[key] = true
-
-						// First time seeing this volume - add to logical stats
-						cif.Size += float64(vi.Size)
-						cif.FileCount += float64(vi.FileCount)
-						cif.DeleteCount += float64(vi.DeleteCount)
-						cif.DeletedByteCount += float64(vi.DeletedByteCount)
-						cif.VolumeCount++
-					}
-				}
-			}
-		}
-	}
 }

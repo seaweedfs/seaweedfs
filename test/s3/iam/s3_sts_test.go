@@ -74,25 +74,33 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
-	t.Run("missing_role_arn", func(t *testing.T) {
+	t.Run("missing_role_arn_invalid_jwt_still_rejected", func(t *testing.T) {
+		// Missing RoleArn is no longer a fast-fail at the HTTP layer:
+		// claim-based policy mode (Phase 3b) advertises RoleArn as
+		// optional so the STS service can derive the assumed-role ARN
+		// from the configured policy claim. Validation now happens at
+		// the STS layer once the JWT is parsed. With a bogus token the
+		// JWT parse fails first, so the request is still rejected —
+		// just with the JWT-parse error code instead of MissingParameter.
 		resp, err := callSTSAPI(t, url.Values{
 			"Action":           {"AssumeRoleWithWebIdentity"},
 			"WebIdentityToken": {"fake-jwt-token"},
 			"RoleSessionName":  {"test-session"},
-			// RoleArn is missing
+			// RoleArn omitted on purpose.
 		})
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
 		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
-			"Should fail without RoleArn")
+			"Should still fail when RoleArn is missing and the JWT is invalid")
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		var errResp STSErrorTestResponse
 		err = xml.Unmarshal(body, &errResp)
 		require.NoError(t, err, "Failed to parse error response: %s", string(body))
-		assert.Equal(t, "MissingParameter", errResp.Error.Code)
+		assert.NotEqual(t, "MissingParameter", errResp.Error.Code,
+			"missing RoleArn alone must no longer surface as MissingParameter")
 	})
 
 	t.Run("missing_role_session_name", func(t *testing.T) {

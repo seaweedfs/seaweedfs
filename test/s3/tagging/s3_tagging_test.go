@@ -3,7 +3,11 @@ package tagging
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,20 +23,41 @@ import (
 
 // S3TestConfig holds configuration for S3 tests
 type S3TestConfig struct {
-	Endpoint      string
-	AccessKey     string
-	SecretKey     string
-	Region        string
-	BucketPrefix  string
-	UseSSL        bool
-	SkipVerifySSL bool
+	Endpoint       string
+	MasterEndpoint string
+	AccessKey      string
+	SecretKey      string
+	Region         string
+	BucketPrefix   string
+	UseSSL         bool
+	SkipVerifySSL  bool
 }
+
+// allTestBucketPrefixes lists every prefix used to name buckets in this test suite.
+// cleanupAllTestBuckets uses it to find stale buckets from prior tests/runs.
+// Add the new prefix here whenever a test introduces one.
+var allTestBucketPrefixes = []string{
+	"test-tagging-",
+}
+
+// testRunID uniquely identifies this `go test` invocation. It's embedded into
+// every bucket created by createTestBucket (after defaultConfig.BucketPrefix), so
+// the cleanup sweep can scope deletions to buckets that belong to this run only —
+// letting concurrent runs against the same endpoints coexist without tearing each
+// other's buckets down. Stale buckets left behind by a crashed prior run share the
+// family prefix but a different runID, so they are not swept here; `make clean`
+// (or wiping the data dir) is the right cleanup for that case.
+var testRunID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
 // getDefaultConfig returns a fresh instance of the default test configuration
 func getDefaultConfig() *S3TestConfig {
 	endpoint := os.Getenv("S3_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "http://localhost:8333" // Default SeaweedFS S3 port
+	}
+	masterEndpoint := os.Getenv("MASTER_ENDPOINT")
+	if masterEndpoint == "" {
+		masterEndpoint = "http://127.0.0.1:9333" // Default SeaweedFS master HTTP port
 	}
 	accessKey := os.Getenv("S3_ACCESS_KEY")
 	if accessKey == "" {
@@ -43,13 +68,14 @@ func getDefaultConfig() *S3TestConfig {
 		secretKey = "some_secret_key1"
 	}
 	return &S3TestConfig{
-		Endpoint:      endpoint,
-		AccessKey:     accessKey,
-		SecretKey:     secretKey,
-		Region:        "us-east-1",
-		BucketPrefix:  "test-tagging-",
-		UseSSL:        false,
-		SkipVerifySSL: true,
+		Endpoint:       endpoint,
+		MasterEndpoint: masterEndpoint,
+		AccessKey:      accessKey,
+		SecretKey:      secretKey,
+		Region:         "us-east-1",
+		BucketPrefix:   "test-tagging-",
+		UseSSL:         false,
+		SkipVerifySSL:  true,
 	}
 }
 
@@ -76,7 +102,12 @@ func getS3Client(t *testing.T) *s3.Client {
 // createTestBucket creates a test bucket with a unique name
 func createTestBucket(t *testing.T, client *s3.Client) string {
 	defaultConfig := getDefaultConfig()
-	bucketName := fmt.Sprintf("%s%d", defaultConfig.BucketPrefix, time.Now().UnixNano())
+	// Sweep stale buckets from prior tests in this run so each new bucket starts
+	// on a fresh slate. Without this, leaked collection volumes accumulate on a
+	// single `weed mini` data node and the suite eventually exhausts its volume
+	// slots.
+	cleanupAllTestBuckets(t, client)
+	bucketName := fmt.Sprintf("%sr%s-%d", defaultConfig.BucketPrefix, testRunID, time.Now().UnixNano())
 
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
@@ -89,8 +120,16 @@ func createTestBucket(t *testing.T, client *s3.Client) string {
 	return bucketName
 }
 
-// cleanupTestBucket removes the test bucket and all its contents
+// cleanupTestBucket removes the test bucket and all its contents.
+// Always force-drops the underlying collection at the master afterwards: the S3
+// DeleteBucket can race with concurrent `volume_grow` requests (the warm-create
+// batch keeps registering volumes after the master's collection-delete sweep has
+// already snapshotted the layout), so 1-3 volumes per bucket can leak. Without
+// this, running enough tests on a single `weed mini` server exhausts the data
+// node's volume slots and every subsequent PutObject 500s with "Not enough data
+// nodes found".
 func cleanupTestBucket(t *testing.T, client *s3.Client, bucketName string) {
+	defer forceDeleteCollection(t, bucketName)
 	// First, delete all objects in the bucket
 	listResp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucketName),
@@ -140,6 +179,67 @@ func cleanupTestBucket(t *testing.T, client *s3.Client, bucketName string) {
 	})
 	if err != nil {
 		t.Logf("Warning: failed to delete bucket %s: %v", bucketName, err)
+	}
+}
+
+// forceDeleteCollection drops the SeaweedFS collection backing a test bucket via the master's
+// /col/delete admin endpoint. The S3 layer normally drops the collection on DeleteBucket, but
+// in-flight `volume_grow` requests can register volumes after the master's first sweep, leaking
+// them. Best-effort: a 400 from the master means the collection was already gone, which is the
+// success path and not an error.
+func forceDeleteCollection(t *testing.T, bucketName string) {
+	masterEndpoint := getDefaultConfig().MasterEndpoint
+	if masterEndpoint == "" {
+		return
+	}
+	endpoint := strings.TrimRight(masterEndpoint, "/") + "/col/delete?collection=" + url.QueryEscape(bucketName)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Logf("Note: building collection delete request for %s failed: %v", bucketName, err)
+		return
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Logf("Note: force-delete collection %s failed: %v", bucketName, err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		t.Logf("Force-deleted collection %s", bucketName)
+	case http.StatusBadRequest:
+		// Collection already gone - normal path when DeleteBucket succeeded.
+	default:
+		t.Logf("Note: force-delete collection %s returned HTTP %d", bucketName, resp.StatusCode)
+	}
+}
+
+// cleanupAllTestBuckets cleans up any leftover test buckets owned by this run
+// (prefix + runID marker). Called from createTestBucket before each new bucket
+// creation so a single `weed mini` data node does not exhaust its volume slots
+// after many tests.
+func cleanupAllTestBuckets(t *testing.T, client *s3.Client) {
+	listResp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
+	if err != nil {
+		t.Logf("Warning: failed to list buckets for cleanup: %v", err)
+		return
+	}
+
+	for _, bucket := range listResp.Buckets {
+		if bucket.Name == nil {
+			continue
+		}
+		for _, prefix := range allTestBucketPrefixes {
+			// Only sweep buckets owned by this run (prefix + runID marker).
+			// Buckets from concurrent runs carry a different runID and are skipped.
+			if strings.HasPrefix(*bucket.Name, prefix+"r"+testRunID+"-") {
+				t.Logf("Cleaning up leftover test bucket: %s", *bucket.Name)
+				cleanupTestBucket(t, client, *bucket.Name)
+				break
+			}
+		}
 	}
 }
 

@@ -3,12 +3,16 @@ package grpc
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 func (store *IamGrpcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	var config *iam_pb.S3ApiConfiguration
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
 		if err != nil {
 			return err
@@ -20,7 +24,7 @@ func (store *IamGrpcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Api
 }
 
 func (store *IamGrpcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.PutConfiguration(ctx, &iam_pb.PutConfigurationRequest{
 			Configuration: config,
 		})
@@ -29,7 +33,7 @@ func (store *IamGrpcStore) SaveConfiguration(ctx context.Context, config *iam_pb
 }
 
 func (store *IamGrpcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.CreateUser(ctx, &iam_pb.CreateUserRequest{
 			Identity: identity,
 		})
@@ -39,7 +43,7 @@ func (store *IamGrpcStore) CreateUser(ctx context.Context, identity *iam_pb.Iden
 
 func (store *IamGrpcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
 	var identity *iam_pb.Identity
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{
 			Username: username,
 		})
@@ -49,11 +53,17 @@ func (store *IamGrpcStore) GetUser(ctx context.Context, username string) (*iam_p
 		identity = resp.Identity
 		return nil
 	})
+	// The filer-side handler returns gRPC NotFound when the user is absent;
+	// translate back to the package sentinel so callers can use
+	// errors.Is(err, credential.ErrUserNotFound) uniformly across stores.
+	if err != nil && status.Code(err) == codes.NotFound {
+		return nil, credential.ErrUserNotFound
+	}
 	return identity, err
 }
 
 func (store *IamGrpcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
 			Username: username,
 			Identity: identity,
@@ -63,7 +73,7 @@ func (store *IamGrpcStore) UpdateUser(ctx context.Context, username string, iden
 }
 
 func (store *IamGrpcStore) DeleteUser(ctx context.Context, username string) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.DeleteUser(ctx, &iam_pb.DeleteUserRequest{
 			Username: username,
 		})
@@ -73,7 +83,7 @@ func (store *IamGrpcStore) DeleteUser(ctx context.Context, username string) erro
 
 func (store *IamGrpcStore) ListUsers(ctx context.Context) ([]string, error) {
 	var usernames []string
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.ListUsers(ctx, &iam_pb.ListUsersRequest{})
 		if err != nil {
 			return err
@@ -86,7 +96,7 @@ func (store *IamGrpcStore) ListUsers(ctx context.Context) ([]string, error) {
 
 func (store *IamGrpcStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
 	var identity *iam_pb.Identity
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		resp, err := client.GetUserByAccessKey(ctx, &iam_pb.GetUserByAccessKeyRequest{
 			AccessKey: accessKey,
 		})
@@ -100,7 +110,7 @@ func (store *IamGrpcStore) GetUserByAccessKey(ctx context.Context, accessKey str
 }
 
 func (store *IamGrpcStore) CreateAccessKey(ctx context.Context, username string, credential *iam_pb.Credential) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	return store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.CreateAccessKey(ctx, &iam_pb.CreateAccessKeyRequest{
 			Username:   username,
 			Credential: credential,
@@ -110,11 +120,81 @@ func (store *IamGrpcStore) CreateAccessKey(ctx context.Context, username string,
 }
 
 func (store *IamGrpcStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+	err := store.withIamClient(ctx, func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.DeleteAccessKey(ctx, &iam_pb.DeleteAccessKeyRequest{
 			Username:  username,
 			AccessKey: accessKey,
 		})
 		return err
 	})
+	// The filer-side handler returns gRPC NotFound when the user or the key is
+	// absent; translate back to the sentinel so callers can use
+	// errors.Is(err, credential.ErrAccessKeyNotFound) uniformly across stores.
+	if err != nil && status.Code(err) == codes.NotFound {
+		return credential.ErrAccessKeyNotFound
+	}
+	return err
+}
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *IamGrpcStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	// Get current user
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	// Verify policy exists
+	policy, err := store.GetPolicy(ctx, policyName)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			// Already attached - return success (idempotent)
+			return nil
+		}
+	}
+
+	identity.PolicyNames = append(identity.PolicyNames, policyName)
+	return store.UpdateUser(ctx, username, identity)
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *IamGrpcStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	var newPolicies []string
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicies = append(newPolicies, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	identity.PolicyNames = newPolicies
+	return store.UpdateUser(ctx, username, identity)
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *IamGrpcStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	return identity.PolicyNames, nil
 }

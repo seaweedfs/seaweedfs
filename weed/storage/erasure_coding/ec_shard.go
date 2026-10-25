@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -43,6 +44,23 @@ func AllShardIds() []ShardId {
 	return res
 }
 
+// Compares a pair of EcShardInfo protos for sorting.
+func CmpEcShardInfo(a, b *volume_server_pb.EcShardInfo) int {
+	if a.VolumeId < b.VolumeId {
+		return -1
+	}
+	if a.VolumeId > b.VolumeId {
+		return 1
+	}
+	if a.ShardId < b.ShardId {
+		return -1
+	}
+	if a.ShardId > b.ShardId {
+		return 1
+	}
+	return 0
+}
+
 type EcVolumeShard struct {
 	VolumeId    needle.VolumeId
 	ShardId     ShardId
@@ -60,7 +78,7 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 	baseFileName := v.FileName()
 
 	// open ecd file
-	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
+	if v.ecdFile, e = backend.OpenVolumeFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY); e != nil {
 		if e == os.ErrNotExist || strings.Contains(e.Error(), "no such file or directory") {
 			return nil, os.ErrNotExist
 		}
@@ -117,9 +135,13 @@ func EcShardBaseFileName(collection string, id int) (baseFileName string) {
 }
 
 func (shard *EcVolumeShard) Close() {
+	// Close the fd but do NOT nil it: a reader resolves the shard under the
+	// ecVolumesLock then calls ReadAt after the lock is released, so a
+	// concurrent eviction that nils the field would race that read and panic.
+	// Leaving the field set means ReadAt hits a closed fd and returns a clean
+	// error (the caller recovers from parity) with no data race on the field.
 	if shard.ecdFile != nil {
 		_ = shard.ecdFile.Close()
-		shard.ecdFile = nil
 	}
 }
 

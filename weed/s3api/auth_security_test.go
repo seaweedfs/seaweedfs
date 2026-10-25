@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,11 @@ func signRawHTTPRequest(ctx context.Context, req *http.Request, accessKey, secre
 }
 
 func TestReproIssue7912(t *testing.T) {
+	// This test asserts behavior for a config with no anonymous identity; reset
+	// the shared in-memory store so a leaked anonymous identity from another test
+	// does not satisfy the unsigned-streaming auth path.
+	resetMemoryStore()
+
 	// Create a temporary s3.json
 	configContent := `{
   "identities": [
@@ -66,7 +72,7 @@ func TestReproIssue7912(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, "memory")
+	iam := NewIdentityAccessManagementWithStore(option, nil, "memory")
 
 	assert.True(t, iam.isEnabled(), "Auth should be enabled")
 
@@ -129,6 +135,24 @@ func TestReproIssue7912(t *testing.T) {
 		// No Authorization header
 		_, errCode3 := iam.AuthSignatureOnly(r3)
 		assert.Equal(t, s3err.ErrAccessDenied, errCode3, "AuthSignatureOnly should be denied with unsigned streaming if no auth header")
+
+		// Verify fix: client-supplied X-SeaweedFS-Principal / X-SeaweedFS-Session-Token
+		// headers must be stripped, otherwise a signed low-privilege caller could
+		// spoof the principal that downstream IAM authorization (e.g. S3Tables
+		// CreateTableBucket) evaluates against.
+		r4 := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
+		r4.Host = "localhost:8333"
+		err = signRawHTTPRequest(context.Background(), r4, "readonly_access_key", "readonly_secret_key", "us-east-1")
+		require.NoError(t, err)
+		// Attacker injects these headers after signing; they are not part of
+		// SignedHeaders, so SigV4 verification still passes.
+		r4.Header.Set(s3_constants.SeaweedFSPrincipalHeader, "arn:aws:iam::123456789012:root")
+		r4.Header.Set(s3_constants.SeaweedFSSessionTokenHeader, "spoofed-session-token")
+
+		_, errCode4 := iam.AuthSignatureOnly(r4)
+		assert.Equal(t, s3err.ErrNone, errCode4)
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSPrincipalHeader), "client-supplied X-SeaweedFS-Principal must be stripped")
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSSessionTokenHeader), "client-supplied X-SeaweedFS-Session-Token must be stripped")
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {
@@ -178,4 +202,464 @@ func TestReproIssue7912(t *testing.T) {
 		assert.Equal(t, s3err.ErrAccessDenied, errCode, "Should be denied with unsigned streaming if no auth header")
 		assert.Nil(t, identity)
 	})
+}
+
+// TestAnonymousStreamingUnsignedUpload is a regression test for issue #9725.
+// Modern botocore/aiobotocore attaches a CRC32 trailer to plain PutObject calls,
+// turning the payload into STREAMING-UNSIGNED-PAYLOAD-TRAILER. An anonymous
+// (anon=True) upload then carries that header but no Authorization, which used to
+// be routed straight to SigV4 verification and rejected as AccessDenied. It must
+// instead fall back to the configured anonymous identity, just like a plain
+// anonymous PUT does.
+func TestAnonymousStreamingUnsignedUpload(t *testing.T) {
+	// This test loads an anonymous identity into the shared in-memory credential
+	// store; reset before and after so it neither inherits nor leaks state.
+	resetMemoryStore()
+	defer resetMemoryStore()
+
+	configContent := `{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read", "Write", "List"]
+    }
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmpFile.Name()}, nil, "memory")
+	require.True(t, iam.isEnabled(), "Auth should be enabled")
+
+	r := httptest.NewRequest(http.MethodPut, "http://localhost:8333/somebucket/someobject", nil)
+	r.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
+	r.Header.Set("x-amz-trailer", "x-amz-checksum-crc32")
+	// No Authorization header: anonymous upload with a checksum trailer.
+
+	// The request must stay classified as unsigned-streaming so getRequestDataReader
+	// still decodes the chunked body; only the auth resolution falls back to anonymous.
+	assert.Equal(t, authTypeStreamingUnsigned, getRequestAuthType(r))
+
+	identity, errCode := iam.authRequest(r, s3_constants.ACTION_WRITE)
+	assert.Equal(t, s3err.ErrNone, errCode, "anonymous unsigned-streaming PUT should resolve to the anonymous identity")
+	require.NotNil(t, identity)
+	assert.Equal(t, s3_constants.AccountAnonymousId, identity.Name)
+}
+
+// TestExternalUrlSignatureVerification tests that S3 signature verification works
+// correctly when s3.externalUrl is configured. It uses the real AWS SDK v2 signer
+// to prove correctness against actual S3 clients behind a reverse proxy.
+func TestExternalUrlSignatureVerification(t *testing.T) {
+	configContent := `{
+  "identities": [
+    {
+      "name": "test_user",
+      "credentials": [
+        {
+          "accessKey": "AKIAIOSFODNN7EXAMPLE",
+          "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	accessKey := "AKIAIOSFODNN7EXAMPLE"
+	secretKey := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+	tests := []struct {
+		name          string
+		clientUrl     string // URL the client signs against
+		backendHost   string // Host header SeaweedFS sees (from proxy)
+		externalUrl   string // s3.externalUrl config
+		expectSuccess bool
+	}{
+		{
+			name:          "non-standard port with externalUrl",
+			clientUrl:     "https://api.example.com:9000/test-bucket/object",
+			backendHost:   "backend:8333",
+			externalUrl:   "https://api.example.com:9000",
+			expectSuccess: true,
+		},
+		{
+			name:          "HTTPS default port 443 with externalUrl (port stripped by SDK and parseExternalUrlToHost)",
+			clientUrl:     "https://api.example.com/test-bucket/object",
+			backendHost:   "backend:8333",
+			externalUrl:   "https://api.example.com:443",
+			expectSuccess: true,
+		},
+		{
+			name:          "HTTPS without explicit port with externalUrl",
+			clientUrl:     "https://api.example.com/test-bucket/object",
+			backendHost:   "backend:8333",
+			externalUrl:   "https://api.example.com",
+			expectSuccess: true,
+		},
+		{
+			name:          "HTTP default port 80 with externalUrl",
+			clientUrl:     "http://api.example.com/test-bucket/object",
+			backendHost:   "backend:8333",
+			externalUrl:   "http://api.example.com:80",
+			expectSuccess: true,
+		},
+		{
+			name:          "externalUrl set, in-cluster client signs the service host",
+			clientUrl:     "http://seaweedfs-s3:8333/test-bucket/object",
+			backendHost:   "seaweedfs-s3:8333",
+			externalUrl:   "https://api.example.com",
+			expectSuccess: true,
+		},
+		{
+			name:          "externalUrl set, external client signs a virtual-hosted bucket name",
+			clientUrl:     "https://test-bucket.api.example.com/object",
+			backendHost:   "test-bucket.api.example.com",
+			externalUrl:   "https://api.example.com",
+			expectSuccess: true,
+		},
+		{
+			name:          "without externalUrl, internal host causes mismatch",
+			clientUrl:     "https://api.example.com:9000/test-bucket/object",
+			backendHost:   "backend:8333",
+			externalUrl:   "",
+			expectSuccess: false,
+		},
+		{
+			name:          "without externalUrl, matching host works",
+			clientUrl:     "http://localhost:8333/test-bucket/object",
+			backendHost:   "localhost:8333",
+			externalUrl:   "",
+			expectSuccess: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create IAM with the externalUrl
+			option := &S3ApiServerOption{
+				Config:      tmpFile.Name(),
+				ExternalUrl: tt.externalUrl,
+			}
+			iam := NewIdentityAccessManagementWithStore(option, nil, "memory")
+			require.True(t, iam.isEnabled())
+
+			// Step 1: Sign a request targeting the client-facing URL using real AWS SDK signer
+			signReq, err := http.NewRequest(http.MethodGet, tt.clientUrl, nil)
+			require.NoError(t, err)
+			signReq.Host = signReq.URL.Host
+
+			err = signRawHTTPRequest(context.Background(), signReq, accessKey, secretKey, "us-east-1")
+			require.NoError(t, err)
+
+			// Step 2: Create a separate request as the proxy would deliver it
+			proxyReq := httptest.NewRequest(http.MethodGet, tt.clientUrl, nil)
+			proxyReq.Host = tt.backendHost
+			proxyReq.URL.Host = tt.backendHost
+
+			// Copy the auth headers from the signed request
+			proxyReq.Header.Set("Authorization", signReq.Header.Get("Authorization"))
+			proxyReq.Header.Set("X-Amz-Date", signReq.Header.Get("X-Amz-Date"))
+			proxyReq.Header.Set("X-Amz-Content-Sha256", signReq.Header.Get("X-Amz-Content-Sha256"))
+
+			// Step 3: Verify
+			identity, errCode := iam.authRequest(proxyReq, s3_constants.ACTION_LIST)
+			if tt.expectSuccess {
+				assert.Equal(t, s3err.ErrNone, errCode, "Expected successful signature verification")
+				require.NotNil(t, identity)
+				assert.Equal(t, "test_user", identity.Name)
+			} else {
+				assert.NotEqual(t, s3err.ErrNone, errCode, "Expected signature verification to fail")
+			}
+		})
+	}
+}
+
+// TestRealSDKSignerWithForwardedHeaders proves that extractHostHeader produces
+// values that match the real AWS SDK v2 signer's SanitizeHostForHeader behavior.
+//
+// Unlike the self-referential tests in auto_signature_v4_test.go (which sign and
+// verify with the same extractHostHeader function), this test uses the real AWS
+// SDK v2 signer to sign the request. The SDK has its own host sanitization:
+//   - strips :80 for http
+//   - strips :443 for https
+//   - preserves all other ports
+//
+// If extractHostHeader disagrees with the SDK, the signature will not match.
+func TestRealSDKSignerWithForwardedHeaders(t *testing.T) {
+	configContent := `{
+  "identities": [
+    {
+      "name": "test_user",
+      "credentials": [
+        {
+          "accessKey": "AKIAIOSFODNN7EXAMPLE",
+          "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	accessKey := "AKIAIOSFODNN7EXAMPLE"
+	secretKey := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+	// Each test case simulates:
+	//   1. A client connecting to clientUrl (SDK signs with the host from this URL)
+	//   2. A proxy forwarding to SeaweedFS with X-Forwarded-* headers
+	//   3. SeaweedFS extracting the host and verifying the signature
+	tests := []struct {
+		name           string
+		clientUrl      string // URL the client/SDK signs against
+		backendHost    string // Host header SeaweedFS receives (proxy rewrites this)
+		forwardedHost  string // X-Forwarded-Host set by proxy
+		forwardedPort  string // X-Forwarded-Port set by proxy
+		forwardedProto string // X-Forwarded-Proto set by proxy
+		expectedHost   string // what extractHostHeader should return (must match SDK)
+	}{
+		{
+			name:           "HTTPS non-standard port",
+			clientUrl:      "https://api.example.com:9000/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com",
+			forwardedPort:  "9000",
+			forwardedProto: "https",
+			expectedHost:   "api.example.com:9000",
+		},
+		{
+			name:           "HTTPS standard port 443 (SDK strips, we must too)",
+			clientUrl:      "https://api.example.com/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expectedHost:   "api.example.com",
+		},
+		{
+			name:           "HTTP standard port 80 (SDK strips, we must too)",
+			clientUrl:      "http://api.example.com/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expectedHost:   "api.example.com",
+		},
+		{
+			name:           "HTTP non-standard port 8080",
+			clientUrl:      "http://api.example.com:8080/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "api.example.com:8080",
+		},
+		{
+			name:           "X-Forwarded-Host with port (Traefik style), HTTPS 443",
+			clientUrl:      "https://api.example.com/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com:443",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expectedHost:   "api.example.com",
+		},
+		{
+			name:           "X-Forwarded-Host with port (Traefik style), HTTP 80",
+			clientUrl:      "http://api.example.com/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com:80",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expectedHost:   "api.example.com",
+		},
+		{
+			name:           "no forwarded headers, direct access",
+			clientUrl:      "http://localhost:8333/bucket/key",
+			backendHost:    "localhost:8333",
+			forwardedHost:  "",
+			forwardedPort:  "",
+			forwardedProto: "",
+			expectedHost:   "localhost:8333",
+		},
+		{
+			name:           "empty proto with port 80 (defaults to http, strip)",
+			clientUrl:      "http://api.example.com/bucket/key",
+			backendHost:    "seaweedfs:8333",
+			forwardedHost:  "api.example.com",
+			forwardedPort:  "80",
+			forwardedProto: "",
+			expectedHost:   "api.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			option := &S3ApiServerOption{Config: tmpFile.Name()}
+			iam := NewIdentityAccessManagementWithStore(option, nil, "memory")
+			require.True(t, iam.isEnabled())
+
+			// Step 1: Sign a request using the real AWS SDK v2 signer.
+			// The SDK applies its own SanitizeHostForHeader logic.
+			signReq, err := http.NewRequest(http.MethodGet, tt.clientUrl, nil)
+			require.NoError(t, err)
+			signReq.Host = signReq.URL.Host
+
+			err = signRawHTTPRequest(context.Background(), signReq, accessKey, secretKey, "us-east-1")
+			require.NoError(t, err)
+
+			// Step 2: Build the request as the proxy would deliver it to SeaweedFS.
+			proxyReq := httptest.NewRequest(http.MethodGet, tt.clientUrl, nil)
+			proxyReq.Host = tt.backendHost
+
+			// Copy signed auth headers
+			proxyReq.Header.Set("Authorization", signReq.Header.Get("Authorization"))
+			proxyReq.Header.Set("X-Amz-Date", signReq.Header.Get("X-Amz-Date"))
+			proxyReq.Header.Set("X-Amz-Content-Sha256", signReq.Header.Get("X-Amz-Content-Sha256"))
+
+			// Set forwarded headers
+			if tt.forwardedHost != "" {
+				proxyReq.Header.Set("X-Forwarded-Host", tt.forwardedHost)
+			}
+			if tt.forwardedPort != "" {
+				proxyReq.Header.Set("X-Forwarded-Port", tt.forwardedPort)
+			}
+			if tt.forwardedProto != "" {
+				proxyReq.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+			}
+
+			// Step 3: Verify extractHostHeader returns the expected value.
+			// This is the critical correctness check: our extracted host must match
+			// what the SDK signed with, otherwise the signature will not match.
+			extractedHost := extractHostHeader(proxyReq, iam.externalHost)
+			assert.Equal(t, tt.expectedHost, extractedHost,
+				"extractHostHeader must return a value matching what AWS SDK signed with")
+
+			// Step 4: Verify the full signature matches.
+			identity, errCode := iam.authRequest(proxyReq, s3_constants.ACTION_LIST)
+			assert.Equal(t, s3err.ErrNone, errCode,
+				"Signature from real AWS SDK signer must verify successfully")
+			require.NotNil(t, identity)
+			assert.Equal(t, "test_user", identity.Name)
+		})
+	}
+}
+
+// GHSA-8rrx-349w-6396: ?prefix= was promoted into the object for every action,
+// so PUT /cache?versioning&prefix=x authorized as Write:cache/x. An identity
+// holding only Write:cache/* could then change bucket versioning, lifecycle,
+// cors, and object-lock configuration.
+func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
+	resetMemoryStore()
+	defer resetMemoryStore()
+
+	configContent := `{
+  "identities": [
+    {"name":"admin","credentials":[{"accessKey":"ADMINKEY","secretKey":"adminsecret0000000000000000000001"}],"actions":["Admin"]},
+    {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret000000000000000000001"}],"actions":["Read:cache","Write:cache/*","List:cache"]},
+    {"name":"uploadreader","credentials":[{"accessKey":"UPREADERKEY","secretKey":"upreadersecret00000000000000001"}],"actions":["Read:cache/uploads/*"]},
+    {"name":"policywriter","credentials":[{"accessKey":"POLICYKEY","secretKey":"policysecret00000000000000000001"}],"policyNames":["WriterPolicy"]},
+    {"name":"uploadlister","credentials":[{"accessKey":"UPLISTERKEY","secretKey":"uplistersecret00000000000000001"}],"policyNames":["UploadsPolicy"]},
+    {"name":"getonly","credentials":[{"accessKey":"GETONLYKEY","secretKey":"getonlysecret0000000000000000001"}],"policyNames":["GetOnlyPolicy"]}
+  ],
+  "policies":[
+    {"name":"WriterPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"},
+    {"name":"UploadsPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucketMultipartUploads\"],\"Resource\":[\"arn:aws:s3:::cache\"]}]}"},
+    {"name":"GetOnlyPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"}
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmpFile.Name()}, nil, "memory")
+	require.True(t, iam.isEnabled(), "Auth should be enabled")
+
+	for _, tc := range []struct {
+		name   string
+		access string
+		secret string
+		object string
+		query  string
+		action Action
+		want   s3err.ErrorCode
+	}{
+		{"writer put object", "WRITERKEY", "writersecret000000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"writer put versioning", "WRITERKEY", "writersecret000000000000000000001", "", "versioning", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put versioning with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put lifecycle with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "lifecycle&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer list with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "list-type=2&prefix=x", s3_constants.ACTION_LIST, s3err.ErrNone},
+		{"policywriter put object", "POLICYKEY", "policysecret00000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"policywriter put versioning with prefix", "POLICYKEY", "policysecret00000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"uploadreader lists uploads under prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=uploads/foo", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"uploadreader cannot list outside prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=other/", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
+		{"uploadlister lists uploads", "UPLISTERKEY", "uplistersecret00000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"getonly cannot list uploads", "GETONLYKEY", "getonlysecret0000000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url := "http://localhost:8333/cache"
+			if tc.object != "" {
+				url += "/" + tc.object
+			}
+			if tc.query != "" {
+				url += "?" + tc.query
+			}
+			r := httptest.NewRequest(http.MethodPut, url, nil)
+			if tc.action == s3_constants.ACTION_LIST || tc.action == s3_constants.ACTION_READ {
+				r.Method = http.MethodGet
+			}
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache", "object": tc.object})
+			require.NoError(t, signRawHTTPRequest(context.Background(), r, tc.access, tc.secret, "us-east-1"))
+
+			_, errCode := iam.authRequest(r, tc.action)
+			assert.Equal(t, tc.want, errCode)
+		})
+	}
+}
+
+// The admin explicit-deny path resolves the same action and resource the
+// policy engine sees, so a promoted prefix must not hide a listing variant:
+// ?uploads resolves s3:ListBucketMultipartUploads on the bucket ARN, and
+// ?versions resolves s3:ListBucketVersions, both at bucket level.
+func TestResolveS3AuthTarget_BucketListings(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		url          string
+		action       Action
+		object       string
+		wantAction   string
+		wantResource string
+	}{
+		{"uploads listing keeps its action", "/cache?uploads&prefix=uploads/", s3_constants.ACTION_READ, "uploads/",
+			s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS, "arn:aws:s3:::cache"},
+		{"versions listing keeps its action", "/cache?versions&prefix=a/", s3_constants.ACTION_LIST, "a/",
+			s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS, "arn:aws:s3:::cache"},
+		{"plain list keeps its action", "/cache?list-type=2&prefix=a/", s3_constants.ACTION_LIST, "a/",
+			s3_constants.S3_ACTION_LIST_BUCKET, "arn:aws:s3:::cache"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache"})
+			action, resource := resolveS3AuthTarget(tt.action, "cache", tt.object, r)
+			assert.Equal(t, tt.wantAction, action)
+			assert.Equal(t, tt.wantResource, resource)
+		})
+	}
 }

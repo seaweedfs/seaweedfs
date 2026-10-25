@@ -50,6 +50,12 @@ print("WRITE_COUNT=" + str(count))
 	keys := listObjectKeysByPrefix(t, env, "test", "issue-8285/")
 	var temporaryKeys []string
 	for _, key := range keys {
+		// Skip directory markers (keys ending in "/") — these are 0-byte
+		// metadata objects, not data artifacts. They are verified separately
+		// via HeadObject with a timeout below.
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
 		if hasTemporaryPathSegment(key) {
 			temporaryKeys = append(temporaryKeys, key)
 		}
@@ -64,7 +70,8 @@ print("WRITE_COUNT=" + str(count))
 		"issue-8285/output/_temporary/0/",
 		"issue-8285/output/_temporary/0/_temporary/",
 	}
-	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 35*time.Second)
+	// Empty folder cleanup has a 2m default delay + 30s processor interval
+	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 3*time.Minute)
 	if len(lingering) > 0 {
 		t.Fatalf("issue #8285 regression detected: lingering temporary directories: %v", lingering)
 	}

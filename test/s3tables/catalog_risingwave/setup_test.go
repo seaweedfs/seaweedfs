@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ import (
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 var (
@@ -60,7 +59,6 @@ type TestEnvironment struct {
 	filerPort           int
 	s3Port              int
 	icebergRestPort     int
-	risingwavePort      int
 	bindIP              string
 	accessKey           string
 	secretKey           string
@@ -115,11 +113,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	env.masterPort = mustFreePort(t, "Master")
-	env.filerPort = mustFreePort(t, "Filer")
-	env.s3Port = mustFreePort(t, "S3")
-	env.icebergRestPort = mustFreePort(t, "Iceberg")
-	env.risingwavePort = mustFreePort(t, "RisingWave")
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg", "Admin"})
+	env.masterPort = ports[0]
+	env.filerPort = ports[1]
+	env.s3Port = ports[2]
+	env.icebergRestPort = ports[3]
 
 	env.bindIP = testutil.FindBindIP()
 
@@ -136,8 +134,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.logFile = logFile
 
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
-	env.masterProcess = exec.Command(
-		"weed", "mini",
+	miniArgs := append([]string{"mini",
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -146,7 +143,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
-	)
+	}, testutil.MiniAdminArgs(ports[4])...)
+	miniArgs = append(miniArgs, "-webdav=false", "-s3.port.lance=0")
+	env.masterProcess = exec.Command("weed", miniArgs...)
 	env.masterProcess.Stdout = logFile
 	env.masterProcess.Stderr = logFile
 	env.masterProcess.Env = append(os.Environ(),
@@ -161,60 +160,18 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	registerMiniProcess(env.masterProcess)
 
 	// Wait for all services to be ready
-	if !waitForPort(env.masterPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.masterPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - master port %d not listening", env.masterPort)
 	}
-	if !waitForPort(env.filerPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.filerPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - filer port %d not listening", env.filerPort)
 	}
-	if !waitForPort(env.s3Port, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/status", env.s3Port), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - s3 endpoint http://127.0.0.1:%d/status not responding", env.s3Port)
 	}
-	if !waitForPort(env.icebergRestPort, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - iceberg rest port %d not listening", env.icebergRestPort)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/v1/config", env.icebergRestPort), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - iceberg rest endpoint http://127.0.0.1:%d/v1/config not responding", env.icebergRestPort)
 	}
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-	minPort := 10000
-	maxPort := 55000 // Ensure port+10000 < 65535
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	for i := 0; i < 1000; i++ {
-		port := minPort + r.Intn(maxPort-minPort)
-
-		// Check http port
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			continue
-		}
-		ln.Close()
-
-		// Check grpc port (weed mini uses port+10000)
-		ln2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+10000))
-		if err != nil {
-			continue
-		}
-		ln2.Close()
-
-		return port
-	}
-	t.Fatalf("failed to find a free port < %d for %s after 1000 attempts", maxPort, name)
-	return 0
-}
-
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
 }
 
 func (env *TestEnvironment) StartRisingWave(t *testing.T) {
@@ -225,7 +182,6 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 
 	cmd := exec.Command("docker", "run", "-d",
 		"--name", containerName,
-		"-p", fmt.Sprintf("%d:4566", env.risingwavePort),
 		"--add-host", "host.docker.internal:host-gateway",
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
@@ -238,6 +194,7 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to start RisingWave container: %v\n%s", err, string(output))
 	}
+	env.checkRisingWaveContainer(t)
 
 	// Start a sidecar postgres container for running psql commands
 	sidecarName := "seaweed-risingwave-sidecar-" + randomString(8)
@@ -249,15 +206,13 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 		"sleep", "infinity",
 	)
 	if output, err := sidecarCmd.CombinedOutput(); err != nil {
+		env.checkRisingWaveContainer(t)
 		t.Fatalf("failed to start postgres sidecar: %v\n%s", err, string(output))
 	}
 
-	// Wait for RisingWave port to be open on host
-	if !waitForPort(env.risingwavePort, 120*time.Second) {
-		t.Fatalf("timed out waiting for RisingWave port %d to be open", env.risingwavePort)
-	}
-
 	// Wait for RisingWave to be truly ready via psql in the sidecar.
+	// The sidecar shares RisingWave's network namespace, so it reaches
+	// 4566 directly without a host port mapping.
 	if !env.waitForRisingWave(120 * time.Second) {
 		t.Fatalf("timed out waiting for RisingWave to be ready via psql")
 	}
@@ -267,6 +222,7 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	env.t.Logf(">>> Waiting for RisingWave to be ready (timeout %v)...\n", timeout)
 	for time.Now().Before(deadline) {
+		env.checkRisingWaveContainer(env.t)
 		if output, err := runPostgresClientSQL(env.postgresSidecar, "SELECT 1;"); err == nil {
 			env.t.Logf(">>> RisingWave is ready.\n")
 			return true
@@ -276,6 +232,26 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 		time.Sleep(5 * time.Second)
 	}
 	return false
+}
+
+func (env *TestEnvironment) checkRisingWaveContainer(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}", env.risingwaveContainer).CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect RisingWave container: %v\n%s", err, out)
+	}
+	state := strings.Fields(string(out))
+	if len(state) != 3 {
+		t.Fatalf("unexpected RisingWave container state: %s", out)
+	}
+	if state[0] == "true" {
+		return
+	}
+	if state[1] == "132" && state[2] == "false" {
+		t.Skip("RisingWave image exited with illegal instruction on this CPU")
+	}
+	logs, _ := exec.Command("docker", "logs", env.risingwaveContainer).CombinedOutput()
+	t.Fatalf("RisingWave container exited before it became ready (code %s, OOM killed: %s):\n%s", state[1], state[2], logs)
 }
 
 func runPostgresClientSQL(containerName, sql string) ([]byte, error) {
@@ -459,7 +435,12 @@ func createIcebergTable(t *testing.T, env *TestEnvironment, bucketName, namespac
 func listFilerContents(t *testing.T, env *TestEnvironment, path string) {
 	t.Helper()
 
-	cmd := exec.Command("weed", "shell",
+	// Bound diagnostic listing so a hung weed shell during cleanup can't
+	// burn the whole 20-minute test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "weed", "shell",
 		fmt.Sprintf("-master=%s", env.hostMasterAddress()),
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("fs.ls -R %s\nexit\n", path))

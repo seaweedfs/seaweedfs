@@ -31,6 +31,8 @@ func (store *Cassandra2Store) GetName() string {
 }
 
 func (store *Cassandra2Store) Initialize(configuration util.Configuration, prefix string) (err error) {
+	// Without this, an env-var config that omits the key drops cluster.Timeout to 0.
+	configuration.SetDefault(prefix+"connection_timeout_millisecond", 600)
 	enableHostVerification := true
 	if val := configuration.GetString(prefix + "ssl_enable_host_verification"); val != "" {
 		enableHostVerification = configuration.GetBool(prefix + "ssl_enable_host_verification")

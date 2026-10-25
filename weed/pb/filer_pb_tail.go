@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -34,7 +35,32 @@ type MetadataFollowOption struct {
 	StartTsNs              int64
 	StopTsNs               int64
 	EventErrorType         EventErrorType
+	// LogFileReaderFn, when non-nil, enables metadata chunks mode:
+	// the server sends log file chunk fids instead of streaming events,
+	// and the client reads directly from volume servers.
+	LogFileReaderFn LogFileReaderFn
+	// OnIdleHeartbeat, when non-nil, opts in to idle heartbeats: while the
+	// subscriber is caught up the server periodically sends an empty response
+	// carrying the current time, and this is called with that timestamp. It is
+	// a freshness signal only and does not advance StartTsNs, so the resume
+	// checkpoint stays on the last real event.
+	OnIdleHeartbeat func(tsNs int64)
+	// GetResumeTsNs, when non-nil, supplies the reconnect position instead of
+	// StartTsNs. It is read on every subscribe, so a callback can return the
+	// durably processed watermark while StartTsNs keeps tracking positions the
+	// stream has merely seen.
+	GetResumeTsNs func() int64
+	// Resubscribe, when closed, drops the stream with ErrResubscribe so the
+	// caller's reconnect loop resubscribes from GetResumeTsNs and replays the
+	// events still pinning the processed watermark. Target-side job failures
+	// never surface on this stream, so without it a pinned event waits for an
+	// unrelated source-stream reconnect (or a restart) to be replayed.
+	Resubscribe <-chan struct{}
 }
+
+// ErrResubscribe ends a metadata follow when the consumer asked for the
+// stream to drop so the reconnect replays what the resume watermark pins.
+var ErrResubscribe = errors.New("resubscribe to replay events behind the failed offset")
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
@@ -61,50 +87,176 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		sinceNs := option.StartTsNs
+		if option.GetResumeTsNs != nil {
+			sinceNs = option.GetResumeTsNs()
+		}
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:   option.ClientName,
-			PathPrefix:   option.PathPrefix,
-			PathPrefixes: option.AdditionalPathPrefixes,
-			Directories:  option.DirectoriesToWatch,
-			SinceNs:      option.StartTsNs,
-			Signature:    option.SelfSignature,
-			ClientId:     option.ClientId,
-			ClientEpoch:  option.ClientEpoch,
-			UntilNs:      option.StopTsNs,
+			ClientName:                   option.ClientName,
+			PathPrefix:                   option.PathPrefix,
+			PathPrefixes:                 option.AdditionalPathPrefixes,
+			Directories:                  option.DirectoriesToWatch,
+			SinceNs:                      sinceNs,
+			Signature:                    option.SelfSignature,
+			ClientId:                     option.ClientId,
+			ClientEpoch:                  option.ClientEpoch,
+			UntilNs:                      option.StopTsNs,
+			ClientSupportsBatching:       true,
+			ClientSupportsMetadataChunks: option.LogFileReaderFn != nil,
+			ClientSupportsIdleHeartbeat:  option.OnIdleHeartbeat != nil,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
 		}
 
+		if option.Resubscribe != nil {
+			go func() {
+				select {
+				case <-option.Resubscribe:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+
+		handleErr := func(resp *filer_pb.SubscribeMetadataResponse, err error) {
+			switch option.EventErrorType {
+			case TrivialOnError:
+				glog.Errorf("process %v: %v", resp, err)
+			case FatalOnError:
+				glog.Fatalf("process %v: %v", resp, err)
+			case RetryForeverOnError:
+				waitTime := time.Second
+				for ctx.Err() == nil {
+					if err := processEventFn(resp); err == nil {
+						break
+					} else {
+						glog.Errorf("process %v: %v", resp, err)
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(waitTime):
+					}
+					if waitTime < util.RetryWaitTime {
+						waitTime += waitTime / 2
+					}
+				}
+			case DontLogError:
+				// pass
+			default:
+				glog.Errorf("process %v: %v", resp, err)
+			}
+		}
+
+		// handleOneEvent processes a single response, whether it arrived as the
+		// batch envelope or inside resp.Events. Freshness signals carry a timestamp
+		// but no entry: the idle heartbeat (nil EventNotification) and the
+		// MaxUnsyncedEvents marker (empty one). Both route to OnIdleHeartbeat,
+		// else the marker pins sync_offset to the stale processed watermark and a
+		// nil heartbeat folded into a batch nil-derefs in the sync job path.
+		handleOneEvent := func(resp *filer_pb.SubscribeMetadataResponse) {
+			if resp.EventNotification == nil || filer_pb.IsEmpty(resp) {
+				if resp.TsNs > 0 && option.OnIdleHeartbeat != nil {
+					option.OnIdleHeartbeat(resp.TsNs)
+				}
+				// The marker advances the resume cursor past the filtered range; the
+				// heartbeat leaves it put so a restart cannot outrun a straggler. A
+				// consumer with a resume callback keeps its cursor in its processed
+				// watermark, so it sees the marker instead.
+				if resp.EventNotification != nil && resp.TsNs > 0 {
+					if option.GetResumeTsNs != nil {
+						if err := processEventFn(resp); err != nil {
+							handleErr(resp, err)
+						}
+					} else {
+						option.StartTsNs = resp.TsNs
+					}
+				}
+				return
+			}
+			if err := processEventFn(resp); err != nil {
+				handleErr(resp, err)
+				// RetryForeverOnError only returns once the event was handled;
+				// other modes leave it failed and the cursor stays behind it.
+				if option.EventErrorType != RetryForeverOnError {
+					return
+				}
+			}
+			if option.GetResumeTsNs == nil {
+				option.StartTsNs = resp.TsNs
+			}
+		}
+
+		var pendingRefs []*filer_pb.LogFileChunkRef
+
+		// drainPendingRefs reads whatever chunk refs have accumulated. The server
+		// sends refs in their own responses, so they can only be read once
+		// something tells us the run of refs has ended — either a normal event, or
+		// the end of the stream. A bounded subscription (StopTsNs set, range
+		// already in the past) may get nothing but refs and then EOF, so draining
+		// only on the former silently returns no events at all.
+		drainPendingRefs := func() error {
+			if len(pendingRefs) == 0 || option.LogFileReaderFn == nil {
+				return nil
+			}
+			readFromNs := option.StartTsNs
+			if option.GetResumeTsNs != nil {
+				// The resume cursor lives in the processed watermark, so a
+				// resubscribed ref replay must not be filtered by positions the
+				// previous stream had only seen.
+				readFromNs = sinceNs
+			}
+			lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
+				readFromNs, option.StopTsNs,
+				PathFilter{
+					PathPrefix:             option.PathPrefix,
+					AdditionalPathPrefixes: option.AdditionalPathPrefixes,
+					DirectoriesToWatch:     option.DirectoriesToWatch,
+				},
+				processEventFn)
+			if readErr != nil {
+				return fmt.Errorf("%w: %w", ErrLogFileRead, readErr)
+			}
+			if lastTs > 0 && option.GetResumeTsNs == nil {
+				option.StartTsNs = lastTs
+			}
+			pendingRefs = nil
+			return nil
+		}
+
 		for {
 			resp, listenErr := stream.Recv()
 			if listenErr == io.EOF {
-				return nil
+				return drainPendingRefs()
 			}
 			if listenErr != nil {
+				select {
+				case <-option.Resubscribe:
+					return ErrResubscribe
+				default:
+				}
 				return listenErr
 			}
 
-			if err := processEventFn(resp); err != nil {
-				switch option.EventErrorType {
-				case TrivialOnError:
-					glog.Errorf("process %v: %v", resp, err)
-				case FatalOnError:
-					glog.Fatalf("process %v: %v", resp, err)
-				case RetryForeverOnError:
-					util.RetryUntil("followMetaUpdates", func() error {
-						return processEventFn(resp)
-					}, func(err error) bool {
-						glog.Errorf("process %v: %v", resp, err)
-						return true
-					})
-				case DontLogError:
-					// pass
-				default:
-					glog.Errorf("process %v: %v", resp, err)
-				}
+			// Accumulate log file chunk references (metadata chunks mode)
+			if len(resp.LogFileRefs) > 0 {
+				pendingRefs = append(pendingRefs, resp.LogFileRefs...)
+				continue
 			}
-			option.StartTsNs = resp.TsNs
+
+			// Process accumulated refs before handling normal events (transition point)
+			if err := drainPendingRefs(); err != nil {
+				return err
+			}
+
+			// Process the envelope event (top-level fields) and any batched tail.
+			// The server folds a backlog into one response: the first event lives in
+			// the top-level fields, the rest in resp.Events. Either slot can hold a
+			// freshness signal, so both go through the same handler.
+			handleOneEvent(resp)
+			for _, batchedEvent := range resp.Events {
+				handleOneEvent(batchedEvent)
+			}
 		}
 	}
 }

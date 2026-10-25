@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -16,31 +18,32 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 
 	parentDir, _ := path.DirAndName()
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(entry)
+	defer wfs.mapPbIdFromFilerToLocal(entry)
 
-		wfs.mapPbIdFromLocalToFiler(entry)
-		defer wfs.mapPbIdFromFilerToLocal(entry)
+	request := &filer_pb.UpdateEntryRequest{
+		Directory:  parentDir,
+		Entry:      entry,
+		Signatures: []int32{wfs.signature},
+	}
 
-		request := &filer_pb.UpdateEntryRequest{
-			Directory:  parentDir,
-			Entry:      entry,
-			Signatures: []int32{wfs.signature},
-		}
+	glog.V(1).Infof("save entry: %v", request)
 
-		glog.V(1).Infof("save entry: %v", request)
-		_, err := client.UpdateEntry(context.Background(), request)
-		if err != nil {
-			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
-		}
-
-		if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("metaCache.UpdateEntry dir %s: %w", path, err)
-		}
-
-		return nil
+	var resp *filer_pb.UpdateEntryResponse
+	err := retryMetadataFlushIf(context.Background(), func() error {
+		var callErr error
+		resp, callErr = wfs.streamUpdateEntry(context.Background(), request)
+		return callErr
+	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		glog.Warningf("saveEntry %s: retrying UpdateEntry (attempt %d/%d) after %v: %v",
+			path, nextAttempt, totalAttempts, backoff, err)
 	})
+
 	if err != nil {
-		// glog.V(0).Infof("saveEntry %s: %v", path, err)
+		// Wrap with %w so grpcErrorToFuseStatus can still unwrap the gRPC status
+		// (e.g. codes.Canceled → ETIMEDOUT). Using %v would stringify the error and
+		// status.FromError would fall through to the default EIO.
+		err = fmt.Errorf("UpdateEntry dir %s: %w", path, err)
 		fuseStatus := grpcErrorToFuseStatus(err)
 		if fuseStatus == fuse.EIO {
 			glog.Errorf("saveEntry failed for %s: %v (returning EIO)", path, err)
@@ -48,6 +51,32 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 			glog.V(1).Infof("saveEntry failed for %s: %v (returning %v)", path, err, fuseStatus)
 		}
 		return fuseStatus
+	}
+
+	// The mutation is acknowledged; bring any open handle for this path up
+	// to the acknowledged state — a handle opened while this save was in
+	// flight holds an older entry, and advancing its version alone would
+	// fence out the events carrying what it lacks. A no-change update
+	// returns no event but still carries the log position it confirmed.
+	ackVersion := ackVersionTsNs(resp)
+	if inode, found := wfs.inodeToPath.GetInode(path); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			ackedEntry := proto.Clone(entry).(*filer_pb.Entry)
+			wfs.mapPbIdFromFilerToLocal(ackedEntry)
+			fh.installAckedEntry(ackedEntry, ackVersion, resp.GetLogSignature())
+		}
+	}
+
+	event := resp.GetMetadataEvent()
+	if event == nil {
+		event = metadataUpdateEvent(parentDir, entry)
+		if event != nil {
+			event.TsNs = ackVersion
+		}
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
 	}
 
 	return fuse.OK
@@ -66,9 +95,29 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
 }
 
-func checkName(name string) fuse.Status {
-	if len(name) >= 4096 {
-		return fuse.Status(syscall.ENAMETOOLONG)
+// sanitizeFuseName scrubs a name arriving from the kernel before it is placed
+// in a proto string field. Linux (and macOS) pass raw bytes for filenames;
+// apps like GNOME Trash produce partial files whose names contain binary
+// payloads. Proto3 `string` fields require valid UTF-8, so an unsanitized
+// name causes gRPC to fail the whole AssignVolume / CreateEntry / DeleteEntry
+// RPC with "grpc: error while marshaling: string field contains invalid
+// UTF-8", which surfaces to userspace as EIO. Sanitizing at every FUSE
+// boundary keeps filer RPCs marshalable and prevents a single ill-named file
+// from poisoning the shared gRPC channel for every other in-flight request.
+//
+// Delegates to util.SanitizeUTF8Name so the replacement character is chosen
+// in exactly one place across the codebase.
+func sanitizeFuseName(name string) string {
+	return util.SanitizeUTF8Name(name)
+}
+
+func checkName(name string) (string, fuse.Status) {
+	name = sanitizeFuseName(name)
+	// The Linux FUSE kernel module enforces NAME_MAX=255 at the VFS layer.
+	// Return ENAMETOOLONG early to avoid creating entries that cannot be
+	// looked up via normal syscalls (stat, chmod, etc.).
+	if len(name) > 255 {
+		return name, fuse.Status(syscall.ENAMETOOLONG)
 	}
-	return fuse.OK
+	return name, fuse.OK
 }

@@ -3,7 +3,9 @@ package distribution
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
@@ -12,113 +14,6 @@ import (
 type ECConfig struct {
 	DataShards   int // Number of data shards (e.g., 10)
 	ParityShards int // Number of parity shards (e.g., 4)
-}
-
-// DefaultECConfig returns the standard 10+4 EC configuration
-func DefaultECConfig() ECConfig {
-	return ECConfig{
-		DataShards:   10,
-		ParityShards: 4,
-	}
-}
-
-// NewECConfig creates a new EC configuration with validation
-func NewECConfig(dataShards, parityShards int) (ECConfig, error) {
-	if dataShards <= 0 {
-		return ECConfig{}, fmt.Errorf("dataShards must be positive, got %d", dataShards)
-	}
-	if parityShards <= 0 {
-		return ECConfig{}, fmt.Errorf("parityShards must be positive, got %d", parityShards)
-	}
-	if dataShards+parityShards > 32 {
-		return ECConfig{}, fmt.Errorf("total shards (%d+%d=%d) exceeds maximum of 32",
-			dataShards, parityShards, dataShards+parityShards)
-	}
-	return ECConfig{
-		DataShards:   dataShards,
-		ParityShards: parityShards,
-	}, nil
-}
-
-// TotalShards returns the total number of shards (data + parity)
-func (c ECConfig) TotalShards() int {
-	return c.DataShards + c.ParityShards
-}
-
-// MaxTolerableLoss returns the maximum number of shards that can be lost
-// while still being able to reconstruct the data
-func (c ECConfig) MaxTolerableLoss() int {
-	return c.ParityShards
-}
-
-// MinShardsForReconstruction returns the minimum number of shards needed
-// to reconstruct the original data
-func (c ECConfig) MinShardsForReconstruction() int {
-	return c.DataShards
-}
-
-// String returns a human-readable representation
-func (c ECConfig) String() string {
-	return fmt.Sprintf("%d+%d (total: %d, can lose: %d)",
-		c.DataShards, c.ParityShards, c.TotalShards(), c.MaxTolerableLoss())
-}
-
-// IsDataShard returns true if the shard ID is a data shard (0 to DataShards-1)
-func (c ECConfig) IsDataShard(shardID int) bool {
-	return shardID >= 0 && shardID < c.DataShards
-}
-
-// IsParityShard returns true if the shard ID is a parity shard (DataShards to TotalShards-1)
-func (c ECConfig) IsParityShard(shardID int) bool {
-	return shardID >= c.DataShards && shardID < c.TotalShards()
-}
-
-// SortShardsDataFirst returns a copy of shards sorted with data shards first.
-// This is useful for initial placement where data shards should be spread out first.
-func (c ECConfig) SortShardsDataFirst(shards []int) []int {
-	result := make([]int, len(shards))
-	copy(result, shards)
-
-	// Partition: data shards first, then parity shards
-	dataIdx := 0
-	parityIdx := len(result) - 1
-
-	sorted := make([]int, len(result))
-	for _, s := range result {
-		if c.IsDataShard(s) {
-			sorted[dataIdx] = s
-			dataIdx++
-		} else {
-			sorted[parityIdx] = s
-			parityIdx--
-		}
-	}
-
-	return sorted
-}
-
-// SortShardsParityFirst returns a copy of shards sorted with parity shards first.
-// This is useful for rebalancing where we prefer to move parity shards.
-func (c ECConfig) SortShardsParityFirst(shards []int) []int {
-	result := make([]int, len(shards))
-	copy(result, shards)
-
-	// Partition: parity shards first, then data shards
-	parityIdx := 0
-	dataIdx := len(result) - 1
-
-	sorted := make([]int, len(result))
-	for _, s := range result {
-		if c.IsParityShard(s) {
-			sorted[parityIdx] = s
-			parityIdx++
-		} else {
-			sorted[dataIdx] = s
-			dataIdx--
-		}
-	}
-
-	return sorted
 }
 
 // ReplicationConfig holds the parsed replication policy
@@ -131,15 +26,32 @@ type ReplicationConfig struct {
 	Original string
 }
 
-// NewReplicationConfig creates a ReplicationConfig from a ReplicaPlacement
+// NewECConfig creates an erasure coding configuration with the given shard counts.
+func NewECConfig(dataShards, parityShards int) (ECConfig, error) {
+	if dataShards < 1 || parityShards < 1 {
+		return ECConfig{}, fmt.Errorf("data and parity shard counts must be positive, got %d+%d", dataShards, parityShards)
+	}
+	return ECConfig{DataShards: dataShards, ParityShards: parityShards}, nil
+}
+
+// DefaultECConfig returns the standard 10+4 erasure coding configuration.
+func DefaultECConfig() ECConfig {
+	return ECConfig{DataShards: erasure_coding.DataShardsCount, ParityShards: erasure_coding.ParityShardsCount}
+}
+
+// NewReplicationConfig parses a replication policy string like "110".
+func NewReplicationConfigFromString(s string) (ReplicationConfig, error) {
+	rp, err := super_block.NewReplicaPlacementFromString(s)
+	if err != nil {
+		return ReplicationConfig{}, err
+	}
+	return NewReplicationConfig(rp), nil
+}
+
+// NewReplicationConfig converts a replica placement into a replication config.
 func NewReplicationConfig(rp *super_block.ReplicaPlacement) ReplicationConfig {
 	if rp == nil {
-		return ReplicationConfig{
-			MinDataCenters:  1,
-			MinRacksPerDC:   1,
-			MinNodesPerRack: 1,
-			Original:        "000",
-		}
+		rp = &super_block.ReplicaPlacement{}
 	}
 	return ReplicationConfig{
 		MinDataCenters:  rp.DiffDataCenterCount + 1,
@@ -149,23 +61,40 @@ func NewReplicationConfig(rp *super_block.ReplicaPlacement) ReplicationConfig {
 	}
 }
 
-// NewReplicationConfigFromString creates a ReplicationConfig from a replication string
-func NewReplicationConfigFromString(replication string) (ReplicationConfig, error) {
-	rp, err := super_block.NewReplicaPlacementFromString(replication)
-	if err != nil {
-		return ReplicationConfig{}, err
-	}
-	return NewReplicationConfig(rp), nil
+// TotalShards returns the number of shards each volume splits into.
+func (ec ECConfig) TotalShards() int {
+	return ec.DataShards + ec.ParityShards
 }
 
-// TotalPlacementSlots returns the minimum number of unique placement locations
-// based on the replication policy
-func (r ReplicationConfig) TotalPlacementSlots() int {
-	return r.MinDataCenters * r.MinRacksPerDC * r.MinNodesPerRack
+// CanLoseShards returns how many shards of a volume can be missing before the
+// volume is no longer readable.
+func (ec ECConfig) CanLoseShards() int {
+	return ec.ParityShards
 }
 
-// String returns a human-readable representation
-func (r ReplicationConfig) String() string {
-	return fmt.Sprintf("replication=%s (DCs:%d, Racks/DC:%d, Nodes/Rack:%d)",
-		r.Original, r.MinDataCenters, r.MinRacksPerDC, r.MinNodesPerRack)
+// IsDataShard reports whether the shard id is a data shard, which serves reads.
+func (ec ECConfig) IsDataShard(shardID int) bool {
+	return shardID >= 0 && shardID < ec.DataShards
+}
+
+// IsParityShard reports whether the shard id is a parity shard, which is only
+// used for reconstruction.
+func (ec ECConfig) IsParityShard(shardID int) bool {
+	return shardID >= ec.DataShards && shardID < ec.TotalShards()
+}
+
+// SortShardsDataFirst orders shard ids so data shards come before parity
+// shards, for initial placement.
+func (ec ECConfig) SortShardsDataFirst(shards []int) []int {
+	sorted := append([]int(nil), shards...)
+	sort.Ints(sorted)
+	return sorted
+}
+
+// SortShardsParityFirst orders shard ids so parity shards come before data
+// shards, for picking which shards to move away first when rebalancing.
+func (ec ECConfig) SortShardsParityFirst(shards []int) []int {
+	sorted := append([]int(nil), shards...)
+	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
+	return sorted
 }

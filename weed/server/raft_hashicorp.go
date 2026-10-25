@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
@@ -31,26 +30,6 @@ const (
 	sdbFile            = "stable.dat"
 	updatePeersTimeout = 15 * time.Minute
 )
-
-func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
-	peerIDs := make([]string, 0, len(mapPeers))
-	seen := make(map[string]struct{}, len(mapPeers))
-	for _, peer := range mapPeers {
-		id := raftServerID(peer)
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		peerIDs = append(peerIDs, id)
-	}
-	sort.Strings(peerIDs)
-	selfID := raftServerID(self)
-	idx := sort.SearchStrings(peerIDs, selfID)
-	if idx < len(peerIDs) && peerIDs[idx] == selfID {
-		return idx
-	}
-	return -1
-}
 
 func raftServerID(server pb.ServerAddress) string {
 	return server.ToHttpAddress()
@@ -73,6 +52,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
 			leader, _ := s.RaftHashicorp.LeaderWithID()
+			s.topo.SetLastLeaderChangeTime(time.Now())
 			if isLeader {
 
 				if updatePeers {
@@ -99,7 +79,6 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
-			s.topo.LastLeaderChangeTime = time.Now()
 		}
 	}
 }
@@ -167,14 +146,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, fmt.Errorf("raft.ValidateConfig: %w", err)
 	}
 
-	if option.RaftBootstrap {
-		os.RemoveAll(path.Join(s.dataDir, ldbFile))
-		os.RemoveAll(path.Join(s.dataDir, sdbFile))
-		os.RemoveAll(path.Join(s.dataDir, "snapshots"))
-	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshots"), os.ModePerm); err != nil {
 		return nil, err
 	}
+	option.Topo.SetMaxVolumeIdFile(filepath.Join(s.dataDir, "max_volume_id"))
 	baseDir := s.dataDir
 
 	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, ldbFile))
@@ -200,21 +175,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, fmt.Errorf("raft.NewRaft: %w", err)
 	}
 
-	updatePeers := false
-	if option.RaftBootstrap || len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) == 0 {
-		cfg := s.AddPeersConfiguration()
-		// Need to get lock, in case all servers do this at the same time.
-		peerIdx := getPeerIdx(s.serverAddr, s.peers)
-		timeSleep := time.Duration(float64(c.LeaderLeaseTimeout) * (rand.Float64()*0.25 + 1) * float64(peerIdx))
-		glog.V(0).Infof("Bootstrapping idx: %d sleep: %v new cluster: %+v", peerIdx, timeSleep, cfg)
-		time.Sleep(timeSleep)
-		f := s.RaftHashicorp.BootstrapCluster(cfg)
-		if err := f.Error(); err != nil {
-			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %w", err)
-		}
-	} else {
-		updatePeers = true
-	}
+	// The caller bootstraps, once it has confirmed no peer already has a
+	// leader: bootstrapping next to a live leader forms a second cluster
+	// instead of joining the first one.
+	updatePeers := len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) > 0
 
 	go s.monitorLeaderLoop(updatePeers)
 

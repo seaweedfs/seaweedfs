@@ -2,564 +2,499 @@ package distribution
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestNewECConfig(t *testing.T) {
-	tests := []struct {
-		name         string
-		dataShards   int
-		parityShards int
-		wantErr      bool
-	}{
-		{"valid 10+4", 10, 4, false},
-		{"valid 8+4", 8, 4, false},
-		{"valid 6+3", 6, 3, false},
-		{"valid 4+2", 4, 2, false},
-		{"invalid data=0", 0, 4, true},
-		{"invalid parity=0", 10, 0, true},
-		{"invalid total>32", 20, 15, true},
-	}
+func TestDefaultECConfig(t *testing.T) {
+	ec := DefaultECConfig()
+	assert.Equal(t, 10, ec.DataShards)
+	assert.Equal(t, 4, ec.ParityShards)
+	assert.Equal(t, 14, ec.TotalShards())
+	assert.Equal(t, 4, ec.CanLoseShards())
+	assert.True(t, ec.IsDataShard(0))
+	assert.True(t, ec.IsDataShard(9))
+	assert.False(t, ec.IsDataShard(10))
+	assert.True(t, ec.IsParityShard(13))
+	assert.False(t, ec.IsParityShard(14))
+	assert.Equal(t, []int{0, 1, 10, 11}, ec.SortShardsDataFirst([]int{11, 1, 10, 0}))
+	assert.Equal(t, []int{13, 12, 2, 1}, ec.SortShardsParityFirst([]int{2, 13, 1, 12}))
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config, err := NewECConfig(tt.dataShards, tt.parityShards)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewECConfig() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if config.DataShards != tt.dataShards {
-					t.Errorf("DataShards = %d, want %d", config.DataShards, tt.dataShards)
-				}
-				if config.ParityShards != tt.parityShards {
-					t.Errorf("ParityShards = %d, want %d", config.ParityShards, tt.parityShards)
-				}
-				if config.TotalShards() != tt.dataShards+tt.parityShards {
-					t.Errorf("TotalShards() = %d, want %d", config.TotalShards(), tt.dataShards+tt.parityShards)
-				}
-			}
-		})
+func TestNewECConfig(t *testing.T) {
+	ec, err := NewECConfig(8, 4)
+	require.NoError(t, err)
+	assert.Equal(t, 12, ec.TotalShards())
+
+	for _, bad := range [][2]int{{0, 4}, {8, 0}, {-1, 4}} {
+		_, err := NewECConfig(bad[0], bad[1])
+		assert.Error(t, err, "config %v must be rejected", bad)
 	}
+}
+
+func TestNewReplicationConfigFromString(t *testing.T) {
+	rep, err := NewReplicationConfigFromString("110")
+	require.NoError(t, err)
+	assert.Equal(t, 2, rep.MinDataCenters)
+	assert.Equal(t, 2, rep.MinRacksPerDC)
+	assert.Equal(t, 1, rep.MinNodesPerRack)
+	assert.Equal(t, "110", rep.Original)
+
+	rep, err = NewReplicationConfigFromString("000")
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.MinDataCenters)
+	assert.Equal(t, 1, rep.MinRacksPerDC)
+	assert.Equal(t, 1, rep.MinNodesPerRack)
+
+	_, err = NewReplicationConfigFromString("abc")
+	assert.Error(t, err)
 }
 
 func TestCalculateDistribution(t *testing.T) {
-	tests := []struct {
-		name                    string
-		ecConfig                ECConfig
-		replication             string
-		expectedMinDCs          int
-		expectedMinRacksPerDC   int
-		expectedMinNodesPerRack int
-		expectedTargetPerDC     int
-		expectedTargetPerRack   int
-		expectedTargetPerNode   int
-	}{
-		{
-			name:                    "10+4 with 000",
-			ecConfig:                DefaultECConfig(),
-			replication:             "000",
-			expectedMinDCs:          1,
-			expectedMinRacksPerDC:   1,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     14,
-			expectedTargetPerRack:   14,
-			expectedTargetPerNode:   14,
-		},
-		{
-			name:                    "10+4 with 100",
-			ecConfig:                DefaultECConfig(),
-			replication:             "100",
-			expectedMinDCs:          2,
-			expectedMinRacksPerDC:   1,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     7,
-			expectedTargetPerRack:   7,
-			expectedTargetPerNode:   7,
-		},
-		{
-			name:                    "10+4 with 110",
-			ecConfig:                DefaultECConfig(),
-			replication:             "110",
-			expectedMinDCs:          2,
-			expectedMinRacksPerDC:   2,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     7,
-			expectedTargetPerRack:   4,
-			expectedTargetPerNode:   4,
-		},
-		{
-			name:                    "10+4 with 200",
-			ecConfig:                DefaultECConfig(),
-			replication:             "200",
-			expectedMinDCs:          3,
-			expectedMinRacksPerDC:   1,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     5,
-			expectedTargetPerRack:   5,
-			expectedTargetPerNode:   5,
-		},
-		{
-			name: "8+4 with 110",
-			ecConfig: ECConfig{
-				DataShards:   8,
-				ParityShards: 4,
-			},
-			replication:             "110",
-			expectedMinDCs:          2,
-			expectedMinRacksPerDC:   2,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     6, // 12/2 = 6
-			expectedTargetPerRack:   3, // 6/2 = 3
-			expectedTargetPerNode:   3,
-		},
-		{
-			name: "6+3 with 100",
-			ecConfig: ECConfig{
-				DataShards:   6,
-				ParityShards: 3,
-			},
-			replication:             "100",
-			expectedMinDCs:          2,
-			expectedMinRacksPerDC:   1,
-			expectedMinNodesPerRack: 1,
-			expectedTargetPerDC:     5, // ceil(9/2) = 5
-			expectedTargetPerRack:   5,
-			expectedTargetPerNode:   5,
-		},
-	}
+	rep, err := NewReplicationConfigFromString("110")
+	require.NoError(t, err)
+	dist := CalculateDistribution(DefaultECConfig(), rep)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rep, err := NewReplicationConfigFromString(tt.replication)
-			if err != nil {
-				t.Fatalf("Failed to parse replication %s: %v", tt.replication, err)
-			}
+	assert.Equal(t, 7, dist.TargetShardsPerDC)
+	assert.Equal(t, 4, dist.TargetShardsPerRack)
+	assert.Equal(t, 4, dist.TargetShardsPerNode)
+	assert.Equal(t, 9, dist.MaxShardsPerDC)
+	assert.Equal(t, 4, dist.MaxShardsPerRack)
+	assert.Equal(t, 4, dist.MaxShardsPerNode)
 
-			dist := CalculateDistribution(tt.ecConfig, rep)
+	expected := "EC Configuration: 10+4 (total: 14, can lose: 4)\n" +
+		"Replication: replication=110 (DCs:2, Racks/DC:2, Nodes/Rack:1)\n" +
+		"Distribution Plan:\n" +
+		"  Data Centers: 2 (target 7 shards each, max 9)\n" +
+		"  Racks per DC: 2 (target 4 shards each, max 4)\n" +
+		"  Nodes per Rack: 1 (target 4 shards each, max 4)\n"
+	assert.Equal(t, expected, dist.Summary())
+}
 
-			if dist.ReplicationConfig.MinDataCenters != tt.expectedMinDCs {
-				t.Errorf("MinDataCenters = %d, want %d", dist.ReplicationConfig.MinDataCenters, tt.expectedMinDCs)
-			}
-			if dist.ReplicationConfig.MinRacksPerDC != tt.expectedMinRacksPerDC {
-				t.Errorf("MinRacksPerDC = %d, want %d", dist.ReplicationConfig.MinRacksPerDC, tt.expectedMinRacksPerDC)
-			}
-			if dist.ReplicationConfig.MinNodesPerRack != tt.expectedMinNodesPerRack {
-				t.Errorf("MinNodesPerRack = %d, want %d", dist.ReplicationConfig.MinNodesPerRack, tt.expectedMinNodesPerRack)
-			}
-			if dist.TargetShardsPerDC != tt.expectedTargetPerDC {
-				t.Errorf("TargetShardsPerDC = %d, want %d", dist.TargetShardsPerDC, tt.expectedTargetPerDC)
-			}
-			if dist.TargetShardsPerRack != tt.expectedTargetPerRack {
-				t.Errorf("TargetShardsPerRack = %d, want %d", dist.TargetShardsPerRack, tt.expectedTargetPerRack)
-			}
-			if dist.TargetShardsPerNode != tt.expectedTargetPerNode {
-				t.Errorf("TargetShardsPerNode = %d, want %d", dist.TargetShardsPerNode, tt.expectedTargetPerNode)
-			}
+// The reported max may not exceed the loss budget at a survivable level:
+// 8+4 over "200" lets a domain drift to 7 of 12 shards, but losing that domain
+// would leave 5 < 8 — capping the max at the budget keeps SURVIVABLE true.
+func TestCalculateDistributionMaxWithinLossBudget(t *testing.T) {
+	ec, err := NewECConfig(8, 4)
+	require.NoError(t, err)
+	rep, err := NewReplicationConfigFromString("200")
+	require.NoError(t, err)
+	dist := CalculateDistribution(ec, rep)
 
-			t.Logf("Distribution for %s: %s", tt.name, dist.String())
-		})
-	}
+	assert.Equal(t, 4, dist.TargetShardsPerDC)
+	assert.Equal(t, 4, dist.MaxShardsPerDC)
+	assert.Equal(t, 4, dist.MaxShardsPerRack)
+	assert.Equal(t, 4, dist.MaxShardsPerNode)
+
+	// a level whose even share already exceeds the budget keeps the slack bound
+	dist = CalculateDistribution(DefaultECConfig(), rep)
+	assert.Equal(t, 6, dist.MaxShardsPerDC) // even 5 > 4: DC loss is not survivable anyway
+}
+
+func TestCalculateDistributionSingleDomain(t *testing.T) {
+	rep, err := NewReplicationConfigFromString("000")
+	require.NoError(t, err)
+	dist := CalculateDistribution(DefaultECConfig(), rep)
+	assert.Equal(t, 14, dist.TargetShardsPerDC)
+	assert.Equal(t, 14, dist.MaxShardsPerDC)
 }
 
 func TestFaultToleranceAnalysis(t *testing.T) {
-	tests := []struct {
-		name           string
-		ecConfig       ECConfig
-		replication    string
-		canSurviveDC   bool
-		canSurviveRack bool
-	}{
-		// 10+4 = 14 shards, need 10 to reconstruct, can lose 4
-		{"10+4 000", DefaultECConfig(), "000", false, false}, // All in one, any failure is fatal
-		{"10+4 100", DefaultECConfig(), "100", false, false}, // 7 per DC/rack, 7 remaining < 10
-		{"10+4 200", DefaultECConfig(), "200", false, false}, // 5 per DC/rack, 9 remaining < 10
-		{"10+4 110", DefaultECConfig(), "110", false, true},  // 4 per rack, 10 remaining = enough for rack
+	ec, err := NewECConfig(8, 4)
+	require.NoError(t, err)
+	rep, err := NewReplicationConfigFromString("200")
+	require.NoError(t, err)
+	dist := CalculateDistribution(ec, rep)
 
-		// 8+4 = 12 shards, need 8 to reconstruct, can lose 4
-		{"8+4 100", ECConfig{8, 4}, "100", false, false}, // 6 per DC/rack, 6 remaining < 8
-		{"8+4 200", ECConfig{8, 4}, "200", true, true},   // 4 per DC/rack, 8 remaining = enough!
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rep, _ := NewReplicationConfigFromString(tt.replication)
-			dist := CalculateDistribution(tt.ecConfig, rep)
-
-			if dist.CanSurviveDCFailure() != tt.canSurviveDC {
-				t.Errorf("CanSurviveDCFailure() = %v, want %v", dist.CanSurviveDCFailure(), tt.canSurviveDC)
-			}
-			if dist.CanSurviveRackFailure() != tt.canSurviveRack {
-				t.Errorf("CanSurviveRackFailure() = %v, want %v", dist.CanSurviveRackFailure(), tt.canSurviveRack)
-			}
-
-			t.Log(dist.FaultToleranceAnalysis())
-		})
-	}
+	analysis := dist.FaultToleranceAnalysis()
+	assert.Contains(t, analysis, "Fault Tolerance Analysis for 8+4:")
+	assert.Contains(t, analysis, "DC Failure: SURVIVABLE")
+	assert.Contains(t, analysis, "- Losing one DC loses ~4 shards")
+	assert.Contains(t, analysis, "- Remaining: 8 shards (need 8)")
 }
 
-func TestMinDCsForDCFaultTolerance(t *testing.T) {
-	tests := []struct {
-		name     string
-		ecConfig ECConfig
-		minDCs   int
-	}{
-		// 10+4: can lose 4, so max 4 per DC, 14/4 = 4 DCs needed
-		{"10+4", DefaultECConfig(), 4},
-		// 8+4: can lose 4, so max 4 per DC, 12/4 = 3 DCs needed
-		{"8+4", ECConfig{8, 4}, 3},
-		// 6+3: can lose 3, so max 3 per DC, 9/3 = 3 DCs needed
-		{"6+3", ECConfig{6, 3}, 3},
-		// 4+2: can lose 2, so max 2 per DC, 6/2 = 3 DCs needed
-		{"4+2", ECConfig{4, 2}, 3},
-	}
+func TestFaultToleranceAnalysisNotSurvivable(t *testing.T) {
+	rep, err := NewReplicationConfigFromString("000")
+	require.NoError(t, err)
+	dist := CalculateDistribution(DefaultECConfig(), rep)
+	analysis := dist.FaultToleranceAnalysis()
+	assert.Contains(t, analysis, "DC Failure: NOT SURVIVABLE")
+	assert.Contains(t, analysis, "Rack Failure: NOT SURVIVABLE")
+	assert.Contains(t, analysis, "Node Failure: NOT SURVIVABLE")
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rep, _ := NewReplicationConfigFromString("000")
-			dist := CalculateDistribution(tt.ecConfig, rep)
-
-			if dist.MinDCsForDCFaultTolerance() != tt.minDCs {
-				t.Errorf("MinDCsForDCFaultTolerance() = %d, want %d",
-					dist.MinDCsForDCFaultTolerance(), tt.minDCs)
-			}
-
-			t.Logf("%s: needs %d DCs for DC fault tolerance", tt.name, dist.MinDCsForDCFaultTolerance())
-		})
-	}
+func makeNode(id, dc, rack string, freeSlots int, shards ...int) *TopologyNode {
+	return &TopologyNode{NodeID: id, DataCenter: dc, Rack: rack, FreeSlots: freeSlots, ShardIDs: shards}
 }
 
 func TestTopologyAnalysis(t *testing.T) {
-	analysis := NewTopologyAnalysis()
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 5, 0, 1))
+	a.AddNode(makeNode("n2", "dc1", "r1", 5, 2))
+	a.AddNode(makeNode("n3", "dc2", "r2", 5))
+	a.Finalize()
 
-	// Add nodes to topology
-	node1 := &TopologyNode{
-		NodeID:     "node1",
-		DataCenter: "dc1",
-		Rack:       "rack1",
-		FreeSlots:  5,
-	}
-	node2 := &TopologyNode{
-		NodeID:     "node2",
-		DataCenter: "dc1",
-		Rack:       "rack2",
-		FreeSlots:  10,
-	}
-	node3 := &TopologyNode{
-		NodeID:     "node3",
-		DataCenter: "dc2",
-		Rack:       "rack3",
-		FreeSlots:  10,
-	}
-
-	analysis.AddNode(node1)
-	analysis.AddNode(node2)
-	analysis.AddNode(node3)
-
-	// Add shard locations (all on node1)
-	for i := 0; i < 14; i++ {
-		analysis.AddShardLocation(ShardLocation{
-			ShardID:    i,
-			NodeID:     "node1",
-			DataCenter: "dc1",
-			Rack:       "rack1",
-		})
-	}
-
-	analysis.Finalize()
-
-	// Verify counts
-	if analysis.TotalShards != 14 {
-		t.Errorf("TotalShards = %d, want 14", analysis.TotalShards)
-	}
-	if analysis.ShardsByDC["dc1"] != 14 {
-		t.Errorf("ShardsByDC[dc1] = %d, want 14", analysis.ShardsByDC["dc1"])
-	}
-	if analysis.ShardsByRack["rack1"] != 14 {
-		t.Errorf("ShardsByRack[rack1] = %d, want 14", analysis.ShardsByRack["rack1"])
-	}
-	if analysis.ShardsByNode["node1"] != 14 {
-		t.Errorf("ShardsByNode[node1] = %d, want 14", analysis.ShardsByNode["node1"])
-	}
-
-	t.Log(analysis.DetailedString())
+	assert.Equal(t, 3, a.TotalShards)
+	assert.Equal(t, 3, a.TotalNodes)
+	assert.Equal(t, 2, a.TotalRacks)
+	assert.Equal(t, 2, a.TotalDCs)
+	assert.Equal(t, 3, a.ShardsByDC["dc1"])
+	assert.Equal(t, 0, a.ShardsByDC["dc2"])
+	assert.Equal(t, []string{"r1"}, a.DCToRacks["dc1"])
+	assert.Equal(t, []int{0, 1, 2}, a.RackToShards[rackKey("dc1", "r1")])
 }
 
-func TestRebalancer(t *testing.T) {
-	// Build topology: 2 DCs, 2 racks each, all shards on one node
-	analysis := NewTopologyAnalysis()
+// A node registered twice must still count once in rack and shard totals.
+func TestTopologyAnalysisDuplicateNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 5, 0, 1))
+	a.AddNode(makeNode("n1", "dc1", "r1", 5, 0, 1))
+	a.Finalize()
 
-	// Add nodes
-	nodes := []*TopologyNode{
-		{NodeID: "dc1-rack1-node1", DataCenter: "dc1", Rack: "dc1-rack1", FreeSlots: 0},
-		{NodeID: "dc1-rack2-node1", DataCenter: "dc1", Rack: "dc1-rack2", FreeSlots: 10},
-		{NodeID: "dc2-rack1-node1", DataCenter: "dc2", Rack: "dc2-rack1", FreeSlots: 10},
-		{NodeID: "dc2-rack2-node1", DataCenter: "dc2", Rack: "dc2-rack2", FreeSlots: 10},
+	assert.Equal(t, 1, a.TotalNodes)
+	assert.Len(t, a.RackToNodes[rackKey("dc1", "r1")], 1)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+}
+
+// A node auto-registered by a shard location gets its real capacity when the
+// node itself registers later, plus any shards the location did not mention.
+func TestTopologyAnalysisNodeCapacityLateRegistration(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 1))
+	a.Finalize()
+
+	assert.Equal(t, 10, a.AllNodes["n1"].FreeSlots)
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Len(t, a.RackToNodes[rackKey("dc1", "r1")], 1)
+}
+
+// Shards may be registered either through TopologyNode.ShardIDs or through
+// AddShardLocation — both must leave the node holding the shards.
+func TestTopologyAnalysisAddShardLocation(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 5))
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalShards)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+}
+
+// Rack names are only unique within a DC, so dc1/rack1 and dc2/rack1 are
+// distinct domains.
+func TestTopologyAnalysisSameRackNameAcrossDCs(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "rack1", 5, 0, 1))
+	a.AddNode(makeNode("n2", "dc2", "rack1", 5, 2))
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalDCs)
+	assert.Equal(t, 2, a.TotalRacks)
+	assert.Equal(t, 2, a.ShardsByRack[rackKey("dc1", "rack1")])
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("dc2", "rack1")])
+}
+
+// A "/" inside a data-center or rack name must not merge distinct racks.
+func TestTopologyAnalysisSlashInNames(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "a", "b/c", 5, 0))
+	a.AddNode(makeNode("n2", "a/b", "c", 5, 1))
+	a.Finalize()
+
+	assert.Equal(t, 2, a.TotalRacks)
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("a", "b/c")])
+	assert.Equal(t, 1, a.ShardsByRack[rackKey("a/b", "c")])
+}
+
+func TestPlanRebalanceAcrossDCs(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("a2", "dcA", "rA2", 10, 4, 5, 6, 7))
+	a.AddNode(makeNode("a3", "dcA", "rA3", 10, 8, 9, 10, 11))
+	a.AddNode(makeNode("a4", "dcA", "rA4", 10, 12, 13))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 10))
+	a.AddNode(makeNode("b2", "dcB", "rB2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("110")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 7, plan.MovesAcrossDC)
+	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcA"])
+	assert.Equal(t, 7, plan.Analysis.ShardsByDC["dcB"])
+
+	// the given analysis still describes the un-moved layout
+	assert.Equal(t, 14, a.ShardsByDC["dcA"])
+	assert.Equal(t, 0, a.ShardsByDC["dcB"])
+	assert.Equal(t, []int{0, 1, 2, 3}, a.AllNodes["a1"].ShardIDs)
+
+	// parity shards (10-13) move before data shards
+	assert.True(t, plan.Moves[0].ShardID >= 10)
+	assert.Equal(t, "b1", plan.Moves[0].DestNode.NodeID)
+}
+
+func TestPlanRebalanceAcrossRacks(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("n2", "dc1", "r2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("110")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, plan.TotalMoves)
+	assert.Equal(t, 2, plan.MovesAcrossRack)
+	assert.Equal(t, 2, plan.Analysis.ShardsByRack[rackKey("dc1", "r1")])
+	assert.Equal(t, 2, plan.Analysis.ShardsByRack[rackKey("dc1", "r2")])
+	// parity-first ordering: shards 3 then 2 move out of r1
+	assert.Equal(t, 3, plan.Moves[0].ShardID)
+	assert.Equal(t, 2, plan.Moves[1].ShardID)
+}
+
+func TestPlanRebalanceWithinRack(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("001")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, plan.TotalMoves)
+	assert.Equal(t, 2, plan.MovesWithinRack)
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{3, 2}, plan.Analysis.AllNodes["n2"].ShardIDs)
+	assert.Equal(t, []int{0, 1, 2, 3}, a.AllNodes["n1"].ShardIDs)
+}
+
+func TestPlanRebalanceRespectsFreeSlots(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("n2", "dc1", "r1", 1))
+	a.Finalize()
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, plan.TotalMoves, "only one slot is free on the destination")
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, 0, plan.Analysis.AllNodes["n2"].FreeSlots)
+	assert.Equal(t, 1, a.AllNodes["n2"].FreeSlots)
+}
+
+func TestPlanRebalanceNoopWhenBalanced(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10, 2, 3))
+	a.Finalize()
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+	assert.Equal(t, 0, plan.TotalMoves)
+}
+
+func TestPlanRebalanceNilAnalysis(t *testing.T) {
+	_, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{}).PlanRebalance(nil)
+	assert.Error(t, err)
+}
+
+// Node balancing inside a rack must aim for the rack's count after
+// DC- and rack-level moves, not the count the rack started with.
+func TestPlanRebalanceNodeTargetAfterMoves(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10))
+	a.AddNode(makeNode("n3", "dc1", "r2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("010")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	assert.Equal(t, 7, plan.Analysis.ShardsByRack[rackKey("dc1", "r1")])
+	assert.Equal(t, 7, plan.Analysis.ShardsByRack[rackKey("dc1", "r2")])
+	assert.Equal(t, 4, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{0, 1, 2, 3}, plan.Analysis.AllNodes["n1"].ShardIDs)
+	assert.Equal(t, []int{6, 5, 4}, plan.Analysis.AllNodes["n2"].ShardIDs)
+}
+
+// A shard that already has a copy anywhere in the destination domain must not
+// be moved there again — the second copy adds no redundancy.
+func TestPlanRebalanceNoDuplicateShardInDomain(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 10, 3))
+	a.AddNode(makeNode("b2", "dcB", "rB2", 10))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// dcA holds 4, dcB holds 1, target 3 each: one move, and it cannot be shard 3
+	require.Len(t, plan.Moves, 1)
+	assert.Equal(t, 2, plan.Moves[0].ShardID)
+	assert.Equal(t, []int{2}, plan.Analysis.AllNodes["b2"].ShardIDs)
+	assert.Equal(t, []int{3}, plan.Analysis.AllNodes["b1"].ShardIDs)
+}
+
+// Shard locations may be registered without registering the node first; the
+// rebalancer must still see the shard, counted under the node's own dc/rack.
+func TestPlanRebalanceShardForUnregisteredNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddShardLocation(ShardLocation{ShardID: 0, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddShardLocation(ShardLocation{ShardID: 1, NodeID: "n1", DataCenter: "dc1", Rack: "r1"})
+	a.AddNode(makeNode("n2", "dc1", "r1", 10))
+	a.Finalize()
+
+	assert.Equal(t, 1, a.TotalDCs)
+	assert.Equal(t, 2, a.ShardsByNode["n1"])
+	assert.Equal(t, []int{0, 1}, a.AllNodes["n1"].ShardIDs)
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+	assert.Equal(t, 1, plan.TotalMoves)
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 1, plan.Analysis.ShardsByNode["n2"])
+}
+
+// When the most overloaded domain can only offer duplicates, balancing must
+// fall through to the next overloaded source rather than stop.
+func TestPlanRebalanceSkipsBlockedSource(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("a2", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("a3", "dcA", "rA", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("b1", "dcB", "rB", 10, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("c1", "dcC", "rC", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("c2", "dcC", "rC", 10))
+	a.AddNode(makeNode("d1", "dcD", "rD", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("d2", "dcD", "rD", 10))
+	a.Finalize()
+
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 4, MinRacksPerDC: 1, MinNodesPerRack: 1}).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// dcA is stuck on duplicates (target 8), but dcB still sheds two shards
+	assert.Equal(t, 12, plan.Analysis.ShardsByDC["dcA"])
+	assert.Equal(t, 8, plan.Analysis.ShardsByDC["dcB"])
+	assert.Equal(t, 5, plan.Analysis.ShardsByDC["dcC"])
+	assert.Equal(t, 5, plan.Analysis.ShardsByDC["dcD"])
+}
+
+// A shard that dc-level balancing lands on a node can be shed again at rack or
+// node level; its moves must collapse to one transfer to the final holder.
+func TestPlanRebalanceCollapsesChainedMoves(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 20))
+	a.AddNode(makeNode("c1", "dcB", "rB2", 20))
+	a.AddNode(makeNode("c2", "dcB", "rB2", 20))
+	a.AddNode(makeNode("c3", "dcB", "rB2", 20))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(DefaultECConfig(), rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	moved := make(map[int]string)
+	for _, m := range plan.Moves {
+		_, twice := moved[m.ShardID]
+		assert.False(t, twice, "shard %d moves more than once", m.ShardID)
+		moved[m.ShardID] = m.DestNode.NodeID
+		assert.Contains(t, m.DestNode.ShardIDs, m.ShardID)
 	}
-	for _, node := range nodes {
-		analysis.AddNode(node)
+	assert.Equal(t, 7, plan.TotalMoves)
+	assert.Equal(t, 7, plan.MovesAcrossDC)
+	// shard 12 reached b1 through c1 in simulation; the plan moves it directly
+	assert.Equal(t, "b1", moved[12])
+	assert.Equal(t, []int{13, 9, 12}, plan.Analysis.AllNodes["b1"].ShardIDs)
+}
+
+// A collapsed move must not be scheduled before the departures that free its
+// destination: applying the plan in order may never target a full node.
+func TestPlanRebalanceMovesRespectSlots(t *testing.T) {
+	ec, err := NewECConfig(20, 4)
+	require.NoError(t, err)
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("a1", "dcA", "rA", 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16))
+	a.AddNode(makeNode("b1", "dcB", "rB1", 10))
+	a.AddNode(makeNode("b2", "dcB", "rB1", 0, 20, 21, 22, 23))
+	a.AddNode(makeNode("c1", "dcB", "rB2", 10, 17, 18, 19))
+	a.Finalize()
+
+	rep, err := NewReplicationConfigFromString("100")
+	require.NoError(t, err)
+	plan, err := NewRebalancer(ec, rep).PlanRebalance(a)
+	require.NoError(t, err)
+
+	free := make(map[string]int)
+	for _, n := range a.AllNodes {
+		free[n.NodeID] = n.FreeSlots
 	}
-
-	// Add all 14 shards to first node
-	for i := 0; i < 14; i++ {
-		analysis.AddShardLocation(ShardLocation{
-			ShardID:    i,
-			NodeID:     "dc1-rack1-node1",
-			DataCenter: "dc1",
-			Rack:       "dc1-rack1",
-		})
+	firstDeparture, firstArrival := -1, -1
+	for i, m := range plan.Moves {
+		assert.Greater(t, free[m.DestNode.NodeID], 0, "move %d targets a full node", i)
+		free[m.DestNode.NodeID]--
+		free[m.SourceNode.NodeID]++
+		if m.DestNode.NodeID == "b2" && firstArrival < 0 {
+			firstArrival = i
+		}
+		if m.SourceNode.NodeID == "b2" && firstDeparture < 0 {
+			firstDeparture = i
+		}
 	}
-	analysis.Finalize()
-
-	// Create rebalancer with 110 replication (2 DCs, 2 racks each)
-	ec := DefaultECConfig()
-	rep, _ := NewReplicationConfigFromString("110")
-	rebalancer := NewRebalancer(ec, rep)
-
-	plan, err := rebalancer.PlanRebalance(analysis)
-	if err != nil {
-		t.Fatalf("PlanRebalance failed: %v", err)
+	moved := make(map[int]string)
+	for _, m := range plan.Moves {
+		moved[m.ShardID] = m.DestNode.NodeID
 	}
+	// shard 16 reaches full-at-start b2 through b1; the plan moves it directly,
+	// but only after the departures that free b2's slots
+	assert.Equal(t, "b2", moved[16])
+	assert.Equal(t, "c1", moved[23])
+	assert.Greater(t, firstArrival, firstDeparture)
+}
 
-	t.Logf("Planned %d moves", plan.TotalMoves)
-	t.Log(plan.DetailedString())
+func TestPlanRebalanceNoDuplicateShardOnNode(t *testing.T) {
+	a := NewTopologyAnalysis()
+	a.AddNode(makeNode("n1", "dc1", "r1", 10, 0, 1, 2, 3))
+	a.AddNode(makeNode("n2", "dc1", "r1", 10, 3))
+	a.Finalize()
 
-	// Verify we're moving shards to dc2
-	movedToDC2 := 0
+	plan, err := NewRebalancer(DefaultECConfig(), ReplicationConfig{MinDataCenters: 1, MinRacksPerDC: 1, MinNodesPerRack: 2}).PlanRebalance(a)
+	require.NoError(t, err)
+
+	// n2 already holds 3, so the balancing move brings a different shard
+	assert.Equal(t, 3, plan.Analysis.ShardsByNode["n1"])
+	assert.Equal(t, 2, plan.Analysis.ShardsByNode["n2"])
+	assert.Equal(t, []int{3, 2}, plan.Analysis.AllNodes["n2"].ShardIDs)
 	for _, move := range plan.Moves {
-		if move.DestNode.DataCenter == "dc2" {
-			movedToDC2++
-		}
-	}
-
-	if movedToDC2 == 0 {
-		t.Error("Expected some moves to dc2")
-	}
-
-	// With "110" replication, target is 7 shards per DC
-	// Starting with 14 in dc1, should plan to move 7 to dc2
-	if plan.MovesAcrossDC < 7 {
-		t.Errorf("Expected at least 7 cross-DC moves for 110 replication, got %d", plan.MovesAcrossDC)
+		assert.NotContains(t, move.DestNode.ShardIDs[:len(move.DestNode.ShardIDs)-1], move.ShardID,
+			"shard %d must not be moved onto a node already holding it", move.ShardID)
 	}
 }
 
-func TestCustomECRatios(t *testing.T) {
-	// Test various custom EC ratios that seaweed-enterprise might use
-	ratios := []struct {
-		name   string
-		data   int
-		parity int
-	}{
-		{"4+2", 4, 2},
-		{"6+3", 6, 3},
-		{"8+2", 8, 2},
-		{"8+4", 8, 4},
-		{"10+4", 10, 4},
-		{"12+4", 12, 4},
-		{"16+4", 16, 4},
-	}
-
-	for _, ratio := range ratios {
-		t.Run(ratio.name, func(t *testing.T) {
-			ec, err := NewECConfig(ratio.data, ratio.parity)
-			if err != nil {
-				t.Fatalf("Failed to create EC config: %v", err)
-			}
-
-			rep, _ := NewReplicationConfigFromString("110")
-			dist := CalculateDistribution(ec, rep)
-
-			t.Logf("EC %s with replication 110:", ratio.name)
-			t.Logf("  Total shards: %d", ec.TotalShards())
-			t.Logf("  Can lose: %d shards", ec.MaxTolerableLoss())
-			t.Logf("  Target per DC: %d", dist.TargetShardsPerDC)
-			t.Logf("  Target per rack: %d", dist.TargetShardsPerRack)
-			t.Logf("  Min DCs for DC fault tolerance: %d", dist.MinDCsForDCFaultTolerance())
-
-			// Verify basic sanity
-			if dist.TargetShardsPerDC*2 < ec.TotalShards() {
-				t.Errorf("Target per DC (%d) * 2 should be >= total (%d)",
-					dist.TargetShardsPerDC, ec.TotalShards())
-			}
-		})
-	}
-}
-
-func TestShardClassification(t *testing.T) {
-	ec := DefaultECConfig() // 10+4
-
-	// Test IsDataShard
-	for i := 0; i < 10; i++ {
-		if !ec.IsDataShard(i) {
-			t.Errorf("Shard %d should be a data shard", i)
-		}
-		if ec.IsParityShard(i) {
-			t.Errorf("Shard %d should not be a parity shard", i)
-		}
-	}
-
-	// Test IsParityShard
-	for i := 10; i < 14; i++ {
-		if ec.IsDataShard(i) {
-			t.Errorf("Shard %d should not be a data shard", i)
-		}
-		if !ec.IsParityShard(i) {
-			t.Errorf("Shard %d should be a parity shard", i)
-		}
-	}
-
-	// Test with custom 8+4 EC
-	ec84, _ := NewECConfig(8, 4)
-	for i := 0; i < 8; i++ {
-		if !ec84.IsDataShard(i) {
-			t.Errorf("8+4 EC: Shard %d should be a data shard", i)
-		}
-	}
-	for i := 8; i < 12; i++ {
-		if !ec84.IsParityShard(i) {
-			t.Errorf("8+4 EC: Shard %d should be a parity shard", i)
-		}
-	}
-}
-
-func TestSortShardsDataFirst(t *testing.T) {
-	ec := DefaultECConfig() // 10+4
-
-	// Mixed shards: [0, 10, 5, 11, 2, 12, 7, 13]
-	shards := []int{0, 10, 5, 11, 2, 12, 7, 13}
-	sorted := ec.SortShardsDataFirst(shards)
-
-	t.Logf("Original: %v", shards)
-	t.Logf("Sorted (data first): %v", sorted)
-
-	// First 4 should be data shards (0, 5, 2, 7)
-	for i := 0; i < 4; i++ {
-		if !ec.IsDataShard(sorted[i]) {
-			t.Errorf("Position %d should be a data shard, got %d", i, sorted[i])
-		}
-	}
-
-	// Last 4 should be parity shards (10, 11, 12, 13)
-	for i := 4; i < 8; i++ {
-		if !ec.IsParityShard(sorted[i]) {
-			t.Errorf("Position %d should be a parity shard, got %d", i, sorted[i])
-		}
-	}
-}
-
-func TestSortShardsParityFirst(t *testing.T) {
-	ec := DefaultECConfig() // 10+4
-
-	// Mixed shards: [0, 10, 5, 11, 2, 12, 7, 13]
-	shards := []int{0, 10, 5, 11, 2, 12, 7, 13}
-	sorted := ec.SortShardsParityFirst(shards)
-
-	t.Logf("Original: %v", shards)
-	t.Logf("Sorted (parity first): %v", sorted)
-
-	// First 4 should be parity shards (10, 11, 12, 13)
-	for i := 0; i < 4; i++ {
-		if !ec.IsParityShard(sorted[i]) {
-			t.Errorf("Position %d should be a parity shard, got %d", i, sorted[i])
-		}
-	}
-
-	// Last 4 should be data shards (0, 5, 2, 7)
-	for i := 4; i < 8; i++ {
-		if !ec.IsDataShard(sorted[i]) {
-			t.Errorf("Position %d should be a data shard, got %d", i, sorted[i])
-		}
-	}
-}
-
-func TestRebalancerPrefersMovingParityShards(t *testing.T) {
-	// Build topology where one node has all shards including mix of data and parity
-	analysis := NewTopologyAnalysis()
-
-	// Node 1: Has all 14 shards (mixed data and parity)
-	node1 := &TopologyNode{
-		NodeID:     "node1",
-		DataCenter: "dc1",
-		Rack:       "rack1",
-		FreeSlots:  0,
-	}
-	analysis.AddNode(node1)
-
-	// Node 2: Empty, ready to receive
-	node2 := &TopologyNode{
-		NodeID:     "node2",
-		DataCenter: "dc1",
-		Rack:       "rack1",
-		FreeSlots:  10,
-	}
-	analysis.AddNode(node2)
-
-	// Add all 14 shards to node1
-	for i := 0; i < 14; i++ {
-		analysis.AddShardLocation(ShardLocation{
-			ShardID:    i,
-			NodeID:     "node1",
-			DataCenter: "dc1",
-			Rack:       "rack1",
-		})
-	}
-	analysis.Finalize()
-
-	// Create rebalancer
-	ec := DefaultECConfig()
-	rep, _ := NewReplicationConfigFromString("000")
-	rebalancer := NewRebalancer(ec, rep)
-
-	plan, err := rebalancer.PlanRebalance(analysis)
-	if err != nil {
-		t.Fatalf("PlanRebalance failed: %v", err)
-	}
-
-	t.Logf("Planned %d moves", len(plan.Moves))
-
-	// Check that parity shards are moved first
-	parityMovesFirst := 0
-	dataMovesFirst := 0
-	seenDataMove := false
-
-	for _, move := range plan.Moves {
-		isParity := ec.IsParityShard(move.ShardID)
-		t.Logf("Move shard %d (parity=%v): %s -> %s",
-			move.ShardID, isParity, move.SourceNode.NodeID, move.DestNode.NodeID)
-
-		if isParity && !seenDataMove {
-			parityMovesFirst++
-		} else if !isParity {
-			seenDataMove = true
-			dataMovesFirst++
-		}
-	}
-
-	t.Logf("Parity moves before first data move: %d", parityMovesFirst)
-	t.Logf("Data moves: %d", dataMovesFirst)
-
-	// With 10+4 EC, there are 4 parity shards
-	// They should be moved before data shards when possible
-	if parityMovesFirst < 4 && len(plan.Moves) >= 4 {
-		t.Logf("Note: Expected parity shards to be moved first, but got %d parity moves before data moves", parityMovesFirst)
-	}
-}
-
-func TestDistributionSummary(t *testing.T) {
-	ec := DefaultECConfig()
-	rep, _ := NewReplicationConfigFromString("110")
-	dist := CalculateDistribution(ec, rep)
-
-	summary := dist.Summary()
-	t.Log(summary)
-
-	if len(summary) == 0 {
-		t.Error("Summary should not be empty")
-	}
-
-	analysis := dist.FaultToleranceAnalysis()
-	t.Log(analysis)
-
-	if len(analysis) == 0 {
-		t.Error("Fault tolerance analysis should not be empty")
-	}
+func TestCalculateDistributionZeroReplication(t *testing.T) {
+	dist := CalculateDistribution(DefaultECConfig(), ReplicationConfig{})
+	assert.Equal(t, 14, dist.TargetShardsPerDC)
+	assert.Contains(t, dist.Summary(), "Data Centers: 1")
+	assert.NotPanics(t, func() { dist.FaultToleranceAnalysis() })
 }

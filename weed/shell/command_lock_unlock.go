@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -32,7 +33,26 @@ func (c *commandLock) HasTag(CommandTag) bool {
 
 func (c *commandLock) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	waited := false
+	if !commandEnv.locker.IsLocked() {
+		if holder, message, held := commandEnv.shellLockHolder(); held {
+			waited = true
+			if holder == "" {
+				holder = "another client"
+			}
+			if message != "" {
+				fmt.Fprintf(writer, "waiting for lock held by %s: %s\n", holder, message)
+			} else {
+				fmt.Fprintf(writer, "waiting for lock held by %s\n", holder)
+			}
+		}
+	}
+
 	commandEnv.locker.RequestLock(util.DetectedHostAddress())
+
+	if waited {
+		fmt.Fprintln(writer, "lock acquired")
+	}
 
 	return nil
 }

@@ -2,20 +2,26 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -41,10 +47,11 @@ type WorkerGrpcServer struct {
 	logRequestsMutex   sync.RWMutex
 
 	// gRPC server
-	grpcServer *grpc.Server
-	listener   net.Listener
-	running    bool
-	stopChan   chan struct{}
+	grpcServer  *grpc.Server
+	listener    net.Listener
+	running     bool
+	stopChan    chan struct{}
+	mtlsEnabled bool
 }
 
 // LogRequestContext tracks pending log requests
@@ -77,22 +84,32 @@ func NewWorkerGrpcServer(adminServer *AdminServer) *WorkerGrpcServer {
 	}
 }
 
-// StartWithTLS starts the gRPC server on the specified port with optional TLS
-func (s *WorkerGrpcServer) StartWithTLS(port int) error {
+// StartWithTLS starts the gRPC server on the specified port with optional TLS.
+// A caller that already holds the port passes its listener instead. When no
+// listener is supplied the server binds to bindIp to honor the operator's -ip.
+func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Listener) error {
 	if s.running {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
-	// Create listener
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %v", port, err)
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", util.JoinHostPort(bindIp, port))
+		if err != nil {
+			return fmt.Errorf("failed to listen on port %d: %v", port, err)
+		}
 	}
 
 	// Create gRPC server with optional TLS
-	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
+	tlsOption, _ := security.LoadServerTLS(util.GetViper(), "grpc.admin")
+	s.mtlsEnabled = tlsOption != nil
+	grpcServer := pb.NewGrpcServer(tlsOption)
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
+	if plugin := s.adminServer.GetPlugin(); plugin != nil {
+		plugin_pb.RegisterPluginControlServiceServer(grpcServer, plugin)
+		glog.V(0).Infof("Plugin gRPC service registered on worker gRPC server")
+	}
 
 	s.grpcServer = grpcServer
 	s.listener = listener
@@ -101,6 +118,8 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	// Start background routines
 	go s.cleanupRoutine()
 	go s.activeLogFetchLoop()
+
+	pb.ServeGrpcOnLocalSocket(grpcServer, port)
 
 	// Start serving in a goroutine
 	go func() {
@@ -114,6 +133,36 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	return nil
 }
 
+// ServeOn serves the worker gRPC API on an additional already-bound listener,
+// e.g. a legacy compat port kept alongside the primary one. grpc.Server tracks
+// every listener passed to Serve, so Stop closes it together with the primary.
+func (s *WorkerGrpcServer) ServeOn(listener net.Listener) {
+	go func() {
+		if err := s.grpcServer.Serve(listener); err != nil && s.running {
+			glog.Warningf("Worker gRPC compat listener on %s stopped: %v", listener.Addr(), err)
+		}
+	}()
+}
+
+// ListenPort returns the currently bound worker gRPC listen port.
+func (s *WorkerGrpcServer) ListenPort() int {
+	if s == nil || s.listener == nil {
+		return 0
+	}
+	if tcpAddr, ok := s.listener.Addr().(*net.TCPAddr); ok {
+		return tcpAddr.Port
+	}
+	_, portStr, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
 // Stop stops the gRPC server
 func (s *WorkerGrpcServer) Stop() error {
 	if !s.running {
@@ -123,11 +172,11 @@ func (s *WorkerGrpcServer) Stop() error {
 	s.running = false
 	close(s.stopChan)
 
-	// Close all worker connections
+	// Close all worker connections. Cancelling the context stops each
+	// handleOutgoingMessages goroutine; the outgoing channel is never closed.
 	s.connMutex.Lock()
 	for _, conn := range s.connections {
 		conn.cancel()
-		s.safeCloseOutgoingChannel(conn, "Stop")
 	}
 	s.connections = make(map[string]*WorkerConnection)
 	s.connMutex.Unlock()
@@ -149,6 +198,10 @@ func (s *WorkerGrpcServer) Stop() error {
 // WorkerStream handles bidirectional communication with workers
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
+
+	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
 
 	// get client address
 	address := findClientAddress(ctx)
@@ -196,13 +249,13 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	s.connMutex.Lock()
 	if oldConn, exists := s.connections[workerID]; exists {
 		glog.Infof("Worker %s reconnected, cleaning up old connection", workerID)
-		// Cancel old connection to stop its goroutines
+		// Cancel old connection to stop its goroutines. Its handleOutgoingMessages
+		// exits on the cancelled context; the outgoing channel is never closed.
 		oldConn.cancel()
-		// Don't close oldConn.outgoing here as it may cause panic in handleOutgoingMessages
-		// Let the goroutine exit naturally when it detects context cancellation
 	}
 	s.connections[workerID] = conn
 	s.connMutex.Unlock()
+	stats_collect.AdminWorkerEventsTotal.WithLabelValues("registered").Inc()
 
 	// Register worker with maintenance manager
 	s.registerWorkerWithManager(conn)
@@ -223,11 +276,8 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 		},
 	}
 
-	select {
-	case conn.outgoing <- regResponse:
+	if s.sendToWorker(conn, regResponse, 5*time.Second, "registration response") {
 		glog.V(1).Infof("Registration response sent to worker %s", workerID)
-	case <-time.After(5 * time.Second):
-		glog.Errorf("Failed to send registration response to worker %s", workerID)
 	}
 
 	// Handle incoming messages
@@ -235,23 +285,27 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 		select {
 		case <-ctx.Done():
 			glog.Infof("Worker %s connection closed: %v", workerID, ctx.Err())
-			s.unregisterWorker(conn)
+			s.unregisterWorker(conn, "unregistered")
 			return nil
 		case <-connCtx.Done():
 			glog.Infof("Worker %s connection cancelled", workerID)
-			s.unregisterWorker(conn)
+			s.unregisterWorker(conn, "unregistered")
 			return nil
 		default:
 		}
 
 		msg, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF {
+			switch {
+			case err == io.EOF:
 				glog.Infof("Worker %s disconnected", workerID)
-			} else {
+			case errors.Is(err, context.Canceled), status.Code(err) == codes.Canceled:
+				// Graceful shutdown on either side cancels the stream.
+				glog.V(1).Infof("Worker %s stream canceled: %v", workerID, err)
+			default:
 				glog.Errorf("Error receiving from worker %s: %v", workerID, err)
 			}
-			s.unregisterWorker(conn)
+			s.unregisterWorker(conn, "unregistered")
 			return err
 		}
 
@@ -304,7 +358,7 @@ func (s *WorkerGrpcServer) handleWorkerMessage(conn *WorkerConnection, msg *work
 
 	case *worker_pb.WorkerMessage_Shutdown:
 		glog.Infof("Worker %s shutting down: %s", workerID, m.Shutdown.Reason)
-		s.unregisterWorker(conn)
+		s.unregisterWorker(conn, "unregistered")
 
 	default:
 		glog.Warningf("Unknown message type from worker %s", workerID)
@@ -348,11 +402,7 @@ func (s *WorkerGrpcServer) handleHeartbeat(conn *WorkerConnection, heartbeat *wo
 		},
 	}
 
-	select {
-	case conn.outgoing <- response:
-	case <-time.After(time.Second):
-		glog.Warningf("Failed to send heartbeat response to worker %s", conn.workerID)
-	}
+	s.sendToWorker(conn, response, time.Second, "heartbeat response")
 }
 
 // handleTaskRequest processes task requests from workers
@@ -399,11 +449,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			},
 		}
 
-		select {
-		case conn.outgoing <- assignment:
-		case <-time.After(time.Second):
-			glog.Warningf("Failed to send task assignment to worker %s", conn.workerID)
-		}
+		s.sendToWorker(conn, assignment, time.Second, "task assignment")
 	} else {
 		// Send explicit "No Task" response to prevent worker timeout
 		// Workers expect a TaskAssignment message but will sleep if TaskId is empty
@@ -416,11 +462,8 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			},
 		}
 
-		select {
-		case conn.outgoing <- noTaskAssignment:
+		if s.sendToWorker(conn, noTaskAssignment, time.Second, "no-task response") {
 			glog.V(4).Infof("Sent 'No Task' response to worker %s", conn.workerID)
-		case <-time.After(time.Second):
-			// If we can't send, the worker will eventually time out and reconnect, which is fine
 		}
 	}
 }
@@ -560,18 +603,26 @@ func (s *WorkerGrpcServer) handleTaskLogResponse(conn *WorkerConnection, respons
 	s.logRequestsMutex.Unlock()
 }
 
-// safeCloseOutgoingChannel safely closes the outgoing channel for a worker connection.
-func (s *WorkerGrpcServer) safeCloseOutgoingChannel(conn *WorkerConnection, source string) {
-	defer func() {
-		if r := recover(); r != nil {
-			glog.V(1).Infof("%s: recovered from panic closing outgoing channel for worker %s: %v", source, conn.workerID, r)
-		}
-	}()
-	close(conn.outgoing)
+// sendToWorker queues a message on conn.outgoing, which is deliberately never
+// closed: it has multiple concurrent senders, so closing it could panic one of
+// them with "send on closed channel". Teardown is signaled via conn.ctx instead;
+// handleOutgoingMessages drains the channel until that context is cancelled.
+// Returns false if the connection closed or the send timed out.
+func (s *WorkerGrpcServer) sendToWorker(conn *WorkerConnection, msg *worker_pb.AdminMessage, timeout time.Duration, description string) bool {
+	select {
+	case conn.outgoing <- msg:
+		return true
+	case <-conn.ctx.Done():
+		glog.V(2).Infof("Dropped %s for worker %s: connection closed", description, conn.workerID)
+		return false
+	case <-time.After(timeout):
+		glog.Warningf("Failed to send %s to worker %s: timeout", description, conn.workerID)
+		return false
+	}
 }
 
 // unregisterWorker removes a worker connection
-func (s *WorkerGrpcServer) unregisterWorker(conn *WorkerConnection) {
+func (s *WorkerGrpcServer) unregisterWorker(conn *WorkerConnection, event string) {
 	s.connMutex.Lock()
 	existingConn, exists := s.connections[conn.workerID]
 	if !exists {
@@ -590,12 +641,12 @@ func (s *WorkerGrpcServer) unregisterWorker(conn *WorkerConnection) {
 	// Remove from map first to prevent duplicate cleanup attempts
 	delete(s.connections, conn.workerID)
 	s.connMutex.Unlock()
+	stats_collect.AdminWorkerEventsTotal.WithLabelValues(event).Inc()
 
-	// Cancel context to signal goroutines to stop
+	// Cancel context to signal goroutines to stop. The outgoing channel is
+	// never closed (it has multiple senders); handleOutgoingMessages exits on
+	// the cancelled context.
 	conn.cancel()
-
-	// Safely close the outgoing channel with recover to handle potential double-close
-	s.safeCloseOutgoingChannel(conn, "unregisterWorker")
 
 	glog.V(1).Infof("Unregistered worker %s", conn.workerID)
 }
@@ -631,7 +682,7 @@ func (s *WorkerGrpcServer) cleanupStaleConnections() {
 
 	for _, conn := range toRemove {
 		glog.Warningf("Cleaning up stale worker connection: %s", conn.workerID)
-		s.unregisterWorker(conn)
+		s.unregisterWorker(conn, "stale_removed")
 	}
 }
 
@@ -695,6 +746,13 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	select {
 	case conn.outgoing <- logRequest:
 		glog.V(1).Infof("Log request sent to worker %s for task %s", workerID, taskID)
+	case <-conn.ctx.Done():
+		s.logRequestsMutex.Lock()
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
+		s.logRequestsMutex.Unlock()
+		return nil, fmt.Errorf("worker %s connection closed", workerID)
 	case <-time.After(logSendTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
@@ -713,6 +771,13 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		}
 		glog.V(1).Infof("Received %d log entries for task %s from worker %s", len(response.LogEntries), taskID, workerID)
 		return response.LogEntries, nil
+	case <-conn.ctx.Done():
+		s.logRequestsMutex.Lock()
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
+		s.logRequestsMutex.Unlock()
+		return nil, fmt.Errorf("worker %s connection closed", workerID)
 	case <-time.After(logResponseTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
@@ -758,15 +823,6 @@ func (s *WorkerGrpcServer) RequestTaskLogsFromAllWorkers(taskID string, maxEntri
 	}
 
 	return results, nil
-}
-
-// convertTaskParameters converts task parameters to protobuf format
-func convertTaskParameters(params map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for key, value := range params {
-		result[key] = fmt.Sprintf("%v", value)
-	}
-	return result
 }
 
 func findClientAddress(ctx context.Context) string {

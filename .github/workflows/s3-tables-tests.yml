@@ -2,10 +2,19 @@ name: "S3 Tables Integration Tests"
 
 on:
   pull_request:
-  
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/worker/tasks/iceberg/**'
+      - 'test/s3tables/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-tables-tests.yml'
+
 concurrency:
-  group: ${{ github.head_ref }}/s3-tables-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -19,12 +28,16 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Run go mod tidy
@@ -43,7 +56,8 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          # A stale FUSE mount can hang or fail df; keep diagnostics best effort.
+          timeout 15 df -h || true
           echo "=== Starting S3 Tables Tests ==="
           
           # Run S3 Tables integration tests
@@ -66,7 +80,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-tables-test-logs
           path: test/s3tables/table-buckets/test-output.log
@@ -79,13 +93,22 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -99,7 +122,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Iceberg Catalog Tests ==="
           
           # Run Iceberg catalog integration tests using Makefile (handles build)
@@ -122,7 +145,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: iceberg-catalog-test-logs
           path: test/s3tables/catalog/test-output.log
@@ -135,19 +158,27 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Trino image
-        run: docker pull trinodb/trino:479
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull trinodb/trino:479
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -165,7 +196,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Trino Iceberg Catalog Tests ==="
           
           # Run Trino + Iceberg catalog integration tests
@@ -188,10 +219,440 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: trino-iceberg-catalog-test-logs
           path: test/s3tables/catalog_trino/test-output.log
+          retention-days: 3
+
+  dremio-iceberg-catalog-tests:
+    name: Dremio Iceberg Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull dremio/dremio-oss:25.2.0
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Dremio Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_dremio
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting Dremio Iceberg Catalog Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "Dremio Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_dremio
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|dremio)" || true
+          echo "=== Dremio containers ==="
+          docker ps -a --filter "name=seaweed-dremio" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dremio-iceberg-catalog-test-logs
+          path: test/s3tables/catalog_dremio/test-output.log
+          retention-days: 3
+
+  doris-iceberg-catalog-tests:
+    name: Doris Iceberg Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/doris:doris-all-in-one-2.1.0
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Doris Iceberg Catalog Integration Tests
+        timeout-minutes: 30
+        working-directory: test/s3tables/catalog_doris
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting Doris Iceberg Catalog Tests ==="
+
+          go test -v -timeout 25m . 2>&1 | tee test-output.log || {
+            echo "Doris Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_doris
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|doris)" || true
+          echo "=== Doris containers ==="
+          docker ps -a --filter "name=seaweed-doris" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: doris-iceberg-catalog-test-logs
+          path: test/s3tables/catalog_doris/test-output.log
+          retention-days: 3
+
+  clickhouse-iceberg-catalog-tests:
+    name: ClickHouse Iceberg Catalog Integration Tests (${{ matrix.tag }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned baseline, and latest so new ClickHouse releases are
+          # exercised without a code change.
+          - clickhouse-image: clickhouse/clickhouse-server:25.8
+            tag: "25.8"
+          - clickhouse-image: clickhouse/clickhouse-server:latest
+            tag: latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull ${{ matrix.clickhouse-image }}
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run ClickHouse Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_clickhouse
+        env:
+          CLICKHOUSE_IMAGE: ${{ matrix.clickhouse-image }}
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting ClickHouse Iceberg Catalog Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "ClickHouse Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_clickhouse
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|clickhouse)" || true
+          echo "=== ClickHouse containers ==="
+          docker ps -a --filter "name=seaweed-clickhouse" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clickhouse-iceberg-catalog-test-logs-${{ matrix.tag }}
+          path: test/s3tables/catalog_clickhouse/test-output.log
+          retention-days: 3
+
+  olake-iceberg-catalog-tests:
+    name: OLake Iceberg Catalog Integration Tests (${{ matrix.tag }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned baseline, and latest so new OLake releases are exercised
+          # without a code change. OLake's Iceberg writer is a Java sidecar
+          # whose Iceberg version moves independently of the Go release, so
+          # the latest leg is the one that catches library drift.
+          - olake-image: olakego/source-postgres:v0.10.1
+            tag: "v0.10.1"
+          - olake-image: olakego/source-postgres:latest
+            tag: latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull ${{ matrix.olake-image }}
+          pull postgres:16
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run OLake Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_olake
+        env:
+          OLAKE_IMAGE: ${{ matrix.olake-image }}
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting OLake Iceberg Catalog Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "OLake Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      # The suite skips itself when Docker is unavailable, so a green job is not
+      # by itself evidence that anything ran. Assert execution explicitly.
+      - name: Assert the suite actually ran
+        working-directory: test/s3tables/catalog_olake
+        run: |
+          log=test-output.log
+          if [ ! -f "$log" ]; then
+            echo "::error::no test-output.log; the suite did not run"
+            exit 1
+          fi
+          passes=$(grep -c '^--- PASS' "$log" || true)
+          skips=$(grep -c '^--- SKIP' "$log" || true)
+          echo "top-level PASS=$passes SKIP=$skips"
+          if [ "$skips" -gt 0 ]; then
+            echo "::error::the OLake suite skipped $skips top-level test(s); the environment it needs was not provisioned, so this job proves nothing"
+            grep '^--- SKIP' "$log" | head -20
+            exit 1
+          fi
+          if [ "$passes" -lt 1 ]; then
+            echo "::error::the OLake suite recorded no passing top-level test"
+            exit 1
+          fi
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_olake
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|olake|postgres)" || true
+          echo "=== Containers ==="
+          docker ps -a | head -30 || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: olake-iceberg-catalog-test-logs-${{ matrix.tag }}
+          path: test/s3tables/catalog_olake/test-output.log
+          retention-days: 3
+
+  polaris-integration-tests:
+    name: Polaris Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull Polaris image
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/polaris:latest
+
+      - name: Run Polaris Integration Tests
+        timeout-minutes: 25
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          echo "=== Starting Polaris Tests ==="
+
+          go test -v -timeout 20m ./test/s3tables/polaris 2>&1 | tee test/s3tables/polaris/test-output.log || {
+            echo "Polaris integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/polaris
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: polaris-test-logs
+          path: test/s3tables/polaris/test-output.log
           retention-days: 3
 
   spark-iceberg-catalog-tests:
@@ -201,19 +662,27 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull Spark image
-        run: docker pull apache/spark:3.5.1
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/spark:3.5.1
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -231,7 +700,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Spark Iceberg Catalog Tests ==="
           
           # Run Spark + Iceberg catalog integration tests
@@ -254,7 +723,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: spark-iceberg-catalog-test-logs
           path: test/s3tables/catalog_spark/test-output.log
@@ -267,21 +736,28 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Pre-pull RisingWave image
         run: |
-          docker pull risingwavelabs/risingwave:v2.5.0
-          docker pull postgres:16-alpine
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull risingwavelabs/risingwave:v2.5.0
+          pull postgres:16-alpine
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -299,7 +775,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting RisingWave Catalog Tests ==="
           
           # Run RisingWave catalog integration tests
@@ -322,7 +798,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: risingwave-catalog-test-logs
           path: test/s3tables/catalog_risingwave/test-output.log
@@ -335,19 +811,52 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: Pre-pull Python image
-        run: docker pull python:3
+      - name: Week stamp for image cache key
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore python:3 image cache
+        id: python-image
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: /tmp/python3-image.tar
+          key: python3-image-${{ steps.week.outputs.week }}
+          restore-keys: |
+            python3-image-
+
+      - name: Load or pull python:3
+        run: |
+          if [ "${{ steps.python-image.outputs.cache-hit }}" = "true" ]; then
+            docker load -i /tmp/python3-image.tar
+            exit 0
+          fi
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          if pull python:3; then
+            docker save -o /tmp/python3-image.tar python:3
+          elif [ -f /tmp/python3-image.tar ]; then
+            # Docker Hub unreachable; fall back to last week's cached image
+            docker load -i /tmp/python3-image.tar
+          else
+            exit 1
+          fi
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -365,7 +874,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting STS Integration Tests ==="
           
           # Run STS integration tests
@@ -388,7 +897,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sts-integration-test-logs
           path: test/s3tables/sts_integration/test-output.log
@@ -401,22 +910,17 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
-
-      - name: Pre-pull Python image
-        run: docker pull python:3
-        
-      - name: Pre-pull LocalStack image (if needed)
-        run: docker pull localstack/localstack:latest || true
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -434,7 +938,7 @@ jobs:
           echo "=== System Information ==="
           uname -a
           free -h
-          df -h
+          timeout 15 df -h || true
           echo "=== Starting Lakekeeper Integration Tests ==="
           
           # Run Lakekeeper integration tests
@@ -457,10 +961,387 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lakekeeper-integration-test-logs
           path: test/s3tables/lakekeeper/test-output.log
+          retention-days: 3
+
+  unity-catalog-integration-tests:
+    name: Unity Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull unitycatalog/unitycatalog:v0.4.0
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Unity Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/unity_catalog
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting Unity Catalog Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "Unity Catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/unity_catalog
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|unitycatalog)" || true
+          echo "=== Unity Catalog containers ==="
+          docker ps -a --filter "name=seaweed-unity-catalog" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unity-catalog-integration-test-logs
+          path: test/s3tables/unity_catalog/test-output.log
+          retention-days: 3
+
+  lancedb-namespace-tests:
+    name: LanceDB Namespace Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed && go build -buildvcs=false .
+
+      - name: Run LanceDB Namespace Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_lancedb
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting LanceDB Namespace Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "LanceDB namespace integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_lancedb
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lancedb-namespace-test-logs
+          path: test/s3tables/catalog_lancedb/test-output.log
+          retention-days: 3
+
+  table-lifecycle-tests:
+    name: Table Lifecycle Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull python:3.11-slim
+          pull duckdb/duckdb:latest
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed && go build -buildvcs=false .
+
+      - name: Run Table Lifecycle Integration Tests
+        timeout-minutes: 35
+        working-directory: test/s3tables/lifecycle
+        env:
+          # The Rust worker's own tests cover its handlers; a cold build of the
+          # lance crate costs more here than the layer it would be checking.
+          WEED_LANCE_MAINTENANCE: library
+        run: |
+          set -x
+          set -o pipefail
+          go test -v -timeout 30m . 2>&1 | tee test-output.log || {
+            echo "Table lifecycle integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/lifecycle
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: table-lifecycle-test-logs
+          path: test/s3tables/lifecycle/test-output.log
+          retention-days: 3
+
+  duckdb-lance-tests:
+    name: DuckDB Lance Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          # The job uploads a test log on failure; nothing here needs to push,
+          # so do not leave a token in the checkout for it to pick up.
+          persist-credentials: false
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull duckdb/duckdb:latest
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed && go build -buildvcs=false .
+
+      - name: Run DuckDB Lance Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_duckdb_lance
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting DuckDB Lance Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "DuckDB Lance integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_duckdb_lance
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|duckdb)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: duckdb-lance-test-logs
+          path: test/s3tables/catalog_duckdb_lance/test-output.log
+          retention-days: 3
+
+  spark-lance-namespace-tests:
+    name: Spark Lance Namespace Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          # The job uploads a test log on failure; nothing here needs to push,
+          # so do not leave a token in the checkout for it to pick up.
+          persist-credentials: false
+
+      - name: Clean up stale FUSE mounts
+        uses: ./.github/actions/cleanup-stale-fuse-mounts
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull apache/spark:3.5.1
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed && go build -buildvcs=false .
+
+      - name: Run Spark Lance Namespace Integration Tests
+        timeout-minutes: 35
+        working-directory: test/s3tables/catalog_spark_lance
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          timeout 15 df -h || true
+          docker info
+          echo "=== Starting Spark Lance Namespace Tests ==="
+
+          go test -v -timeout 30m . 2>&1 | tee test-output.log || {
+            echo "Spark Lance namespace integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_spark_lance
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|spark)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spark-lance-namespace-test-logs
+          path: test/s3tables/catalog_spark_lance/test-output.log
           retention-days: 3
 
   s3-tables-build-verification:
@@ -470,12 +1351,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Verify S3 Tables Package Builds
@@ -535,12 +1417,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Check Go Format
@@ -586,12 +1469,13 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
         id: go
 
       - name: Run Go Vet

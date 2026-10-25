@@ -3,12 +3,21 @@ package dash
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+)
+
+var (
+	ErrAccessKeyInUse = errors.New("access key already in use")
+	ErrUserNotFound   = errors.New("user not found")
+	ErrInvalidInput   = errors.New("invalid input")
 )
 
 // CreateObjectStoreUser creates a new user using the credential manager
@@ -167,7 +176,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 
 	ctx := context.Background()
 
-	// Get user using credential manager
+	// Get user using credential manager (resolves static users via filer gRPC)
 	identity, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
@@ -182,9 +191,38 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		PolicyNames: identity.PolicyNames,
 	}
 
+	// Inline user policies are stored separately from the identity record and
+	// are authoritative at enforcement time (they take precedence over the
+	// legacy Actions list). Surface their names alongside attached policies so
+	// the admin reflects the user's actual permissions rather than only the
+	// (potentially overridden) Actions.
+	if inlinePolicyNames, err := s.credentialManager.ListUserInlinePolicies(ctx, username); err != nil {
+		glog.Warningf("failed to list inline policies for user %s: %v", username, err)
+	} else if len(inlinePolicyNames) > 0 {
+		details.PolicyNames = append(details.PolicyNames, inlinePolicyNames...)
+	}
+
 	// Set email from account if available
 	if identity.Account != nil {
 		details.Email = identity.Account.EmailAddress
+	}
+
+	// Look up groups the user belongs to
+	groupNames, err := s.credentialManager.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	for _, gName := range groupNames {
+		g, err := s.credentialManager.GetGroup(ctx, gName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get group %s: %w", gName, err)
+		}
+		for _, member := range g.Members {
+			if member == username {
+				details.Groups = append(details.Groups, gName)
+				break
+			}
+		}
 	}
 
 	// Convert credentials to access key info
@@ -201,7 +239,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 }
 
 // CreateAccessKey creates a new access key for a user
-func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
+func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyRequest) (*AccessKeyInfo, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
@@ -212,14 +250,49 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	_, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
-			return nil, fmt.Errorf("user %s not found", username)
+			return nil, fmt.Errorf("user %s: %w", username, ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Generate new access key
-	accessKey := generateAccessKey()
-	secretKey := generateSecretKey()
+	if req == nil {
+		req = &CreateAccessKeyRequest{}
+	}
+
+	// Validate provided keys (shared with the IAM API and embedded IAM paths).
+	if req.AccessKey != "" {
+		if err := iam.ValidateCallerSuppliedAccessKeyId(req.AccessKey); err != nil {
+			return nil, fmt.Errorf("%s: %w", err.Error(), ErrInvalidInput)
+		}
+	}
+	if req.SecretKey != "" {
+		if err := iam.ValidateCallerSuppliedSecretAccessKey(req.SecretKey); err != nil {
+			return nil, fmt.Errorf("%s: %w", err.Error(), ErrInvalidInput)
+		}
+	}
+	// Enforce the both-or-none rule to match the IAM API and embedded IAM
+	// paths — silently generating the missing half lets a caller end up
+	// with a credential they did not fully choose.
+	if (req.AccessKey != "") != (req.SecretKey != "") {
+		return nil, fmt.Errorf("access key and secret key must be supplied together: %w", ErrInvalidInput)
+	}
+
+	// Use provided keys or generate new ones
+	accessKey := req.AccessKey
+	secretKey := req.SecretKey
+	if accessKey == "" {
+		accessKey = generateAccessKey()
+		secretKey = generateSecretKey()
+	}
+
+	// Verify access key is globally unique
+	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
+	if existingUser != nil {
+		return nil, ErrAccessKeyInUse
+	}
+	if err != nil && !errors.Is(err, credential.ErrAccessKeyNotFound) && !isNotFoundError(err) {
+		return nil, fmt.Errorf("failed to check access key uniqueness: %w", err)
+	}
 
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
@@ -364,6 +437,12 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 	return nil
 }
 
+// isNotFoundError checks for "not found" in the error message as a fallback
+// for stores (e.g. gRPC) that don't return the credential.ErrAccessKeyNotFound sentinel.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
 // Helper functions for generating keys and IDs
 func generateAccessKey() string {
 	// Generate 20-character access key (AWS standard)
@@ -376,10 +455,13 @@ func generateAccessKey() string {
 }
 
 func generateSecretKey() string {
-	// Generate 40-character secret key (AWS standard)
-	b := make([]byte, 30) // 30 bytes = 40 characters in base64
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
+	// Use the IAM helper to generate URL-safe secret keys (no +, / characters)
+	// that won't break S3 signature authentication
+	key, err := iam.GenerateSecretAccessKey()
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate secret key: %v", err))
+	}
+	return key
 }
 
 func generateAccountId() string {

@@ -1,39 +1,52 @@
 package page_writer
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 type ActivityScore struct {
-	lastActiveTsNs         int64
-	decayedActivenessScore int64
+	lastActiveTsNs         int64 // atomic
+	decayedActivenessScore int64 // atomic
 }
 
 func NewActivityScore() *ActivityScore {
 	return &ActivityScore{}
 }
 
-func (as ActivityScore) MarkRead() {
+func (as *ActivityScore) MarkRead() {
 	now := time.Now().UnixNano()
-	deltaTime := (now - as.lastActiveTsNs) >> 30 // about number of seconds
-	as.lastActiveTsNs = now
-
-	as.decayedActivenessScore = as.decayedActivenessScore>>deltaTime + 256
-	if as.decayedActivenessScore < 0 {
-		as.decayedActivenessScore = 0
+	last := atomic.SwapInt64(&as.lastActiveTsNs, now)
+	deltaTime := (now - last) >> 30 // about number of seconds
+	for {
+		old := atomic.LoadInt64(&as.decayedActivenessScore)
+		score := old>>deltaTime + 256
+		if score < 0 {
+			score = 0
+		}
+		if atomic.CompareAndSwapInt64(&as.decayedActivenessScore, old, score) {
+			break
+		}
 	}
 }
 
-func (as ActivityScore) MarkWrite() {
+func (as *ActivityScore) MarkWrite() {
 	now := time.Now().UnixNano()
-	deltaTime := (now - as.lastActiveTsNs) >> 30 // about number of seconds
-	as.lastActiveTsNs = now
-
-	as.decayedActivenessScore = as.decayedActivenessScore>>deltaTime + 1024
-	if as.decayedActivenessScore < 0 {
-		as.decayedActivenessScore = 0
+	last := atomic.SwapInt64(&as.lastActiveTsNs, now)
+	deltaTime := (now - last) >> 30 // about number of seconds
+	for {
+		old := atomic.LoadInt64(&as.decayedActivenessScore)
+		score := old>>deltaTime + 1024
+		if score < 0 {
+			score = 0
+		}
+		if atomic.CompareAndSwapInt64(&as.decayedActivenessScore, old, score) {
+			break
+		}
 	}
 }
 
-func (as ActivityScore) ActivityScore() int64 {
-	deltaTime := (time.Now().UnixNano() - as.lastActiveTsNs) >> 30 // about number of seconds
-	return as.decayedActivenessScore >> deltaTime
+func (as *ActivityScore) ActivityScore() int64 {
+	deltaTime := (time.Now().UnixNano() - atomic.LoadInt64(&as.lastActiveTsNs)) >> 30
+	return atomic.LoadInt64(&as.decayedActivenessScore) >> deltaTime
 }

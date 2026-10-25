@@ -1,0 +1,244 @@
+// Package testutil provides shared test utilities for SeaweedFS integration tests.
+package testutil
+
+import (
+	"fmt"
+	"math/rand"
+	"net"
+	"testing"
+)
+
+// GrpcPortOffset is the offset weed mini uses to derive gRPC ports from HTTP ports.
+const GrpcPortOffset = 10000
+
+// linuxEphemeralPortFloor is the Linux default ip_local_port_range lower bound.
+// Ports at or above it can be claimed as the source port of a transient
+// outbound connection during mini's own startup (e.g. volume dialing master
+// gRPC) in the window between allocation and the listener bind, surfacing as
+// "bind: address already in use".
+const linuxEphemeralPortFloor = 32768
+
+// miniPortMin/miniPortMax bound the random HTTP port range for weed mini.
+// The cap keeps both the HTTP port and its +GrpcPortOffset gRPC counterpart
+// below linuxEphemeralPortFloor, out of the range the kernel draws ephemeral
+// source ports from, so the steal above cannot happen. Deriving the cap from
+// GrpcPortOffset keeps the two in lockstep if the offset ever changes.
+const (
+	miniPortMin = 10000
+	miniPortMax = linuxEphemeralPortFloor - GrpcPortOffset
+)
+
+// miniDefaultPorts are the weed mini flag defaults (see weed/command/mini.go).
+// A test only overrides services it uses; unspecified services still bind
+// these defaults, so allocation must avoid handing them out (or any value
+// whose gRPC offset would collide with them).
+var miniDefaultPorts = []int{
+	9333,  // master.port
+	8888,  // filer.port
+	9340,  // volume.port
+	8333,  // s3.port
+	8181,  // s3.port.iceberg
+	9101,  // s3.port.lance
+	7333,  // webdav.port
+	12535, // admin.port
+}
+
+func reservedMiniPorts() map[int]bool {
+	r := make(map[int]bool, len(miniDefaultPorts)*2)
+	for _, p := range miniDefaultPorts {
+		r[p] = true
+		r[p+GrpcPortOffset] = true
+	}
+	return r
+}
+
+// AllocatePorts allocates count unique free ports atomically.
+// All listeners are held open until every port is obtained, preventing
+// the OS from recycling a port between successive allocations.
+func AllocatePorts(count int) ([]int, error) {
+	listeners := make([]net.Listener, 0, count)
+	ports := make([]int, 0, count)
+	for i := 0; i < count; i++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			for _, ll := range listeners {
+				_ = ll.Close()
+			}
+			return nil, err
+		}
+		listeners = append(listeners, l)
+		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
+	}
+	for _, l := range listeners {
+		_ = l.Close()
+	}
+	return ports, nil
+}
+
+// MustAllocatePorts is a testing wrapper for AllocatePorts.
+func MustAllocatePorts(t *testing.T, count int) []int {
+	t.Helper()
+	ports, err := AllocatePorts(count)
+	if err != nil {
+		t.Fatalf("Failed to allocate %d free ports: %v", count, err)
+	}
+	return ports
+}
+
+// AllocateMiniPorts allocates n free ports where each port and its gRPC
+// counterpart (port + GrpcPortOffset) are available and don't collide
+// with any other allocated port or its gRPC counterpart. All listeners
+// are held open until the entire batch is allocated, preventing the OS
+// from recycling ports between allocations. Use this when ports will be
+// passed to weed mini without explicit gRPC port flags, so mini will
+// derive gRPC ports as HTTP + 10000.
+//
+// Listeners are bound on all interfaces (":port") rather than 127.0.0.1
+// to match weed mini's availability check (isPortAvailable). A port can
+// be free on loopback but held by another process on a different
+// interface; reserving only on loopback lets mini's check fail and
+// trigger gRPC port shifting, which then causes weed shell to dial the
+// wrong port and hang.
+func AllocateMiniPorts(count int) ([]int, error) {
+	const (
+		minPort = miniPortMin
+		maxPort = miniPortMax
+	)
+	reserved := reservedMiniPorts()
+	ports := make([]int, 0, count)
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
+
+	for idx := 0; idx < count; idx++ {
+		found := false
+		for i := 0; i < 1000; i++ {
+			port := minPort + rand.Intn(maxPort-minPort)
+			grpcPort := port + GrpcPortOffset
+
+			if reserved[port] || reserved[grpcPort] {
+				continue
+			}
+
+			l1, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if err != nil {
+				continue
+			}
+
+			l2, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+			if err != nil {
+				l1.Close()
+				continue
+			}
+
+			listeners = append(listeners, l1, l2)
+			reserved[port] = true
+			reserved[grpcPort] = true
+			ports = append(ports, port)
+			found = true
+			break
+		}
+		if !found {
+			return nil, fmt.Errorf("failed to allocate mini port %d of %d", idx+1, count)
+		}
+	}
+
+	return ports, nil
+}
+
+// MustFreeMiniPorts allocates n ports suitable for weed mini, ensuring
+// each port's gRPC offset (port + 10000) doesn't collide with any other
+// allocated port. names is used only for error messages.
+func MustFreeMiniPorts(t *testing.T, names []string) []int {
+	t.Helper()
+	ports, err := AllocateMiniPorts(len(names))
+	if err != nil {
+		t.Fatalf("failed to allocate mini ports for %v: %v", names, err)
+	}
+	return ports
+}
+
+// MustFreeMiniPort allocates a single weed mini port.
+func MustFreeMiniPort(t *testing.T, name string) int {
+	t.Helper()
+	return MustFreeMiniPorts(t, []string{name})[0]
+}
+
+// MiniAdminArgs returns weed mini flags pinning the admin server to
+// adminPort and adminPort+GrpcPortOffset and disabling the legacy compat
+// listener. Unconfigured minis all bind the fixed default admin port 12535
+// and the legacy port 23646 (+33646 gRPC), so sequential or concurrent
+// minis on one host collide on them. Allocate adminPort with
+// MustFreeMiniPort(s) — the admin binds late in mini startup, after the
+// cluster's own outbound connections may steal an ephemeral port, so it
+// must stay below the Linux ephemeral port floor.
+func MiniAdminArgs(adminPort int) []string {
+	return []string{
+		fmt.Sprintf("-admin.port=%d", adminPort),
+		fmt.Sprintf("-admin.port.grpc=%d", adminPort+GrpcPortOffset),
+		"-admin.port.legacy=0",
+	}
+}
+
+// AllocatePortSet atomically allocates miniCount master-style port pairs (each
+// with port and port+GrpcPortOffset reserved) plus regularCount additional
+// distinct ports. All listeners are held open until the entire batch is
+// allocated, so a mini gRPC port cannot be recycled as a regular port mid-batch.
+func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, err error) {
+	const (
+		minPort = miniPortMin
+		maxPort = miniPortMax
+	)
+	reserved := reservedMiniPorts()
+	mini = make([]int, 0, miniCount)
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
+
+	for idx := 0; idx < miniCount; idx++ {
+		found := false
+		for i := 0; i < 1000; i++ {
+			port := minPort + rand.Intn(maxPort-minPort)
+			grpcPort := port + GrpcPortOffset
+			if reserved[port] || reserved[grpcPort] {
+				continue
+			}
+			l1, lErr := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if lErr != nil {
+				continue
+			}
+			l2, lErr := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+			if lErr != nil {
+				l1.Close()
+				continue
+			}
+			listeners = append(listeners, l1, l2)
+			reserved[port] = true
+			reserved[grpcPort] = true
+			mini = append(mini, port)
+			found = true
+			break
+		}
+		if !found {
+			return nil, nil, fmt.Errorf("failed to allocate mini port %d of %d", idx+1, miniCount)
+		}
+	}
+
+	regular = make([]int, 0, regularCount)
+	for i := 0; i < regularCount; i++ {
+		l, lErr := net.Listen("tcp", ":0")
+		if lErr != nil {
+			return nil, nil, lErr
+		}
+		listeners = append(listeners, l)
+		regular = append(regular, l.Addr().(*net.TCPAddr).Port)
+	}
+
+	return mini, regular, nil
+}

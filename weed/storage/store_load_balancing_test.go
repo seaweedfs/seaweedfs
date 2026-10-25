@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -14,7 +15,7 @@ import (
 )
 
 // newTestStore creates a test store with the specified number of directories
-func newTestStore(t *testing.T, numDirs int) *Store {
+func newTestStore(t testing.TB, numDirs int) *Store {
 	tempDir := t.TempDir()
 
 	var dirs []string
@@ -30,9 +31,9 @@ func newTestStore(t *testing.T, numDirs int) *Store {
 		minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
 		diskTypes = append(diskTypes, types.HardDriveType)
 	}
-
+	diskIOProbeConfig := stats.DefaultDiskIOProbeConfig()
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "",
-		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
+		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3, diskIOProbeConfig)
 
 	// Consume channel messages to prevent blocking
 	done := make(chan bool)
@@ -101,7 +102,7 @@ func TestLocalVolumesLen(t *testing.T) {
 
 				// Mark some as remote
 				if i < tc.remoteVolumes {
-					vol.hasRemoteFile = true
+					vol.hasRemoteFile.Store(true)
 					vol.volumeInfo.Files = []*volume_server_pb.RemoteFile{
 						{BackendType: "s3", BackendId: "test", Key: "test-key"},
 					}
@@ -249,7 +250,7 @@ func createTestVolume(vid needle.VolumeId, isRemote bool) *Volume {
 	}
 
 	if isRemote {
-		vol.hasRemoteFile = true
+		vol.hasRemoteFile.Store(true)
 		vol.volumeInfo.Files = []*volume_server_pb.RemoteFile{
 			{BackendType: "s3", BackendId: "test", Key: "remote-key-" + strconv.Itoa(int(vid))},
 		}

@@ -8,6 +8,7 @@ on:
       - 'weed/pb/filer_pb/**'
       - 'weed/util/log_buffer/**'
       - 'weed/server/filer_grpc_server_sub_meta.go'
+      - 'weed/server/master_grpc_server.go'
       - 'weed/command/filer_backup.go'
       - 'test/metadata_subscribe/**'
       - '.github/workflows/metadata-subscribe-tests.yml'
@@ -18,19 +19,19 @@ on:
       - 'weed/pb/filer_pb/**'
       - 'weed/util/log_buffer/**'
       - 'weed/server/filer_grpc_server_sub_meta.go'
+      - 'weed/server/master_grpc_server.go'
       - 'weed/command/filer_backup.go'
       - 'test/metadata_subscribe/**'
       - '.github/workflows/metadata-subscribe-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/metadata-subscribe-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.24'
   TEST_TIMEOUT: '10m'
 
 jobs:
@@ -41,12 +42,13 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       
-    - name: Set up Go ${{ env.GO_VERSION }}
-      uses: actions/setup-go@v6
+    - name: Set up Go
+      uses: actions/setup-go@v7
       with:
-        go-version: ${{ env.GO_VERSION }}
+        go-version-file: 'go.mod'
+        cache: ${{ runner.environment == 'github-hosted' }}
         
     - name: Build SeaweedFS
       run: |
@@ -70,7 +72,7 @@ jobs:
         
     - name: Archive logs on failure
       if: failure()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: metadata-subscribe-test-logs
         path: |

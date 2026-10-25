@@ -2,32 +2,37 @@ package admin_dockertest
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/rand"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 const (
-	AdminUrl  = "http://localhost:23646"
+	AdminUrl  = "http://localhost:12535"
 	MasterUrl = "http://localhost:9333"
 	FilerUrl  = "http://localhost:8888"
 )
 
-// Helper to run commands in background and track PIDs for cleanup
-var runningCmds []*exec.Cmd
+// Helper to run commands in background and track PIDs for cleanup. Guarded
+// by runningCmdsLock so parallel subprocess startup can append safely.
+var (
+	runningCmds     []*exec.Cmd
+	runningCmdsLock sync.Mutex
+)
 
 func cleanup() {
+	runningCmdsLock.Lock()
+	defer runningCmdsLock.Unlock()
 	for _, cmd := range runningCmds {
 		if cmd.Process != nil {
 			cmd.Process.Kill()
@@ -61,7 +66,9 @@ func startWeed(t *testing.T, name string, args ...string) *exec.Cmd {
 	if err != nil {
 		t.Fatalf("Failed to start weed %v: %v", args, err)
 	}
+	runningCmdsLock.Lock()
 	runningCmds = append(runningCmds, cmd)
+	runningCmdsLock.Unlock()
 	return cmd
 }
 
@@ -109,14 +116,23 @@ func ensureEnvironment(t *testing.T) {
 	waitForUrl(t, MasterUrl+"/cluster/status", 10)
 
 	// 3. Start Volume Server (Worker)
-	// Start 14 volume servers to verify RS(10,4) default EC
+	// Start 14 volume servers to verify RS(10,4) default EC. Fork/exec in
+	// parallel because startWeed is non-blocking and the per-process fork +
+	// mkdir + log-file-open overhead stacks up sequentially on cold CI
+	// disks, eating most of the admin /health wait budget further down.
+	var volWg sync.WaitGroup
 	for i := 1; i <= 14; i++ {
-		volName := fmt.Sprintf("volume%d", i)
-		port := 8080 + i - 1
-		dir := filepath.Join("tmp", volName)
-		os.MkdirAll(dir, 0755)
-		startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost")
+		volWg.Add(1)
+		go func(i int) {
+			defer volWg.Done()
+			volName := fmt.Sprintf("volume%d", i)
+			port := 8080 + i - 1
+			dir := filepath.Join("tmp", volName)
+			os.MkdirAll(dir, 0755)
+			startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost", "-volume.allowUntrustedRemoteEndpoints")
+		}(i)
 	}
+	volWg.Wait()
 
 	// 4. Start Filer
 	os.MkdirAll(filepath.Join("tmp", "filer"), 0755)
@@ -131,14 +147,19 @@ func ensureEnvironment(t *testing.T) {
 		debugPort := 6060 + i
 		dir, _ := filepath.Abs(filepath.Join("tmp", workerName))
 		os.MkdirAll(dir, 0755)
-		startWeed(t, workerName, "worker", "-admin=localhost:23646", "-workingDir="+dir, fmt.Sprintf("-metricsPort=%d", metricsPort), fmt.Sprintf("-debug.port=%d", debugPort))
+		startWeed(t, workerName, "worker", "-admin=localhost:12535", "-workingDir="+dir, fmt.Sprintf("-metricsPort=%d", metricsPort), fmt.Sprintf("-debug.port=%d", debugPort))
 	}
 
 	// 6. Start Admin
 	os.RemoveAll(filepath.Join("tmp", "admin"))
 	os.MkdirAll(filepath.Join("tmp", "admin"), 0755)
-	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin")
-	waitForUrl(t, AdminUrl+"/health", 60)
+	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=12535", "-dataDir=./tmp/admin")
+	// Admin is started after master, 14 volume servers, filer and 2 workers,
+	// so under cold CI conditions the wait here has to absorb the tail of
+	// every earlier subprocess coming up. 60s is too tight and has flaked;
+	// 180s gives comfortable headroom without meaningfully extending the
+	// fast path (the first successful /health usually hits well under 30s).
+	waitForUrl(t, AdminUrl+"/health", 180)
 
 	t.Log("Environment started successfully")
 }
@@ -155,135 +176,133 @@ func waitForUrl(t *testing.T, url string, retries int) {
 	t.Fatalf("Timeout waiting for %s", url)
 }
 
+func fetchJSON(url string, out interface{}) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func mapField(obj map[string]interface{}, key string) (interface{}, bool) {
+	if obj == nil {
+		return nil, false
+	}
+	if value, ok := obj[key]; ok {
+		return value, true
+	}
+	return nil, false
+}
+
+func mapFieldAny(obj map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := mapField(obj, key); ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
 func TestEcEndToEnd(t *testing.T) {
 	defer cleanup()
 	ensureEnvironment(t)
 
 	client := &http.Client{}
 
-	// 1. Configure Global Maintenance (Scan Interval = 1s) via API
-	t.Log("Configuring Global Maintenance via API...")
+	// 1. Configure plugin job types for fast EC detection/execution.
+	t.Log("Configuring plugin job types via API...")
 
-	// 1.1 Fetch current config
-	req, _ := http.NewRequest("GET", AdminUrl+"/api/maintenance/config", nil)
+	// Disable volume balance to reduce interference for this EC-focused test.
+	balanceConfig := map[string]interface{}{
+		"job_type": "volume_balance",
+		"admin_runtime": map[string]interface{}{
+			"enabled": false,
+		},
+	}
+	jsonBody, err := json.Marshal(balanceConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal volume_balance config: %v", err)
+	}
+	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create volume_balance config request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("Failed to get global config: %v", err)
+		t.Fatalf("Failed to update volume_balance config: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to get global config (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var globalConfig map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&globalConfig); err != nil {
-		t.Fatalf("Failed to decode global config: %v", err)
+		t.Fatalf("Failed to update volume_balance config (status %d): %s", resp.StatusCode, string(body))
 	}
 	resp.Body.Close()
 
-	// 1.2 Modify config
-	globalConfig["enabled"] = true
-	globalConfig["scan_interval_seconds"] = 1
-
-	// Ensure policy structure exists
-	if globalConfig["policy"] == nil {
-		globalConfig["policy"] = map[string]interface{}{}
+	ecConfig := map[string]interface{}{
+		"job_type": "erasure_coding",
+		"admin_runtime": map[string]interface{}{
+			"enabled":                          true,
+			"detection_interval_minutes":       1,
+			"global_execution_concurrency":     4,
+			"per_worker_execution_concurrency": 4,
+			"max_jobs_per_detection":           100,
+		},
+		"worker_config_values": map[string]interface{}{
+			"quiet_for_seconds": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"min_interval_seconds": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"min_size_mb": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"fullness_ratio": map[string]interface{}{
+				"double_value": 0.0001,
+			},
+		},
 	}
-	policy, _ := globalConfig["policy"].(map[string]interface{})
-
-	// Ensure task_policies structure exists
-	if policy["task_policies"] == nil {
-		policy["task_policies"] = map[string]interface{}{}
+	jsonBody, err = json.Marshal(ecConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal erasure_coding config: %v", err)
 	}
-	taskPolicies, _ := policy["task_policies"].(map[string]interface{})
-
-	// Disable balance tasks to avoid interference with EC test
-	if taskPolicies["balance"] == nil {
-		taskPolicies["balance"] = map[string]interface{}{}
+	req, err = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/erasure_coding/config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create erasure_coding config request: %v", err)
 	}
-	balancePolicy, _ := taskPolicies["balance"].(map[string]interface{})
-	balancePolicy["enabled"] = false
-
-	// Set global max concurrent
-	policy["global_max_concurrent"] = 4
-	globalConfig["policy"] = policy
-
-	// Explicitly set required fields
-	requiredFields := map[string]float64{
-		"worker_timeout_seconds":   300,
-		"task_timeout_seconds":     7200,
-		"retry_delay_seconds":      900,
-		"cleanup_interval_seconds": 86400,
-		"task_retention_seconds":   604800,
-		"max_retries":              3,
-	}
-	for field, val := range requiredFields {
-		if _, ok := globalConfig[field]; !ok || globalConfig[field] == 0 {
-			globalConfig[field] = val
-		}
-	}
-
-	// 1.3 Update config
-	jsonBody, _ := json.Marshal(globalConfig)
-	req, _ = http.NewRequest("PUT", AdminUrl+"/api/maintenance/config", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = client.Do(req)
 	if err != nil {
-		t.Fatalf("Failed to update global config: %v", err)
+		t.Fatalf("Failed to update erasure_coding config: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to update global config (status %d): %s", resp.StatusCode, string(body))
+		t.Fatalf("Failed to update erasure_coding config (status %d): %s", resp.StatusCode, string(body))
 	}
 	resp.Body.Close()
 
-	// 2. Configure EC Task (Short intervals) via Form API
-	t.Log("Configuring EC Task via Form API...")
-	formData := url.Values{}
-	formData.Set("enabled", "true")
-	formData.Set("scan_interval_seconds", "1")
-	formData.Set("repeat_interval_seconds", "1")
-	formData.Set("check_interval_seconds", "1")
-	formData.Set("max_concurrent", "4")
-	formData.Set("quiet_for_seconds_value", "1")
-	formData.Set("quiet_for_seconds_unit", "seconds")
-	formData.Set("min_size_mb", "1")
-	formData.Set("fullness_ratio", "0.0001")
-
-	req, _ = http.NewRequest("POST", AdminUrl+"/maintenance/config/erasure_coding", strings.NewReader(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to update EC config: %v", err)
-	}
-	if resp.StatusCode != 200 && resp.StatusCode != 303 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to update EC config (status %d): %s", resp.StatusCode, string(body))
-	}
-	resp.Body.Close()
-	t.Log("EC Task Configuration updated")
-
-	// 3. Restart Admin to pick up Global Config (Scan Interval)
-	if len(runningCmds) > 0 {
-		adminCmd := runningCmds[len(runningCmds)-1]
-		t.Log("Restarting Admin Server to apply configuration...")
-		stopWeed(t, adminCmd)
-		time.Sleep(10 * time.Second)
-		startWeed(t, "admin_restarted", "admin", "-master=localhost:9333", "-port=23646", "-port.grpc=33646", "-dataDir=./tmp/admin")
-		waitForUrl(t, AdminUrl+"/health", 60)
-	}
-
-	// 4. Upload a file
+	// 2. Upload a file
 	fileSize := 5 * 1024 * 1024
 	data := make([]byte, fileSize)
-	rand.Read(data)
+	crand.Read(data)
 	fileName := fmt.Sprintf("ec_test_file_%d", time.Now().Unix())
 	t.Logf("Uploading %d bytes file %s to Filer...", fileSize, fileName)
 	uploadUrl := FilerUrl + "/" + fileName
 
 	var uploadErr error
 	for i := 0; i < 10; i++ {
-		req, _ := http.NewRequest("PUT", uploadUrl, bytes.NewBuffer(data))
+		req, err := http.NewRequest("PUT", uploadUrl, bytes.NewBuffer(data))
+		if err != nil {
+			uploadErr = err
+			t.Logf("Upload attempt %d failed to create request: %v", i+1, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		resp, err := client.Do(req)
 		if err == nil {
 			if resp.StatusCode == 201 {
@@ -306,17 +325,18 @@ func TestEcEndToEnd(t *testing.T) {
 	}
 	t.Log("Upload successful")
 
-	// 5. Verify EC Encoding
+	// 3. Verify EC Encoding
 	t.Log("Waiting for EC encoding (checking Master topology)...")
 	startTime := time.Now()
 	ecVerified := false
 	var lastBody []byte
+	debugTick := 0
 
 	for time.Since(startTime) < 300*time.Second {
-		// 5.1 Check Master Topology
+		// 3.1 Check Master Topology
 		resp, err := http.Get(MasterUrl + "/dir/status")
 		if err == nil {
-			lastBody, _ = ioutil.ReadAll(resp.Body)
+			lastBody, _ = io.ReadAll(resp.Body)
 			resp.Body.Close()
 
 			// Check total EC shards
@@ -336,25 +356,104 @@ func TestEcEndToEnd(t *testing.T) {
 			}
 		}
 
-		// 5.2 Debug: Check workers and tasks
-		wResp, wErr := http.Get(AdminUrl + "/api/maintenance/workers")
+		// 3.2 Debug: Check workers, jobs, and scheduler status
+		debugTick++
+
+		var workers []map[string]interface{}
 		workerCount := 0
-		if wErr == nil {
-			var workers []interface{}
-			json.NewDecoder(wResp.Body).Decode(&workers)
-			wResp.Body.Close()
+		ecDetectorCount := 0
+		ecExecutorCount := 0
+		if err := fetchJSON(AdminUrl+"/api/plugin/workers", &workers); err == nil {
 			workerCount = len(workers)
+			for _, worker := range workers {
+				capsValue, ok := mapFieldAny(worker, "capabilities", "Capabilities")
+				if !ok {
+					continue
+				}
+				caps, ok := capsValue.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if capValue, ok := caps["erasure_coding"].(map[string]interface{}); ok {
+					if capValue["can_detect"] == true {
+						ecDetectorCount++
+					}
+					if capValue["can_execute"] == true {
+						ecExecutorCount++
+					}
+				}
+			}
 		}
 
-		tResp, tErr := http.Get(AdminUrl + "/api/maintenance/tasks")
+		var tasks []map[string]interface{}
 		taskCount := 0
-		if tErr == nil {
-			var tasks []interface{}
-			json.NewDecoder(tResp.Body).Decode(&tasks)
-			tResp.Body.Close()
+		ecTaskCount := 0
+		ecTaskStates := map[string]int{}
+		if err := fetchJSON(AdminUrl+"/api/plugin/jobs?limit=1000", &tasks); err == nil {
 			taskCount = len(tasks)
+			for _, task := range tasks {
+				jobType, _ := task["job_type"].(string)
+				state, _ := task["state"].(string)
+				if jobType == "erasure_coding" {
+					ecTaskCount++
+					ecTaskStates[state]++
+				}
+			}
 		}
-		t.Logf("Waiting for EC... (Workers: %d, Active Tasks: %d)", workerCount, taskCount)
+
+		t.Logf("Waiting for EC... (Workers: %d det=%d exec=%d, Tasks: %d ec=%d, EC States: %+v)",
+			workerCount, ecDetectorCount, ecExecutorCount, taskCount, ecTaskCount, ecTaskStates)
+
+		if debugTick%3 == 0 {
+			var pluginStatus map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/status", &pluginStatus); err == nil {
+				t.Logf("Plugin status: enabled=%v worker_count=%v worker_grpc_port=%v configured=%v",
+					pluginStatus["enabled"], pluginStatus["worker_count"], pluginStatus["worker_grpc_port"], pluginStatus["configured"])
+			}
+
+			var schedulerStatus map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-status", &schedulerStatus); err == nil {
+				if schedValue, ok := schedulerStatus["scheduler"].(map[string]interface{}); ok {
+					t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v last_iteration_done_at=%v next_detection_at=%v",
+						schedValue["current_job_type"], schedValue["current_phase"],
+						schedValue["last_iteration_had_jobs"], schedValue["idle_sleep_seconds"], schedValue["last_iteration_done_at"], schedValue["next_detection_at"])
+				} else {
+					t.Logf("Scheduler status: %v", schedulerStatus)
+				}
+			}
+
+			var schedulerStates []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-states", &schedulerStates); err == nil {
+				for _, state := range schedulerStates {
+					if state["job_type"] == "erasure_coding" {
+						t.Logf("EC scheduler state: enabled=%v detection_in_flight=%v detector_available=%v executor_workers=%v next_detection_at=%v last_run_status=%v last_run_started_at=%v last_run_completed_at=%v",
+							state["enabled"], state["detection_in_flight"], state["detector_available"],
+							state["executor_worker_count"], state["next_detection_at"], state["last_run_status"],
+							state["last_run_started_at"], state["last_run_completed_at"])
+						break
+					}
+				}
+			}
+
+			var jobTypes []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/job-types", &jobTypes); err == nil {
+				var names []string
+				for _, jobType := range jobTypes {
+					if name, ok := jobType["job_type"].(string); ok && name != "" {
+						names = append(names, name)
+					}
+				}
+				t.Logf("Plugin job types: %v", names)
+			}
+
+			var activities []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/activities?job_type=erasure_coding&limit=5", &activities); err == nil {
+				for i := len(activities) - 1; i >= 0; i-- {
+					act := activities[i]
+					t.Logf("EC activity: stage=%v message=%v occurred_at=%v", act["stage"], act["message"], act["occurred_at"])
+				}
+			}
+		}
 
 		time.Sleep(10 * time.Second)
 	}

@@ -2,6 +2,7 @@ package distribution
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ECDistribution represents the target distribution of EC shards
@@ -25,136 +26,96 @@ type ECDistribution struct {
 	MaxShardsPerNode int
 }
 
-// CalculateDistribution computes the target EC shard distribution based on
-// EC configuration and replication policy.
-//
-// The algorithm:
-// 1. Uses replication policy to determine minimum topology spread
-// 2. Calculates target shards per level (evenly distributed)
-// 3. Calculates max shards per level (for fault tolerance)
+// CalculateDistribution computes the balanced shard counts each topology level
+// should hold for the given EC ratio spread over the minimum topology the
+// replication policy describes.
 func CalculateDistribution(ec ECConfig, rep ReplicationConfig) *ECDistribution {
-	totalShards := ec.TotalShards()
-
-	// Target distribution (balanced, rounded up to ensure all shards placed)
-	targetShardsPerDC := ceilDivide(totalShards, rep.MinDataCenters)
-	targetShardsPerRack := ceilDivide(targetShardsPerDC, rep.MinRacksPerDC)
-	targetShardsPerNode := ceilDivide(targetShardsPerRack, rep.MinNodesPerRack)
-
-	// Maximum limits for fault tolerance
-	// The key constraint: losing one failure domain shouldn't lose more than parityShards
-	// So max shards per domain = totalShards - parityShards + tolerance
-	// We add small tolerance (+2) to allow for imbalanced topologies
-	faultToleranceLimit := totalShards - ec.ParityShards + 1
-
-	maxShardsPerDC := min(faultToleranceLimit, targetShardsPerDC+2)
-	maxShardsPerRack := min(faultToleranceLimit, targetShardsPerRack+2)
-	maxShardsPerNode := min(faultToleranceLimit, targetShardsPerNode+2)
-
+	total := ec.TotalShards()
+	rep.MinDataCenters = max(rep.MinDataCenters, 1)
+	rep.MinRacksPerDC = max(rep.MinRacksPerDC, 1)
+	rep.MinNodesPerRack = max(rep.MinNodesPerRack, 1)
+	dcUnits := rep.MinDataCenters
+	rackUnits := dcUnits * rep.MinRacksPerDC
+	nodeUnits := rackUnits * rep.MinNodesPerRack
 	return &ECDistribution{
 		ECConfig:            ec,
 		ReplicationConfig:   rep,
-		TargetShardsPerDC:   targetShardsPerDC,
-		TargetShardsPerRack: targetShardsPerRack,
-		TargetShardsPerNode: targetShardsPerNode,
-		MaxShardsPerDC:      maxShardsPerDC,
-		MaxShardsPerRack:    maxShardsPerRack,
-		MaxShardsPerNode:    maxShardsPerNode,
+		TargetShardsPerDC:   evenShare(total, dcUnits),
+		TargetShardsPerRack: evenShare(total, rackUnits),
+		TargetShardsPerNode: evenShare(total, nodeUnits),
+		MaxShardsPerDC:      maxShare(total, dcUnits, ec.CanLoseShards()),
+		MaxShardsPerRack:    maxShare(total, rackUnits, ec.CanLoseShards()),
+		MaxShardsPerNode:    maxShare(total, nodeUnits, ec.CanLoseShards()),
 	}
 }
 
-// String returns a human-readable description of the distribution
-func (d *ECDistribution) String() string {
-	return fmt.Sprintf(
-		"ECDistribution{EC:%s, DCs:%d (target:%d/max:%d), Racks/DC:%d (target:%d/max:%d), Nodes/Rack:%d (target:%d/max:%d)}",
-		d.ECConfig.String(),
-		d.ReplicationConfig.MinDataCenters, d.TargetShardsPerDC, d.MaxShardsPerDC,
-		d.ReplicationConfig.MinRacksPerDC, d.TargetShardsPerRack, d.MaxShardsPerRack,
-		d.ReplicationConfig.MinNodesPerRack, d.TargetShardsPerNode, d.MaxShardsPerNode,
-	)
+// evenShare is the balanced shard count per unit at one topology level.
+func evenShare(total, units int) int {
+	return ceilDivide(total, units)
 }
 
-// Summary returns a multi-line summary of the distribution plan
-func (d *ECDistribution) Summary() string {
-	summary := fmt.Sprintf("EC Configuration: %s\n", d.ECConfig.String())
-	summary += fmt.Sprintf("Replication: %s\n", d.ReplicationConfig.String())
-	summary += fmt.Sprintf("Distribution Plan:\n")
-	summary += fmt.Sprintf("  Data Centers: %d (target %d shards each, max %d)\n",
-		d.ReplicationConfig.MinDataCenters, d.TargetShardsPerDC, d.MaxShardsPerDC)
-	summary += fmt.Sprintf("  Racks per DC: %d (target %d shards each, max %d)\n",
-		d.ReplicationConfig.MinRacksPerDC, d.TargetShardsPerRack, d.MaxShardsPerRack)
-	summary += fmt.Sprintf("  Nodes per Rack: %d (target %d shards each, max %d)\n",
-		d.ReplicationConfig.MinNodesPerRack, d.TargetShardsPerNode, d.MaxShardsPerNode)
-	return summary
-}
-
-// CanSurviveDCFailure returns true if the distribution can survive
-// complete loss of one data center
-func (d *ECDistribution) CanSurviveDCFailure() bool {
-	// After losing one DC with max shards, check if remaining shards are enough
-	remainingAfterDCLoss := d.ECConfig.TotalShards() - d.TargetShardsPerDC
-	return remainingAfterDCLoss >= d.ECConfig.MinShardsForReconstruction()
-}
-
-// CanSurviveRackFailure returns true if the distribution can survive
-// complete loss of one rack
-func (d *ECDistribution) CanSurviveRackFailure() bool {
-	remainingAfterRackLoss := d.ECConfig.TotalShards() - d.TargetShardsPerRack
-	return remainingAfterRackLoss >= d.ECConfig.MinShardsForReconstruction()
-}
-
-// MinDCsForDCFaultTolerance calculates the minimum number of DCs needed
-// to survive complete DC failure with this EC configuration
-func (d *ECDistribution) MinDCsForDCFaultTolerance() int {
-	// To survive DC failure, max shards per DC = parityShards
-	maxShardsPerDC := d.ECConfig.MaxTolerableLoss()
-	if maxShardsPerDC == 0 {
-		return d.ECConfig.TotalShards() // Would need one DC per shard
+// maxShare bounds how many shards a single failure domain may hold: the even
+// share plus the slack that would pad the total to the next multiple of the
+// unit count. When the even share is survivable on its own, the loss budget
+// caps the bound so the fault tolerance report stays true even at the max.
+func maxShare(total, units, lossBudget int) int {
+	if units < 1 {
+		units = 1
 	}
-	return ceilDivide(d.ECConfig.TotalShards(), maxShardsPerDC)
-}
-
-// FaultToleranceAnalysis returns a detailed analysis of fault tolerance
-func (d *ECDistribution) FaultToleranceAnalysis() string {
-	analysis := fmt.Sprintf("Fault Tolerance Analysis for %s:\n", d.ECConfig.String())
-
-	// DC failure
-	dcSurvive := d.CanSurviveDCFailure()
-	shardsAfterDC := d.ECConfig.TotalShards() - d.TargetShardsPerDC
-	analysis += fmt.Sprintf("  DC Failure: %s\n", boolToResult(dcSurvive))
-	analysis += fmt.Sprintf("    - Losing one DC loses ~%d shards\n", d.TargetShardsPerDC)
-	analysis += fmt.Sprintf("    - Remaining: %d shards (need %d)\n", shardsAfterDC, d.ECConfig.DataShards)
-	if !dcSurvive {
-		analysis += fmt.Sprintf("    - Need at least %d DCs for DC fault tolerance\n", d.MinDCsForDCFaultTolerance())
+	m := ceilDivide(total, units) + units - total%units
+	if m > total {
+		m = total
 	}
-
-	// Rack failure
-	rackSurvive := d.CanSurviveRackFailure()
-	shardsAfterRack := d.ECConfig.TotalShards() - d.TargetShardsPerRack
-	analysis += fmt.Sprintf("  Rack Failure: %s\n", boolToResult(rackSurvive))
-	analysis += fmt.Sprintf("    - Losing one rack loses ~%d shards\n", d.TargetShardsPerRack)
-	analysis += fmt.Sprintf("    - Remaining: %d shards (need %d)\n", shardsAfterRack, d.ECConfig.DataShards)
-
-	// Node failure (usually survivable)
-	shardsAfterNode := d.ECConfig.TotalShards() - d.TargetShardsPerNode
-	nodeSurvive := shardsAfterNode >= d.ECConfig.DataShards
-	analysis += fmt.Sprintf("  Node Failure: %s\n", boolToResult(nodeSurvive))
-	analysis += fmt.Sprintf("    - Losing one node loses ~%d shards\n", d.TargetShardsPerNode)
-	analysis += fmt.Sprintf("    - Remaining: %d shards (need %d)\n", shardsAfterNode, d.ECConfig.DataShards)
-
-	return analysis
-}
-
-func boolToResult(b bool) string {
-	if b {
-		return "SURVIVABLE ✓"
+	if evenShare(total, units) <= lossBudget && m > lossBudget {
+		m = lossBudget
 	}
-	return "NOT SURVIVABLE ✗"
+	return m
 }
 
-// ceilDivide performs ceiling division
 func ceilDivide(a, b int) int {
-	if b <= 0 {
+	if b < 1 {
 		return a
 	}
 	return (a + b - 1) / b
+}
+
+// Summary describes the distribution plan in human-readable form.
+func (d *ECDistribution) Summary() string {
+	var sb strings.Builder
+	ec := d.ECConfig
+	rep := d.ReplicationConfig
+	fmt.Fprintf(&sb, "EC Configuration: %d+%d (total: %d, can lose: %d)\n",
+		ec.DataShards, ec.ParityShards, ec.TotalShards(), ec.CanLoseShards())
+	fmt.Fprintf(&sb, "Replication: replication=%s (DCs:%d, Racks/DC:%d, Nodes/Rack:%d)\n",
+		rep.Original, rep.MinDataCenters, rep.MinRacksPerDC, rep.MinNodesPerRack)
+	sb.WriteString("Distribution Plan:\n")
+	fmt.Fprintf(&sb, "  Data Centers: %d (target %d shards each, max %d)\n",
+		rep.MinDataCenters, d.TargetShardsPerDC, d.MaxShardsPerDC)
+	fmt.Fprintf(&sb, "  Racks per DC: %d (target %d shards each, max %d)\n",
+		rep.MinRacksPerDC, d.TargetShardsPerRack, d.MaxShardsPerRack)
+	fmt.Fprintf(&sb, "  Nodes per Rack: %d (target %d shards each, max %d)\n",
+		rep.MinNodesPerRack, d.TargetShardsPerNode, d.MaxShardsPerNode)
+	return sb.String()
+}
+
+// FaultToleranceAnalysis reports whether losing one unit at each topology
+// level still leaves enough shards to reconstruct the volume.
+func (d *ECDistribution) FaultToleranceAnalysis() string {
+	var sb strings.Builder
+	ec := d.ECConfig
+	fmt.Fprintf(&sb, "Fault Tolerance Analysis for %d+%d:\n", ec.DataShards, ec.ParityShards)
+	writeLevel := func(name string, target int) {
+		remaining := ec.TotalShards() - target
+		status := "SURVIVABLE ✓"
+		if remaining < ec.DataShards {
+			status = "NOT SURVIVABLE ✗"
+		}
+		fmt.Fprintf(&sb, "  %s Failure: %s\n", name, status)
+		fmt.Fprintf(&sb, "    - Losing one %s loses ~%d shards\n", name, target)
+		fmt.Fprintf(&sb, "    - Remaining: %d shards (need %d)\n", remaining, ec.DataShards)
+	}
+	writeLevel("DC", d.TargetShardsPerDC)
+	writeLevel("Rack", d.TargetShardsPerRack)
+	writeLevel("Node", d.TargetShardsPerNode)
+	return sb.String()
 }

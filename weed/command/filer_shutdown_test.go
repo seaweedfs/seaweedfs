@@ -1,0 +1,226 @@
+package command
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestFilerShutdownJoinsServeDuringParallelDrain(t *testing.T) {
+	var servers []*http.Server
+	var releases []func()
+	var completed []chan struct{}
+	var listenersClosing []chan struct{}
+	for range 2 {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		finish := sync.OnceFunc(func() { close(release) })
+		done := make(chan struct{})
+		closing := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(entered)
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(server.Close)
+		t.Cleanup(finish)
+		server.Config.RegisterOnShutdown(func() { close(closing) })
+		servers = append(servers, server.Config)
+		releases = append(releases, finish)
+		completed = append(completed, done)
+		listenersClosing = append(listenersClosing, closing)
+		go func() {
+			defer close(done)
+			response, err := server.Client().Get(server.URL)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer response.Body.Close()
+			io.Copy(io.Discard, response.Body)
+			if response.StatusCode != http.StatusNoContent {
+				t.Errorf("active request returned %s", response.Status)
+			}
+		}()
+		<-entered
+	}
+
+	grpcStarted := make(chan struct{})
+	grpcRelease := make(chan struct{})
+	releaseGrpc := sync.OnceFunc(func() { close(grpcRelease) })
+	t.Cleanup(releaseGrpc)
+	grpcStopped := make(chan struct{})
+	filerClosed := make(chan struct{})
+	var closes atomic.Int32
+	shutdown := newFilerShutdown(func() {}, func() {}, func() {
+		close(grpcStarted)
+		<-grpcRelease
+		close(grpcStopped)
+	}, func() {
+		closes.Add(1)
+		close(filerClosed)
+	}, servers...)
+	joined := make(chan struct{})
+	go func() { shutdown(); close(joined) }()
+	deadline := time.After(5 * time.Second)
+	select {
+	case <-grpcStarted:
+	case <-deadline:
+		t.Fatal("gRPC shutdown did not start")
+	}
+	for _, closing := range listenersClosing {
+		select {
+		case <-closing:
+		case <-deadline:
+			t.Fatal("HTTP shutdown did not start while gRPC was draining")
+		}
+	}
+	// Model the main Serve path joining shutdown as soon as listeners close.
+	serveReturned := make(chan struct{})
+	go func() { shutdown(); close(serveReturned) }()
+
+	releases[0]()
+	<-completed[0]
+	select {
+	case <-filerClosed:
+		t.Error("filer closed while another server still had an active request")
+	default:
+	}
+	select {
+	case <-serveReturned:
+		t.Error("Serve exit path returned before request draining completed")
+	default:
+	}
+	releases[1]()
+	<-completed[1]
+	select {
+	case <-filerClosed:
+		t.Error("filer closed while gRPC was still draining")
+	default:
+	}
+	releaseGrpc()
+	<-grpcStopped
+	<-joined
+	<-serveReturned
+	if closes.Load() != 1 {
+		t.Errorf("filer closed %d times, want once", closes.Load())
+	}
+}
+
+func TestFilerShutdownWaitsForHTTPAfterGrpcStops(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(finish)
+	requestDone := make(chan struct{})
+	go func() {
+		defer close(requestDone)
+		response, err := server.Client().Get(server.URL)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		response.Body.Close()
+	}()
+	<-entered
+
+	httpClosing := make(chan struct{})
+	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
+	grpcStopped := make(chan struct{})
+	filerClosed := make(chan struct{})
+	shutdown := newFilerShutdown(func() {}, func() {}, func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
+	joined := make(chan struct{})
+	go func() { shutdown(); close(joined) }()
+	<-httpClosing
+	<-grpcStopped
+	select {
+	case <-filerClosed:
+		t.Error("filer closed while HTTP request was active")
+	case <-time.After(100 * time.Millisecond):
+	}
+	finish()
+	<-requestDone
+	<-joined
+	select {
+	case <-filerClosed:
+	default:
+		t.Error("filer was not closed after HTTP request completed")
+	}
+}
+
+func TestFilerShutdownLeavesLockRingBeforeDraining(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(server.Close)
+	httpClosing := make(chan struct{})
+	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
+
+	leaving := make(chan struct{})
+	releaseLeave := make(chan struct{})
+	finishLeave := sync.OnceFunc(func() { close(releaseLeave) })
+	t.Cleanup(finishLeave)
+	grpcStopping := make(chan struct{})
+	shutdown := newFilerShutdown(func() {
+		close(leaving)
+		<-releaseLeave
+	}, func() {}, func() { close(grpcStopping) }, func() {}, server.Config)
+	joined := make(chan struct{})
+	go func() { shutdown(); close(joined) }()
+
+	select {
+	case <-leaving:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not leave the lock ring")
+	}
+	select {
+	case <-grpcStopping:
+		t.Fatal("gRPC stopped accepting while the filer was still leaving the lock ring")
+	case <-httpClosing:
+		t.Fatal("HTTP stopped accepting while the filer was still leaving the lock ring")
+	case <-time.After(100 * time.Millisecond):
+	}
+	finishLeave()
+	<-joined
+	select {
+	case <-grpcStopping:
+	default:
+		t.Error("gRPC was not stopped after leaving the lock ring")
+	}
+}
+
+// The filer's own MetaAggregator and an in-process S3 gateway keep metadata
+// subscription streams open until the filer is shut down, which happens after
+// gRPC GracefulStop - so the subscriptions have to end before it, or every
+// shutdown sits out the full graceful-stop timeout.
+func TestFilerShutdownStopsSubscriptionsBeforeGrpc(t *testing.T) {
+	var order []string
+	var mu sync.Mutex
+	record := func(step string) func() {
+		return func() {
+			mu.Lock()
+			defer mu.Unlock()
+			order = append(order, step)
+		}
+	}
+	shutdown := newFilerShutdown(record("leave"), record("subscriptions"), record("grpc"), record("filer"))
+	shutdown()
+
+	want := []string{"leave", "subscriptions", "grpc", "filer"}
+	if len(order) != len(want) {
+		t.Fatalf("shutdown steps %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("shutdown steps %v, want %v", order, want)
+		}
+	}
+}

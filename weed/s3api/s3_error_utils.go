@@ -1,22 +1,35 @@
 package s3api
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
 )
 
+// isFilerNotFound reports whether a filer error is a not-found.
+// Unlike lookups (normalized in filer_pb.LookupEntry), list and cache errors
+// cross gRPC as raw status errors, so the sentinel survives as codes.NotFound
+// or only as text. The text is matched last and only on what the filer itself
+// said, since callers wrap these errors with a path the client chose.
+func isFilerNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return true
+	}
+	if st, ok := util.ServerStatus(err); ok {
+		return st.Code() == codes.NotFound || strings.Contains(st.Message(), filer_pb.ErrNotFound.Error())
+	}
+	return strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
+}
+
 // ErrorHandlers provide common error handling patterns for S3 API operations
-
-// handlePutToFilerError logs an error and returns the standard putToFiler error format
-func handlePutToFilerError(operation string, err error, errorCode s3err.ErrorCode) (string, s3err.ErrorCode, string) {
-	glog.Errorf("Failed to %s: %v", operation, err)
-	return "", errorCode, ""
-}
-
-// handlePutToFilerInternalError is a convenience wrapper for internal errors in putToFiler
-func handlePutToFilerInternalError(operation string, err error) (string, s3err.ErrorCode, string) {
-	return handlePutToFilerError(operation, err, s3err.ErrInternalError)
-}
 
 // handleMultipartError logs an error and returns the standard multipart error format
 func handleMultipartError(operation string, err error, errorCode s3err.ErrorCode) (interface{}, s3err.ErrorCode) {
@@ -27,28 +40,4 @@ func handleMultipartError(operation string, err error, errorCode s3err.ErrorCode
 // handleMultipartInternalError is a convenience wrapper for internal errors in multipart operations
 func handleMultipartInternalError(operation string, err error) (interface{}, s3err.ErrorCode) {
 	return handleMultipartError(operation, err, s3err.ErrInternalError)
-}
-
-// logErrorAndReturn logs an error with operation context and returns the specified error code
-func logErrorAndReturn(operation string, err error, errorCode s3err.ErrorCode) s3err.ErrorCode {
-	glog.Errorf("Failed to %s: %v", operation, err)
-	return errorCode
-}
-
-// logInternalError is a convenience wrapper for internal error logging
-func logInternalError(operation string, err error) s3err.ErrorCode {
-	return logErrorAndReturn(operation, err, s3err.ErrInternalError)
-}
-
-// SSE-specific error handlers
-
-// handleSSEError handles common SSE-related errors with appropriate context
-func handleSSEError(sseType string, operation string, err error, errorCode s3err.ErrorCode) (string, s3err.ErrorCode, string) {
-	glog.Errorf("Failed to %s for %s: %v", operation, sseType, err)
-	return "", errorCode, ""
-}
-
-// handleSSEInternalError is a convenience wrapper for SSE internal errors
-func handleSSEInternalError(sseType string, operation string, err error) (string, s3err.ErrorCode, string) {
-	return handleSSEError(sseType, operation, err, s3err.ErrInternalError)
 }

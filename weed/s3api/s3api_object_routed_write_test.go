@@ -1,0 +1,586 @@
+package s3api
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+)
+
+func reqWith(headers map[string]string) *http.Request {
+	r, _ := http.NewRequest(http.MethodPut, "/b/o", nil)
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	return r
+}
+
+// oneClause returns the single clause of cond, failing if it does not hold
+// exactly one.
+func oneClause(t *testing.T, cond *filer_pb.WriteCondition) *filer_pb.WriteCondition_Clause {
+	t.Helper()
+	if cond == nil {
+		t.Fatal("expected a condition, got nil")
+	}
+	if len(cond.Clauses) != 1 {
+		t.Fatalf("expected 1 clause, got %d", len(cond.Clauses))
+	}
+	return cond.Clauses[0]
+}
+
+func TestBuildWriteCondition(t *testing.T) {
+	t.Run("no headers is unconditional", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(nil))
+		if !ok || cond != nil {
+			t.Fatalf("want (nil, true), got (%v, %v)", cond, ok)
+		}
+	})
+	t.Run("If-None-Match * to IF_NOT_EXISTS", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfNoneMatch: "*"}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_NOT_EXISTS {
+			t.Fatalf("kind = %v", c.Kind)
+		}
+	})
+	t.Run("If-Match * to IF_EXISTS", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
+			t.Fatalf("kind = %v", c.Kind)
+		}
+	})
+	t.Run("If-Match strong etag to IF_ETAG_MATCH", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"abc123"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != "abc123" {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
+	t.Run("If-None-Match strong etag to IF_ETAG_NOT_MATCH", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfNoneMatch: `"abc123"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH || len(c.Etags) != 1 || c.Etags[0] != "abc123" {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
+	t.Run("weak etag falls back", func(t *testing.T) {
+		if _, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"abc"`})); ok {
+			t.Fatal("weak etag must not take the fast path")
+		}
+	})
+	t.Run("etag list falls back", func(t *testing.T) {
+		if _, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a","b"`})); ok {
+			t.Fatal("etag list must not take the fast path")
+		}
+	})
+	t.Run("both match and none-match falls back", func(t *testing.T) {
+		if _, ok := buildWriteCondition(reqWith(map[string]string{
+			s3_constants.IfMatch:     "*",
+			s3_constants.IfNoneMatch: "*",
+		})); ok {
+			t.Fatal("ambiguous combination must not take the fast path")
+		}
+	})
+	t.Run("time-based falls back", func(t *testing.T) {
+		if _, ok := buildWriteCondition(reqWith(map[string]string{
+			"If-Unmodified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+		})); ok {
+			t.Fatal("time condition must not take the fast path")
+		}
+	})
+}
+
+func TestParseConditionalHeadersAcceptsHTTPDateFormats(t *testing.T) {
+	testCases := []struct {
+		name     string
+		header   string
+		value    string
+		expected time.Time
+	}{
+		{
+			name:     "If-Modified-Since RFC850",
+			header:   s3_constants.IfModifiedSince,
+			value:    "Sunday, 06-Nov-94 08:49:37 GMT",
+			expected: time.Date(1994, time.November, 6, 8, 49, 37, 0, time.UTC),
+		},
+		{
+			name:     "If-Unmodified-Since ANSIC",
+			header:   s3_constants.IfUnmodifiedSince,
+			value:    "Sun Nov  6 08:49:37 1994",
+			expected: time.Date(1994, time.November, 6, 8, 49, 37, 0, time.UTC),
+		},
+		{
+			// Go clients build this with t.UTC().Format(time.RFC1123); the "UTC"
+			// zone is rejected by http.ParseTime but was accepted before, so the
+			// RFC1123 fallback must keep it working.
+			name:     "If-Modified-Since RFC1123 UTC zone",
+			header:   s3_constants.IfModifiedSince,
+			value:    "Wed, 21 Oct 2015 07:28:00 UTC",
+			expected: time.Date(2015, time.October, 21, 7, 28, 0, 0, time.UTC),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := reqWith(map[string]string{testCase.header: testCase.value})
+
+			headers, errCode := parseConditionalHeaders(r)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("expected %s to be accepted, got %v", testCase.header, errCode)
+			}
+			if !headers.isSet {
+				t.Fatal("expected conditional headers to be marked set")
+			}
+			parsed := headers.ifModifiedSince
+			if testCase.header == s3_constants.IfUnmodifiedSince {
+				parsed = headers.ifUnmodifiedSince
+			}
+			if !parsed.Equal(testCase.expected) {
+				t.Fatalf("expected parsed time %v, got %v", testCase.expected, parsed)
+			}
+		})
+	}
+}
+
+func TestValidateConditionalCopyHeadersAcceptsHTTPDateFormats(t *testing.T) {
+	testCases := []struct {
+		name   string
+		header string
+		value  string
+		mtime  int64 // source mtime chosen so the condition passes
+	}{
+		{
+			name:   "X-Amz-Copy-Source-If-Modified-Since RFC850",
+			header: s3_constants.AmzCopySourceIfModifiedSince,
+			value:  "Sunday, 06-Nov-94 08:49:37 GMT",
+			mtime:  1577836800, // 2020-01-01, modified after the 1994 header
+		},
+		{
+			name:   "X-Amz-Copy-Source-If-Unmodified-Since ANSIC",
+			header: s3_constants.AmzCopySourceIfUnmodifiedSince,
+			value:  "Sun Nov  6 08:49:37 1994",
+			mtime:  631152000, // 1990-01-01, not modified after the 1994 header
+		},
+	}
+
+	var s3a *S3ApiServer // method does not use the receiver
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := reqWith(map[string]string{testCase.header: testCase.value})
+			entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: testCase.mtime}}
+
+			if errCode := s3a.validateConditionalCopyHeaders(r, entry); errCode != s3err.ErrNone {
+				t.Fatalf("expected %s to be accepted, got %v", testCase.header, errCode)
+			}
+		})
+	}
+}
+
+func TestBuildDeleteCondition(t *testing.T) {
+	t.Run("no If-Match is unconditional", func(t *testing.T) {
+		cond, ok := buildDeleteCondition(reqWith(nil))
+		if !ok || cond != nil {
+			t.Fatalf("want (nil, true), got (%v, %v)", cond, ok)
+		}
+	})
+	t.Run("If-Match * to IF_EXISTS", func(t *testing.T) {
+		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
+			t.Fatalf("kind = %v", c.Kind)
+		}
+	})
+	t.Run("If-Match etag to IF_ETAG_MATCH", func(t *testing.T) {
+		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || c.Etags[0] != "e" {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
+	t.Run("weak etag falls back", func(t *testing.T) {
+		if _, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`})); ok {
+			t.Fatal("weak etag must not take the fast path")
+		}
+	})
+}
+
+func TestSingleStrongETag(t *testing.T) {
+	cases := []struct {
+		in     string
+		want   string
+		single bool
+	}{
+		{`"abc"`, "abc", true},
+		{` "abc" `, "abc", true},
+		{`abc`, "abc", true},
+		{`W/"abc"`, "", false},
+		{`w/"abc"`, "", false},
+		{`"a","b"`, "", false},
+	}
+	for _, c := range cases {
+		got, single := singleStrongETag(c.in)
+		if single != c.single || (single && got != c.want) {
+			t.Errorf("singleStrongETag(%q) = (%q, %v), want (%q, %v)", c.in, got, single, c.want, c.single)
+		}
+	}
+}
+
+// fakeTxnFiler is a minimal SeaweedFiler gRPC server that records ObjectTransaction
+// calls, standing in for a live filer that a routed write fails over to.
+type fakeTxnFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	calls   int32
+	lastReq *filer_pb.ObjectTransactionRequest
+	resp    *filer_pb.ObjectTransactionResponse
+	err     error
+}
+
+func (f *fakeTxnFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	atomic.AddInt32(&f.calls, 1)
+	f.lastReq = req
+	if f.resp != nil || f.err != nil {
+		return f.resp, f.err
+	}
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// startFakeFiler serves impl on a random localhost port and returns the S3-style
+// filer address whose ToGrpcAddress resolves back to that port.
+func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, impl)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	port := lis.Addr().(*net.TCPAddr).Port
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
+	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
+	versionFile := "v_" + versionId
+	filer := &fakeTxnFiler{
+		resp: &filer_pb.ObjectTransactionResponse{
+			Error:     "precondition failed",
+			ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+		},
+	}
+	owner := startFakeFiler(t, filer)
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false); code != s3err.ErrAccessDenied {
+		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
+	}
+
+	req := filer.lastReq
+	if req == nil {
+		t.Fatal("expected an ObjectTransaction request")
+	}
+	if req.LockKey != "/buckets/b/obj" {
+		t.Fatalf("LockKey = %q", req.LockKey)
+	}
+	if req.ConditionKey != "/buckets/b/obj.versions/"+versionFile {
+		t.Fatalf("ConditionKey = %q", req.ConditionKey)
+	}
+	if req.RouteKey != "s3.object.write:/buckets/b/obj" {
+		t.Fatalf("RouteKey = %q", req.RouteKey)
+	}
+
+	if len(req.Condition.GetClauses()) != 2 {
+		t.Fatalf("condition clauses = %d, want 2", len(req.Condition.GetClauses()))
+	}
+	hold := req.Condition.GetClauses()[0]
+	if hold.Kind != filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL ||
+		hold.ExtKey != s3_constants.ExtLegalHoldKey ||
+		hold.ExtValue != s3_constants.LegalHoldOn {
+		t.Fatalf("legal hold clause = %+v", hold)
+	}
+	retain := req.Condition.GetClauses()[1]
+	if retain.Kind != filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED ||
+		retain.ExtKey != s3_constants.ExtRetentionUntilDateKey ||
+		retain.GateKey != "" {
+		t.Fatalf("retention clause = %+v", retain)
+	}
+
+	if len(req.Mutations) != 2 {
+		t.Fatalf("mutations = %d, want 2", len(req.Mutations))
+	}
+	recompute := req.Mutations[0]
+	if recompute.Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST ||
+		recompute.GetRecompute().GetExcludeName() != versionFile {
+		t.Fatalf("recompute mutation = %+v", recompute)
+	}
+	deleteVersion := req.Mutations[1]
+	if deleteVersion.Type != filer_pb.ObjectMutation_DELETE ||
+		deleteVersion.Directory != "/buckets/b/obj.versions" ||
+		deleteVersion.Name != versionFile ||
+		!deleteVersion.IsDeleteData ||
+		!deleteVersion.RemoveEmptyParent {
+		t.Fatalf("delete mutation = %+v", deleteVersion)
+	}
+}
+
+func TestWormDeleteConditionForGovernanceBypass(t *testing.T) {
+	cond := wormDeleteCondition(true, true)
+	if len(cond.GetClauses()) != 2 {
+		t.Fatalf("condition clauses = %d, want 2", len(cond.GetClauses()))
+	}
+	retain := cond.GetClauses()[1]
+	if retain.Kind != filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED ||
+		retain.ExtKey != s3_constants.ExtRetentionUntilDateKey ||
+		retain.GateKey != s3_constants.ExtObjectLockModeKey ||
+		retain.GateValue != s3_constants.RetentionModeCompliance {
+		t.Fatalf("retention clause = %+v", retain)
+	}
+}
+
+// closedFilerAddress returns an address whose gRPC port has nothing listening,
+// modeling a filer whose ring address is stale after a pod restart.
+func closedFilerAddress(t *testing.T) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+	lis.Close()
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+// A routed write whose owner address is dead fails over to a live filer (which
+// forwards to the real owner by route_key) instead of hanging on the dead owner,
+// so an object write survives a filer pod IP change without an S3 gateway restart.
+func TestObjectTxnFailsOverStaleOwner(t *testing.T) {
+	live := &fakeTxnFiler{}
+	liveAddr := startFakeFiler(t, live)
+	deadOwner := closedFilerAddress(t)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{liveAddr}, dialOption, ""),
+	}
+	req := &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}
+
+	// Owner not yet flagged: the first attempt dials it, fails fast, then fails
+	// over to the live filer and flags the owner unreachable.
+	resp, err := s3a.objectTxnOnFiler(deadOwner, req)
+	if err != nil {
+		t.Fatalf("expected failover success, got %v", err)
+	}
+	if resp == nil || resp.Error != "" {
+		t.Fatalf("unexpected response %+v", resp)
+	}
+	if got := atomic.LoadInt32(&live.calls); got != 1 {
+		t.Fatalf("live filer calls = %d, want 1", got)
+	}
+	if !s3a.ownerRecentlyUnreachable(deadOwner) {
+		t.Fatal("dead owner should be flagged unreachable after the failed dial")
+	}
+
+	// Once flagged, the owner is skipped entirely and the write still lands.
+	if _, err := s3a.objectTxnOnFiler(deadOwner, req); err != nil {
+		t.Fatalf("expected success while owner flagged, got %v", err)
+	}
+	if got := atomic.LoadInt32(&live.calls); got != 2 {
+		t.Fatalf("live filer calls = %d, want 2", got)
+	}
+}
+
+// Issue 11631: a transaction the owner may have applied must not be re-sent to
+// another filer — a lost response is indistinguishable from a commit. Failover
+// is only for channels that never came up, which provably sent nothing.
+func TestObjectTxnNoReplayAfterSend(t *testing.T) {
+	owner := &fakeTxnFiler{err: status.Error(codes.Unavailable, "response lost")}
+	ownerAddr := startFakeFiler(t, owner)
+	backup := &fakeTxnFiler{}
+	backupAddr := startFakeFiler(t, backup)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{ownerAddr, backupAddr}, dialOption, ""),
+	}
+	req := &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}
+
+	if _, err := s3a.objectTxnOnFiler(ownerAddr, req); err == nil {
+		t.Fatal("expected the lost response to surface as an error")
+	}
+	if got := atomic.LoadInt32(&backup.calls); got != 0 {
+		t.Fatalf("backup filer calls = %d — replayed a possibly-committed transaction", got)
+	}
+}
+
+// A completed multipart upload commits in one transaction: the version file's
+// PUT, the metadata-only removal of .uploads/<id> (its chunks are the object's
+// chunks), and the latest-pointer recompute, in that order.
+func TestRoutedMultipartFinalize(t *testing.T) {
+	filer := &fakeTxnFiler{}
+	owner := startFakeFiler(t, filer)
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+
+	chunks := []*filer_pb.FileChunk{{FileId: "1,01637037d6"}}
+	code := s3a.routedMultipartFinalize(owner, "b", "obj", false, "/buckets/b/obj.versions", "v_1", chunks, func(entry *filer_pb.Entry) {
+		entry.Extended = map[string][]byte{s3_constants.SeaweedFSUploadId: []byte("up1")}
+	}, "up1")
+	if code != s3err.ErrNone {
+		t.Fatalf("routedMultipartFinalize = %v", code)
+	}
+
+	req := filer.lastReq
+	if req == nil {
+		t.Fatal("expected an ObjectTransaction request")
+	}
+	if req.LockKey != "/buckets/b/obj" {
+		t.Fatalf("LockKey = %q", req.LockKey)
+	}
+	if req.RouteKey != "s3.object.write:/buckets/b/obj" {
+		t.Fatalf("RouteKey = %q", req.RouteKey)
+	}
+	if req.ConditionKey != "/buckets/b/.uploads/up1" {
+		t.Fatalf("ConditionKey = %q", req.ConditionKey)
+	}
+	if req.Condition == nil || len(req.Condition.Clauses) != 1 || req.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+		t.Fatalf("Condition = %+v", req.Condition)
+	}
+	if len(req.Mutations) != 3 {
+		t.Fatalf("mutations = %d, want 3", len(req.Mutations))
+	}
+
+	put := req.Mutations[0]
+	if put.Type != filer_pb.ObjectMutation_PUT ||
+		put.Directory != "/buckets/b/obj.versions" ||
+		put.Entry == nil ||
+		put.Entry.Name != "v_1" ||
+		len(put.Entry.Chunks) != 1 ||
+		string(put.Entry.Extended[s3_constants.SeaweedFSUploadId]) != "up1" {
+		t.Fatalf("put mutation = %+v", put)
+	}
+	removeUpload := req.Mutations[1]
+	if removeUpload.Type != filer_pb.ObjectMutation_DELETE ||
+		removeUpload.Directory != "/buckets/b/.uploads" ||
+		removeUpload.Name != "up1" ||
+		!removeUpload.IsRecursive ||
+		removeUpload.IsDeleteData {
+		t.Fatalf("remove upload mutation = %+v", removeUpload)
+	}
+	if req.Mutations[2].Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST {
+		t.Fatalf("recompute mutation = %+v", req.Mutations[2])
+	}
+}
+
+// A non-versioned multipart completion removes .uploads/<id> metadata-only in
+// the same transaction as the object's PUT.
+func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
+	filer := &fakeTxnFiler{}
+	owner := startFakeFiler(t, filer)
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+
+	if removal, err := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{}); removal != nil || err != nil {
+		t.Fatalf("unrouted write should not carry the removal, got %+v, %v", removal, err)
+	}
+	removal, err := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{})
+	if err != nil {
+		t.Fatalf("routedUploadRemoval: %v", err)
+	}
+	if err := s3a.writeMultipartObject(owner, "s3.object.write:/buckets/b/o", "/buckets/b", "o", nil, nil, removal); err != nil {
+		t.Fatalf("writeMultipartObject: %v", err)
+	}
+
+	req := filer.lastReq
+	if req == nil {
+		t.Fatal("expected an ObjectTransaction request")
+	}
+	if req.LockKey != "/buckets/b/o" {
+		t.Fatalf("LockKey = %q", req.LockKey)
+	}
+	if req.ConditionKey != "/buckets/b/.uploads/up1" {
+		t.Fatalf("ConditionKey = %q", req.ConditionKey)
+	}
+	if req.Condition == nil || len(req.Condition.Clauses) != 1 || req.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+		t.Fatalf("Condition = %+v", req.Condition)
+	}
+	if len(req.Mutations) != 2 {
+		t.Fatalf("mutations = %d, want 2", len(req.Mutations))
+	}
+	put := req.Mutations[0]
+	if put.Type != filer_pb.ObjectMutation_PUT || put.Directory != "/buckets/b" || put.Entry == nil || put.Entry.Name != "o" {
+		t.Fatalf("put mutation = %+v", put)
+	}
+	removeUpload := req.Mutations[1]
+	if removeUpload.Type != filer_pb.ObjectMutation_DELETE ||
+		removeUpload.Directory != "/buckets/b/.uploads" ||
+		removeUpload.Name != "up1" ||
+		!removeUpload.IsRecursive ||
+		removeUpload.IsDeleteData {
+		t.Fatalf("remove upload mutation = %+v", removeUpload)
+	}
+}
+
+func TestRouteWriteCondition(t *testing.T) {
+	// Unconditional routes either way.
+	if c, ok := routeWriteCondition(reqWith(nil), false); !ok || c != nil {
+		t.Fatalf("overwrite unconditional: got (%v,%v)", c, ok)
+	}
+	if c, ok := routeWriteCondition(reqWith(nil), true); !ok || c != nil {
+		t.Fatalf("unique unconditional: got (%v,%v)", c, ok)
+	}
+	// An overwrite carries a reducible condition.
+	if c, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}), false); !ok || c == nil {
+		t.Fatalf("overwrite conditional should route: got (%v,%v)", c, ok)
+	}
+	// A conditional unique (versioned) write bails to the lock path.
+	if _, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}), true); ok {
+		t.Fatal("conditional unique write must not route")
+	}
+	// A non-reducible condition bails regardless.
+	if _, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`}), false); ok {
+		t.Fatal("weak etag must not route")
+	}
+}

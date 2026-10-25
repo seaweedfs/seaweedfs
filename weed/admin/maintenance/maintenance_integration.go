@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -24,6 +25,10 @@ type MaintenanceIntegration struct {
 
 	// Active topology for task detection and target selection
 	activeTopology *topology.ActiveTopology
+
+	// Master's default replication, refreshed by the scanner each cycle and
+	// passed to detectors as the replica-placement fallback (matches the shell).
+	defaultReplicaPlacement string
 
 	// Type conversion maps
 	taskTypeMap    map[types.TaskType]MaintenanceTaskType
@@ -117,6 +122,22 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 	glog.V(1).Infof("Registered tasks: %v", registeredTaskTypes)
 }
 
+// SetPolicy replaces the maintenance policy the integration configures tasks from and
+// applies it immediately. Without this the integration kept the policy it was built with,
+// so a policy updated at runtime reached the queue but never the detectors that decide
+// which task types are scanned for.
+//
+// Not safe to call concurrently with a running scan. ConfigureTasksFromPolicy writes
+// TaskDefinition.Config and TaskDefinition.MaxConcurrent, which ScanWithTaskDetectors reads
+// through detector.IsEnabled(); nothing synchronises the two. Today every caller runs during
+// admin server startup, before the scan loop exists. Anything that wires this to an HTTP
+// handler has to add that synchronisation first - the same applies to
+// tasks.ConfigUpdateRegistry.UpdateAllConfigs, which replaces TaskDefinition.Config outright.
+func (s *MaintenanceIntegration) SetPolicy(policy *MaintenancePolicy) {
+	s.maintenancePolicy = policy
+	s.ConfigureTasksFromPolicy()
+}
+
 // ConfigureTasksFromPolicy dynamically configures all registered tasks based on the maintenance policy
 func (s *MaintenanceIntegration) ConfigureTasksFromPolicy() {
 	if s.maintenancePolicy == nil {
@@ -150,20 +171,32 @@ func (s *MaintenanceIntegration) configureDetectorFromPolicy(taskType types.Task
 		return
 	}
 
-	// Apply basic configuration that all detectors should support
-	if basicDetector, ok := detector.(interface{ SetEnabled(bool) }); ok {
-		// Convert task system type to maintenance task type for policy lookup
-		maintenanceTaskType, exists := s.taskTypeMap[taskType]
-		if exists {
-			enabled := IsTaskEnabled(s.maintenancePolicy, maintenanceTaskType)
-			basicDetector.SetEnabled(enabled)
-			glog.V(3).Infof("Set enabled=%v for detector %s", enabled, taskType)
-		}
+	// Convert task system type to maintenance task type for policy lookup
+	maintenanceTaskType, exists := s.taskTypeMap[taskType]
+	if !exists {
+		glog.V(3).Infof("No maintenance task type mapping for %s, skipping configuration", taskType)
+		return
 	}
 
-	// For detectors that don't implement PolicyConfigurableDetector interface,
-	// they should be updated to implement it for full policy-based configuration
-	glog.V(2).Infof("Detector %s should implement PolicyConfigurableDetector interface for full policy support", taskType)
+	// A task type the policy says nothing about is left alone. IsTaskEnabled reports
+	// false for a missing entry, so applying it unconditionally would silently disable
+	// every task the policy does not list - which is how ec_balance would have been
+	// switched off the moment SetEnabled started working.
+	if GetTaskPolicy(s.maintenancePolicy, maintenanceTaskType) == nil {
+		glog.V(2).Infof("Maintenance policy has no entry for %s, leaving its detector configuration untouched", taskType)
+		return
+	}
+
+	// Apply basic configuration that all detectors should support
+	if basicDetector, ok := detector.(interface{ SetEnabled(bool) }); ok {
+		enabled := IsTaskEnabled(s.maintenancePolicy, maintenanceTaskType)
+		basicDetector.SetEnabled(enabled)
+		glog.V(3).Infof("Set enabled=%v for detector %s", enabled, taskType)
+	} else {
+		// For detectors that don't implement PolicyConfigurableDetector interface,
+		// they should be updated to implement it for full policy-based configuration
+		glog.V(2).Infof("Detector %s supports neither PolicyConfigurableDetector nor SetEnabled, its policy is ignored", taskType)
+	}
 }
 
 // configureSchedulerFromPolicy configures a scheduler using policy-based configuration
@@ -182,11 +215,21 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 		return
 	}
 
+	// Same guard as on the detector side: no policy entry means no opinion, not disabled.
+	if GetTaskPolicy(s.maintenancePolicy, maintenanceTaskType) == nil {
+		glog.V(2).Infof("Maintenance policy has no entry for %s, leaving its scheduler configuration untouched", taskType)
+		return
+	}
+
 	// Set enabled status if scheduler supports it
 	if enableableScheduler, ok := scheduler.(interface{ SetEnabled(bool) }); ok {
 		enabled := IsTaskEnabled(s.maintenancePolicy, maintenanceTaskType)
 		enableableScheduler.SetEnabled(enabled)
 		glog.V(3).Infof("Set enabled=%v for scheduler %s", enabled, taskType)
+	} else {
+		// For schedulers that don't implement PolicyConfigurableScheduler interface,
+		// they should be updated to implement it for full policy-based configuration
+		glog.V(2).Infof("Scheduler %s supports neither PolicyConfigurableScheduler nor SetEnabled, its policy is ignored", taskType)
 	}
 
 	// Set max concurrent if scheduler supports it
@@ -197,10 +240,6 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 			glog.V(3).Infof("Set max concurrent=%d for scheduler %s", maxConcurrent, taskType)
 		}
 	}
-
-	// For schedulers that don't implement PolicyConfigurableScheduler interface,
-	// they should be updated to implement it for full policy-based configuration
-	glog.V(2).Infof("Scheduler %s should implement PolicyConfigurableScheduler interface for full policy support", taskType)
 }
 
 // ScanWithTaskDetectors performs a scan using the task system
@@ -218,15 +257,22 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 	// Create cluster info
 	clusterInfo := &types.ClusterInfo{
-		TotalVolumes:   len(filteredMetrics),
-		LastUpdated:    time.Now(),
-		ActiveTopology: s.activeTopology, // Provide ActiveTopology for destination planning
+		TotalVolumes:            len(filteredMetrics),
+		LastUpdated:             time.Now(),
+		ActiveTopology:          s.activeTopology, // Provide ActiveTopology for destination planning
+		DefaultReplicaPlacement: s.defaultReplicaPlacement,
 	}
 
 	// Run detection for each registered task type
 	for taskType, detector := range s.taskRegistry.GetAllDetectors() {
 		if !detector.IsEnabled() {
 			continue
+		}
+
+		// Cancel stale pending tasks for this type before re-detection
+		maintenanceType := s.taskTypeMap[taskType]
+		if cancelled := s.maintenanceQueue.CancelPendingTasksByType(maintenanceType); cancelled > 0 {
+			glog.Infof("Cancelled %d stale pending %s tasks before re-detection", cancelled, taskType)
 		}
 
 		glog.V(2).Infof("Running detection for task type: %s", taskType)
@@ -262,6 +308,12 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	}
 
 	return allResults, nil
+}
+
+// SetDefaultReplicaPlacement records the master's default replication so detectors
+// can use it as the replica-placement fallback (matching the shell).
+func (s *MaintenanceIntegration) SetDefaultReplicaPlacement(replicaPlacement string) {
+	s.defaultReplicaPlacement = replicaPlacement
 }
 
 // UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers
@@ -528,10 +580,15 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 		// Volume size is not currently used for Balance/Vacuum impact and is not stored in MaintenanceTask
 		sourceImpact, targetImpact := topology.CalculateTaskStorageImpact(topology.TaskType(string(taskType)), 0)
 
-		// Use unified sources and targets from TaskParams
+		// Use unified sources and targets from TaskParams.
+		// Task protos store ServerAddresses (with gRPC port, e.g., "host:port.grpcPort")
+		// but the topology indexes disks by NodeId (e.g., "host:port").
+		// Strip the gRPC port suffix via ToHttpAddress() to match the topology key.
 		for _, src := range task.TypedParams.Sources {
+			resolvedSrc := pb.ServerAddress(src.Node).ToHttpAddress()
+			glog.V(2).Infof("SyncTask %s: source proto Node=%q resolved to %q, diskId=%d", task.ID, src.Node, resolvedSrc, src.DiskId)
 			sources = append(sources, topology.TaskSource{
-				SourceServer:  src.Node,
+				SourceServer:  resolvedSrc,
 				SourceDisk:    src.DiskId,
 				StorageChange: sourceImpact,
 			})
@@ -539,8 +596,10 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 			estimatedSize += int64(src.EstimatedSize)
 		}
 		for _, target := range task.TypedParams.Targets {
+			resolvedTarget := pb.ServerAddress(target.Node).ToHttpAddress()
+			glog.V(2).Infof("SyncTask %s: target proto Node=%q resolved to %q, diskId=%d", task.ID, target.Node, resolvedTarget, target.DiskId)
 			destinations = append(destinations, topology.TaskDestination{
-				TargetServer:  target.Node,
+				TargetServer:  resolvedTarget,
 				TargetDisk:    target.DiskId,
 				StorageChange: targetImpact,
 			})

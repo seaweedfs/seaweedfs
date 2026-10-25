@@ -1,0 +1,73 @@
+---
+name: Star History
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # daily, 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Only one chart regeneration per branch at a time so overlapping runs never
+  # conflict on note/star_history.svg during rebase. Scoped by ref so a manual
+  # run on another branch can't cancel the daily master update.
+  group: star-history-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+jobs:
+  render:
+    name: Regenerate star history chart
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history so the chart commit can rebase onto a moved master.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+          cache: ${{ runner.environment == 'github-hosted' && 'pip' || '' }}
+          cache-dependency-path: .github/scripts/star_history.py
+
+      - name: Install matplotlib
+        run: pip install matplotlib
+
+      - name: Render chart
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python .github/scripts/star_history.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- note/star_history.svg; then
+            echo "No changes to the chart."
+            exit 0
+          fi
+          git add note/star_history.svg
+          git commit -m "docs: regenerate star history chart"
+          # Rebase and retry so a concurrent push to master doesn't lose the chart.
+          for attempt in 1 2 3 4 5; do
+            if [ "$attempt" -gt 1 ]; then
+              # Guard the rebase: a transient fetch error or conflict must not
+              # abort the fail-fast shell before the remaining attempts run.
+              if ! git pull --rebase origin "$GITHUB_REF_NAME"; then
+                echo "rebase failed (attempt ${attempt}); aborting and retrying"
+                git rebase --abort || true
+                continue
+              fi
+            fi
+            if git push origin HEAD:"$GITHUB_REF_NAME"; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}); will rebase and retry"
+          done
+          echo "::error::could not push star history chart after retries"
+          exit 1

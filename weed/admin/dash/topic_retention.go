@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -151,17 +151,21 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 			}
 
 			// Only process directories that are versions (start with "v")
-			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
 				versionTime, err := p.parseVersionTime(versionResp.Entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to parse version time from %s: %v", versionResp.Entry.Name, err)
 					continue
 				}
 
+				var modTime time.Time
+				if versionResp.Entry.Attributes != nil {
+					modTime = time.Unix(versionResp.Entry.Attributes.Mtime, 0)
+				}
 				versionDirs = append(versionDirs, VersionDirInfo{
 					Name:        versionResp.Entry.Name,
 					VersionTime: versionTime,
-					ModTime:     time.Unix(versionResp.Entry.Attributes.Mtime, 0),
+					ModTime:     modTime,
 				})
 			}
 		}
@@ -183,7 +187,7 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 
 			// Check if this version directory is expired
 			if versionDir.VersionTime.Before(cutoffTime) {
-				dirPath := filepath.Join(topicDir, versionDir.Name)
+				dirPath := path.Join(topicDir, versionDir.Name)
 
 				// Delete the entire version directory
 				err := p.deleteDirectoryRecursively(client, dirPath)
@@ -260,7 +264,10 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			return fmt.Errorf("failed to receive entries: %w", err)
 		}
 
-		entryPath := filepath.Join(dirPath, resp.Entry.Name)
+		if resp.Entry == nil {
+			continue
+		}
+		entryPath := path.Join(dirPath, resp.Entry.Name)
 
 		if resp.Entry.IsDirectory {
 			// Recursively delete subdirectory
@@ -270,25 +277,17 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			}
 		} else {
 			// Delete file
-			_, err = client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-				Directory: dirPath,
-				Name:      resp.Entry.Name,
-			})
-			if err != nil {
+			if err := filer_pb.DoRemove(context.Background(), client, dirPath, resp.Entry.Name, false, false, false, false, nil); err != nil {
 				return fmt.Errorf("failed to delete file %s: %v", entryPath, err)
 			}
 		}
 	}
 
 	// Delete the directory itself
-	parentDir := filepath.Dir(dirPath)
-	dirName := filepath.Base(dirPath)
+	parentDir := path.Dir(dirPath)
+	dirName := path.Base(dirPath)
 
-	_, err = client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-		Directory: parentDir,
-		Name:      dirName,
-	})
-	if err != nil {
+	if err := filer_pb.DoRemove(context.Background(), client, parentDir, dirName, false, false, false, false, nil); err != nil {
 		return fmt.Errorf("failed to delete directory %s: %v", dirPath, err)
 	}
 

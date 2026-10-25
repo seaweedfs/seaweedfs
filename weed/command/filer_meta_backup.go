@@ -65,6 +65,8 @@ When both match, the deeper prefix wins.
 
 func runFilerMetaBackup(cmd *Command, args []string) bool {
 
+	*metaBackup.backupFilerConfig = util.ResolvePath(*metaBackup.backupFilerConfig)
+
 	util.LoadSecurityConfiguration()
 	metaBackup.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -113,15 +115,19 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			glog.Errorf("traverse meta data: %v", err)
 			return true
 		}
-		glog.V(0).Infof("metadata copied up to %v", startTime)
 		if err := metaBackup.setOffset(startTime); err != nil {
-			startTime = time.Now()
+			glog.Exitf("set metadata backup offset: %v", err)
+			return true
 		}
+		glog.V(0).Infof("metadata copied up to %v", startTime)
 	}
 
 	for {
-		err := metaBackup.streamMetadataBackup()
+		startTime, err := metaBackup.getOffset()
 		if err != nil {
+			glog.Exitf("read metadata backup offset from %s: %v", *metaBackup.filerAddress, err)
+		}
+		if err := metaBackup.streamMetadataBackup(startTime); err != nil {
 			glog.Errorf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
@@ -175,12 +181,8 @@ var (
 	MetaBackupKey = []byte("metaBackup")
 )
 
-func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
+func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup(startTime time.Time) error {
 
-	startTime, err := metaBackup.getOffset()
-	if err != nil {
-		startTime = time.Now()
-	}
 	glog.V(0).Infof("streaming from %v", startTime)
 
 	store := metaBackup.store

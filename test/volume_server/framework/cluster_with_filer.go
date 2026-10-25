@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 )
 
@@ -25,7 +26,7 @@ func StartSingleVolumeClusterWithFiler(t testing.TB, profile matrix.Profile) *Cl
 
 	baseCluster := StartSingleVolumeCluster(t, profile)
 
-	ports, err := allocatePorts(2)
+	ports, err := testutil.AllocatePorts(2)
 	if err != nil {
 		t.Fatalf("allocate filer ports: %v", err)
 	}

@@ -39,7 +39,7 @@ func (store *ArangodbStore) KvGet(ctx context.Context, key []byte) (value []byte
 	}
 	if err != nil {
 		glog.ErrorfCtx(ctx, "kv get: %s %v", string(key), err)
-		return nil, filer.ErrKvNotFound
+		return nil, err
 	}
 	return arrayToBytes(model.Meta), nil
 }

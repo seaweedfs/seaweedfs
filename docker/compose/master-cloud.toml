@@ -7,6 +7,7 @@
 
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
+# Scripts are skipped while an admin server is connected.
 scripts = """
   lock
   ec.encode -fullPercent=95 -quietFor=1h
@@ -29,3 +30,5 @@ sleep_minutes = 17          # sleep minutes between each script execution
 	bucket = "volume_bucket"    # an existing bucket
 	endpoint = "http://server2:8333"
 	storage_class = "STANDARD_IA"
+	# upload_concurrency = 5     # concurrent multipart part uploads per volume (volume.tier.upload -concurrent overrides)
+	# download_concurrency = 5   # concurrent multipart part downloads per volume (volume.tier.download -concurrent overrides)

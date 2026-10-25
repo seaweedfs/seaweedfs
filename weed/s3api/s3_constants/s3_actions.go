@@ -16,17 +16,20 @@ const (
 	ACTION_PUT_OBJECT_LEGAL_HOLD         = "PutObjectLegalHold"
 	ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG = "GetBucketObjectLockConfiguration"
 	ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG = "PutBucketObjectLockConfiguration"
-
-	// Granular multipart upload actions for fine-grained IAM policies
-	ACTION_CREATE_MULTIPART_UPLOAD = "s3:CreateMultipartUpload"
-	ACTION_UPLOAD_PART             = "s3:UploadPart"
-	ACTION_COMPLETE_MULTIPART      = "s3:CompleteMultipartUpload"
-	ACTION_ABORT_MULTIPART         = "s3:AbortMultipartUpload"
-	ACTION_LIST_MULTIPART_UPLOADS  = "s3:ListMultipartUploads"
-	ACTION_LIST_PARTS              = "s3:ListParts"
+	ACTION_PUT_BUCKET_POLICY             = "PutBucketPolicy"
+	ACTION_DELETE_BUCKET_POLICY          = "DeleteBucketPolicy"
+	ACTION_PUT_BUCKET_QUOTA              = "PutBucketQuota"
+	ACTION_GET_BUCKET_QUOTA              = "GetBucketQuota"
+	// Scoped to their single operation: the multipart listing routes are
+	// gated on ACTION_READ for compatibility, but a policy granting one of
+	// these names must not widen into a general Read grant.
+	ACTION_LIST_MULTIPART_UPLOADS = "ListBucketMultipartUploads"
+	ACTION_LIST_PARTS             = "ListMultipartUploadParts"
 
 	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
 	MultipartUploadsFolder          = ".uploads"
 	VersionsFolder                  = ".versions"
+	SystemFolder                    = ".system"
 	FolderMimeType                  = "httpd/unix-directory"
+	DirectoryMimeType               = "application/x-directory"
 )

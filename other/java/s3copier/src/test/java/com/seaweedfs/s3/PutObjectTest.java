@@ -29,7 +29,7 @@ public class PutObjectTest
     }
 
     /**
-     * Rigourous Test :-)
+     * Rigorous Test :-)
      */
     public void testApp()
     {

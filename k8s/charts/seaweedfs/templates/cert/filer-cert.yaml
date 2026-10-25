@@ -1,5 +1,6 @@
-{{- if and .Values.global.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
-apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
+{{- include "seaweedfs.compat" . -}}
+{{- if and .Values.global.seaweedfs.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
+apiVersion: cert-manager.io/v1{{ if .Values.global.seaweedfs.certificates.alphacrds }}alpha1{{ end }}
 kind: Certificate
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-filer-cert
@@ -27,6 +28,11 @@ spec:
     - '*.{{ .Release.Namespace }}'
     - '*.{{ .Release.Namespace }}.svc'
     - '*.{{ .Release.Namespace }}.svc.cluster.local'
+{{- if .Values.certificates.dnsNames }}
+{{- range .Values.certificates.dnsNames }}
+    - {{ . | quote }}
+{{- end }}
+{{- end }}
     - '*.{{ include "seaweedfs.fullname" . }}-master'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}.svc'

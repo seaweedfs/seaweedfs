@@ -3,9 +3,14 @@ package iceberg
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/apache/iceberg-go/table"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -99,5 +104,31 @@ func TestIsS3TablesConflict(t *testing.T) {
 	}
 	if isS3TablesConflict(errors.New("other")) {
 		t.Fatalf("unexpected conflict for non-conflict error")
+	}
+}
+
+// A create-on-commit is a create, and it writes the new table's metadata file
+// before the registration that authorizes it.
+func TestCreateOnCommitDeniedBeforeAnyWrite(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/finance/tables/quarterly_reports",
+		strings.NewReader(`{"requirements":[{"type":"assert-create"}],"updates":[]}`))
+	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "quarterly_reports"})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "mallory"))
+
+	w := httptest.NewRecorder()
+	s.handleUpdateTable(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (body: %s)", w.Code, http.StatusForbidden, w.Body.String())
+	}
+	for p, entry := range fc.entries {
+		if !entry.IsDirectory && strings.Contains(p, "quarterly_reports") {
+			t.Errorf("unauthorized caller wrote %s", p)
+		}
 	}
 }

@@ -1,0 +1,174 @@
+[package]
+name = "weed-volume"
+version = "0.1.0"
+edition = "2024"
+# The edition needs 1.85; the dependency tree needs more. Verified with
+# `cargo +1.91.1 check --all-targets` (1.90 fails on the AWS SDK).
+rust-version = "1.91.1"
+description = "SeaweedFS Volume Server — Rust implementation"
+
+[lib]
+name = "seaweed_volume"
+
+[[bin]]
+name = "weed-volume"
+path = "src/main.rs"
+
+[features]
+# Default: 5-byte offsets (8TB max volume size), matching production Go builds (-tags 5BytesOffset).
+# Disable with --no-default-features for 4-byte offsets (32GB max volume size).
+default = ["5bytes"]
+5bytes = []
+# Unstable redb cursor bulk-load for full_rebuild. Off in production.
+# Pulls redb's experimental_cursor (and therefore experimental-api-5).
+redb-experimental-cursor = ["redb/experimental_cursor"]
+
+[lints.clippy]
+# Protobuf message literals keep `..Default::default()` on purpose: it is
+# what lets a proto gain a field without touching every constructor.
+needless_update = "allow"
+# Every `unsafe` block states its precondition, right above the block.
+undocumented_unsafe_blocks = "warn"
+
+[dependencies]
+# Helpers the Rust plugin workers (seaweed-worker) need as well. A path
+# dependency because the two trees are separate cargo workspaces with no
+# common root manifest.
+seaweed-common = { path = "../seaweed-common" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tokio-io-timeout = "1"
+
+# gRPC + protobuf
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+
+# HTTP server
+axum = { version = "0.8", features = ["multipart"] }
+http-body = "1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Metrics
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+
+# JWT
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+
+# LevelDB (via RocksDB for better Rust support)
+# Using rusty-leveldb for pure Rust LevelDB
+rusty-leveldb = "3"
+
+# Disk-backed needle map (alternative to in-memory HashMap)
+redb = "4"
+
+# Reed-Solomon erasure coding
+reed-solomon-erasure = "6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Config
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+
+# CRC32 — using Castagnoli polynomial (CRC32-C), matching Go's crc32.Castagnoli
+crc32c = "0.6"
+crc32fast = "1"
+
+# xxhash64 - must match Go's cespare/xxhash for the heartbeat volume digest
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
+# Memory-mapped files
+memmap2 = "0.9"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
+
+# HTTP client (for proxying, remote fetch)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart", "json"] }
+
+# Content hashing
+md-5 = "0.10"
+base64 = "0.22"
+
+# Compression
+flate2 = "1"
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+kamadak-exif = "0.5"
+
+# Multipart form-data parsing
+multer = "3"
+
+# MIME type guessing from file extensions
+mime_guess = "2"
+
+# Misc
+bytes = "1"
+rand = "0.10"
+chrono = "0.4"
+hex = "0.4"
+parking_lot = "0.12"
+dashmap = "6"
+thiserror = "1"
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+async-stream = "0.3"
+x509-parser = "0.16"
+
+# Disk space checking
+sysinfo = "0.31"
+libc = "0.2"
+
+# AWS S3 SDK (for remote storage backends)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.125.0", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+aws-credential-types = "1"
+aws-types = "1"
+
+# pprof is Unix-only (requires libc/nix APIs not available on Windows)
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.15", features = ["prost-codec"] }
+
+# GetDiskFreeSpaceExW for per-path disk capacity on Windows (0.61.2 already
+# in the tree via tempfile/mio, so this unifies rather than adding a version).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Paused-time tests drive the write-queue batch window deterministically.
+tokio = { version = "1", features = ["full", "test-util"] }
+# Already a transitive dependency of aws-sdk-s3 at a single locked version;
+# needed directly only for the canned HttpClient in remote_storage::s3 tests.
+aws-smithy-runtime-api = "1"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+# Ships protoc with the build so neither CI nor a developer needs a system
+# install, and so the version is pinned rather than whatever the platform's
+# package manager happens to carry.
+protoc-bin-vendored = "3"
+
+[patch.crates-io]
+reed-solomon-erasure = { path = "vendor/reed-solomon-erasure" }

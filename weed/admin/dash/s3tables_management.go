@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -26,6 +25,7 @@ type S3TablesBucketsData struct {
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
 	IcebergPort  int                     `json:"iceberg_port"`
+	LancePort    int                     `json:"lance_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -34,29 +34,45 @@ type S3TablesBucketSummary struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// Format is empty for a bucket created before formats were declared. Such a
+	// bucket takes tables of either format, which is what it always did.
+	Format string `json:"format,omitempty"`
+	// PolicyStatementCount is the number of statements in the table bucket's
+	// resource policy, or 0 if it has none. Unrelated to the S3 bucket
+	// policy mechanism (policy_engine.PolicyDocument / s3-bucket-policy):
+	// S3 Tables stores its own s3tables.PolicyDocument under the
+	// s3tables.policy extended attribute.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3TablesNamespacesData struct {
 	Username        string                      `json:"username"`
 	BucketARN       string                      `json:"bucket_arn"`
+	BucketFormat    string                      `json:"bucket_format,omitempty"`
 	Namespaces      []s3tables.NamespaceSummary `json:"namespaces"`
 	TotalNamespaces int                         `json:"total_namespaces"`
 	LastUpdated     time.Time                   `json:"last_updated"`
 }
 
 type S3TablesTablesData struct {
-	Username    string                  `json:"username"`
-	BucketARN   string                  `json:"bucket_arn"`
-	Namespace   string                  `json:"namespace"`
-	Tables      []s3tables.TableSummary `json:"tables"`
-	TotalTables int                     `json:"total_tables"`
-	LastUpdated time.Time               `json:"last_updated"`
+	Username     string                  `json:"username"`
+	BucketARN    string                  `json:"bucket_arn"`
+	BucketFormat string                  `json:"bucket_format,omitempty"`
+	Namespace    string                  `json:"namespace"`
+	Tables       []s3tables.TableSummary `json:"tables"`
+	TotalTables  int                     `json:"total_tables"`
+	// ObservedRows holds what a worker last counted, by table name, for formats
+	// this server cannot read itself. A table nothing has looked at is absent
+	// rather than zero: those are different facts.
+	ObservedRows map[string]string `json:"observed_rows,omitempty"`
+	LastUpdated  time.Time         `json:"last_updated"`
 }
 
 type tableBucketMetadata struct {
 	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"createdAt"`
 	OwnerAccountID string    `json:"ownerAccountId"`
+	Format         string    `json:"format,omitempty"`
 }
 
 // S3Tables manager helpers
@@ -67,10 +83,10 @@ func parseNamespaceInput(namespace string) ([]string, error) {
 	return s3tables.ParseNamespace(namespace)
 }
 
-func (s *AdminServer) parseNamespaceFromGin(c *gin.Context, namespace string) ([]string, bool) {
+func (s *AdminServer) parseNamespaceFromRequest(w http.ResponseWriter, namespace string) ([]string, bool) {
 	parts, err := parseNamespaceInput(namespace)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid namespace: " + err.Error()})
+		writeJSONError(w, http.StatusBadRequest, "Invalid namespace: "+err.Error())
 		return nil, false
 	}
 	return parts, true
@@ -134,10 +150,12 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 				continue
 			}
 			buckets = append(buckets, S3TablesBucketSummary{
-				ARN:            arn,
-				Name:           entry.Entry.Name,
-				OwnerAccountID: metadata.OwnerAccountID,
-				CreatedAt:      metadata.CreatedAt,
+				ARN:                  arn,
+				Name:                 entry.Entry.Name,
+				OwnerAccountID:       metadata.OwnerAccountID,
+				CreatedAt:            metadata.CreatedAt,
+				Format:               metadata.Format,
+				PolicyStatementCount: extractS3TablesPolicyStatementCountFromEntry(entry.Entry),
 			})
 		}
 		return nil
@@ -149,8 +167,75 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
 		IcebergPort:  s.icebergPort,
+		LancePort:    s.lancePort,
 		LastUpdated:  time.Now(),
 	}, nil
+}
+
+// extractS3TablesPolicyStatementCountFromEntry returns the number of
+// statements in the table bucket's resource policy, or 0 if it has none or
+// the stored JSON can't be parsed. Forgiving on parse failure, matching
+// extractPolicyStatementCountFromEntry (the S3 bucket policy equivalent in
+// admin_server.go, which is a different, unrelated policy mechanism).
+func extractS3TablesPolicyStatementCountFromEntry(entry *filer_pb.Entry) int {
+	policyJSON := entry.Extended[s3tables.ExtendedKeyPolicy]
+	if len(policyJSON) == 0 {
+		return 0
+	}
+	var doc s3tables.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &doc); err != nil {
+		return 0
+	}
+	return len(doc.Statement)
+}
+
+// observedRowCounts collects what workers last reported for these tables. For a
+// format admin cannot read, this is the only row count that exists.
+func (s *AdminServer) observedRowCounts(bucketArn string, namespaceParts []string, tables []s3tables.TableSummary) map[string]string {
+	plugin := s.GetPlugin()
+	if plugin == nil || len(tables) == 0 {
+		return nil
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return nil
+	}
+	counts := make(map[string]string)
+	for _, table := range tables {
+		objectID := append(append([]string{bucketName}, namespaceParts...), table.Name)
+		if observed, ok := plugin.Observations().GetFormat(objectID, table.Format); ok {
+			if rows := observed.AttributeString("rows"); rows != "" {
+				counts[table.Name] = rows
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+// catalogPortForFormat is the port serving a format, or 0 when this cluster
+// does not run that catalog.
+func (s *AdminServer) catalogPortForFormat(format string) int {
+	if strings.EqualFold(format, s3tables.FormatLance) {
+		return s.lancePort
+	}
+	return s.icebergPort
+}
+
+// tableBucketFormat reports what the bucket says it holds, or "" for one made
+// before the declaration existed. A page inside a bucket asks so it can label
+// itself and constrain what can be created; failing to read it is not worth
+// failing the page over, so it degrades to undeclared.
+func (s *AdminServer) tableBucketFormat(ctx context.Context, bucketArn string) string {
+	var resp s3tables.GetTableBucketResponse
+	req := &s3tables.GetTableBucketRequest{TableBucketARN: bucketArn}
+	if err := s.executeS3TablesOperation(ctx, "GetTableBucket", req, &resp); err != nil {
+		glog.V(1).Infof("S3Tables: failed to read format of %s: %v", bucketArn, err)
+		return ""
+	}
+	return resp.Format
 }
 
 func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn string) (S3TablesNamespacesData, error) {
@@ -161,6 +246,7 @@ func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn s
 	}
 	return S3TablesNamespacesData{
 		BucketARN:       bucketArn,
+		BucketFormat:    s.tableBucketFormat(ctx, bucketArn),
 		Namespaces:      resp.Namespaces,
 		TotalNamespaces: len(resp.Namespaces),
 		LastUpdated:     time.Now(),
@@ -181,13 +267,16 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 	if err := s.executeS3TablesOperation(ctx, "ListTables", req, &resp); err != nil {
 		return S3TablesTablesData{}, err
 	}
-	return S3TablesTablesData{
-		BucketARN:   bucketArn,
-		Namespace:   namespace,
-		Tables:      resp.Tables,
-		TotalTables: len(resp.Tables),
-		LastUpdated: time.Now(),
-	}, nil
+	data := S3TablesTablesData{
+		BucketARN:    bucketArn,
+		BucketFormat: s.tableBucketFormat(ctx, bucketArn),
+		Namespace:    namespace,
+		Tables:       resp.Tables,
+		TotalTables:  len(resp.Tables),
+		LastUpdated:  time.Now(),
+	}
+	data.ObservedRows = s.observedRowCounts(bucketArn, ns, resp.Tables)
+	return data, nil
 }
 
 // Iceberg Catalog data providers
@@ -300,7 +389,73 @@ func (s *AdminServer) GetIcebergTableDetailsData(ctx context.Context, catalogNam
 	}
 
 	applyIcebergMetadata(resp.Metadata, &details)
+	s.applyWorkerObservation(&details, bucketArn, namespaceParts, resp.Name)
 	return details, nil
+}
+
+// applyWorkerObservation fills in what a plugin worker last reported about a
+// table this server cannot read itself. Only the catalog knows a Lance table
+// exists; only a worker with the format's runtime can say what is in it, so
+// without this the page has nothing to show but a location.
+//
+// The observation is cached, not live, which is why the page carries the time
+// and the worker that took it.
+func (s *AdminServer) applyWorkerObservation(details *IcebergTableDetailsData, bucketArn string, namespaceParts []string, tableName string) {
+	if len(details.SchemaFields) > 0 {
+		return
+	}
+	plugin := s.GetPlugin()
+	if plugin == nil {
+		return
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return
+	}
+	objectID := append(append([]string{bucketName}, namespaceParts...), tableName)
+	observed, ok := plugin.Observations().GetFormat(objectID, details.Format)
+	if !ok {
+		return
+	}
+
+	details.ObservedBy = observed.WorkerID
+	details.ObservedAt = observed.ObservedAt
+	details.SchemaFields = observationSchemaFields(observed.AttributeString("schema"))
+	for _, name := range []string{"rows", "fragments", "versions"} {
+		if value := observed.AttributeString(name); value != "" {
+			details.Properties = append(details.Properties, IcebergPropertyInfo{Key: name, Value: value})
+		}
+	}
+}
+
+// observationSchemaFields parses the schema a worker reported. A schema it
+// could not render is not worth failing the page over.
+func observationSchemaFields(schema string) []IcebergSchemaFieldInfo {
+	if schema == "" {
+		return nil
+	}
+	var reported []struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Nullable bool   `json:"nullable"`
+	}
+	if err := json.Unmarshal([]byte(schema), &reported); err != nil {
+		return nil
+	}
+	fields := make([]IcebergSchemaFieldInfo, 0, len(reported))
+	for i, field := range reported {
+		encoded, err := json.Marshal(field.Type)
+		if err != nil {
+			continue
+		}
+		fields = append(fields, IcebergSchemaFieldInfo{
+			ID:       i + 1,
+			Name:     field.Name,
+			Type:     encoded,
+			Required: !field.Nullable,
+		})
+	}
+	return fields
 }
 
 type icebergFullMetadata struct {
@@ -569,58 +724,79 @@ func parseSummaryInt(summary map[string]string, keys ...string) (int64, bool) {
 
 // API handlers
 
-func (s *AdminServer) ListS3TablesBucketsAPI(c *gin.Context) {
-	data, err := s.GetS3TablesBucketsData(c.Request.Context())
+func (s *AdminServer) ListS3TablesBucketsAPI(w http.ResponseWriter, r *http.Request) {
+	data, err := s.GetS3TablesBucketsData(r.Context())
 	if err != nil {
-		writeS3TablesError(c, err)
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
-	var req struct {
-		Name  string            `json:"name"`
-		Tags  map[string]string `json:"tags"`
-		Owner string            `json:"owner"`
+func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	var req struct {
+		Name   string            `json:"name"`
+		Tags   map[string]string `json:"tags"`
+		Owner  string            `json:"owner"`
+		Format string            `json:"format"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.Name == "" {
-		c.JSON(400, gin.H{"error": "Bucket name is required"})
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
 		return
 	}
 	owner := strings.TrimSpace(req.Owner)
 	if len(owner) > MaxOwnerNameLength {
-		c.JSON(400, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength))
 		return
 	}
 	if len(req.Tags) > 0 {
 		if err := s3tables.ValidateTags(req.Tags); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
+			writeJSONError(w, http.StatusBadRequest, "Invalid tags: "+err.Error())
 			return
 		}
 	}
-	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags}
+	format := s3tables.FormatIceberg
+	if req.Format != "" {
+		normalized, ok := s3tables.NormalizeFormat(req.Format)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported format %q", req.Format))
+			return
+		}
+		format = normalized
+	}
+	// A bucket of a format this cluster does not serve is a bucket no client can
+	// reach. The picker disables the option; refuse it here too, since the API
+	// is reachable without the page.
+	if port := s.catalogPortForFormat(format); port == 0 {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("No %s endpoint is configured, so a %s bucket would be unreachable", format, format))
+		return
+	}
+	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags, Format: format}
 	var resp s3tables.CreateTableBucketResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "CreateTableBucket", createReq, &resp); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "CreateTableBucket", createReq, &resp); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
 	if owner != "" {
-		if err := s.SetTableBucketOwner(c.Request.Context(), req.Name, owner); err != nil {
+		if err := s.SetTableBucketOwner(r.Context(), req.Name, owner); err != nil {
 			deleteReq := &s3tables.DeleteTableBucketRequest{TableBucketARN: resp.ARN}
-			if deleteErr := s.executeS3TablesOperation(c.Request.Context(), "DeleteTableBucket", deleteReq, nil); deleteErr != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to set table bucket owner: %v; rollback delete failed: %v", err, deleteErr)})
+			if deleteErr := s.executeS3TablesOperation(r.Context(), "DeleteTableBucket", deleteReq, nil); deleteErr != nil {
+				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to set table bucket owner: %v; rollback delete failed: %v", err, deleteErr))
 				return
 			}
-			writeS3TablesError(c, err)
+			writeS3TablesError(w, err)
 			return
 		}
 	}
-	c.JSON(201, gin.H{"arn": resp.ARN})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"arn": resp.ARN})
 }
 
 func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner string) error {
@@ -663,101 +839,107 @@ func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner
 	})
 }
 
-func (s *AdminServer) DeleteS3TablesBucket(c *gin.Context) {
-	bucketArn := c.Query("bucket")
+func (s *AdminServer) DeleteS3TablesBucket(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
-		c.JSON(400, gin.H{"error": "Bucket ARN is required"})
+		writeJSONError(w, http.StatusBadRequest, "Bucket ARN is required")
 		return
 	}
 	req := &s3tables.DeleteTableBucketRequest{TableBucketARN: bucketArn}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTableBucket", req, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "DeleteTableBucket", req, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Bucket deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Bucket deleted"})
 }
 
-func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
-	bucketArn := c.Query("bucket")
+func (s *AdminServer) ListS3TablesNamespacesAPI(w http.ResponseWriter, r *http.Request) {
+	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
-		c.JSON(400, gin.H{"error": "bucket query parameter is required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket query parameter is required")
 		return
 	}
-	data, err := s.GetS3TablesNamespacesData(c.Request.Context(), bucketArn)
+	data, err := s.GetS3TablesNamespacesData(r.Context(), bucketArn)
 	if err != nil {
-		writeS3TablesError(c, err)
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
-	if !requireSessionCSRFToken(c) {
+func (s *AdminServer) CreateS3TablesNamespace(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
 		return
 	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Name      string `json:"name"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.BucketARN == "" || req.Name == "" {
-		c.JSON(400, gin.H{"error": "bucket_arn and name are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket_arn and name are required")
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Name)
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, req.Name)
 	if !ok {
 		return
 	}
 	createReq := &s3tables.CreateNamespaceRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts}
 	var resp s3tables.CreateNamespaceResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "CreateNamespace", createReq, &resp); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "CreateNamespace", createReq, &resp); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(201, gin.H{"namespace": resp.Namespace})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"namespace": resp.Namespace})
 }
 
-func (s *AdminServer) DeleteS3TablesNamespace(c *gin.Context) {
-	if !requireSessionCSRFToken(c) {
+func (s *AdminServer) DeleteS3TablesNamespace(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
 		return
 	}
-	bucketArn := c.Query("bucket")
-	namespace := c.Query("name")
+	bucketArn := r.URL.Query().Get("bucket")
+	namespace := r.URL.Query().Get("name")
 	if bucketArn == "" || namespace == "" {
-		c.JSON(400, gin.H{"error": "bucket and name query parameters are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket and name query parameters are required")
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, namespace)
 	if !ok {
 		return
 	}
 	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: namespaceParts}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteNamespace", req, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "DeleteNamespace", req, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Namespace deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Namespace deleted"})
 }
 
-func (s *AdminServer) ListS3TablesTablesAPI(c *gin.Context) {
-	bucketArn := c.Query("bucket")
+func (s *AdminServer) ListS3TablesTablesAPI(w http.ResponseWriter, r *http.Request) {
+	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
-		c.JSON(400, gin.H{"error": "bucket query parameter is required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket query parameter is required")
 		return
 	}
-	namespace := c.Query("namespace")
-	data, err := s.GetS3TablesTablesData(c.Request.Context(), bucketArn, namespace)
+	namespace := r.URL.Query().Get("namespace")
+	data, err := s.GetS3TablesTablesData(r.Context(), bucketArn, namespace)
 	if err != nil {
-		writeS3TablesError(c, err)
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
+func (s *AdminServer) CreateS3TablesTable(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string                  `json:"bucket_arn"`
 		Namespace string                  `json:"namespace"`
@@ -766,15 +948,15 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 		Tags      map[string]string       `json:"tags"`
 		Metadata  *s3tables.TableMetadata `json:"metadata"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.BucketARN == "" || req.Namespace == "" || req.Name == "" {
-		c.JSON(400, gin.H{"error": "bucket_arn, namespace, and name are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket_arn, namespace, and name are required")
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, req.Namespace)
 	if !ok {
 		return
 	}
@@ -784,7 +966,7 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 	}
 	if len(req.Tags) > 0 {
 		if err := s3tables.ValidateTags(req.Tags); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
+			writeJSONError(w, http.StatusBadRequest, "Invalid tags: "+err.Error())
 			return
 		}
 	}
@@ -797,211 +979,237 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 		Metadata:       req.Metadata,
 	}
 	var resp s3tables.CreateTableResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "CreateTable", createReq, &resp); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "CreateTable", createReq, &resp); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(201, gin.H{"table_arn": resp.TableARN, "version_token": resp.VersionToken})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"table_arn": resp.TableARN, "version_token": resp.VersionToken})
 }
 
-func (s *AdminServer) DeleteS3TablesTable(c *gin.Context) {
-	bucketArn := c.Query("bucket")
-	namespace := c.Query("namespace")
-	name := c.Query("name")
-	version := c.Query("version")
-	if bucketArn == "" || namespace == "" || name == "" {
-		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
+func (s *AdminServer) DeleteS3TablesTable(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	bucketArn := r.URL.Query().Get("bucket")
+	namespace := r.URL.Query().Get("namespace")
+	name := r.URL.Query().Get("name")
+	version := r.URL.Query().Get("version")
+	if bucketArn == "" || namespace == "" || name == "" {
+		writeJSONError(w, http.StatusBadRequest, "bucket, namespace, and name query parameters are required")
+		return
+	}
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, namespace)
 	if !ok {
 		return
 	}
 	req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name, VersionToken: version}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTable", req, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "DeleteTable", req, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Table deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Table deleted"})
 }
 
-func (s *AdminServer) PutS3TablesBucketPolicy(c *gin.Context) {
+func (s *AdminServer) PutS3TablesBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Policy    string `json:"policy"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.BucketARN == "" || req.Policy == "" {
-		c.JSON(400, gin.H{"error": "bucket_arn and policy are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket_arn and policy are required")
 		return
 	}
 	putReq := &s3tables.PutTableBucketPolicyRequest{TableBucketARN: req.BucketARN, ResourcePolicy: req.Policy}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "PutTableBucketPolicy", putReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "PutTableBucketPolicy", putReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Policy updated"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Policy updated"})
 }
 
-func (s *AdminServer) GetS3TablesBucketPolicy(c *gin.Context) {
-	bucketArn := c.Query("bucket")
+func (s *AdminServer) GetS3TablesBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
-		c.JSON(400, gin.H{"error": "bucket query parameter is required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket query parameter is required")
 		return
 	}
 	getReq := &s3tables.GetTableBucketPolicyRequest{TableBucketARN: bucketArn}
 	var resp s3tables.GetTableBucketPolicyResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "GetTableBucketPolicy", getReq, &resp); err != nil {
-		writeS3TablesError(c, err)
-		return
+	if err := s.executeS3TablesOperation(r.Context(), "GetTableBucketPolicy", getReq, &resp); err != nil {
+		// No policy is a normal state for the UI (empty editor), not an error.
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
-	c.JSON(200, gin.H{"policy": resp.ResourcePolicy})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
 
-func (s *AdminServer) DeleteS3TablesBucketPolicy(c *gin.Context) {
-	bucketArn := c.Query("bucket")
+func (s *AdminServer) DeleteS3TablesBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
-		c.JSON(400, gin.H{"error": "bucket query parameter is required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket query parameter is required")
 		return
 	}
 	deleteReq := &s3tables.DeleteTableBucketPolicyRequest{TableBucketARN: bucketArn}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTableBucketPolicy", deleteReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "DeleteTableBucketPolicy", deleteReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Policy deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Policy deleted"})
 }
 
-func (s *AdminServer) PutS3TablesTablePolicy(c *gin.Context) {
+func (s *AdminServer) PutS3TablesTablePolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Namespace string `json:"namespace"`
 		Name      string `json:"name"`
 		Policy    string `json:"policy"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.BucketARN == "" || req.Namespace == "" || req.Name == "" || req.Policy == "" {
-		c.JSON(400, gin.H{"error": "bucket_arn, namespace, name, and policy are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket_arn, namespace, name, and policy are required")
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, req.Namespace)
 	if !ok {
 		return
 	}
 	putReq := &s3tables.PutTablePolicyRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts, Name: req.Name, ResourcePolicy: req.Policy}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "PutTablePolicy", putReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "PutTablePolicy", putReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Policy updated"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Policy updated"})
 }
 
-func (s *AdminServer) GetS3TablesTablePolicy(c *gin.Context) {
-	bucketArn := c.Query("bucket")
-	namespace := c.Query("namespace")
-	name := c.Query("name")
+func (s *AdminServer) GetS3TablesTablePolicy(w http.ResponseWriter, r *http.Request) {
+	bucketArn := r.URL.Query().Get("bucket")
+	namespace := r.URL.Query().Get("namespace")
+	name := r.URL.Query().Get("name")
 	if bucketArn == "" || namespace == "" || name == "" {
-		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
+		writeJSONError(w, http.StatusBadRequest, "bucket, namespace, and name query parameters are required")
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, namespace)
 	if !ok {
 		return
 	}
 	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
 	var resp s3tables.GetTablePolicyResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "GetTablePolicy", getReq, &resp); err != nil {
-		writeS3TablesError(c, err)
-		return
+	if err := s.executeS3TablesOperation(r.Context(), "GetTablePolicy", getReq, &resp); err != nil {
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
-	c.JSON(200, gin.H{"policy": resp.ResourcePolicy})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
 
-func (s *AdminServer) DeleteS3TablesTablePolicy(c *gin.Context) {
-	bucketArn := c.Query("bucket")
-	namespace := c.Query("namespace")
-	name := c.Query("name")
-	if bucketArn == "" || namespace == "" || name == "" {
-		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
+func (s *AdminServer) DeleteS3TablesTablePolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
 		return
 	}
-	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	bucketArn := r.URL.Query().Get("bucket")
+	namespace := r.URL.Query().Get("namespace")
+	name := r.URL.Query().Get("name")
+	if bucketArn == "" || namespace == "" || name == "" {
+		writeJSONError(w, http.StatusBadRequest, "bucket, namespace, and name query parameters are required")
+		return
+	}
+	namespaceParts, ok := s.parseNamespaceFromRequest(w, namespace)
 	if !ok {
 		return
 	}
 	deleteReq := &s3tables.DeleteTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTablePolicy", deleteReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "DeleteTablePolicy", deleteReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Policy deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Policy deleted"})
 }
 
-func (s *AdminServer) TagS3TablesResource(c *gin.Context) {
+func (s *AdminServer) TagS3TablesResource(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		ResourceARN string            `json:"resource_arn"`
 		Tags        map[string]string `json:"tags"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.ResourceARN == "" || len(req.Tags) == 0 {
-		c.JSON(400, gin.H{"error": "resource_arn and tags are required"})
+		writeJSONError(w, http.StatusBadRequest, "resource_arn and tags are required")
 		return
 	}
 	if err := s3tables.ValidateTags(req.Tags); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
+		writeJSONError(w, http.StatusBadRequest, "Invalid tags: "+err.Error())
 		return
 	}
 	tagReq := &s3tables.TagResourceRequest{ResourceARN: req.ResourceARN, Tags: req.Tags}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "TagResource", tagReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "TagResource", tagReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Tags updated"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Tags updated"})
 }
 
-func (s *AdminServer) ListS3TablesTags(c *gin.Context) {
-	resourceArn := c.Query("arn")
+func (s *AdminServer) ListS3TablesTags(w http.ResponseWriter, r *http.Request) {
+	resourceArn := r.URL.Query().Get("arn")
 	if resourceArn == "" {
-		c.JSON(400, gin.H{"error": "arn query parameter is required"})
+		writeJSONError(w, http.StatusBadRequest, "arn query parameter is required")
 		return
 	}
 	listReq := &s3tables.ListTagsForResourceRequest{ResourceARN: resourceArn}
 	var resp s3tables.ListTagsForResourceResponse
-	if err := s.executeS3TablesOperation(c.Request.Context(), "ListTagsForResource", listReq, &resp); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "ListTagsForResource", listReq, &resp); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *AdminServer) UntagS3TablesResource(c *gin.Context) {
+func (s *AdminServer) UntagS3TablesResource(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		ResourceARN string   `json:"resource_arn"`
 		TagKeys     []string `json:"tag_keys"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	if req.ResourceARN == "" || len(req.TagKeys) == 0 {
-		c.JSON(400, gin.H{"error": "resource_arn and tag_keys are required"})
+		writeJSONError(w, http.StatusBadRequest, "resource_arn and tag_keys are required")
 		return
 	}
 	untagReq := &s3tables.UntagResourceRequest{ResourceARN: req.ResourceARN, TagKeys: req.TagKeys}
-	if err := s.executeS3TablesOperation(c.Request.Context(), "UntagResource", untagReq, nil); err != nil {
-		writeS3TablesError(c, err)
+	if err := s.executeS3TablesOperation(r.Context(), "UntagResource", untagReq, nil); err != nil {
+		writeS3TablesError(w, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "Tags removed"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Tags removed"})
 }
 
 func parseS3TablesErrorMessage(err error) string {
@@ -1018,8 +1226,13 @@ func parseS3TablesErrorMessage(err error) string {
 	return err.Error()
 }
 
-func writeS3TablesError(c *gin.Context, err error) {
-	c.JSON(s3TablesErrorStatus(err), gin.H{"error": parseS3TablesErrorMessage(err)})
+func writeS3TablesError(w http.ResponseWriter, err error) {
+	writeJSONError(w, s3TablesErrorStatus(err), parseS3TablesErrorMessage(err))
+}
+
+func isS3TablesNoSuchPolicy(err error) bool {
+	var s3Err *s3tables.S3TablesError
+	return errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeNoSuchPolicy
 }
 
 func s3TablesErrorStatus(err error) int {
@@ -1032,7 +1245,7 @@ func s3TablesErrorStatus(err error) int {
 			return http.StatusNotFound
 		case s3tables.ErrCodeAccessDenied:
 			return http.StatusForbidden
-		case s3tables.ErrCodeBucketAlreadyExists, s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeConflict:
+		case s3tables.ErrCodeBucketAlreadyExists, s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeBucketNotEmpty, s3tables.ErrCodeNamespaceNotEmpty, s3tables.ErrCodeConflict:
 			return http.StatusConflict
 		}
 	}

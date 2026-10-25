@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -19,8 +20,8 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	confFullName := filepath.Join(filer.DirectoryEtcSeaweedFS, filer.FilerConfName)
 
 	// read current conf
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, confDir, confName)
+	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		content, err := filer.ReadInsideFiler(ctx, client, confDir, confName)
 		if err != nil {
 			return err
 		}
@@ -45,19 +46,11 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		message := resp.EventNotification
-		if message.NewEntry == nil {
+		if !isFilerConfUpdateEvent(resp, confDir, confName) {
 			return nil
 		}
 
-		dir := resp.Directory
-		name := resp.EventNotification.NewEntry.Name
-
-		if dir != confDir || name != confName {
-			return nil
-		}
-
-		content := message.NewEntry.Content
+		content := resp.EventNotification.NewEntry.Content
 		fc := filer.NewFilerConf()
 		if len(content) > 0 {
 			if err = fc.LoadFromBytes(content); err != nil {
@@ -75,13 +68,21 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	}, nil
 }
 
+func isFilerConfUpdateEvent(resp *filer_pb.SubscribeMetadataResponse, confDir, confName string) bool {
+	if resp == nil || resp.EventNotification == nil || resp.EventNotification.NewEntry == nil {
+		return false
+	}
+	return filer_pb.MetadataEventTargetDirectory(resp) == confDir &&
+		resp.EventNotification.NewEntry.Name == confName
+}
+
 func (wfs *WFS) wormEnforcedForEntry(path util.FullPath, entry *filer_pb.Entry) (wormEnforced, wormEnabled bool) {
 	if entry == nil || wfs.FilerConf == nil {
 		return false, false
 	}
 
 	rule := wfs.FilerConf.MatchStorageRule(string(path))
-	if !rule.Worm {
+	if !rule.GetWorm() {
 		return false, false
 	}
 

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -72,6 +73,8 @@ func runMqBroker(cmd *Command, args []string) bool {
 
 func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 
+	*mqBrokerStandaloneOptions.cpuprofile = util.ResolvePath(*mqBrokerStandaloneOptions.cpuprofile)
+	*mqBrokerStandaloneOptions.memprofile = util.ResolvePath(*mqBrokerStandaloneOptions.memprofile)
 	grace.SetupProfiling(*mqBrokerStandaloneOptions.cpuprofile, *mqBrokerStandaloneOptions.memprofile)
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")
@@ -109,14 +112,16 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		reflection.Register(localGrpcS)
 		go func() {
 			glog.V(0).Infof("MQ Broker listening on localhost:%d", *mqBrokerOpt.port)
-			if err := localGrpcS.Serve(localL); err != nil {
+			if err := localGrpcS.Serve(localL); err != nil && err != grpc.ErrServerStopped {
 				glog.Errorf("MQ Broker localhost listener error: %v", err)
 			}
 		}()
 	}
 
 	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
-	grpcS.Serve(grpcL)
+	if err := grpcS.Serve(grpcL); err != nil && err != grpc.ErrServerStopped {
+		glog.Errorf("Failed to serve MQ Broker: %v", err)
+	}
 
 	return true
 

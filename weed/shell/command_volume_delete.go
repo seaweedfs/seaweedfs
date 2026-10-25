@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"io"
 
@@ -23,8 +24,10 @@ func (c *commandVolumeDelete) Help() string {
 	return `delete a live volume from one volume server
 
 	volume.delete -node <volume server host:port> -volumeId <volume id>
+	volume.delete -node <volume server host:port> -volumeId <volume id> -timeout 30s
 
 	This command deletes a volume from one volume server.
+	The option "-timeout" fails the command if the volume server does not respond in time.
 
 `
 }
@@ -38,6 +41,7 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volDeleteCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volDeleteCommand.String("node", "", "the volume server <host>:<port>")
+	timeout := volDeleteCommand.Duration("timeout", 0, "wall-clock cap on the deletion; 0 = no timeout")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -50,6 +54,13 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return deleteVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false)
+	ctx := context.Background()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	return deleteVolume(ctx, commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false, false, false)
 
 }

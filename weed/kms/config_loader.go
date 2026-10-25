@@ -290,15 +290,6 @@ func (loader *ConfigLoader) ValidateConfiguration() error {
 	return nil
 }
 
-// LoadKMSFromFilerToml is a convenience function to load KMS configuration from filer.toml
-func LoadKMSFromFilerToml(v ViperConfig) error {
-	loader := NewConfigLoader(v)
-	if err := loader.LoadConfigurations(); err != nil {
-		return err
-	}
-	return loader.ValidateConfiguration()
-}
-
 // LoadKMSFromConfig loads KMS configuration directly from parsed JSON data
 func LoadKMSFromConfig(kmsConfig interface{}) error {
 	kmsMap, ok := kmsConfig.(map[string]interface{})
@@ -411,15 +402,6 @@ func getIntFromConfig(config map[string]interface{}, key string, defaultValue in
 		}
 		if floatValue, ok := value.(float64); ok {
 			return int(floatValue)
-		}
-	}
-	return defaultValue
-}
-
-func getStringFromConfig(config map[string]interface{}, key string, defaultValue string) string {
-	if value, exists := config[key]; exists {
-		if stringValue, ok := value.(string); ok {
-			return stringValue
 		}
 	}
 	return defaultValue

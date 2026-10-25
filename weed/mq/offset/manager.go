@@ -338,13 +338,6 @@ type OffsetAssigner struct {
 	registry *PartitionOffsetRegistry
 }
 
-// NewOffsetAssigner creates a new offset assigner
-func NewOffsetAssigner(storage OffsetStorage) *OffsetAssigner {
-	return &OffsetAssigner{
-		registry: NewPartitionOffsetRegistry(storage),
-	}
-}
-
 // AssignSingleOffset assigns a single offset with timestamp
 func (a *OffsetAssigner) AssignSingleOffset(namespace, topicName string, partition *schema_pb.Partition) *AssignmentResult {
 	offset, err := a.registry.AssignOffset(namespace, topicName, partition)

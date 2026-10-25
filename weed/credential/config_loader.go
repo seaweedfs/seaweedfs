@@ -57,42 +57,6 @@ func LoadCredentialConfiguration() (*CredentialConfig, error) {
 	}, nil
 }
 
-// GetCredentialStoreConfig extracts credential store configuration from command line flags
-// This is used when credential store is configured via command line instead of credential.toml
-func GetCredentialStoreConfig(store string, config util.Configuration, prefix string) *CredentialConfig {
-	if store == "" {
-		return nil
-	}
-
-	return &CredentialConfig{
-		Store:  store,
-		Config: config,
-		Prefix: prefix,
-	}
-}
-
-// MergeCredentialConfig merges command line credential config with credential.toml config
-// Command line flags take priority over credential.toml
-func MergeCredentialConfig(cmdLineStore string, cmdLineConfig util.Configuration, cmdLinePrefix string) (*CredentialConfig, error) {
-	// If command line credential store is specified, use it
-	if cmdLineStore != "" {
-		glog.V(0).Infof("Using command line credential configuration: store=%s", cmdLineStore)
-		return GetCredentialStoreConfig(cmdLineStore, cmdLineConfig, cmdLinePrefix), nil
-	}
-
-	// Otherwise, try to load from credential.toml
-	config, err := LoadCredentialConfiguration()
-	if err != nil {
-		return nil, err
-	}
-
-	if config == nil {
-		glog.V(1).Info("No credential store configured")
-	}
-
-	return config, nil
-}
-
 // NewCredentialManagerWithDefaults creates a credential manager with fallback to defaults
 // If explicitStore is provided, it will be used regardless of credential.toml
 // If explicitStore is empty, it tries credential.toml first, then defaults to "filer_etc"

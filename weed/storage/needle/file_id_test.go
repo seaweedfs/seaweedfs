@@ -54,3 +54,29 @@ func TestParseFileIdFromString(t *testing.T) {
 		t.Errorf("%s : needleId is too long", fidStr1)
 	}
 }
+
+func TestNeedleIdFileId(t *testing.T) {
+	tests := []struct {
+		key      types.NeedleId
+		volumeId uint32
+		want     string
+	}{
+		{types.NeedleId(1), 3, "3,0100000000"},
+		{types.NeedleId(0x123), 3, "3,012300000000"},
+		{types.NeedleId(0x1234), 7, "7,123400000000"},
+	}
+	for _, tt := range tests {
+		fid := tt.key.FileId(tt.volumeId)
+		if fid != tt.want {
+			t.Errorf("NeedleId(%d).FileId(%d) = %s, want %s", tt.key, tt.volumeId, fid, tt.want)
+		}
+		fileId, err := ParseFileIdFromString(fid)
+		if err != nil {
+			t.Errorf("%s : should be OK: %v", fid, err)
+			continue
+		}
+		if fileId.VolumeId != VolumeId(tt.volumeId) || fileId.Key != tt.key || fileId.Cookie != 0 {
+			t.Errorf("src : %s, dest : %v", fid, fileId)
+		}
+	}
+}

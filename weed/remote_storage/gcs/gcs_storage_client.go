@@ -2,13 +2,19 @@ package gcs
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -16,12 +22,42 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
 	remote_storage.RemoteStorageClientMakers["gcs"] = new(gcsRemoteStorageMaker)
+}
+
+// defaultTokenURL is where the SDK sends the token request when the credentials
+// leave token_uri unset.
+const defaultTokenURL = "https://oauth2.googleapis.com/token"
+
+// StaticKeyCredentialTypes are the credential types that carry their own key
+// material. Every other type tells the SDK to fetch the token from a url, file
+// or executable named inside the credentials.
+var StaticKeyCredentialTypes = []string{
+	string(google.ServiceAccount),
+	string(google.AuthorizedUser),
+}
+
+// ParseInlineCredentials reports the credential type of an inline credentials
+// document and the token endpoint it makes the SDK dial.
+func ParseInlineCredentials(creds string) (credType string, tokenURL string, err error) {
+	var doc struct {
+		Type     string `json:"type"`
+		TokenURI string `json:"token_uri"`
+	}
+	if err := json.Unmarshal([]byte(creds), &doc); err != nil {
+		return "", "", fmt.Errorf("parse gcs credentials: %w", err)
+	}
+	if doc.TokenURI == "" {
+		return doc.Type, defaultTokenURL, nil
+	}
+	return doc.Type, doc.TokenURI, nil
 }
 
 type gcsRemoteStorageMaker struct{}
@@ -31,8 +67,22 @@ func (s gcsRemoteStorageMaker) HasBucket() bool {
 }
 
 func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	return MakeWithHTTPClient(conf, nil)
+}
+
+// MakeWithHTTPClient builds a gcs client whose token exchange and object reads
+// both go through the supplied *http.Client (or the SDK default when nil).
+// Callers that need to pin the dial path against DNS rebinding pass a client
+// whose transport has a guarded DialContext, mirroring the S3 backend. Callers
+// handling credentials they do not control pass the types they accept.
+func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client, allowedTypes ...string) (remote_storage.RemoteStorageClient, error) {
 	client := &gcsRemoteStorageClient{
 		conf: conf,
+	}
+
+	ctx := context.Background()
+	if httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	}
 
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
@@ -68,15 +118,23 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
 			}
 		}
-		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		credType, _, parseErr := ParseInlineCredentials(string(data))
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if len(allowedTypes) > 0 && !slices.Contains(allowedTypes, credType) {
+			return nil, fmt.Errorf("gcs credential type %q is not accepted here", credType)
+		}
+		// Declaring the type keeps the SDK from reading the document as anything
+		// else; the untyped loader is deprecated for exactly that reason.
+		creds, err := google.CredentialsFromJSONWithType(ctx, data, google.CredentialsType(credType), storage.ScopeFullControl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse credentials: %w", err)
 		}
-		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
-		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
+		clientOpts = append(clientOpts, option.WithHTTPClient(oauth2.NewClient(ctx, creds.TokenSource)), option.WithoutAuthentication())
 	}
 
-	c, err := storage.NewClient(context.Background(), clientOpts...)
+	c, err := storage.NewClient(ctx, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
@@ -93,6 +151,16 @@ type gcsRemoteStorageClient struct {
 }
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
+
+func (gcs *gcsRemoteStorageClient) toRemoteEntry(attr *storage.ObjectAttrs) *filer_pb.RemoteEntry {
+	return &filer_pb.RemoteEntry{
+		StorageName:           gcs.conf.Name,
+		RemoteMtime:           attr.Updated.Unix(),
+		RemoteSize:            attr.Size,
+		RemoteETag:            attr.Etag,
+		RemoteContentEncoding: proto.String(attr.ContentEncoding),
+	}
+}
 
 func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
@@ -117,20 +185,78 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 		key := objectAttr.Name
 		key = "/" + key
 		dir, name := util.FullPath(key).DirAndName()
-		err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
-			RemoteMtime: objectAttr.Updated.Unix(),
-			RemoteSize:  objectAttr.Size,
-			RemoteETag:  objectAttr.Etag,
-			StorageName: gcs.conf.Name,
-		})
+		err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr))
 	}
 	return
 }
+
+const defaultGCSOpTimeout = 30 * time.Second
+
+func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(ctx, &storage.Query{
+		Delimiter: "/",
+		Prefix:    pathKey,
+		Versions:  false,
+	})
+
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr != nil {
+			if iterErr == iterator.Done {
+				return nil
+			}
+			return fmt.Errorf("list directory %s%s: %w", loc.Bucket, loc.Path, iterErr)
+		}
+
+		if objectAttr.Prefix != "" {
+			// Common prefix → subdirectory
+			dirKey := "/" + strings.TrimSuffix(objectAttr.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err = visitFn(dir, name, true, nil); err != nil {
+				return err
+			}
+		} else {
+			key := "/" + objectAttr.Name
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			if err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return gcs.toRemoteEntry(attr), nil
+}
+
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
-	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(context.Background(), offset, size)
+	// read the stored bytes: decompressive transcoding of gzip-encoded objects
+	// breaks range reads and returns sizes that disagree with RemoteSize
+	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(context.Background(), offset, size)
 	if readErr != nil {
+		if errors.Is(readErr, storage.ErrObjectNotExist) {
+			return nil, gcs.missingObjectError(context.Background(), loc)
+		}
 		return nil, readErr
 	}
 	data, err = io.ReadAll(rangeReader)
@@ -142,12 +268,74 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 	return
 }
 
+func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
+	key := loc.Path[1:]
+	reader, err = gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, gcs.missingObjectError(ctx, loc)
+		}
+		return nil, fmt.Errorf("failed to open stream for %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return reader, nil
+}
+
+// missingObjectError confirms a read's ErrObjectNotExist before reporting the
+// object gone: GCS answers a read from a missing bucket the same way, and that
+// must not read as every object under the mount being deleted.
+func (gcs *gcsRemoteStorageClient) missingObjectError(ctx context.Context, loc *remote_pb.RemoteStorageLocation) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultGCSOpTimeout)
+	defer cancel()
+	key := loc.Path[1:]
+	query := &storage.Query{Prefix: key}
+	if err := query.SetAttrSelection([]string{"Name"}); err != nil {
+		return fmt.Errorf("read gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	attrs, err := gcs.client.Bucket(loc.Bucket).Objects(ctx, query).Next()
+	switch {
+	case errors.Is(err, iterator.Done):
+		return remote_storage.ErrRemoteObjectNotFound
+	case err != nil:
+		return fmt.Errorf("read gcs %s%s: object not found and bucket unconfirmed: %w", loc.Bucket, loc.Path, err)
+	case attrs.Name == key:
+		return fmt.Errorf("read gcs %s%s: object not found but listed", loc.Bucket, loc.Path)
+	}
+	return remote_storage.ErrRemoteObjectNotFound
+}
+
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
 
 func (gcs *gcsRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
-	return nil
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole bucket; wiping every object from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("gcs %s: skip removing directory mapped to the bucket root", loc.Bucket)
+		return nil
+	}
+
+	bucket := gcs.client.Bucket(loc.Bucket)
+	objectIterator := bucket.Objects(context.Background(), &storage.Query{
+		Prefix: prefix,
+	})
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr == iterator.Done {
+			return nil
+		}
+		if iterErr != nil {
+			return fmt.Errorf("gcs list %s/%s: %w", loc.Bucket, prefix, iterErr)
+		}
+		if delErr := bucket.Object(objectAttr.Name).Delete(context.Background()); delErr != nil && !errors.Is(delErr, storage.ErrObjectNotExist) {
+			return fmt.Errorf("gcs delete %s/%s: %w", loc.Bucket, objectAttr.Name, delErr)
+		}
+	}
 }
 
 func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
@@ -157,6 +345,20 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 	metadata := toMetadata(entry.Extended)
 	wc := gcs.client.Bucket(loc.Bucket).Object(key).NewWriter(context.Background())
 	wc.Metadata = metadata
+	if entry.Attributes != nil && entry.Attributes.Mime != "" {
+		wc.ContentType = entry.Attributes.Mime
+	}
+	wc.ContentEncoding = remote_storage.EntryContentEncoding(entry)
+	// A Writer reserves a buffer of ChunkSize bytes (16 MiB by default) so a
+	// failed request can be retried. An object below that size takes a buffer
+	// of its own size plus one 256 KiB unit, the SDK's granularity: a burst of
+	// small uploads in flight does not hold 16 MiB each, every upload keeps
+	// its retry buffer, and the object stays below ChunkSize so it goes in one
+	// request rather than a resumable session. The size counts the chunks,
+	// not only the attribute, which some write paths leave at zero.
+	if size := filer.FileSize(entry); size < uint64(googleapi.DefaultUploadChunkSize) {
+		wc.ChunkSize = int((size/googleapi.MinUploadChunkSize + 1) * googleapi.MinUploadChunkSize)
+	}
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
@@ -170,20 +372,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(context.Background())
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-		StorageName: gcs.conf.Name,
-	}, nil
-
+	return gcs.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]string {
@@ -197,30 +386,71 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 	return metadata
 }
 
-func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
-	metadata := toMetadata(newEntry.Extended)
-
-	key := loc.Path[1:]
-
-	if len(metadata) > 0 {
-		_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), storage.ObjectAttrsToUpdate{
-			Metadata: metadata,
-		})
+	attrsToUpdate := storage.ObjectAttrsToUpdate{}
+	if metadata := toMetadata(newEntry.Extended); len(metadata) > 0 {
+		attrsToUpdate.Metadata = metadata
 	} else {
 		// no way to delete the metadata yet
 	}
+	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
+		attrsToUpdate.ContentEncoding = encoding // empty clears the header
+	}
 
-	return
+	if attrsToUpdate.Metadata == nil && attrsToUpdate.ContentEncoding == nil {
+		return nil, nil
+	}
+	key := loc.Path[1:]
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
+	if err != nil {
+		return nil, err
+	}
+	return gcs.toRemoteEntry(attr), nil
 }
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	if err = gcs.client.Bucket(loc.Bucket).Object(key).Delete(context.Background()); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return remote_storage.ErrRemoteObjectNotFound
+		}
 		return fmt.Errorf("gcs delete %s%s: %v", loc.Bucket, key, err)
 	}
 	return
+}
+
+// DeleteFileIfUnchanged deletes the object only while it is still the one the
+// stat describes, enforced with a generation precondition. A replacement that
+// lands between the stat and the delete gets a new generation and fails the
+// precondition instead of being deleted.
+func (gcs *gcsRemoteStorageClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (bool, error) {
+	key := loc.Path[1:]
+	object := gcs.client.Bucket(loc.Bucket).Object(key)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := object.Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	if !remote_storage.StillCurrent(stamp, gcs.toRemoteEntry(attr)) {
+		return false, nil
+	}
+	if err := object.If(storage.Conditions{GenerationMatch: attr.Generation}).Delete(ctx); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return true, nil
+		}
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusPreconditionFailed {
+			return false, nil
+		}
+		return false, fmt.Errorf("gcs delete %s%s: %w", loc.Bucket, key, err)
+	}
+	return true, nil
 }
 
 func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {

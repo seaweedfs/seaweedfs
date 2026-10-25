@@ -21,6 +21,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	brokerHealthCheckTimeout = 5 * time.Second
+	brokerHealthCheckBackoff = 250 * time.Millisecond
+)
+
 // NewBrokerClientWithFilerAccessor creates a client with a shared filer accessor
 func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor *filer_client.FilerClientAccessor) (*BrokerClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,19 +101,36 @@ func (bc *BrokerClient) Close() error {
 	return bc.conn.Close()
 }
 
-// HealthCheck verifies the broker connection is working
+// HealthCheck verifies the broker connection is working. A freshly announced
+// broker may still be acquiring its balancer lock, so keep retrying for the
+// same window cluster discovery waits out.
 func (bc *BrokerClient) HealthCheck() error {
-	// Create a timeout context for health check
-	ctx, cancel := context.WithTimeout(bc.ctx, 2*time.Second)
-	defer cancel()
-
-	// Try to list topics as a health check
-	_, err := bc.client.ListTopics(ctx, &mq_pb.ListTopicsRequest{})
-	if err != nil {
-		return fmt.Errorf("broker health check failed: %v", err)
+	if bc.client == nil {
+		return fmt.Errorf("broker client not connected")
 	}
 
-	return nil
+	deadline := time.Now().Add(clusterNodeDiscoveryTimeout)
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(bc.ctx, brokerHealthCheckTimeout)
+		_, err := bc.client.FindBrokerLeader(ctx, &mq_pb.FindBrokerLeaderRequest{})
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !time.Now().Before(deadline) {
+			break
+		}
+		backoff := min(time.Duration(attempt)*brokerHealthCheckBackoff, time.Second)
+		select {
+		case <-bc.ctx.Done():
+			return bc.ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+
+	return fmt.Errorf("broker health check failed after %v: %v", clusterNodeDiscoveryTimeout, lastErr)
 }
 
 // GetPartitionRangeInfo gets comprehensive range information from SeaweedMQ broker's native range manager
@@ -232,7 +254,7 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
+			if resp.Entry != nil && resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
 				if latestVersion == "" || resp.Entry.Name > latestVersion {
 					latestVersion = resp.Entry.Name
 				}
@@ -267,9 +289,15 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
-				partitionDir = resp.Entry.Name
-				break // Use the first partition directory we find
+			if resp.Entry != nil && resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
+				// Parse partition range (format: NNNN-NNNN) and match requested partition
+				var pStart, pStop int32
+				if n, scanErr := fmt.Sscanf(resp.Entry.Name, "%04d-%04d", &pStart, &pStop); n == 2 && scanErr == nil {
+					if partition >= pStart && partition < pStop {
+						partitionDir = resp.Entry.Name
+						break
+					}
+				}
 			}
 		}
 		return nil
@@ -303,7 +331,7 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
+			if resp.Entry != nil && !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
 				// Check for offset ranges in Extended attributes (both log files and parquet files)
 				if resp.Entry.Extended != nil {
 					// Track maximum offset for high water mark

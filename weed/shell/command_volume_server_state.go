@@ -40,7 +40,7 @@ func (c *commandVolumeServerState) Help() string {
 
 	Additionally, if any flags are provided, these are applied
 	to the selected node(s). The command will display the resulting
-	state for each node *after* the state is updated. For exmaple...
+	state for each node *after* the state is updated. For example...
 
 	  volumeServer.state --nodes 192.168.10.111:9000 --maintenanceOn
 

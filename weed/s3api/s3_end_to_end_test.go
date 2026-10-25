@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,13 +114,12 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to assume role %s", tt.roleArn)
 
-			jwtToken := response.Credentials.SessionToken
-			require.NotEmpty(t, jwtToken, "JWT token should not be empty")
+			require.NotEmpty(t, response.Credentials.SessionToken, "session token should not be empty")
 
 			// Execute S3 operations
 			for i, operation := range tt.s3Operations {
 				t.Run(fmt.Sprintf("%s_%s", tt.name, operation.Operation), func(t *testing.T) {
-					allowed := executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+					allowed := executeS3OperationWithJWT(t, s3Server, operation, response.Credentials)
 					expected := tt.expectedResults[i]
 
 					if expected {
@@ -151,8 +151,6 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 		RoleSessionName:  "multipart-test-session",
 	})
 	require.NoError(t, err)
-
-	jwtToken := response.Credentials.SessionToken
 
 	// Test multipart upload workflow
 	tests := []struct {
@@ -204,12 +202,281 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			allowed := executeS3OperationWithJWT(t, s3Server, tt.operation, jwtToken)
+			allowed := executeS3OperationWithJWT(t, s3Server, tt.operation, response.Credentials)
 			if tt.expected {
 				assert.True(t, allowed, "Multipart operation %s should be allowed", tt.operation.Operation)
 			} else {
 				assert.False(t, allowed, "Multipart operation %s should be denied", tt.operation.Operation)
 			}
+		})
+	}
+}
+
+// TestS3ListObjectsV2PrefixCondition tests that ListObjectsV2 requests with a prefix
+// query parameter correctly populate s3:prefix in the policy evaluation context and
+// use bucket-level resource ARNs, so that policies with s3:prefix conditions work.
+// This reproduces the bug reported in https://github.com/seaweedfs/seaweedfs/issues/8969
+func TestS3ListObjectsV2PrefixCondition(t *testing.T) {
+	// Set up IAM system
+	iamManager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+
+	err := iamManager.Initialize(config, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	setupTestProviders(t, iamManager)
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	require.NotNil(t, s3IAMIntegration)
+
+	ctx := context.Background()
+
+	// Create a role with a policy that allows ListBucket only with a specific s3:prefix condition.
+	// This is the pattern used by Lakekeeper-vended STS credentials (issue #8969).
+	prefixPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowListUnderWarehouse",
+				Effect: "Allow",
+				Action: []string{"s3:ListBucket"},
+				Resource: []string{
+					"arn:aws:s3:::examples",
+				},
+				Condition: map[string]map[string]interface{}{
+					"StringLike": {
+						"s3:prefix": []string{"warehouse/*"},
+					},
+				},
+			},
+			{
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
+		},
+	}
+
+	iamManager.CreatePolicy(ctx, "", "PrefixRestrictedPolicy", prefixPolicy)
+	iamManager.CreateRole(ctx, "", "PrefixRestrictedRole", &integration.RoleDefinition{
+		RoleName: "PrefixRestrictedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: map[string]interface{}{"Federated": "test-oidc"},
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"PrefixRestrictedPolicy"},
+	})
+
+	// Assume role to get a session token
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/PrefixRestrictedRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "prefix-test-session",
+	})
+	require.NoError(t, err)
+
+	sessionToken := response.Credentials.SessionToken
+	require.NotEmpty(t, sessionToken)
+
+	// Authenticate to get IAM identity
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, sessionToken)
+
+	tests := []struct {
+		name     string
+		url      string
+		bucket   string
+		objKey   string
+		expected s3err.ErrorCode
+	}{
+		{
+			name:     "ListObjectsV2 with matching prefix query param and empty objectKey",
+			url:      "/examples?list-type=2&prefix=warehouse/data",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV2 with matching prefix propagated as objectKey",
+			url:      "/examples?list-type=2&prefix=warehouse/data",
+			bucket:   "examples",
+			objKey:   "warehouse/data",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV1 with matching prefix query param",
+			url:      "/examples?prefix=warehouse/files",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "ListObjectsV2 with non-matching prefix should be denied",
+			url:      "/examples?list-type=2&prefix=other/path",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "ListObjectsV2 with no prefix should be denied",
+			url:      "/examples?list-type=2",
+			bucket:   "examples",
+			objKey:   "",
+			expected: s3err.ErrAccessDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.url, http.NoBody)
+			result := s3IAMIntegration.AuthorizeAction(ctx, identity, Action("List"), tt.bucket, tt.objKey, req)
+			assert.Equal(t, tt.expected, result, "unexpected authorization result for %s", tt.name)
+		})
+	}
+}
+
+// TestS3CreateBucketWithAttachedPolicy verifies a federated session whose
+// attached policy grants s3:CreateBucket on a bucket ARN pattern can create
+// matching buckets. CreateBucket is registered with ACTION_ADMIN, which used
+// to resolve to s3:* and made the operation unmatchable by any narrower grant.
+func TestS3CreateBucketWithAttachedPolicy(t *testing.T) {
+	iamManager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+
+	err := iamManager.Initialize(config, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	setupTestProviders(t, iamManager)
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	ctx := context.Background()
+
+	bucketPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:      "AllowBucketManagement",
+				Effect:   "Allow",
+				Action:   []string{"s3:CreateBucket", "s3:DeleteBucket"},
+				Resource: []string{"arn:aws:s3:::ml-*"},
+			},
+			{
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
+		},
+	}
+
+	iamManager.CreatePolicy(ctx, "", "BucketManagementPolicy", bucketPolicy)
+	iamManager.CreateRole(ctx, "", "BucketManagerRole", &integration.RoleDefinition{
+		RoleName: "BucketManagerRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: map[string]interface{}{"Federated": "test-oidc"},
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"BucketManagementPolicy"},
+	})
+
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/BucketManagerRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "bucket-create-session",
+	})
+	require.NoError(t, err)
+
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, response.Credentials.SessionToken)
+
+	tests := []struct {
+		name     string
+		method   string
+		url      string
+		bucket   string
+		action   Action
+		expected s3err.ErrorCode
+	}{
+		{
+			name:     "CreateBucket on matching bucket is allowed",
+			method:   "PUT",
+			url:      "/ml-models",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "CreateBucket outside the resource pattern is denied",
+			method:   "PUT",
+			url:      "/other-bucket",
+			bucket:   "other-bucket",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "PutBucketEncryption is not swept into CreateBucket",
+			method:   "PUT",
+			url:      "/ml-models?encryption",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "DeleteBucket on matching bucket is allowed",
+			method:   "DELETE",
+			url:      "/ml-models",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_DELETE_BUCKET),
+			expected: s3err.ErrNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.url, http.NoBody)
+			result := s3IAMIntegration.AuthorizeAction(ctx, identity, tt.action, tt.bucket, "", req)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -262,8 +529,6 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	jwtToken := response.Credentials.SessionToken
-
 	// Benchmark multiple GET requests
 	numRequests := 100
 	start := time.Now()
@@ -276,7 +541,7 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 			Operation: "GetObject",
 		}
 
-		executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+		executeS3OperationWithJWT(t, s3Server, operation, response.Credentials)
 	}
 
 	duration := time.Since(start)
@@ -353,11 +618,13 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		t.Skip("Could not create S3 IAM integration")
 	}
 
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
+	iam.SetIAMIntegration(s3IAMIntegration)
+
 	// Add a simple test endpoint that we can use to verify IAM functionality
 	router.HandleFunc("/test-auth", func(w http.ResponseWriter, r *http.Request) {
-		// Test JWT authentication
-		identity, errCode := s3IAMIntegration.AuthenticateJWT(r.Context(), r)
-		if errCode != s3err.ErrNone {
+		identity, errCode, _ := iam.authenticateRequestInternal(r)
+		if errCode != s3err.ErrNone || identity == nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Authentication failed"))
 			return
@@ -379,7 +646,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		}
 
 		// Test authorization with appropriate action
-		authErrCode := s3IAMIntegration.AuthorizeAction(r.Context(), identity, action, "test-bucket", "test-object", r)
+		authErrCode := iam.authorizeWithIAM(r, identity, action, "test-bucket", "test-object")
 		if authErrCode != s3err.ErrNone {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte("Authorization failed"))
@@ -624,10 +891,11 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 	})
 }
 
-func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, jwtToken string) bool {
+func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, creds *sts.Credentials) bool {
 	// Use our simplified test endpoint for IAM validation with the correct HTTP method
-	req := httptest.NewRequest(operation.Method, "/test-auth", nil)
-	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req, err := newTestRequest(operation.Method, "http://example.com/test-auth", 0, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	// Set source IP if specified
@@ -635,6 +903,8 @@ func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3
 		req.Header.Set("X-Forwarded-For", operation.SourceIP)
 		req.RemoteAddr = operation.SourceIP + ":12345"
 	}
+
+	require.NoError(t, signRequestV4(req, creds.AccessKeyId, creds.SecretAccessKey))
 
 	// Execute request
 	recorder := httptest.NewRecorder()
@@ -781,8 +1051,10 @@ func TestS3IAMOnlyModeRejectsAnonymous(t *testing.T) {
 	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
 	require.NotNil(t, s3IAMIntegration)
 
-	// Set IAM integration - this should enable auth
+	// Set IAM integration and explicitly enforce auth, matching what the
+	// startup path does when an operator passes -s3.iam.config (#9557).
 	iam.SetIAMIntegration(s3IAMIntegration)
+	iam.EnableAuthEnforcement()
 
 	// Verify auth is enabled
 	require.True(t, iam.isEnabled(), "Auth must be enabled when IAM integration is configured")

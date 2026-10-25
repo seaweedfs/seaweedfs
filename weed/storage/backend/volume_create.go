@@ -1,5 +1,4 @@
 //go:build !linux && !windows
-// +build !linux,!windows
 
 package backend
 
@@ -10,7 +9,7 @@ import (
 )
 
 func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
-	file, e := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	file, e := OpenVolumeFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC)
 	if e != nil {
 		return nil, e
 	}

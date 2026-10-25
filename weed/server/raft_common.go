@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -8,12 +9,35 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
+// recoverTopologyIdFromState restores the TopologyId from serialized FSM
+// state bytes (JSON-encoded MaxVolumeIdCommand). Both raft implementations
+// call this after reading their snapshot in their own format.
+func recoverTopologyIdFromState(fsmState []byte, topo *topology.Topology) {
+	if topo.GetTopologyId() != "" {
+		return
+	}
+	var cmd topology.MaxVolumeIdCommand
+	if err := json.Unmarshal(fsmState, &cmd); err != nil {
+		return
+	}
+	if cmd.TopologyId != "" {
+		topo.SetTopologyId(cmd.TopologyId)
+		glog.V(0).Infof("Recovered TopologyId from snapshot: %s", cmd.TopologyId)
+	}
+}
+
 // EnsureTopologyId ensures that a TopologyId is generated and persisted if it's currently missing.
 // It uses the provided checkLeaderFn to verify leadership and persistFn to save the new ID.
 func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persistFn func(string) error) {
 	if topo.GetTopologyId() != "" {
+		// The id arrived through raft replay or the mirror file; reports
+		// stashed while it was unknown can now be checked.
+		topo.SetTopologyInitPending(false)
 		return
 	}
+
+	topo.SetTopologyInitPending(true)
+	defer topo.SetTopologyInitPending(false)
 
 	topologyId := uuid.New().String()
 	for {
@@ -41,6 +65,7 @@ func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persis
 		} else {
 			glog.V(0).Infof("TopologyId generated: %s", topologyId)
 		}
+		topo.DeferAllocation(topo.WarmupDuration())
 		break
 	}
 }

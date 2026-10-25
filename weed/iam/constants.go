@@ -9,6 +9,10 @@ const (
 // Policy document version
 const PolicyDocumentVersion = "2012-10-17"
 
+// DefaultAccountID is the placeholder AWS account id used in generated ARNs,
+// matching the value used throughout the S3 API.
+const DefaultAccountID = "000000000000"
+
 // Error message templates
 const UserDoesNotExist = "the user with name %s cannot be found."
 

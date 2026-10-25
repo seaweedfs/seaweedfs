@@ -63,25 +63,44 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 			schemaChanged = true
 		}
 
-		if !schemaChanged {
+		// Check if retention needs to be updated. Callers that do not want to
+		// touch retention send Retention=nil; we only consider it a change
+		// when the request supplies a non-nil Retention that differs from
+		// the stored value.
+		retentionChanged := request.Retention != nil && !proto.Equal(request.Retention, resp.Retention)
+
+		if !schemaChanged && !retentionChanged {
 			glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
 			return resp, nil
 		}
 
-		// Update schema in existing configuration
-		resp.MessageRecordType = request.MessageRecordType
-		resp.KeyColumns = request.KeyColumns
-		resp.SchemaFormat = request.SchemaFormat
+		if schemaChanged {
+			resp.MessageRecordType = request.MessageRecordType
+			resp.KeyColumns = request.KeyColumns
+			resp.SchemaFormat = request.SchemaFormat
+		}
+		if retentionChanged {
+			resp.Retention = request.Retention
+		}
 
 		if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
-			return nil, fmt.Errorf("update topic schemas: %w", err)
+			return nil, fmt.Errorf("update topic conf: %w", err)
 		}
 
 		// Invalidate topic cache since we just updated the topic
 		b.invalidateTopicCache(t)
 
-		glog.V(0).Infof("updated schemas for topic %s", request.Topic)
+		glog.V(0).Infof("updated topic %s (schema=%v retention=%v)", request.Topic, schemaChanged, retentionChanged)
 		return resp, nil
+	}
+
+	// Capture the prior retention before we overwrite resp so partition-count
+	// changes (or first-time creates that hit this path after a partial
+	// readErr) don't accidentally clear an existing retention configuration
+	// when the request omits Retention.
+	var prevRetention *mq_pb.TopicRetention
+	if resp != nil {
+		prevRetention = resp.Retention
 	}
 
 	if resp != nil && len(resp.BrokerPartitionAssignments) > 0 {
@@ -98,7 +117,11 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	resp.MessageRecordType = request.MessageRecordType
 	resp.KeyColumns = request.KeyColumns
 	resp.SchemaFormat = request.SchemaFormat
-	resp.Retention = request.Retention
+	if request.Retention != nil {
+		resp.Retention = request.Retention
+	} else {
+		resp.Retention = prevRetention
+	}
 
 	// save the topic configuration on filer
 	if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {

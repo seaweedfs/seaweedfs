@@ -13,12 +13,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var _ CredentialStore = &PropagatingCredentialStore{}
 var _ PolicyManager = &PropagatingCredentialStore{}
+
+type propagatingManagedPolicyLoader interface {
+	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
+}
+
+type propagatingInlinePolicyLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
 
 type PropagatingCredentialStore struct {
 	CredentialStore
@@ -40,6 +51,24 @@ func (s *PropagatingCredentialStore) SetFilerAddressFunc(getFiler func() pb.Serv
 	}
 }
 
+// WithS3InternalAdminAuth attaches a Bearer token signed with
+// jwt.filer_signing.key to the outgoing context so the S3 gateway's internal
+// gRPC handlers (IAM cache, lifecycle) accept the call. With no key configured
+// it is a no-op, matching the S3 handler's checkAdminAuth. Returns the token's
+// lifetime (0 = no expiry) so callers can cap any downstream timeout below it.
+func WithS3InternalAdminAuth(ctx context.Context) (context.Context, time.Duration) {
+	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
+	if signingKey == "" {
+		return ctx, 0
+	}
+	expiresAfterSec := util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds")
+	token := security.GenJwtForFilerAdmin(security.SigningKey(signingKey), expiresAfterSec)
+	if token == "" {
+		return ctx, 0
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token)), time.Duration(expiresAfterSec) * time.Second
+}
+
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
 	if s.masterClient == nil {
 		return
@@ -47,14 +76,14 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 
 	// List S3 servers
 	var s3Servers []string
-	err := s.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		glog.V(4).Infof("IAM: listing S3 servers (FilerGroup: '%s')", s.masterClient.FilerGroup)
 		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.S3Type,
 			FilerGroup: s.masterClient.FilerGroup,
 		})
 		if err != nil {
-			glog.V(1).Infof("failed to list S3 servers: %v", err)
+			glog.Warningf("failed to list S3 servers: %v", err)
 			return err
 		}
 		for _, node := range resp.ClusterNodes {
@@ -64,13 +93,21 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		return nil
 	})
 	if err != nil {
-		glog.V(1).Infof("failed to list s3 servers via master client: %v", err)
+		glog.Warningf("failed to list s3 servers via master client: %v", err)
 		return
 	}
 	glog.V(1).Infof("IAM: propagating change to %d S3 servers: %v", len(s3Servers), s3Servers)
 
-	// Create context with timeout for the propagation process
-	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Mint the admin token after master discovery so master retries can't burn
+	// through the token lifetime before the peer fan-out begins. Cap the
+	// propagation deadline below the token's expiry so slower peers don't see
+	// an expired token.
+	authedCtx, tokenTTL := WithS3InternalAdminAuth(ctx)
+	propagateTimeout := 10 * time.Second
+	if tokenTTL > 0 && tokenTTL < propagateTimeout {
+		propagateTimeout = tokenTTL
+	}
+	propagateCtx, cancel := context.WithTimeout(authedCtx, propagateTimeout)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -78,17 +115,132 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		wg.Add(1)
 		go func(server string) {
 			defer wg.Done()
-			err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+			err := pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
 				glog.V(4).Infof("IAM: successfully connected to S3 server %s for propagation", server)
 				client := s3_pb.NewSeaweedS3IamCacheClient(conn)
 				return fn(propagateCtx, client)
 			}, server, false, s.grpcDialOption)
 			if err != nil {
-				glog.V(1).Infof("failed to propagate change to s3 server %s: %v", server, err)
+				glog.Warningf("failed to propagate change to s3 server %s: %v", server, err)
 			}
 		}(server)
 	}
 	wg.Wait()
+}
+
+func (s *PropagatingCredentialStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.AttachUserPolicy %s -> %s", username, policyName)
+	if err := s.CredentialStore.AttachUserPolicy(ctx, username, policyName); err != nil {
+		return err
+	}
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after attaching policy: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DetachUserPolicy %s -> %s", username, policyName)
+	if err := s.CredentialStore.DetachUserPolicy(ctx, username, policyName); err != nil {
+		return err
+	}
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after detaching policy: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	return s.CredentialStore.ListAttachedUserPolicies(ctx, username)
+}
+
+// SaveConfiguration overrides the embedded CredentialStore.SaveConfiguration
+// so bulk identity / group updates also push to running S3 caches. The IAM
+// API flow ends each handler with SaveConfiguration after recomputing
+// identity.Actions (the legacy authorization field), so reusing PutIdentity
+// here is what keeps inline-policy changes visible to S3 servers without
+// requiring a restart. We diff against the prior store state so deletions
+// also fan out (RemoveIdentity / RemoveGroup); without the diff a postgres
+// user who got pruned by SaveConfiguration would linger in the S3 cache.
+func (s *PropagatingCredentialStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	priorUsers, priorErr := s.CredentialStore.ListUsers(ctx)
+	if priorErr != nil {
+		glog.V(1).Infof("failed to list users before SaveConfiguration; skipping deletion propagation: %v", priorErr)
+		priorUsers = nil
+	}
+	priorGroups, gPriorErr := s.CredentialStore.ListGroups(ctx)
+	if gPriorErr != nil {
+		glog.V(1).Infof("failed to list groups before SaveConfiguration; skipping deletion propagation: %v", gPriorErr)
+		priorGroups = nil
+	}
+
+	if err := s.CredentialStore.SaveConfiguration(ctx, config); err != nil {
+		return err
+	}
+
+	keptUsers := make(map[string]struct{}, len(config.Identities))
+	for _, ident := range config.Identities {
+		if ident != nil {
+			keptUsers[ident.Name] = struct{}{}
+		}
+	}
+	keptGroups := make(map[string]struct{}, len(config.Groups))
+	for _, g := range config.Groups {
+		if g != nil {
+			keptGroups[g.Name] = struct{}{}
+		}
+	}
+
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		for _, ident := range config.Identities {
+			if ident == nil {
+				continue
+			}
+			if _, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: ident}); err != nil {
+				return err
+			}
+		}
+		for _, g := range config.Groups {
+			if g == nil {
+				continue
+			}
+			if _, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: g}); err != nil {
+				return err
+			}
+		}
+		for _, name := range priorUsers {
+			if _, kept := keptUsers[name]; kept {
+				continue
+			}
+			if _, err := client.RemoveIdentity(tx, &iam_pb.RemoveIdentityRequest{Username: name}); err != nil {
+				return err
+			}
+		}
+		for _, name := range priorGroups {
+			if _, kept := keptGroups[name]; kept {
+				continue
+			}
+			if _, err := client.RemoveGroup(tx, &iam_pb.RemoveGroupRequest{GroupName: name}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return nil
 }
 
 func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
@@ -196,6 +348,105 @@ func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name stri
 	return nil
 }
 
+func (s *PropagatingCredentialStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListPolicyNames(ctx)
+}
+
+func (s *PropagatingCredentialStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	if loader, ok := s.CredentialStore.(propagatingManagedPolicyLoader); ok {
+		return loader.LoadManagedPolicies(ctx)
+	}
+
+	policies, err := s.CredentialStore.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policyDocument := range policies {
+		content, err := json.Marshal(policyDocument)
+		if err != nil {
+			return nil, err
+		}
+		managedPolicies = append(managedPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	return managedPolicies, nil
+}
+
+func (s *PropagatingCredentialStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := s.CredentialStore.(propagatingInlinePolicyLoader); ok {
+		return loader.LoadInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.PutUserInlinePolicy(ctx, userName, policyName, document)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.GetUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.DeleteUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.ListUserInlinePolicies(ctx, userName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) PutGroupInlinePolicy(ctx context.Context, groupName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.PutGroupInlinePolicy(ctx, groupName, policyName, document)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetGroupInlinePolicy(ctx context.Context, groupName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.GetGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) DeleteGroupInlinePolicy(ctx context.Context, groupName, policyName string) error {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.DeleteGroupInlinePolicy(ctx, groupName, policyName)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListGroupInlinePolicies(ctx context.Context, groupName string) ([]string, error) {
+	if store, ok := s.CredentialStore.(GroupInlinePolicyStore); ok {
+		return store.ListGroupInlinePolicies(ctx, groupName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) LoadGroupInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := s.CredentialStore.(GroupInlinePoliciesLoader); ok {
+		return loader.LoadGroupInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if pm, ok := s.CredentialStore.(PolicyManager); ok {
 		if err := pm.CreatePolicy(ctx, name, document); err != nil {
@@ -297,6 +548,54 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 	}
 	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.CreateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error) {
+	return s.CredentialStore.GetGroup(ctx, groupName)
+}
+
+func (s *PropagatingCredentialStore) DeleteGroup(ctx context.Context, groupName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeleteGroup %s", groupName)
+	if err := s.CredentialStore.DeleteGroup(ctx, groupName); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.RemoveGroup(tx, &iam_pb.RemoveGroupRequest{GroupName: groupName})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListGroups(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListGroups(ctx)
+}
+
+func (s *PropagatingCredentialStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.UpdateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
 		return err
 	})
 	return nil

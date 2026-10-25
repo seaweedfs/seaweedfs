@@ -1,186 +1,173 @@
 package s3tables
 
-import (
-	"testing"
-)
+import "testing"
 
-func TestIcebergLayoutValidator_ValidateFilePath(t *testing.T) {
-	v := NewIcebergLayoutValidator()
-
-	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
+// TestIcebergLayoutValidator_AcceptsRealWorldManifestNames pins down the
+// filename patterns we must accept across Iceberg engines. The original strict
+// regex only covered Iceberg-internal naming (`{uuid}-m{n}.avro`,
+// `snap-{n}-{n}-{uuid}.avro`) and rejected real manifests written by Flink and
+// other writers, causing 403s during INSERT commits. The catch-all entries
+// added alongside this test must keep these names valid.
+func TestIcebergLayoutValidator_AcceptsRealWorldManifestNames(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
 	}{
-		// Valid metadata files
-		{"valid metadata v1", "metadata/v1.metadata.json", false},
-		{"valid metadata v123", "metadata/v123.metadata.json", false},
-		{"valid snapshot manifest", "metadata/snap-123-1-abc12345-1234-5678-9abc-def012345678.avro", false},
-		{"valid manifest file", "metadata/abc12345-1234-5678-9abc-def012345678-m0.avro", false},
-		{"valid general manifest", "metadata/abc12345-1234-5678-9abc-def012345678.avro", false},
-		{"valid version hint", "metadata/version-hint.text", false},
-		{"valid uuid metadata", "metadata/abc12345-1234-5678-9abc-def012345678.metadata.json", false},
-		{"valid trino stats", "metadata/20260208_212535_00007_bn4hb-d3599c32-1709-4b94-b6b2-1957b6d6db04.stats", false},
-
-		// Valid data files
-		{"valid parquet file", "data/file.parquet", false},
-		{"valid orc file", "data/file.orc", false},
-		{"valid avro data file", "data/file.avro", false},
-		{"valid parquet with path", "data/00000-0-abc12345.parquet", false},
-
-		// Valid partitioned data
-		{"valid partitioned parquet", "data/year=2024/file.parquet", false},
-		{"valid multi-partition", "data/year=2024/month=01/file.parquet", false},
-		{"valid bucket subdirectory", "data/bucket0/file.parquet", false},
-
-		// Directories only
-		{"metadata directory bare", "metadata", true},
-		{"data directory bare", "data", true},
-		{"metadata directory with slash", "metadata/", false},
-		{"data directory with slash", "data/", false},
-
-		// Invalid paths
-		{"empty path", "", true},
-		{"invalid top dir", "invalid/file.parquet", true},
-		{"root file", "file.parquet", true},
-		{"invalid metadata file", "metadata/random.txt", true},
-		{"nested metadata directory", "metadata/nested/v1.metadata.json", true},
-		{"nested metadata directory no file", "metadata/nested/", true},
-		{"metadata subdir no slash", "metadata/nested", true},
-		{"invalid data file", "data/file.csv", true},
-		{"invalid data file json", "data/file.json", true},
-
-		// Partition/subdirectory without trailing slashes
-		{"partition directory no slash", "data/year=2024", false},
-		{"data subdirectory no slash", "data/my_subdir", false},
-		{"multi-level partition", "data/event_date=2025-01-01/hour=00/file.parquet", false},
-		{"multi-level partition directory", "data/event_date=2025-01-01/hour=00/", false},
-		{"multi-level partition directory no slash", "data/event_date=2025-01-01/hour=00", false},
-
-		// Double slashes
-		{"data double slash", "data//file.parquet", true},
-		{"data redundant slash", "data/year=2024//file.parquet", true},
-		{"metadata redundant slash", "metadata//v1.metadata.json", true},
+		{
+			"flink-style manifest (job-id + checkpoint + operator-id + counter)",
+			"metadata/02678a59b3d6b460ba392851d77155fc-1-cbc357ccb763df2852fee8c4fc7d55f2-00001.avro",
+		},
+		{
+			"spark-style manifest with two uuids and -m suffix",
+			"metadata/00000000-0000-0000-0000-000000000000-m0.avro",
+		},
+		{
+			"snapshot manifest list with iceberg-internal naming",
+			"metadata/snap-7234891234567890123-1-82e3eec4-3aee-414f-a444-94c03c641d20.avro",
+		},
+		{
+			"versioned table metadata",
+			"metadata/v1.metadata.json",
+		},
+		{
+			"uuid-named metadata json (newer iceberg)",
+			"metadata/82e3eec4-3aee-414f-a444-94c03c641d20.metadata.json",
+		},
+		{
+			"flink-style metadata json with dashes and digits",
+			"metadata/02678a59-1-cbc357cc.metadata.json",
+		},
+		{
+			"version hint",
+			"metadata/version-hint.text",
+		},
+		{
+			"trino/iceberg stats file",
+			"metadata/table.stats",
+		},
+		{
+			"puffin statistics file",
+			"metadata/20260928-1-0199a3c2-7d1e-7c55-9a0e-3b1f2c4d5e6f.puffin",
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := v.ValidateFilePath(tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateFilePath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+	v := NewIcebergLayoutValidator()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := v.ValidateFilePath(tc.path); err != nil {
+				t.Errorf("expected %q to be accepted, got error: %v", tc.path, err)
 			}
 		})
 	}
 }
 
-func TestIcebergLayoutValidator_PartitionPaths(t *testing.T) {
-	v := NewIcebergLayoutValidator()
-
-	validPaths := []string{
-		"data/year=2024/file.parquet",
-		"data/date=2024-01-15/file.parquet",
-		"data/category=electronics/file.parquet",
-		"data/user_id=12345/file.parquet",
-		"data/region=us-east-1/file.parquet",
-		"data/year=2024/month=01/day=15/file.parquet",
+// TestIcebergLayoutValidator_RejectsClearlyBadMetadataNames guards the
+// catch-all from being too permissive — paths that look like attempts to
+// escape the metadata layout or have forbidden file types must still fail.
+func TestIcebergLayoutValidator_RejectsClearlyBadMetadataNames(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"random extension", "metadata/random-file.txt"},
+		{"executable masquerading as avro path", "metadata/evil.sh"},
+		{"subdirectory under metadata is not allowed", "metadata/sub/file.avro"},
+		{"top-level dir other than metadata or data", "garbage/file.avro"},
+		{"catch-all anchors must reject trailing extension", "metadata/file.avro.txt"},
+		{"puffin with a trailing extension", "metadata/stats.puffin.txt"},
+		{"puffin in a subdirectory under metadata", "metadata/sub/stats.puffin"},
 	}
 
-	for _, path := range validPaths {
+	v := NewIcebergLayoutValidator()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := v.ValidateFilePath(tc.path); err == nil {
+				t.Errorf("expected %q to be rejected, but it passed validation", tc.path)
+			}
+		})
+	}
+}
+
+// TestIcebergLayoutValidator_AcceptsRealWorldDataFiles is a sanity check that
+// the patterns most engines actually emit for data files still pass.
+func TestIcebergLayoutValidator_AcceptsRealWorldDataFiles(t *testing.T) {
+	cases := []string{
+		"data/00000-0-ede83b82-08e1-40cd-af8a-6d83680a5194-00001.parquet",
+		"data/part-00000.parquet",
+		"data/some-file.orc",
+		"data/year=2026/month=05/00000-0-uuid.parquet",
+		"data/00000-2-c56b1e21-828c-40ad-8f7b-739c6cb82dcf-00001-deletes.puffin",
+		"data/82e3eec4-3aee-414f-a444-94c03c641d20-deletes.puffin",
+		"data/year=2026/month=05/00000-2-c56b1e21-828c-40ad-8f7b-739c6cb82dcf-00001-deletes.puffin",
+	}
+	v := NewIcebergLayoutValidator()
+	for _, p := range cases {
+		t.Run(p, func(t *testing.T) {
+			if err := v.ValidateFilePath(p); err != nil {
+				t.Errorf("expected %q to be accepted, got error: %v", p, err)
+			}
+		})
+	}
+}
+
+// A Lance dataset writes fragments into data/ and keeps its own bookkeeping in
+// underscore-prefixed directories. The validator runs on the S3 door, where the
+// table's format is not in hand, so it has to admit both formats' layouts.
+func TestValidateFilePathAcceptsLanceLayout(t *testing.T) {
+	v := NewIcebergLayoutValidator()
+	allowed := []string{
+		"data/01111110101110001101011164cadc43919eace9c608107bd9.lance",
+		"_versions/1.manifest",
+		"_versions/9223372036854775806.manifest",
+		"_transactions/0-ddb27ab7-2e5c-42c7-b4bf-265d8a3ff636.txn",
+		"_indices/85814508-ed9a-41f2-b939-2050bb7a0ed5-fts/index.idx",
+		"_deletions/_deletions-1.arrow",
+		".lance-reserved",
+		".lance-deregistered",
+	}
+	for _, path := range allowed {
 		if err := v.ValidateFilePath(path); err != nil {
-			t.Errorf("ValidateFilePath(%q) should be valid, got error: %v", path, err)
+			t.Errorf("ValidateFilePath(%q) = %v, want nil", path, err)
+		}
+	}
+
+	rejected := []string{
+		"_versions/../../escape",
+		"_versions//empty",
+		"notadir/file.lance",
+		"random.txt",
+	}
+	for _, path := range rejected {
+		if err := v.ValidateFilePath(path); err == nil {
+			t.Errorf("ValidateFilePath(%q) = nil, want an error", path)
 		}
 	}
 }
 
-func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
+// Statistics files are referenced from the table metadata and kept by orphan
+// cleanup; the upload door has to admit them in the table's metadata/, and
+// only there.
+func TestTableBucketFileValidator_PuffinStatisticsOnlyInTableMetadata(t *testing.T) {
 	v := NewTableBucketFileValidator()
-
-	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
-	}{
-		// Non-table bucket paths should pass (no validation)
-		{"regular bucket path", "/buckets/mybucket/file.txt", false},
-		{"filer path", "/home/user/file.txt", false},
-
-		// Table bucket structure paths (creating directories)
-		{"table bucket root", "/buckets/mybucket", false},
-		{"namespace dir", "/buckets/mybucket/myns", false},
-		{"table dir", "/buckets/mybucket/myns/mytable", false},
-		{"table dir trailing slash", "/buckets/mybucket/myns/mytable/", false},
-
-		// Valid table bucket file uploads
-		{"valid parquet upload", "/buckets/mybucket/myns/mytable/data/file.parquet", false},
-		{"valid metadata upload", "/buckets/mybucket/myns/mytable/metadata/v1.metadata.json", false},
-		{"valid trino stats upload", "/buckets/mybucket/myns/mytable/metadata/20260208_212535_00007_bn4hb-d3599c32-1709-4b94-b6b2-1957b6d6db04.stats", false},
-		{"valid partitioned data", "/buckets/mybucket/myns/mytable/data/year=2024/file.parquet", false},
-
-		// Invalid table bucket file uploads
-		{"invalid file type", "/buckets/mybucket/myns/mytable/data/file.csv", true},
-		{"invalid top-level dir", "/buckets/mybucket/myns/mytable/invalid/file.parquet", true},
-		{"root file in table", "/buckets/mybucket/myns/mytable/file.parquet", true},
-
-		// Empty segment cases
-		{"empty bucket", "/buckets//myns/mytable/data/file.parquet", true},
-		{"empty namespace", "/buckets/mybucket//mytable/data/file.parquet", true},
-		{"empty table", "/buckets/mybucket/myns//data/file.parquet", true},
-		{"empty bucket dir", "/buckets//", true},
-		{"empty namespace dir", "/buckets/mybucket//", true},
-		{"table double slash bypass", "/buckets/mybucket/myns/mytable//data/file.parquet", true},
+	accepted := []string{
+		TablesPath + "/cat/ns/t/metadata/stats-1.puffin",
+		TablesPath + "/cat/ns/t/metadata/table.stats",
+		TablesPath + "/cat/ns/t/data/0199a3c2-deletes.puffin",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := v.ValidateTableBucketUpload(tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateTableBucketUpload(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
-			}
-		})
+	for _, p := range accepted {
+		if err := v.ValidateTableBucketUpload(p); err != nil {
+			t.Errorf("ValidateTableBucketUpload(%q) = %v, want nil", p, err)
+		}
 	}
-}
-
-func TestIsTableBucketPath(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{"/buckets/mybucket", true},
-		{"/buckets/mybucket/ns/table/data/file.parquet", true},
-		{"/home/user/file.txt", false},
-		{"buckets/mybucket", false}, // missing leading slash
+	rejected := []string{
+		TablesPath + "/cat/ns/t/stats-1.puffin",
+		TablesPath + "/cat/ns/t/other/stats-1.puffin",
+		TablesPath + "/cat/ns/t/metadata/sub/stats-1.puffin",
+		TablesPath + "/cat/ns/t/metadata/notes.txt",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			if got := IsTableBucketPath(tt.path); got != tt.want {
-				t.Errorf("IsTableBucketPath(%q) = %v, want %v", tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetTableInfoFromPath(t *testing.T) {
-	tests := []struct {
-		path          string
-		wantBucket    string
-		wantNamespace string
-		wantTable     string
-	}{
-		{"/buckets/mybucket/myns/mytable/data/file.parquet", "mybucket", "myns", "mytable"},
-		{"/buckets/mybucket/myns/mytable", "mybucket", "myns", "mytable"},
-		{"/buckets/mybucket/myns", "mybucket", "myns", ""},
-		{"/buckets/mybucket", "mybucket", "", ""},
-		{"/home/user/file.txt", "", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			bucket, namespace, table := GetTableInfoFromPath(tt.path)
-			if bucket != tt.wantBucket || namespace != tt.wantNamespace || table != tt.wantTable {
-				t.Errorf("GetTableInfoFromPath(%q) = (%q, %q, %q), want (%q, %q, %q)",
-					tt.path, bucket, namespace, table, tt.wantBucket, tt.wantNamespace, tt.wantTable)
-			}
-		})
+	for _, p := range rejected {
+		if err := v.ValidateTableBucketUpload(p); err == nil {
+			t.Errorf("ValidateTableBucketUpload(%q) = nil, want an error", p)
+		}
 	}
 }

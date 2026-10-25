@@ -23,28 +23,31 @@ func TestEcMaintenanceModeRejections(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Encode a volume before entering maintenance mode so the shard delete
+	// below has real shards to remove.
+	const ecVolumeID = uint32(1)
+	framework.AllocateVolume(t, grpcClient, ecVolumeID, "")
+	httpClient := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(ecVolumeID, 990001, 0x11223344), []byte("ec-maintenance-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{
-			Maintenance: true,
-			Version:     stateResp.GetState().GetVersion(),
-		},
-	})
-	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
+	if _, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: ecVolumeID, Collection: ""}); err != nil {
+		t.Fatalf("VolumeEcShardsGenerate before maintenance failed: %v", err)
 	}
 
-	_, err = grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: 1, Collection: ""})
+	framework.EnableMaintenanceMode(t, ctx, grpcClient)
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{VolumeId: 1, Collection: ""})
 	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
 		t.Fatalf("VolumeEcShardsGenerate maintenance error mismatch: %v", err)
 	}
@@ -59,13 +62,23 @@ func TestEcMaintenanceModeRejections(t *testing.T) {
 		t.Fatalf("VolumeEcShardsCopy maintenance error mismatch: %v", err)
 	}
 
+	// Deleting shards removes data rather than adding it, and is how evacuating
+	// EC shards off a server in maintenance mode finishes (issue #11066).
 	_, err = grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-		VolumeId:   1,
+		VolumeId:   ecVolumeID,
 		Collection: "",
 		ShardIds:   []uint32{0},
 	})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeEcShardsDelete maintenance error mismatch: %v", err)
+	if err != nil {
+		t.Fatalf("VolumeEcShardsDelete should succeed in maintenance mode, got: %v", err)
+	}
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   ecVolumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err == nil {
+		t.Fatalf("VolumeEcShardsMount should fail once shard 0 has been deleted")
 	}
 
 	_, err = grpcClient.VolumeEcBlobDelete(ctx, &volume_server_pb.VolumeEcBlobDeleteRequest{
@@ -92,7 +105,7 @@ func TestEcMissingInvalidAndNoopPaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -199,7 +212,7 @@ func TestEcGenerateMountInfoUnmountLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -268,7 +281,7 @@ func TestEcShardReadAndBlobDeleteLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -369,7 +382,7 @@ func TestEcRebuildMissingShardLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -449,7 +462,7 @@ func TestEcShardsToVolumeMissingShardAndNoLiveEntries(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -560,7 +573,7 @@ func TestEcShardsToVolumeSuccessRoundTrip(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -621,7 +634,7 @@ func TestEcShardsDeleteLastShardRemovesEcx(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -752,12 +765,93 @@ func TestEcShardsCopyFromPeerSuccess(t *testing.T) {
 	}
 }
 
+// TestEcIndexConsistencyAfterEncode verifies that every needle indexed in .ecx
+// can be read back correctly from EC shards after VolumeEcShardsGenerate.
+// This catches the race condition fixed in this PR where .ecx could reference
+// data not present in EC shards.
+func TestEcIndexConsistencyAfterEncode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(130)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+
+	// Upload multiple needles of varying sizes
+	type testNeedle struct {
+		fid     string
+		payload []byte
+	}
+	needles := []testNeedle{
+		{framework.NewFileID(volumeID, 1001, 0xAABB0001), []byte("small-needle-1")},
+		{framework.NewFileID(volumeID, 1002, 0xAABB0002), make([]byte, 1024)},     // 1KB
+		{framework.NewFileID(volumeID, 1003, 0xAABB0003), make([]byte, 64*1024)},  // 64KB
+		{framework.NewFileID(volumeID, 1004, 0xAABB0004), make([]byte, 256*1024)}, // 256KB
+		{framework.NewFileID(volumeID, 1005, 0xAABB0005), []byte("small-needle-2")},
+	}
+
+	// Fill larger payloads with recognizable data
+	for i := range needles {
+		for j := range needles[i].payload {
+			needles[i].payload[j] = byte(i*37 + j%251)
+		}
+	}
+
+	for _, n := range needles {
+		resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid, n.payload)
+		_ = framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload %s expected 201, got %d", n.fid, resp.StatusCode)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// EC encode
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	// Mount all data shards so reads go through the EC path
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount failed: %v", err)
+	}
+
+	// Read every needle back from EC shards and verify payload
+	for _, n := range needles {
+		readResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), n.fid)
+		readBody := framework.ReadAllAndClose(t, readResp)
+		if readResp.StatusCode != http.StatusOK {
+			t.Fatalf("EC read %s expected 200, got %d", n.fid, readResp.StatusCode)
+		}
+		if string(readBody) != string(n.payload) {
+			t.Fatalf("EC read %s payload mismatch: got %d bytes, want %d bytes", n.fid, len(readBody), len(n.payload))
+		}
+	}
+}
+
 func TestEcShardsCopyFailsWhenSourceUnavailable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

@@ -2,12 +2,14 @@ package iceberg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/apache/iceberg-go"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -32,9 +34,17 @@ func parseNamespace(encoded string) []string {
 	return result
 }
 
-// encodeNamespace encodes namespace parts for response.
+// encodeNamespace encodes namespace parts using the Iceberg REST protocol's
+// unit separator (0x1F) convention. This is only appropriate for protocol-level
+// encoding (e.g. URL path parameters), NOT for filesystem/S3 paths.
 func encodeNamespace(parts []string) string {
 	return strings.Join(parts, "\x1F")
+}
+
+// flattenNamespacePath joins namespace parts with "." for use in S3 location
+// and filer paths, matching the S3 Tables storage layer convention.
+func flattenNamespacePath(parts []string) string {
+	return strings.Join(parts, ".")
 }
 
 func parseS3Location(location string) (bucketName, tablePath string, err error) {
@@ -65,6 +75,34 @@ func tableLocationFromMetadataLocation(metadataLocation string) string {
 	return trimmed
 }
 
+// accessDelegationHeader is how a client asks the catalog to hand back storage
+// credentials along with the table metadata.
+const accessDelegationHeader = "X-Iceberg-Access-Delegation"
+
+// wantsVendedCredentials reports whether the client asked for vended
+// credentials. The header carries a comma-separated list of mechanisms.
+func wantsVendedCredentials(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, value := range r.Header.Values(accessDelegationHeader) {
+		for _, mechanism := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(mechanism), "vended-credentials") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// writeLoadResult writes a table or view load response. The FileIO config it
+// carries depends on the delegation the client asked for, so a cache between
+// us and the client must key on that header and not on the URL alone.
+func writeLoadResult(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Vary", accessDelegationHeader)
+	writeJSON(w, status, v)
+}
+
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -91,15 +129,163 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 	writeJSON(w, status, resp)
 }
 
+// nameValidationError reports whether err is an S3 Tables namespace or table
+// name validation failure. Such names are client input (the S3 Tables charset
+// is stricter than the Iceberg REST spec), so the catalog answers 400 rather
+// than treating it as a server fault.
+func nameValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Match the validator's own phrasings rather than a bare "namespace name"/
+	// "table name" so unrelated faults (e.g. "failed to resolve table name")
+	// aren't misreported as client errors. Lowercased for resilience to
+	// capitalization changes.
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"invalid namespace name", "namespace name must", "namespace name cannot",
+		"invalid table name", "table name must", "table name cannot",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeManagerError maps a residual error to a response: name validation
+// failures and rejected schemas come from the request body, so they are client
+// errors (400) and must carry the reason -- a variant field without
+// format-version 3 otherwise reads as a bare 500 with "variant is not supported
+// until v3" only in the log. Anything else is a server fault (500).
+// classifyManagerError maps a storage-layer error to the HTTP status, the
+// Iceberg error type and the message the catalog answers with.
+func classifyManagerError(err error) (int, string, string) {
+	switch {
+	case nameValidationError(err),
+		errors.Is(err, iceberg.ErrInvalidSchema),
+		errors.Is(err, iceberg.ErrInvalidPartitionSpec),
+		errors.Is(err, iceberg.ErrInvalidTypeString),
+		errors.Is(err, iceberg.ErrInvalidTransform),
+		errors.Is(err, iceberg.ErrInvalidArgument):
+		return http.StatusBadRequest, "BadRequestException", err.Error()
+	}
+	// Storage-layer failures are mostly the client's, not the server's. Reporting
+	// a missing namespace or a name conflict as a 500 makes the catalog look
+	// broken and gives the client nothing to act on.
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) {
+		switch tableErr.Type {
+		case s3tables.ErrCodeNoSuchBucket:
+			// The storage-layer message names the resolved bucket, which for a
+			// client that sent no warehouse at all is the default one it never
+			// asked for, so say how to select a real table bucket.
+			return http.StatusNotFound, "NoSuchNamespaceException",
+				fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message)
+		case s3tables.ErrCodeNoSuchNamespace:
+			return http.StatusNotFound, "NoSuchNamespaceException", tableErr.Message
+		case s3tables.ErrCodeNoSuchTable:
+			return http.StatusNotFound, "NoSuchTableException", tableErr.Message
+		case s3tables.ErrCodeNoSuchView:
+			return http.StatusNotFound, "NoSuchViewException", tableErr.Message
+		case s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeBucketAlreadyExists,
+			s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeViewAlreadyExists:
+			return http.StatusConflict, "AlreadyExistsException", tableErr.Message
+		case s3tables.ErrCodeNamespaceNotEmpty, s3tables.ErrCodeBucketNotEmpty:
+			return http.StatusConflict, "AlreadyExistsException", tableErr.Message
+		case s3tables.ErrCodeConflict:
+			return http.StatusConflict, "CommitFailedException", tableErr.Message
+		case s3tables.ErrCodeAccessDenied:
+			return http.StatusForbidden, "ForbiddenException", tableErr.Message
+		case s3tables.ErrCodeInvalidRequest, s3tables.ErrCodeInvalidIcebergLayout:
+			return http.StatusBadRequest, "BadRequestException", tableErr.Message
+		}
+	}
+	return http.StatusInternalServerError, "InternalServerError", err.Error()
+}
+
+func writeManagerError(w http.ResponseWriter, err error) {
+	status, typ, msg := classifyManagerError(err)
+	writeError(w, status, typ, msg)
+}
+
+// A storage-layer error the catalog answers with a 4xx (access denied, not
+// found, already exists, not empty, a conflict) is the API refusing a request
+// as intended, not a server fault; it is logged at V(1). A 5xx stays at ERROR.
+var (
+	logManagerRefusal = func(format string, args ...interface{}) { glog.V(1).Infof(format, args...) }
+	logManagerFault   = glog.Errorf
+)
+
+func logManagerError(op string, err error) {
+	if status, _, _ := classifyManagerError(err); status >= 400 && status < 500 {
+		logManagerRefusal("Iceberg: %s refused (%d): %v", op, status, err)
+		return
+	}
+	logManagerFault("Iceberg: %s error: %v", op, err)
+}
+
+// resolveWarehouseBucket maps a client-supplied warehouse value to a table
+// bucket name. Clients spell the warehouse three ways: the s3://<bucket>/
+// location this catalog advertises, the table bucket ARN that AWS S3 Tables
+// uses, and the bare bucket name. Accepting only the first sends every other
+// spelling to the default bucket, where the request fails naming a bucket the
+// client never asked for. Returns "" when the value names no usable bucket so
+// the caller keeps its own default.
+func resolveWarehouseBucket(warehouse string) string {
+	warehouse = strings.TrimSpace(warehouse)
+	var bucket string
+	switch {
+	case warehouse == "":
+		return ""
+	case strings.HasPrefix(warehouse, "s3://"):
+		parsed, _, err := parseS3Location(warehouse)
+		if err != nil {
+			return ""
+		}
+		bucket = parsed
+	case strings.HasPrefix(warehouse, "arn:"):
+		parsed, err := s3tables.ParseBucketNameFromARN(warehouse)
+		if err != nil {
+			return ""
+		}
+		bucket = parsed
+	default:
+		// Bare name, possibly with a sub-path that bucket-scoped routing ignores.
+		bucket, _, _ = strings.Cut(strings.TrimSuffix(warehouse, "/"), "/")
+	}
+	if !s3tables.IsValidBucketName(bucket) {
+		return ""
+	}
+	return bucket
+}
+
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
 // For now, we use the prefix as the table bucket name.
+//
+// The Iceberg REST spec lets clients identify a catalog either by embedding
+// its prefix in the URL (/v1/{prefix}/...) or by passing ?warehouse= as a
+// query parameter. Clients that skip the /v1/config handshake (or ignore its
+// overrides) still routinely send the warehouse parameter on every request,
+// so honor it as a fallback before the env-var default.
 func getBucketFromPrefix(r *http.Request) string {
 	vars := mux.Vars(r)
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
 	}
+	if bucket := resolveWarehouseBucket(r.URL.Query().Get("warehouse")); bucket != "" {
+		return bucket
+	}
 	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
 		return bucket
+	}
+	// Some writers commit to the unprefixed path even though their reads
+	// honor the /v1/config prefix; the deployment's first table bucket is
+	// where those commits belong.
+	for _, name := range strings.Split(os.Getenv("S3_TABLE_BUCKET"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			return name
+		}
 	}
 	// Default bucket if no prefix - use "warehouse" for Iceberg
 	return "warehouse"
@@ -146,6 +332,41 @@ func parsePagination(r *http.Request) (pageToken string, pageSize int, err error
 func normalizeNamespaceProperties(properties map[string]string) map[string]string {
 	if properties == nil {
 		return map[string]string{}
+	}
+	return properties
+}
+
+// namespaceLocationProperty is the well-known Iceberg key used to advertise a
+// default base path for tables created in a namespace.
+const namespaceLocationProperty = "location"
+
+// defaultNamespaceLocation returns the s3 path under which tables in the
+// namespace should be stored when the namespace itself does not carry an
+// explicit "location" property. The flattened namespace path mirrors the on-
+// disk layout used by handleCreateTable so a deferred client-side commit ends
+// up at the same place a server-computed one would.
+func defaultNamespaceLocation(bucket string, namespace []string) string {
+	if bucket == "" || len(namespace) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("s3://%s/%s", bucket, flattenNamespacePath(namespace))
+}
+
+// withDefaultNamespaceLocation populates the Iceberg "location" property on a
+// namespace response when the storage layer does not carry one. Trino's REST
+// catalog falls back to an eager createTable code path when the namespace
+// has no location, which races our metadata write against Trino's emptiness
+// check and surfaces as a "Cannot create a table on a non-empty location"
+// error on the very first CREATE TABLE. Advertising a default location lets
+// Trino take the deferred-transaction path and pick a unique per-table path.
+// See issue #9074.
+func withDefaultNamespaceLocation(properties map[string]string, bucket string, namespace []string) map[string]string {
+	properties = normalizeNamespaceProperties(properties)
+	if _, ok := properties[namespaceLocationProperty]; ok {
+		return properties
+	}
+	if def := defaultNamespaceLocation(bucket, namespace); def != "" {
+		properties[namespaceLocationProperty] = def
 	}
 	return properties
 }

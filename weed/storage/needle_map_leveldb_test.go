@@ -7,8 +7,106 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/syndtr/goleveldb/leveldb"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+// A mid-commit crash can leave an old .ldb (with a high watermark) beside a
+// freshly swapped, shorter .idx. generateLevelDbFile must distrust the stale
+// watermark and rebuild from offset 0 instead of walking past EOF and
+// replaying zero entries, which would leave the needle map empty and make
+// every live needle a phantom 404.
+func TestGenerateLevelDbFileStaleWatermarkRebuilds(t *testing.T) {
+	dir := t.TempDir()
+
+	idxPath := filepath.Join(dir, "1.idx")
+	idxFile, err := os.OpenFile(idxPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		t.Fatalf("create idx: %v", err)
+	}
+	defer idxFile.Close()
+
+	// A short .idx: three live needles.
+	const liveCount = 3
+	for i := uint64(1); i <= liveCount; i++ {
+		entry := needle_map.ToBytes(types.Uint64ToNeedleId(i), types.ToOffset(int64(i*1024)), types.Size(512))
+		if _, err := idxFile.Write(entry); err != nil {
+			t.Fatalf("write idx entry: %v", err)
+		}
+	}
+	if err := idxFile.Sync(); err != nil {
+		t.Fatalf("sync idx: %v", err)
+	}
+
+	// Seed an .ldb whose stored watermark sits far past the short .idx, mimicking
+	// the leftover db from a pre-crash, much larger index.
+	dbPath := filepath.Join(dir, "1.ldb")
+	db, err := leveldb.OpenFile(dbPath, nil)
+	if err != nil {
+		t.Fatalf("open ldb: %v", err)
+	}
+	if err := setWatermark(db, watermarkBatchSize); err != nil {
+		t.Fatalf("set stale watermark: %v", err)
+	}
+	db.Close()
+
+	if err := generateLevelDbFile(dbPath, idxFile); err != nil {
+		t.Fatalf("generateLevelDbFile: %v", err)
+	}
+
+	db, err = leveldb.OpenFile(dbPath, nil)
+	if err != nil {
+		t.Fatalf("reopen ldb: %v", err)
+	}
+	defer db.Close()
+	for i := uint64(1); i <= liveCount; i++ {
+		keyBytes := make([]byte, types.NeedleIdSize)
+		types.NeedleIdToBytes(keyBytes, types.Uint64ToNeedleId(i))
+		if _, err := db.Get(keyBytes, nil); err != nil {
+			t.Fatalf("needle %d missing after rebuild (stale watermark poisoned the map): %v", i, err)
+		}
+	}
+}
+
+// The write on a watermarkBatchSize boundary is the one that must persist the
+// replay watermark; the ordinary writes in between must leave it alone. Passing
+// "watermark == 0" inverted that and pinned the stored watermark at 0, so every
+// rebuild replayed the whole .idx. Deletes count too: tombstones are .idx
+// entries and advance the watermark the same way.
+func TestLevelDbNeedleMapWatermarkAdvances(t *testing.T) {
+	dir := t.TempDir()
+
+	indexFile, err := os.Create(filepath.Join(dir, "wm.idx"))
+	if err != nil {
+		t.Fatalf("create index file: %v", err)
+	}
+	m, err := NewLevelDbNeedleMap(filepath.Join(dir, "wm.ldb"), indexFile, nil, 0, needle.GetCurrentVersion())
+	if err != nil {
+		t.Fatalf("NewLevelDbNeedleMap: %v", err)
+	}
+	defer m.Close()
+
+	for i := uint64(1); i <= watermarkBatchSize; i++ {
+		if err := m.Put(types.Uint64ToNeedleId(i), types.ToOffset(int64(i*1024)), types.Size(512)); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	if got := getWatermark(m.db); got != watermarkBatchSize {
+		t.Errorf("after %d puts: watermark = %d, want %d", watermarkBatchSize, got, watermarkBatchSize)
+	}
+
+	for i := uint64(1); i <= watermarkBatchSize; i++ {
+		if err := m.Delete(types.Uint64ToNeedleId(i), types.ToOffset(int64(i*1024))); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+	if got, want := getWatermark(m.db), uint64(2*watermarkBatchSize); got != want {
+		t.Errorf("after %d deletes: watermark = %d, want %d", watermarkBatchSize, got, want)
+	}
+}
 
 func TestLevelDbNeedleMap_Concurrency(t *testing.T) {
 	dir, err := os.MkdirTemp("", "test_leveldb_concurrency")
@@ -25,7 +123,7 @@ func TestLevelDbNeedleMap_Concurrency(t *testing.T) {
 	dbFileName := filepath.Join(dir, prefix+".ldb")
 
 	// Create and initialize map
-	m, err := NewLevelDbNeedleMap(dbFileName, indexFile, nil, 1)
+	m, err := NewLevelDbNeedleMap(dbFileName, indexFile, nil, 1, needle.GetCurrentVersion())
 	if err != nil {
 		t.Fatalf("NewLevelDbNeedleMap: %v", err)
 	}

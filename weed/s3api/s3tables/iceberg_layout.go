@@ -1,14 +1,9 @@
 package s3tables
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	pathpkg "path"
 	"regexp"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Iceberg file layout validation
@@ -20,18 +15,48 @@ import (
 // - metadata/v*.metadata.json (table metadata)
 // - metadata/snap-*.avro (snapshot manifest lists)
 // - metadata/*.avro (manifest files)
-// - data/*.parquet, data/*.orc, data/*.avro (data files)
+// - metadata/*.stats, metadata/*.puffin (statistics files)
+// - data/*.parquet, *.orc, *.avro, *.puffin (data files)
 
 const uuidPattern = `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`
 
 var (
-	// Allowed directories in an Iceberg table
-	icebergAllowedDirs = map[string]bool{
+	// Allowed directories in a table. The set is the union of what every
+	// supported format writes, because this runs on the S3 door where the
+	// table's format is not in hand: metadata/ and data/ for Iceberg,
+	// _versions/ and _indices/ for Lance, which also puts its fragments in
+	// data/.
+	tableAllowedDirs = map[string]bool{
 		"metadata": true,
 		"data":     true,
 	}
 
-	// Patterns for valid metadata files
+	// A format's own bookkeeping lives in underscore-prefixed directories that
+	// the catalog does not interpret: Lance writes _versions, _transactions,
+	// _indices and _deletions, and enumerating them here would mean guessing at
+	// the next one. Iceberg writes none, so admitting them costs it nothing.
+	formatOwnedDirPattern = regexp.MustCompile(`^_[a-z][a-z0-9_]*$`)
+
+	// Marker files a Lance table keeps at its root to record that it is
+	// reserved but not yet written, or deregistered but still on storage.
+	lanceMarkerFiles = map[string]bool{
+		".lance-reserved":     true,
+		".lance-deregistered": true,
+	}
+
+	// Patterns for valid metadata files.
+	//
+	// Note: Iceberg engines (Flink/Spark/Trino, plus different Iceberg versions)
+	// use a variety of manifest/snapshot naming schemes that the strict patterns
+	// below don't cover - e.g. Flink emits manifests like
+	// "{flink-job-id}-{checkpoint}-{operator-id}-{n}.avro". The Iceberg spec
+	// itself doesn't mandate a specific filename; engines just need a stable
+	// unique name. So in addition to the strict patterns we keep below for
+	// documentation, the catch-all entries at the bottom accept any
+	// *.avro and *.metadata.json filename composed of safe characters
+	// ([A-Za-z0-9._-]). The catch-all deliberately does NOT cover arbitrary
+	// *.json — only the *.metadata.json suffix — to avoid letting random
+	// JSON drop into the metadata/ directory.
 	metadataFilePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`^v\d+\.metadata\.json$`),                   // Table metadata: v1.metadata.json, v2.metadata.json
 		regexp.MustCompile(`^snap-\d+-\d+-` + uuidPattern + `\.avro$`), // Snapshot manifests: snap-123-1-uuid.avro
@@ -40,6 +65,13 @@ var (
 		regexp.MustCompile(`^version-hint\.text$`),                     // Version hint file
 		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),    // UUID-named metadata
 		regexp.MustCompile(`^[^/]+\.stats$`),                           // Trino/Iceberg stats files
+		// Catch-all for Iceberg writer-generated manifest / metadata files
+		// whose naming we can't anticipate across engines and versions.
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.avro$`),
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.metadata\.json$`),
+		// Table and partition statistics files listed in the table metadata
+		// are Puffin files; engines name them *.stats or *.puffin.
+		regexp.MustCompile(`^[A-Za-z0-9._-]+\.puffin$`),
 	}
 
 	// Patterns for valid data files
@@ -47,6 +79,8 @@ var (
 		regexp.MustCompile(`^[^/]+\.parquet$`), // Parquet files
 		regexp.MustCompile(`^[^/]+\.orc$`),     // ORC files
 		regexp.MustCompile(`^[^/]+\.avro$`),    // Avro files
+		regexp.MustCompile(`^[^/]+\.puffin$`),  // Iceberg v3 deletion vectors
+		regexp.MustCompile(`^[^/]+\.lance$`),   // Lance fragments
 	}
 
 	// Data file partition path pattern (e.g., year=2024/month=01/)
@@ -80,11 +114,16 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 
 	topDir := parts[0]
 
+	// A Lance table's marker files sit at its root rather than in a directory.
+	if len(parts) == 1 && lanceMarkerFiles[topDir] {
+		return nil
+	}
+
 	// Check if top-level directory is allowed
-	if !icebergAllowedDirs[topDir] {
+	if !tableAllowedDirs[topDir] && !formatOwnedDirPattern.MatchString(topDir) {
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "files must be placed in 'metadata/' or 'data/' directories",
+			Message: "files must be placed in 'metadata/', 'data/' or a format-owned '_' directory",
 		}
 	}
 
@@ -108,6 +147,28 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 		return v.validateDataFile(remainingPath)
 	}
 
+	// Everything else is a format-owned directory: the only guard is that the
+	// path stays inside the table.
+	return validateFileSegments(remainingPath)
+}
+
+// IsTableMarkerFile reports whether a name is one of the marker files a table
+// keeps at its root.
+func IsTableMarkerFile(name string) bool {
+	return lanceMarkerFiles[name]
+}
+
+// validateFileSegments rejects traversal and empty segments in a path whose
+// contents the catalog does not otherwise interpret.
+func validateFileSegments(path string) error {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid path segment in: " + path,
+			}
+		}
+	}
 	return nil
 }
 
@@ -153,7 +214,7 @@ func validateFilePatterns(filename string, isMetadata bool) error {
 		errorMsg = "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file"
 	} else {
 		patterns = dataFilePatterns
-		errorMsg = "invalid data file format: must be .parquet, .orc, or .avro"
+		errorMsg = "invalid data file format: must be .parquet, .orc, .avro, .puffin or .lance"
 	}
 
 	for _, pattern := range patterns {
@@ -306,131 +367,4 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 	}
 
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
-}
-
-// IsTableBucketPath checks if a path is under the table buckets directory
-func IsTableBucketPath(fullPath string) bool {
-	return strings.HasPrefix(fullPath, TablesPath+"/")
-}
-
-// GetTableInfoFromPath extracts bucket, namespace, and table names from a table bucket path
-// Returns empty strings if the path doesn't contain enough components
-func GetTableInfoFromPath(fullPath string) (bucket, namespace, table string) {
-	if !strings.HasPrefix(fullPath, TablesPath+"/") {
-		return "", "", ""
-	}
-
-	relativePath := strings.TrimPrefix(fullPath, TablesPath+"/")
-	parts := strings.SplitN(relativePath, "/", 4)
-
-	if len(parts) >= 1 {
-		bucket = parts[0]
-	}
-	if len(parts) >= 2 {
-		namespace = parts[1]
-	}
-	if len(parts) >= 3 {
-		table = parts[2]
-	}
-
-	return
-}
-
-// ValidateTableBucketUploadWithClient validates upload and checks that the table exists and is ICEBERG format
-func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
-	ctx context.Context,
-	client filer_pb.SeaweedFilerClient,
-	fullPath string,
-) error {
-	// If not a table bucket path, nothing more to check
-	if !IsTableBucketPath(fullPath) {
-		return nil
-	}
-
-	// Get table info and verify it exists
-	bucket, namespace, table := GetTableInfoFromPath(fullPath)
-	if bucket == "" || namespace == "" || table == "" {
-		return nil // Not deep enough to need validation
-	}
-
-	if strings.HasPrefix(bucket, ".") {
-		return nil
-	}
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: TablesPath,
-		Name:      bucket,
-	})
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return nil
-		}
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to verify table bucket: " + err.Error(),
-		}
-	}
-	if resp == nil || !IsTableBucketEntry(resp.Entry) {
-		return nil
-	}
-
-	// Now check basic layout once we know this is a table bucket path.
-	if err := v.ValidateTableBucketUpload(fullPath); err != nil {
-		return err
-	}
-
-	// Verify the table exists and has ICEBERG format by checking its metadata
-	tablePath := GetTablePath(bucket, namespace, table)
-	dir, name := splitPath(tablePath)
-
-	resp, err = filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		// Distinguish between "not found" and other errors
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return &IcebergLayoutError{
-				Code:    ErrCodeInvalidIcebergLayout,
-				Message: "table does not exist",
-			}
-		}
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to verify table existence: " + err.Error(),
-		}
-	}
-
-	// Check if table has metadata indicating ICEBERG format
-	if resp.Entry == nil || resp.Entry.Extended == nil {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not a valid ICEBERG table (missing metadata)",
-		}
-	}
-
-	metadataBytes, ok := resp.Entry.Extended[ExtendedKeyMetadata]
-	if !ok {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not in ICEBERG format (missing format metadata)",
-		}
-	}
-
-	var metadata tableMetadataInternal
-	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "failed to parse table metadata: " + err.Error(),
-		}
-	}
-	const TableFormatIceberg = "ICEBERG"
-	if metadata.Format != TableFormatIceberg {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not in " + TableFormatIceberg + " format",
-		}
-	}
-
-	return nil
 }

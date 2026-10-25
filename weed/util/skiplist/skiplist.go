@@ -240,9 +240,10 @@ func (t *SkipList) DeleteByKey(key []byte) (id int64, err error) {
 				}
 			}
 
-			// Link from start needs readjustments.
-			startNextKey := t.StartLevels[index].Key
-			if compareElement(nextNode, startNextKey) == 0 {
+			// Match by id, not the cached key: redis3 re-keys nodes in place,
+			// so StartLevels[index].Key can be stale and skip this update while
+			// the end readjustment below still clears EndLevels[index].
+			if t.StartLevels[index] != nil && t.StartLevels[index].ElementPointer == nextNode.Id {
 				t.HasChanges = true
 				t.StartLevels[index] = nextNode.Next[index]
 				// This was our currently highest node!
@@ -307,8 +308,14 @@ func (t *SkipList) InsertByKey(key []byte, idIfKnown int64, value []byte) (id in
 	newFirst := true
 	newLast := true
 	if !t.IsEmpty() {
-		newFirst = compareElement(elem, t.StartLevels[0].Key) < 0
-		newLast = compareElement(elem, t.EndLevels[0].Key) > 0
+		// Guard each end: a persisted skiplist may have one end nil, so
+		// self-heal instead of dereferencing it.
+		if t.StartLevels[0] != nil {
+			newFirst = compareElement(elem, t.StartLevels[0].Key) < 0
+		}
+		if t.EndLevels[0] != nil {
+			newLast = compareElement(elem, t.EndLevels[0].Key) > 0
+		}
 	}
 
 	normallyInserted := false
@@ -492,7 +499,7 @@ func (t *SkipList) Prev(e *SkipListElement) (*SkipListElement, error) {
 // ChangeValue can be used to change the actual value of a node in the skiplist
 // without the need of Deleting and reinserting the node again.
 // Be advised, that ChangeValue only works, if the actual key from ExtractKey() will stay the same!
-// ok is an indicator, wether the value is actually changed.
+// ok is an indicator, whether the value is actually changed.
 func (t *SkipList) ChangeValue(e *SkipListElement, newValue []byte) (err error) {
 	// The key needs to stay correct, so this is very important!
 	e.Value = newValue

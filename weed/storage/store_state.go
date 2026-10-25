@@ -34,16 +34,6 @@ func NewState(dir string) (*State, error) {
 	return state, err
 }
 
-func NewStateFromProto(filePath string, state *volume_server_pb.VolumeServerState) *State {
-	pb := &volume_server_pb.VolumeServerState{}
-	proto.Merge(pb, state)
-
-	return &State{
-		filePath: filePath,
-		pb:       pb,
-	}
-}
-
 func (st *State) Proto() *volume_server_pb.VolumeServerState {
 	st.mu.Lock()
 	defer st.mu.Unlock()

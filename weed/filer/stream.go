@@ -51,6 +51,18 @@ func JwtForVolumeServer(fileId string) string {
 	return string(security.GenJwtForVolumeServer(jwtSigningReadKey, jwtSigningReadKeyExpires, fileId))
 }
 
+// ChunkReadJwt returns the credential for reading fileId from urlStrings. A
+// lookup answers with the volume servers holding the needle or with a filer
+// proxying it, never a mix. A proxied chunk is a request to the filer, which
+// authorizes it and attaches the volume credential itself, so the token there
+// is a filer one.
+func ChunkReadJwt(urlStrings []string, fileId string) string {
+	if len(urlStrings) > 0 && util_http.IsProxyChunkUrl(urlStrings[0]) {
+		return util_http.JwtForFilerServer(false)
+	}
+	return JwtForVolumeServer(fileId)
+}
+
 func HasData(entry *filer_pb.Entry) bool {
 
 	if len(entry.Content) > 0 {
@@ -73,14 +85,16 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	slices.SortFunc(a, func(i, j *filer_pb.FileChunk) int {
+	sortedA := slices.Clone(a)
+	sortedB := slices.Clone(b)
+	slices.SortFunc(sortedA, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	slices.SortFunc(b, func(i, j *filer_pb.FileChunk) int {
+	slices.SortFunc(sortedB, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	for i := 0; i < len(a); i++ {
-		if a[i].ETag != b[i].ETag {
+	for i := 0; i < len(sortedA); i++ {
+		if sortedA[i].ETag != sortedB[i].ETag {
 			return false
 		}
 	}
@@ -102,37 +116,68 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
-func noJwtFunc(string) string {
-	return ""
-}
-
-type CacheInvalidator interface {
-	InvalidateCache(fileId string)
-}
-
-// urlSlicesEqual checks if two URL slices contain the same URLs (order-independent)
-func urlSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+// refreshUrls lets a fetch loop relearn a chunk's locations inside a single
+// read: drop the cached entry and look it up again, whether every location
+// failed or one did while another answered. Nil when there is nothing to
+// invalidate against.
+func refreshUrls(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string) util_http.RefreshUrlsFunc {
+	if invalidator == nil || lookupFn == nil {
+		return nil
 	}
-	// Create a map to count occurrences in first slice
-	counts := make(map[string]int)
-	for _, url := range a {
-		counts[url]++
-	}
-	// Verify all URLs in second slice match
-	for _, url := range b {
-		if counts[url] == 0 {
-			return false
+	return func() []string {
+		invalidator.InvalidateCache(fileId)
+		urls, err := lookupFn(ctx, fileId)
+		if err != nil {
+			glog.V(0).InfofCtx(ctx, "re-lookup chunk %s: %v", fileId, err)
+			return nil
 		}
-		counts[url]--
+		return urls
 	}
-	return true
+}
+
+// retryFetchWithFreshLocations is the shared self-heal for the read paths: when a chunk fetch
+// fails, invalidate the cached volume locations, re-lookup, and call refetch only when the
+// resolved locations actually changed (so we never retry against the same servers). originalErr
+// is returned unchanged when no retry is attempted, so callers surface the real fetch failure.
+func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string, oldUrls []string, originalErr error, refetch func(newUrls []string) error) error {
+	// the caller may have gone away between its own check and this one; a
+	// cancelled read is no evidence the locations are wrong, and callers such
+	// as volume.fsck tell an abort from real corruption with errors.Is
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if invalidator == nil {
+		return originalErr
+	}
+
+	glog.V(0).InfofCtx(ctx, "read chunk %s failed, invalidating cache and retrying: %v", fileId, originalErr)
+	invalidator.InvalidateCache(fileId)
+
+	newUrls, lookupErr := lookupFn(ctx, fileId)
+	if lookupErr != nil {
+		glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", fileId, lookupErr)
+		return fmt.Errorf("re-lookup chunk %s after cache invalidation: %w", fileId, lookupErr)
+	}
+	if len(newUrls) == 0 {
+		glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", fileId)
+		return fmt.Errorf("re-lookup chunk %s returned no locations", fileId)
+	}
+	if util_http.SameUrls(oldUrls, newUrls) {
+		glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", fileId)
+		return originalErr
+	}
+
+	glog.V(0).InfofCtx(ctx, "retrying read chunk %s with %d new locations", fileId, len(newUrls))
+	return refetch(newUrls)
 }
 
 func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
 	glog.V(4).InfofCtx(ctx, "prepare to stream content for chunks: %d", len(chunks))
-	chunkViews := ViewFromChunks(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
+	chunkViews := ViewFromVisibleIntervals(visibles, offset, size)
 
 	fileId2Url := make(map[string][]string)
 
@@ -141,12 +186,26 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			urlStrings, err = masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
 			if err == nil && len(urlStrings) > 0 {
 				break
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			glog.V(4).InfofCtx(ctx, "waiting for chunk: %s", chunkView.FileId)
-			time.Sleep(backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 		if err != nil {
 			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
@@ -177,36 +236,23 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			urlStrings := fileId2Url[chunkView.FileId]
 			start := time.Now()
 			jwt := jwtFunc(chunkView.FileId)
-			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+			invalidator, _ := masterClient.(CacheInvalidator)
+			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), refreshUrls(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId))
+
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
 
 			// If read failed, try to invalidate cache and re-lookup
 			if err != nil && written == 0 {
-				if invalidator, ok := masterClient.(CacheInvalidator); ok {
-					glog.V(0).InfofCtx(ctx, "read chunk %s failed, invalidating cache and retrying", chunkView.FileId)
-					invalidator.InvalidateCache(chunkView.FileId)
-
-					// Re-lookup
-					newUrlStrings, lookupErr := masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
-					if lookupErr == nil && len(newUrlStrings) > 0 {
-						// Check if new URLs are different from old ones to avoid infinite retry
-						if !urlSlicesEqual(urlStrings, newUrlStrings) {
-							glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", chunkView.FileId, newUrlStrings)
-							_, err = retriedStreamFetchChunkData(ctx, writer, newUrlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
-							// Update the map so subsequent references use fresh URLs
-							if err == nil {
-								fileId2Url[chunkView.FileId] = newUrlStrings
-							}
-						} else {
-							glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", chunkView.FileId)
-						}
-					} else {
-						if lookupErr != nil {
-							glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", chunkView.FileId, lookupErr)
-						} else {
-							glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", chunkView.FileId)
-						}
+				err = retryFetchWithFreshLocations(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId, urlStrings, err, func(newUrls []string) error {
+					_, refetchErr := retriedStreamFetchChunkData(ctx, writer, newUrls, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), nil)
+					if refetchErr == nil {
+						// Update the map so subsequent references use fresh URLs
+						fileId2Url[chunkView.FileId] = newUrls
 					}
-				}
+					return refetchErr
+				})
 			}
 
 			offset += int64(chunkView.ViewSize)
@@ -228,6 +274,70 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 		}
 
 		return nil
+	}, nil
+}
+
+// PrepareStreamContentWithPrefetch is like PrepareStreamContentWithThrottler but uses
+// concurrent chunk prefetching to overlap network I/O. When prefetchAhead > 1, fetch
+// goroutines establish HTTP connections to volume servers ahead of time, streaming data
+// through io.Pipe with minimal memory overhead.
+//
+// prefetchAhead controls the number of chunks fetched concurrently:
+//   - 0 or 1: falls back to sequential fetching (same as PrepareStreamContentWithThrottler)
+//   - 2+: uses pipe-based prefetch pipeline with that many concurrent fetches
+func PrepareStreamContentWithPrefetch(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64, prefetchAhead int) (DoStreamContent, error) {
+	if prefetchAhead <= 1 {
+		return PrepareStreamContentWithThrottler(ctx, masterClient, jwtFunc, chunks, offset, size, downloadMaxBytesPs)
+	}
+
+	glog.V(4).InfofCtx(ctx, "prepare to stream content with prefetch=%d for chunks: %d", prefetchAhead, len(chunks))
+	visibles, err := NonOverlappingVisibleIntervals(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
+	chunkViews := ViewFromVisibleIntervals(visibles, offset, size)
+
+	fileId2Url := make(map[string][]string)
+
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
+		var urlStrings []string
+		var err error
+		for _, backoff := range getLookupFileIdBackoffSchedule {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			urlStrings, err = masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
+			if err == nil && len(urlStrings) > 0 {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			glog.V(4).InfofCtx(ctx, "waiting for chunk: %s", chunkView.FileId)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err != nil {
+			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			return nil, err
+		} else if len(urlStrings) == 0 {
+			errUrlNotFound := fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
+			glog.ErrorCtx(ctx, errUrlNotFound)
+			return nil, errUrlNotFound
+		}
+		fileId2Url[chunkView.FileId] = urlStrings
+	}
+
+	return func(writer io.Writer) error {
+		return streamChunksPrefetched(ctx, writer, chunkViews, fileId2Url, jwtFunc, masterClient, offset, size, downloadMaxBytesPs, prefetchAhead)
 	}, nil
 }
 
@@ -258,33 +368,6 @@ func writeZero(w io.Writer, size int64) (err error) {
 	return
 }
 
-func ReadAll(ctx context.Context, buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) error {
-
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrls []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
-
-	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, int64(len(buffer)))
-
-	idx := 0
-
-	for x := chunkViews.Front(); x != nil; x = x.Next {
-		chunkView := x.Value
-		urlStrings, err := lookupFileIdFn(ctx, chunkView.FileId)
-		if err != nil {
-			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-			return err
-		}
-
-		n, err := util_http.RetriedFetchChunkData(ctx, buffer[idx:idx+int(chunkView.ViewSize)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, chunkView.FileId)
-		if err != nil {
-			return err
-		}
-		idx += n
-	}
-	return nil
-}
-
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
 	head         *Interval[*ChunkView]
@@ -296,15 +379,25 @@ type ChunkStreamReader struct {
 	bufferLock   sync.Mutex
 	chunk        string
 	lookupFileId wdclient.LookupFileIdFunctionType
+	sourceErr    error
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
 var _ = io.ReaderAt(&ChunkStreamReader{})
 var _ = io.Closer(&ChunkStreamReader{})
 
+// doNewChunkStreamReader builds a reader over chunks. If their manifests cannot
+// be resolved, the reader fails every read with that error and reports it as its
+// SourceError.
 func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	chunkViews, err := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if err != nil {
+		return &ChunkStreamReader{
+			lookupFileId: lookupFileIdFn,
+			sourceErr:    err,
+		}
+	}
 
 	var totalSize int64
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -322,11 +415,13 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 
 func NewChunkStreamReaderFromFiler(ctx context.Context, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrl []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
+	return doNewChunkStreamReader(ctx, masterClient.GetLookupFileIdFunction(), chunks)
+}
 
-	return doNewChunkStreamReader(ctx, lookupFileIdFn, chunks)
+// NewChunkStreamReaderFromLookup creates a ChunkStreamReader from a lookup function.
+// Used by clients that already have a LookupFileIdFunctionType (e.g., from FilerSource).
+func NewChunkStreamReaderFromLookup(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
+	return doNewChunkStreamReader(ctx, lookupFn, chunks)
 }
 
 func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
@@ -397,6 +492,10 @@ func insideChunk(offset int64, chunk *ChunkView) bool {
 }
 
 func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
+	// a reader without chunk views has a source error only if ViewFromChunks failed
+	if c.head == nil && c.sourceErr != nil {
+		return c.sourceErr
+	}
 	// stay in the same chunk
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil
@@ -428,13 +527,15 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	urlStrings, err := c.lookupFileId(context.Background(), chunkView.FileId)
 	if err != nil {
 		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-		return err
+		return c.rememberSourceError(err)
 	}
 	var buffer bytes.Buffer
+	// pre-size to the known chunk size; avoids bytes.Buffer's doubling regrowth
+	buffer.Grow(int(chunkView.ViewSize))
 	var shouldRetry bool
-	jwt := JwtForVolumeServer(chunkView.FileId)
+	jwt := ChunkReadJwt(urlStrings, chunkView.FileId)
 	for _, urlString := range urlStrings {
-		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), urlString+"?readDeleted=true", jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
+		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), util_http.AppendQueryParameter(urlString, "readDeleted", "true"), jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
 			buffer.Write(data)
 		})
 		if !shouldRetry {
@@ -448,7 +549,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		}
 	}
 	if err != nil {
-		return err
+		return c.rememberSourceError(err)
 	}
 	c.buffer = buffer.Bytes()
 	c.bufferOffset = chunkView.ViewOffset
@@ -456,6 +557,28 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 
 	// glog.V(0).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize))
 
+	return nil
+}
+
+func (c *ChunkStreamReader) rememberSourceError(err error) error {
+	if c.sourceErr == nil {
+		c.sourceErr = err
+	}
+	return err
+}
+
+// SourceError returns the first lookup or chunk read failure, or nil.
+func (c *ChunkStreamReader) SourceError() error {
+	c.bufferLock.Lock()
+	defer c.bufferLock.Unlock()
+	return c.sourceErr
+}
+
+// ReaderSourceError returns the SourceError of a reader from NewFileReader, or nil.
+func ReaderSourceError(r io.Reader) error {
+	if csr, ok := r.(*ChunkStreamReader); ok {
+		return csr.SourceError()
+	}
 	return nil
 }
 

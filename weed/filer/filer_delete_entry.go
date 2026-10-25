@@ -2,17 +2,117 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
 )
+
+// ErrNonEmptyFolder is a non-recursive delete refused because the folder still
+// has children. The marker leads the message the filer builds for it and is
+// never wrapped on the way out, so the path that follows it, which the client
+// chose, cannot forge one.
+var ErrNonEmptyFolder = errors.New(MsgFailDelNonEmptyFolder)
+
+// DeleteEntryError turns the text of DeleteEntryResponse.Error back into an
+// error carrying the condition the filer reported. Call it on the response
+// field, before formatting a path around it.
+func DeleteEntryError(msg string) error {
+	if strings.HasPrefix(msg, MsgFailDelNonEmptyFolder) {
+		return &deleteEntryError{msg: msg, cause: ErrNonEmptyFolder}
+	}
+	return errors.New(msg)
+}
+
+// IsNonEmptyFolderError is for callers holding a delete failure that has not
+// been wrapped yet: the sentinel when it survived, the leading marker when the
+// error only crossed the wire as text.
+func IsNonEmptyFolderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrNonEmptyFolder) || strings.HasPrefix(err.Error(), MsgFailDelNonEmptyFolder)
+}
+
+type deleteEntryError struct {
+	msg   string
+	cause error
+}
+
+func (e *deleteEntryError) Error() string { return e.msg }
+func (e *deleteEntryError) Unwrap() error { return e.cause }
+
+// ExtKeepRemoteObjectKey marks the entry in the event of a metadata-only
+// delete, so the remote write-back daemons leave the remote object alone too.
+// It is set on the event only; the store drops it from every write, so a
+// client cannot plant it on an entry.
+const ExtKeepRemoteObjectKey = "Seaweed-X-Keep-Remote-Object"
+
+// IsMetadataOnlyDelete reports a delete event's entry marked by
+// WithKeepRemoteObject.
+func IsMetadataOnlyDelete(oldEntry *filer_pb.Entry) bool {
+	_, marked := oldEntry.GetExtended()[ExtKeepRemoteObjectKey]
+	return marked
+}
+
+type keepRemoteObjectKey struct{}
+
+// WithKeepRemoteObject marks a delete as metadata-only: neither the filer nor
+// filer.remote.sync deletes the entry's object on the mounted remote storage.
+// Unlike isFromOtherCluster, the metadata event stays an ordinary local
+// delete, so replication still carries it.
+func WithKeepRemoteObject(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keepRemoteObjectKey{}, true)
+}
+
+func keepsRemoteObject(ctx context.Context) bool {
+	return ctx.Value(keepRemoteObjectKey{}) != nil
+}
+
+// emptyFolderDeleteContext makes deleting a folder that is empty in the filer
+// metadata-only when it is under a remote mount. A mount is populated lazily,
+// so the folder can still hold remote objects never read, and removing its
+// remote directory deletes every object under that prefix.
+func (f *Filer) emptyFolderDeleteContext(ctx context.Context, dirPath util.FullPath) context.Context {
+	if f.IsUnderRemoteMount(dirPath) {
+		return WithKeepRemoteObject(ctx)
+	}
+	return ctx
+}
+
+// IsUnderRemoteMount reports whether p is a remote mount directory or lies under one.
+func (f *Filer) IsUnderRemoteMount(p util.FullPath) bool {
+	if f.RemoteStorage == nil {
+		return false
+	}
+	// Mount rules are keyed with a trailing slash, so this also matches the mount directory itself.
+	_, remoteLoc := f.RemoteStorage.FindMountDirectory(util.FullPath(string(p) + "/"))
+	return remoteLoc != nil
+}
+
+func deleteEventEntry(ctx context.Context, entry *Entry) *Entry {
+	if !keepsRemoteObject(ctx) {
+		return entry
+	}
+	marked := entry.ShallowClone()
+	marked.Extended = maps.Clone(entry.Extended)
+	if marked.Extended == nil {
+		marked.Extended = map[string][]byte{}
+	}
+	marked.Extended[ExtKeepRemoteObjectKey] = []byte("true")
+	return marked
+}
 
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
@@ -22,6 +122,8 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return nil
 	}
 
+	ctx = f.syncWriteContext(ctx, p)
+
 	entry, findErr := f.FindEntry(ctx, p)
 	if findErr != nil {
 		return findErr
@@ -29,10 +131,20 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
 		return nil
 	}
+	if !isRecursive && entry.IsDirectory() {
+		ctx = f.emptyFolderDeleteContext(ctx, p)
+	}
 	isDeleteCollection := f.IsBucket(entry)
+	collectionName := ""
+	if isDeleteCollection {
+		collectionName = f.bucketCollection(ctx, entry.Name())
+	}
+	// A preserved collection outlives the bucket, so its chunks are collected
+	// per entry rather than dropped wholesale with it.
+	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
-		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
+		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
 			// A case not handled:
 			// what if the chunk is in a different collection?
 			if shouldDeleteChunks {
@@ -42,6 +154,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		})
 		if err != nil {
 			glog.V(2).InfofCtx(ctx, "delete directory %s: %v", p, err)
+			if errors.Is(err, ErrNonEmptyFolder) {
+				return err
+			}
 			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
 	}
@@ -52,7 +167,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
-	if shouldDeleteChunks && !isDeleteCollection {
+	if shouldDeleteChunks && !dropsCollection {
 		if len(entry.HardLinkId) != 0 && entry.HardLinkCounter > 1 {
 			// if the file is a hard link and there are other hard links, do not delete the chunks
 		} else {
@@ -61,8 +176,18 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if isDeleteCollection {
-		collectionName := entry.Name()
-		f.DoDeleteCollection(collectionName)
+		if collectionName != "" {
+			// the entry is already gone: a caller that hung up must not leave the
+			// collection behind, so this cleanup outlives the request -- bounded all
+			// the same, or a master that is down parks this handler indefinitely and
+			// every client retry behind it parks another
+			collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
+			f.DoDeleteCollection(collectionCtx, collectionName)
+			cancelCollection()
+		}
+		// drop bucket-labeled series held by this process; the S3 gateway
+		// only cleans its own registry
+		stats.DeleteBucketMetrics(entry.Name())
 	}
 
 	return nil
@@ -70,33 +195,63 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {
 
+	var dirTombstoneTs int64
+	if isRecursive && !keepsRemoteObject(ctx) {
+		// Tombstone the directory before its children: when the store drops
+		// the subtree without listing it, or a child error aborts the walk,
+		// the ancestor tombstone still covers every descendant.
+		dirTombstoneTs = time.Now().UnixNano()
+		f.noteRemoteDeletion(entry.FullPath, true, dirTombstoneTs)
+	}
+
 	//collect all the chunks of this layer and delete them together at the end
 	var chunksToDelete []*filer_pb.FileChunk
 	lastFileName := ""
 	includeLastFile := false
-	if !isDeletingBucket || !f.Store.CanDropWholeBucket() {
+	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
+	if listedChildren {
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
+				// nothing was deleted; a leftover tombstone would hide the
+				// still-existing remote children
+				f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
 				glog.ErrorfCtx(ctx, "list folder %s: %v", entry.FullPath, err)
 				return fmt.Errorf("list folder %s: %v", entry.FullPath, err)
 			}
 			if lastFileName == "" && !isRecursive && len(entries) > 0 {
 				// only for first iteration in the loop
 				glog.V(2).InfofCtx(ctx, "deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
-				return fmt.Errorf("%s: %s", MsgFailDelNonEmptyFolder, entry.FullPath)
+				return fmt.Errorf("%w: %s", ErrNonEmptyFolder, entry.FullPath)
 			}
 
 			for _, sub := range entries {
 				lastFileName = sub.Name()
+				if !keepsRemoteObject(ctx) {
+					f.noteRemoteDeletion(sub.FullPath, sub.IsDirectory(), time.Now().UnixNano())
+				}
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
-					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, false, nil, onHardLinkIdsFn)
+					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
 				} else {
-					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
+					if !isFromOtherCluster && !keepsRemoteObject(ctx) {
+						if _, remoteErr := f.maybeDeleteFromRemote(ctx, sub); remoteErr != nil {
+							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
+							if !ignoreRecursiveError {
+								err = remoteErr
+							}
+						}
+					}
+					if err != nil && !ignoreRecursiveError {
+						break
+					}
+					f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, sub), nil, shouldDeleteChunks, isFromOtherCluster, nil)
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
 						err = onHardLinkIdsFn([]HardLinkId{sub.HardLinkId})
+						if shouldDeleteChunks && f.hardLinkIsOrphaned(ctx, sub.HardLinkId) {
+							chunksToDelete = append(chunksToDelete, sub.GetChunks()...)
+						}
 					} else {
 						if shouldDeleteChunks {
 							chunksToDelete = append(chunksToDelete, sub.GetChunks()...)
@@ -116,11 +271,15 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	glog.V(3).InfofCtx(ctx, "deleting directory %v delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
-	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
-		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+	// a non-recursive delete already proved the folder empty above, so sweeping the
+	// children now can only remove entries that raced in after that listing
+	if isRecursive || !listedChildren {
+		if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
+			return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+		}
 	}
 
-	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
+	f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, entry), nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	f.DeleteChunks(ctx, entry.FullPath, chunksToDelete)
 
 	return nil
@@ -130,20 +289,116 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
+	if !isFromOtherCluster && !keepsRemoteObject(ctx) {
+		if _, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry); remoteDeletionErr != nil {
+			return remoteDeletionErr
+		}
+	}
+
+	// A metadata-only delete owes the remote nothing, so lazy reads stay open.
+	if !keepsRemoteObject(ctx) {
+		f.noteRemoteDeletion(entry.FullPath, entry.IsDirectory(), time.Now().UnixNano())
+	}
+
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
+
 	if !entry.IsDirectory() {
-		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
+		f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, entry), nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	}
 
 	return nil
 }
 
-func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
+// collectionDeleteTimeout bounds the collection delete a bucket entry's own
+// delete leaves behind, which carries no deadline of its own. It bounds the wait
+// and not the work: the master keeps deleting on its own fan-out once asked, so
+// giving up costs the confirmation. Short enough that the S3 client waiting on
+// the bucket delete, which pays this and then the gateway's own follow-up
+// DeleteCollection, still has retry budget left.
+const collectionDeleteTimeout = 15 * time.Second
 
-	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+// bucketCollection resolves the collection a bucket's objects land in
+// through the same chain the write path uses -- a grouped gateway's explicit
+// collection, then the storage rules, then the bucket name -- and reports it
+// only when nothing outside the bucket can still route into it. A shared
+// collection must survive the bucket delete: dropping it removes volumes
+// other paths still write to. A listing failure keeps the collection, the
+// safe side of an unknown.
+func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection string) {
+	bucketDir := f.DirBucketsPath + "/" + bucket + "/"
+	resolve := func(dir, name string) string {
+		if f.MasterClient != nil {
+			if group := f.MasterClient.FilerGroup; group != "" {
+				return group + "_" + name
+			}
+		}
+		return util.Nvl(f.FilerConf.MatchStorageRule(dir).Collection, name)
+	}
+	collection = resolve(bucketDir, bucket)
+
+	// Rule-less writes outside buckets fall back to the filer's default
+	// collection, so a bucket resolving there shares it with them. The
+	// system metadata-log collection (when explicitly redirected via
+	// filer.options.metaLog.collection) is in the same boat: it backs internal
+	// log volumes, so a bucket that resolves there must never drop it
+	// either.
+	if collection == f.metaLogCollection {
+		return ""
+	}
+	if f.metaLogTargetCollection != "" && collection == f.metaLogTargetCollection {
+		return ""
+	}
+
+	// A rule whose prefix escapes the bucket can route other paths into the
+	// same collection, including prefixes nested under surviving buckets.
+	for _, rule := range f.FilerConf.ToProto().Locations {
+		prefix := strings.TrimSuffix(rule.LocationPrefix, "/") + "/"
+		if strings.HasPrefix(prefix, bucketDir) {
+			continue
+		}
+		if f.FilerConf.MatchStorageRule(prefix).Collection == collection {
+			return ""
+		}
+	}
+
+	siblings, err := f.listBuckets(ctx)
+	if err != nil {
+		glog.ErrorfCtx(ctx, "list buckets for collection check: %v", err)
+		return ""
+	}
+	for _, sibling := range siblings {
+		if sibling != bucket && resolve(f.DirBucketsPath+"/"+sibling+"/", sibling) == collection {
+			return ""
+		}
+	}
+	return collection
+}
+
+func (f *Filer) listBuckets(ctx context.Context) (buckets []string, err error) {
+	lastFileName := ""
+	for {
+		entries, _, listErr := f.ListDirectoryEntries(ctx, util.FullPath(f.DirBucketsPath), lastFileName, false, PaginationSize, "", "", "")
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, entry := range entries {
+			lastFileName = entry.Name()
+			if f.IsBucket(entry) {
+				buckets = append(buckets, entry.Name())
+			}
+		}
+		if len(entries) < PaginationSize {
+			return buckets, nil
+		}
+	}
+}
+
+func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
+
+	return f.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})
 		if err != nil {
@@ -160,4 +415,11 @@ func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLink
 			glog.ErrorfCtx(ctx, "delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
+}
+
+// hardLinkIsOrphaned reports whether the shared inode record for hardLinkId
+// is gone, meaning the removed link was the last owner of its chunks.
+func (f *Filer) hardLinkIsOrphaned(ctx context.Context, hardLinkId HardLinkId) bool {
+	_, err := f.Store.KvGet(ctx, hardLinkId)
+	return errors.Is(err, ErrKvNotFound)
 }

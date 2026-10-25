@@ -1,5 +1,4 @@
 //go:build tikv
-// +build tikv
 
 package tikv
 
@@ -247,7 +246,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 	lastFileName := ""
 	directoryPrefix := store.genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
-	if startFileName != "" {
+	if startFileName > prefix {
 		lastFileStart = store.genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 

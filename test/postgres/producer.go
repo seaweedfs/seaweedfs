@@ -322,7 +322,7 @@ func discoverFiler(masterHTTPAddress string) (string, error) {
 
 	// Use the first available filer and convert HTTP address to gRPC
 	filerHTTPAddress := resp.ClusterNodes[0].Address
-	httpAddr := pb.ServerAddress(filerHTTPAddress)
+	httpAddr = pb.ServerAddress(filerHTTPAddress)
 	return httpAddr.ToGrpcAddress(), nil
 }
 

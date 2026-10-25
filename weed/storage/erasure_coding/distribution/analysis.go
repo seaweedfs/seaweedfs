@@ -1,9 +1,102 @@
 package distribution
 
-import (
-	"fmt"
-	"slices"
-)
+// NewTopologyAnalysis creates an empty topology analysis.
+func NewTopologyAnalysis() *TopologyAnalysis {
+	return &TopologyAnalysis{
+		ShardsByDC:   make(map[string]int),
+		ShardsByRack: make(map[string]int),
+		ShardsByNode: make(map[string]int),
+		DCToShards:   make(map[string][]int),
+		RackToShards: make(map[string][]int),
+		NodeToShards: make(map[string][]int),
+		DCToRacks:    make(map[string][]string),
+		RackToNodes:  make(map[string][]*TopologyNode),
+		AllNodes:     make(map[string]*TopologyNode),
+	}
+}
+
+// AddNode registers a node in the topology, including any shards it already
+// holds for the volume being analyzed. A node id may only register once;
+// registering it again updates its capacity and adds any new shards. The
+// first registration wins for the node's place in the topology.
+func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
+	registered, ok := a.AllNodes[node.NodeID]
+	if !ok {
+		registered = node
+		a.AllNodes[node.NodeID] = node
+		a.RackToNodes[rackKey(node.DataCenter, node.Rack)] = append(a.RackToNodes[rackKey(node.DataCenter, node.Rack)], node)
+		if !contains(a.DCToRacks[node.DataCenter], node.Rack) {
+			a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
+		}
+	} else {
+		registered.FreeSlots = node.FreeSlots
+		registered.TotalShards = node.TotalShards
+	}
+	seen := node.ShardIDs[:0]
+	for _, shardID := range node.ShardIDs {
+		if !contains(seen, shardID) {
+			seen = append(seen, shardID)
+		}
+	}
+	node.ShardIDs = seen
+	for _, shardID := range node.ShardIDs {
+		a.AddShardLocation(ShardLocation{
+			ShardID:    shardID,
+			NodeID:     registered.NodeID,
+			DataCenter: registered.DataCenter,
+			Rack:       registered.Rack,
+		})
+	}
+}
+
+// AddShardLocation records one shard's placement in the topology. Repeated
+// calls for a shard already known to its node are ignored, so callers may
+// either set ShardIDs on the TopologyNode or register each shard here. A
+// location naming an unregistered node registers that node so the rebalancer
+// can see the shard; for a registered node the node's own dc/rack win.
+func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
+	node, ok := a.AllNodes[loc.NodeID]
+	if !ok {
+		node = &TopologyNode{NodeID: loc.NodeID, DataCenter: loc.DataCenter, Rack: loc.Rack}
+		a.AddNode(node)
+	}
+	if contains(a.NodeToShards[loc.NodeID], loc.ShardID) {
+		return
+	}
+	a.ShardsByDC[node.DataCenter]++
+	a.ShardsByRack[rackKey(node.DataCenter, node.Rack)]++
+	a.ShardsByNode[loc.NodeID]++
+	a.DCToShards[node.DataCenter] = append(a.DCToShards[node.DataCenter], loc.ShardID)
+	a.RackToShards[rackKey(node.DataCenter, node.Rack)] = append(a.RackToShards[rackKey(node.DataCenter, node.Rack)], loc.ShardID)
+	a.NodeToShards[loc.NodeID] = append(a.NodeToShards[loc.NodeID], loc.ShardID)
+	a.TotalShards++
+	if !contains(node.ShardIDs, loc.ShardID) {
+		node.ShardIDs = append(node.ShardIDs, loc.ShardID)
+	}
+}
+
+// rackKey qualifies a rack name with its data center: rack names are only
+// unique within a DC, so two DCs can both hold a "rack1". NUL separates the
+// parts so a "/" inside either name cannot merge distinct racks.
+func rackKey(dc, rack string) string {
+	return dc + "\x00" + rack
+}
+
+// Finalize computes topology statistics after all nodes and shards are added.
+func (a *TopologyAnalysis) Finalize() {
+	a.TotalNodes = len(a.AllNodes)
+	a.TotalRacks = len(a.RackToNodes)
+	a.TotalDCs = len(a.DCToRacks)
+}
+
+func contains[T comparable](list []T, s T) bool {
+	for _, item := range list {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
 
 // ShardLocation represents where a shard is located in the topology
 type ShardLocation struct {
@@ -47,101 +140,6 @@ type TopologyAnalysis struct {
 	TotalDCs    int
 }
 
-// NewTopologyAnalysis creates a new empty analysis
-func NewTopologyAnalysis() *TopologyAnalysis {
-	return &TopologyAnalysis{
-		ShardsByDC:   make(map[string]int),
-		ShardsByRack: make(map[string]int),
-		ShardsByNode: make(map[string]int),
-		DCToShards:   make(map[string][]int),
-		RackToShards: make(map[string][]int),
-		NodeToShards: make(map[string][]int),
-		DCToRacks:    make(map[string][]string),
-		RackToNodes:  make(map[string][]*TopologyNode),
-		AllNodes:     make(map[string]*TopologyNode),
-	}
-}
-
-// AddShardLocation adds a shard location to the analysis
-func (a *TopologyAnalysis) AddShardLocation(loc ShardLocation) {
-	// Update counts
-	a.ShardsByDC[loc.DataCenter]++
-	a.ShardsByRack[loc.Rack]++
-	a.ShardsByNode[loc.NodeID]++
-
-	// Update shard lists
-	a.DCToShards[loc.DataCenter] = append(a.DCToShards[loc.DataCenter], loc.ShardID)
-	a.RackToShards[loc.Rack] = append(a.RackToShards[loc.Rack], loc.ShardID)
-	a.NodeToShards[loc.NodeID] = append(a.NodeToShards[loc.NodeID], loc.ShardID)
-
-	a.TotalShards++
-}
-
-// AddNode adds a node to the topology (even if it has no shards)
-func (a *TopologyAnalysis) AddNode(node *TopologyNode) {
-	if _, exists := a.AllNodes[node.NodeID]; exists {
-		return // Already added
-	}
-
-	a.AllNodes[node.NodeID] = node
-	a.TotalNodes++
-
-	// Update topology structure
-	if !slices.Contains(a.DCToRacks[node.DataCenter], node.Rack) {
-		a.DCToRacks[node.DataCenter] = append(a.DCToRacks[node.DataCenter], node.Rack)
-	}
-	a.RackToNodes[node.Rack] = append(a.RackToNodes[node.Rack], node)
-
-	// Update counts
-	if _, exists := a.ShardsByDC[node.DataCenter]; !exists {
-		a.TotalDCs++
-	}
-	if _, exists := a.ShardsByRack[node.Rack]; !exists {
-		a.TotalRacks++
-	}
-}
-
-// Finalize computes final statistics after all data is added
-func (a *TopologyAnalysis) Finalize() {
-	// Ensure we have accurate DC and rack counts
-	dcSet := make(map[string]bool)
-	rackSet := make(map[string]bool)
-	for _, node := range a.AllNodes {
-		dcSet[node.DataCenter] = true
-		rackSet[node.Rack] = true
-	}
-	a.TotalDCs = len(dcSet)
-	a.TotalRacks = len(rackSet)
-	a.TotalNodes = len(a.AllNodes)
-}
-
-// String returns a summary of the analysis
-func (a *TopologyAnalysis) String() string {
-	return fmt.Sprintf("TopologyAnalysis{shards:%d, nodes:%d, racks:%d, dcs:%d}",
-		a.TotalShards, a.TotalNodes, a.TotalRacks, a.TotalDCs)
-}
-
-// DetailedString returns a detailed multi-line summary
-func (a *TopologyAnalysis) DetailedString() string {
-	s := fmt.Sprintf("Topology Analysis:\n")
-	s += fmt.Sprintf("  Total Shards: %d\n", a.TotalShards)
-	s += fmt.Sprintf("  Data Centers: %d\n", a.TotalDCs)
-	for dc, count := range a.ShardsByDC {
-		s += fmt.Sprintf("    %s: %d shards\n", dc, count)
-	}
-	s += fmt.Sprintf("  Racks: %d\n", a.TotalRacks)
-	for rack, count := range a.ShardsByRack {
-		s += fmt.Sprintf("    %s: %d shards\n", rack, count)
-	}
-	s += fmt.Sprintf("  Nodes: %d\n", a.TotalNodes)
-	for nodeID, count := range a.ShardsByNode {
-		if count > 0 {
-			s += fmt.Sprintf("    %s: %d shards\n", nodeID, count)
-		}
-	}
-	return s
-}
-
 // TopologyExcess represents a topology level (DC/rack/node) with excess shards
 type TopologyExcess struct {
 	ID     string          // DC/rack/node ID
@@ -149,92 +147,4 @@ type TopologyExcess struct {
 	Excess int             // Number of excess shards (above target)
 	Shards []int           // Shard IDs at this level
 	Nodes  []*TopologyNode // Nodes at this level (for finding sources)
-}
-
-// CalculateDCExcess returns DCs with more shards than the target
-func CalculateDCExcess(analysis *TopologyAnalysis, dist *ECDistribution) []TopologyExcess {
-	var excess []TopologyExcess
-
-	for dc, count := range analysis.ShardsByDC {
-		if count > dist.TargetShardsPerDC {
-			// Collect nodes in this DC
-			var nodes []*TopologyNode
-			for _, rack := range analysis.DCToRacks[dc] {
-				nodes = append(nodes, analysis.RackToNodes[rack]...)
-			}
-			excess = append(excess, TopologyExcess{
-				ID:     dc,
-				Level:  "dc",
-				Excess: count - dist.TargetShardsPerDC,
-				Shards: analysis.DCToShards[dc],
-				Nodes:  nodes,
-			})
-		}
-	}
-
-	// Sort by excess (most excess first)
-	slices.SortFunc(excess, func(a, b TopologyExcess) int {
-		return b.Excess - a.Excess
-	})
-
-	return excess
-}
-
-// CalculateRackExcess returns racks with more shards than the target (within a DC)
-func CalculateRackExcess(analysis *TopologyAnalysis, dc string, targetPerRack int) []TopologyExcess {
-	var excess []TopologyExcess
-
-	for _, rack := range analysis.DCToRacks[dc] {
-		count := analysis.ShardsByRack[rack]
-		if count > targetPerRack {
-			excess = append(excess, TopologyExcess{
-				ID:     rack,
-				Level:  "rack",
-				Excess: count - targetPerRack,
-				Shards: analysis.RackToShards[rack],
-				Nodes:  analysis.RackToNodes[rack],
-			})
-		}
-	}
-
-	slices.SortFunc(excess, func(a, b TopologyExcess) int {
-		return b.Excess - a.Excess
-	})
-
-	return excess
-}
-
-// CalculateUnderservedDCs returns DCs that have fewer shards than target
-func CalculateUnderservedDCs(analysis *TopologyAnalysis, dist *ECDistribution) []string {
-	var underserved []string
-
-	// Check existing DCs
-	for dc, count := range analysis.ShardsByDC {
-		if count < dist.TargetShardsPerDC {
-			underserved = append(underserved, dc)
-		}
-	}
-
-	// Check DCs with nodes but no shards
-	for dc := range analysis.DCToRacks {
-		if _, exists := analysis.ShardsByDC[dc]; !exists {
-			underserved = append(underserved, dc)
-		}
-	}
-
-	return underserved
-}
-
-// CalculateUnderservedRacks returns racks that have fewer shards than target
-func CalculateUnderservedRacks(analysis *TopologyAnalysis, dc string, targetPerRack int) []string {
-	var underserved []string
-
-	for _, rack := range analysis.DCToRacks[dc] {
-		count := analysis.ShardsByRack[rack]
-		if count < targetPerRack {
-			underserved = append(underserved, rack)
-		}
-	}
-
-	return underserved
 }

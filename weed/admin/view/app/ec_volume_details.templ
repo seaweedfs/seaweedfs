@@ -3,18 +3,19 @@ package app
 import (
     "fmt"
     "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <div>
             <h1 class="h2">
-                <i class="fas fa-th-large me-2"></i>EC Volume Details
+                <i class="bi bi-grid me-2"></i>EC Volume Details
             </h1>
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="/admin" class="text-decoration-none">Dashboard</a></li>
-                    <li class="breadcrumb-item"><a href="/storage/ec-shards" class="text-decoration-none">EC Volumes</a></li>
+                    <li class="breadcrumb-item"><a href={ dash.PUrl(ctx, "/admin") } class="text-decoration-none">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href={ dash.PUrl(ctx, "/storage/ec-shards") } class="text-decoration-none">EC Volumes</a></li>
                     <li class="breadcrumb-item active" aria-current="page">Volume {fmt.Sprintf("%d", data.VolumeID)}</li>
                 </ol>
             </nav>
@@ -22,10 +23,10 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="history.back()">
-                    <i class="fas fa-arrow-left me-1"></i>Back
+                    <i class="bi bi-arrow-left me-1"></i>Back
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
-                    <i class="fas fa-refresh me-1"></i>Refresh
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                 </button>
             </div>
         </div>
@@ -37,7 +38,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="fas fa-info-circle me-2"></i>Volume Information
+                        <i class="bi bi-info-circle me-2"></i>Volume Information
                     </h5>
                 </div>
                 <div class="card-body">
@@ -61,11 +62,11 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             <td>
                                 if data.IsComplete {
                                     <span class="badge bg-success">
-                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/14 shards)
+                                        <i class="bi bi-check me-1"></i>Complete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 } else {
                                     <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/14 shards)
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 }
                             </td>
@@ -78,7 +79,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         if i > 0 { 
                                             <span>, </span>
                                         }
-                                        <span class="badge bg-danger">{fmt.Sprintf("%02d", shardID)}</span>
+                                        @renderEcShardBadge(uint32(shardID), true)
                                     }
                                 </td>
                             </tr>
@@ -115,7 +116,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="fas fa-chart-pie me-2"></i>Shard Distribution
+                        <i class="bi bi-pie-chart me-2"></i>Shard Distribution
                     </h5>
                 </div>
                 <div class="card-body">
@@ -145,14 +146,19 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                         <h6>Present Shards:</h6>
                         <div class="d-flex flex-wrap gap-1">
                             for _, shard := range data.Shards {
-                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                @renderEcShardBadge(shard.ShardID, false)
                             }
+                        </div>
+                        <div class="small text-muted mt-2">
+                            <span class="badge bg-primary me-1">Data</span>
+                            <span class="badge bg-warning text-dark me-2">Parity</span>
+                            Data shards are blue, parity shards are yellow.
                         </div>
                         if len(data.MissingShards) > 0 {
                             <h6 class="mt-2">Missing Shards:</h6>
                             <div class="d-flex flex-wrap gap-1">
                                 for _, shardID := range data.MissingShards {
-                                    <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                    @renderEcShardBadge(uint32(shardID), true)
                                 }
                             </div>
                         }
@@ -166,7 +172,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
     <div class="card">
         <div class="card-header">
             <h5 class="card-title mb-0">
-                <i class="fas fa-list me-2"></i>Shard Details
+                <i class="bi bi-list me-2"></i>Shard Details
             </h5>
         </div>
         <div class="card-body">
@@ -180,12 +186,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Shard ID
                                         if data.SortBy == "shard_id" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -194,12 +200,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Server
                                         if data.SortBy == "server" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -208,12 +214,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Data Center
                                         if data.SortBy == "data_center" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -222,12 +228,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         Rack
                                         if data.SortBy == "rack" {
                                             if data.SortOrder == "asc" {
-                                                <i class="fas fa-sort-up ms-1"></i>
+                                                <i class="bi bi-sort-up ms-1"></i>
                                             } else {
-                                                <i class="fas fa-sort-down ms-1"></i>
+                                                <i class="bi bi-sort-down ms-1"></i>
                                             }
                                         } else {
-                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                            <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                         }
                                     </a>
                                 </th>
@@ -240,10 +246,10 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             for _, shard := range data.Shards {
                                     <tr>
                                         <td>
-                                            <span class="badge bg-primary">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                            @renderEcShardBadge(shard.ShardID, false)
                                         </td>
                                         <td>
-                                            <a href={ templ.URL("/cluster/volume-servers/" + shard.Server) } class="text-primary text-decoration-none">
+                                            <a href={ dash.PUrl(ctx, "/cluster/volume-servers/" + shard.Server) } class="text-primary text-decoration-none">
                                                 <code class="small">{shard.Server}</code>
                                             </a>
                                         </td>
@@ -260,8 +266,8 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                             <span class="text-success">{bytesToHumanReadableUint64(shard.Size)}</span>
                                         </td>
                                         <td>
-                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" class="btn btn-sm btn-primary">
-                                                <i class="fas fa-external-link-alt me-1"></i>Volume Server
+                                            <a href={ templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
+                                                <i class="bi bi-box-arrow-up-right me-1"></i>Volume Server
                                             </a>
                                         </td>
                                     </tr>
@@ -271,7 +277,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                 </div>
             } else {
                 <div class="text-center py-4">
-                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <i class="bi bi-exclamation-triangle icon-3x text-warning mb-3"></i>
                     <h5>No EC shards found</h5>
                     <p class="text-muted">This volume may not be EC encoded yet.</p>
                 </div>
@@ -296,6 +302,22 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             window.location.href = url.toString();
         }
     </script>
+}
+
+templ renderEcShardBadge(shardID uint32, missing bool) {
+	if shardID < erasure_coding.DataShardsCount {
+		if missing {
+			<span class="badge bg-primary opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-primary me-1 mb-1" title={ fmt.Sprintf("Data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		}
+	} else {
+		if missing {
+			<span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-warning text-dark me-1 mb-1" title={ fmt.Sprintf("Parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		}
+	}
 }
 
 // Helper function to convert bytes to human readable format (uint64 version)

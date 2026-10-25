@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
@@ -76,14 +78,19 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 
 	if readConfErr != nil {
-		// Negative cache: topic doesn't exist
-		b.topicCacheMu.Lock()
-		b.topicCache[topicKey] = &topicCacheEntry{
-			conf:      nil,
-			expiresAt: time.Now().Add(b.topicCacheTTL),
+		// Only negative-cache when the filer definitively reports topic.conf is
+		// missing. Transient errors (timeouts, connection blips) must not poison
+		// the cache, otherwise the topic appears to vanish for the full TTL even
+		// though it still exists on disk.
+		if errors.Is(readConfErr, filer_pb.ErrNotFound) {
+			b.topicCacheMu.Lock()
+			b.topicCache[topicKey] = &topicCacheEntry{
+				conf:      nil,
+				expiresAt: time.Now().Add(b.topicCacheTTL),
+			}
+			b.topicCacheMu.Unlock()
+			glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 		}
-		b.topicCacheMu.Unlock()
-		glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 
@@ -147,12 +154,12 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		assignmentPartition := topic.FromPbPartition(assignment.Partition)
 		glog.V(4).Infof("checking assignment: LeaderBroker=%s, Partition=%s", assignment.LeaderBroker, assignmentPartition)
-		glog.V(4).Infof("comparing self=%s with LeaderBroker=%s: %v", self, assignment.LeaderBroker, assignment.LeaderBroker == string(self))
+		glog.V(4).Infof("comparing self=%s with LeaderBroker=%s: %v", self, assignment.LeaderBroker, pb.ServerAddress(assignment.LeaderBroker).Equals(self))
 		glog.V(4).Infof("comparing partition=%s with assignmentPartition=%s: %v", partition.String(), assignmentPartition.String(), partition.Equals(assignmentPartition))
 		glog.V(4).Infof("logical comparison (RangeStart, RangeStop only): %v", partition.LogicalEquals(assignmentPartition))
 		glog.V(4).Infof("partition details: RangeStart=%d, RangeStop=%d, RingSize=%d, UnixTimeNs=%d", partition.RangeStart, partition.RangeStop, partition.RingSize, partition.UnixTimeNs)
 		glog.V(4).Infof("assignmentPartition details: RangeStart=%d, RangeStop=%d, RingSize=%d, UnixTimeNs=%d", assignmentPartition.RangeStart, assignmentPartition.RangeStop, assignmentPartition.RingSize, assignmentPartition.UnixTimeNs)
-		if assignment.LeaderBroker == string(self) && partition.LogicalEquals(assignmentPartition) {
+		if pb.ServerAddress(assignment.LeaderBroker).Equals(self) && partition.LogicalEquals(assignmentPartition) {
 			glog.V(4).Infof("Creating local partition for %s %s", t, partition)
 			localPartition = topic.NewLocalPartition(partition, b.option.LogFlushInterval, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
 
@@ -252,7 +259,7 @@ func (b *MessageQueueBroker) getOffsetRangeFromChunkMetadata(t topic.Topic, part
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
+			if resp.Entry != nil && resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
 				if latestVersion == "" || resp.Entry.Name > latestVersion {
 					latestVersion = resp.Entry.Name
 				}
@@ -290,7 +297,7 @@ func (b *MessageQueueBroker) getOffsetRangeFromChunkMetadata(t topic.Topic, part
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && resp.Entry.Name == targetPartitionName {
+			if resp.Entry != nil && resp.Entry.IsDirectory && resp.Entry.Name == targetPartitionName {
 				partitionDir = resp.Entry.Name
 				break
 			}
@@ -327,7 +334,7 @@ func (b *MessageQueueBroker) getOffsetRangeFromChunkMetadata(t topic.Topic, part
 			if err != nil {
 				return err
 			}
-			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
+			if resp.Entry != nil && !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
 				// Check for offset ranges in Extended attributes (both log files and parquet files)
 				if resp.Entry.Extended != nil {
 					fileType := "log"

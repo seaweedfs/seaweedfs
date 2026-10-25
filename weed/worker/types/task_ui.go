@@ -6,47 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
-// Helper function to convert seconds to the most appropriate interval unit
-func secondsToIntervalValueUnit(totalSeconds int) (int, string) {
-	if totalSeconds == 0 {
-		return 0, "minute"
-	}
-
-	// Preserve seconds when not divisible by minutes
-	if totalSeconds < 60 || totalSeconds%60 != 0 {
-		return totalSeconds, "second"
-	}
-
-	// Check if it's evenly divisible by days
-	if totalSeconds%(24*3600) == 0 {
-		return totalSeconds / (24 * 3600), "day"
-	}
-
-	// Check if it's evenly divisible by hours
-	if totalSeconds%3600 == 0 {
-		return totalSeconds / 3600, "hour"
-	}
-
-	// Default to minutes
-	return totalSeconds / 60, "minute"
-}
-
-// Helper function to convert interval value and unit to seconds
-func IntervalValueUnitToSeconds(value int, unit string) int {
-	switch unit {
-	case "day":
-		return value * 24 * 3600
-	case "hour":
-		return value * 3600
-	case "minute":
-		return value * 60
-	case "second":
-		return value
-	default:
-		return value * 60 // Default to minutes
-	}
-}
-
 // TaskConfig defines the interface for task configurations
 // This matches the interfaces used in base package and handlers
 type TaskConfig interface {

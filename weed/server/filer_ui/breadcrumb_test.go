@@ -84,3 +84,21 @@ func TestToBreadcrumb(t *testing.T) {
 		})
 	}
 }
+
+func TestPrintPathPreservesPathSafeTimestampChars(t *testing.T) {
+	got := printpath("/logs/run_id=backfill__2025-01-31T15:00:00+00:00/")
+	want := "/logs/run_id=backfill__2025-01-31T15:00:00+00:00/"
+
+	if got != want {
+		t.Fatalf("printpath() = %q, want %q", got, want)
+	}
+}
+
+func TestQueryEscapePreservesPlusInLoadMoreCursor(t *testing.T) {
+	got := funcMap["queryEscape"].(func(string) string)("task:1+next")
+	want := "task%3A1%2Bnext"
+
+	if got != want {
+		t.Fatalf("queryEscape() = %q, want %q", got, want)
+	}
+}

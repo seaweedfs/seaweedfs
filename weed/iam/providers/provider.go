@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // IdentityProvider defines the interface for external identity providers
@@ -42,11 +43,34 @@ type ExternalIdentity struct {
 	// Groups are the groups the user belongs to
 	Groups []string `json:"groups,omitempty"`
 
+	// Roles are the roles the user holds (from the token's `roles` claim).
+	// Surfaced into the STS request context so resource policies can gate on
+	// jwt:roles - same rationale as Groups (the claim is otherwise excluded from
+	// attributes by the provider's processedClaims set, so it never reached the
+	// request context and was usable only via provider-configured role mapping).
+	Roles []string `json:"roles,omitempty"`
+
 	// Attributes are additional user attributes
 	Attributes map[string]string `json:"attributes,omitempty"`
 
 	// Provider is the name of the identity provider
 	Provider string `json:"provider"`
+
+	// Issuer is the OIDC `iss` claim (or equivalent) from the source token.
+	// Stable per (provider, identity) and used together with UserID to derive
+	// a stable parent-user hash that survives token rotation.
+	Issuer string `json:"issuer,omitempty"`
+
+	// PrincipalTags are key/value pairs extracted from the AWS principal-tags
+	// namespace claim (`https://aws.amazon.com/tags/principal_tags`). They are
+	// surfaced as `aws:PrincipalTag/<key>` in the policy request context
+	// (subject to per-provider allowlist filtering at the STS layer).
+	PrincipalTags map[string]string `json:"principalTags,omitempty"`
+
+	// ClaimPolicies are policy names pulled from the provider-configured
+	// PolicyClaim. Empty when the provider isn't running in claim-based
+	// policy mode or the claim was absent.
+	ClaimPolicies []string `json:"claimPolicies,omitempty"`
 
 	// TokenExpiration is the expiration time of the source identity token
 	// This is used to limit session duration to not exceed the token's exp claim
@@ -225,7 +249,7 @@ func (r *MappingRule) Matches(claims *TokenClaims) bool {
 // matchValue checks if a value matches the rule value (with wildcard support)
 // Uses AWS IAM-compliant case-insensitive wildcard matching for consistency with policy engine
 func (r *MappingRule) matchValue(value string) bool {
-	matched := policy.AwsWildcardMatch(r.Value, value)
+	matched := wildcard.MatchesWildcard(strings.ToLower(r.Value), strings.ToLower(value))
 	glog.V(3).Infof("AWS IAM pattern match result: '%s' matches '%s' = %t", value, r.Value, matched)
 	return matched
 }

@@ -1,13 +1,39 @@
+{{- include "seaweedfs.compat" . -}}
 {{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
 {{- $createBuckets := list }}
-{{- $s3Enabled := false }}
 {{- $enableAuth := false }}
 {{- $existingConfigSecret := "" }}
+{{- $bucketsFolder := "/buckets" }}
+{{- $bucketEnvVars := merge (dict) (.Values.global.seaweedfs.extraEnvironmentVars | default dict) }}
+{{- if .Values.allInOne.enabled }}
+  {{- $bucketEnvVars = merge (.Values.allInOne.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- else }}
+  {{- $bucketEnvVars = merge (.Values.filer.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- end }}
+{{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
+{{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}
+{{- $clusterAlias := default "sw" (get $bucketEnvVars "WEED_CLUSTER_DEFAULT") }}
+{{- $clusterUpper := upper $clusterAlias }}
+{{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
+{{- $clusterFilerKey := printf "WEED_CLUSTER_%s_FILER" $clusterUpper }}
+{{- $podSecurityContext := .Values.filer.podSecurityContext }}
+{{- $containerSecurityContext := .Values.filer.containerSecurityContext }}
+{{- $nodeSelector := .Values.filer.nodeSelector }}
+{{- $tolerations := .Values.filer.tolerations }}
+{{- $createBucketsHook := .Values.filer.s3.createBucketsHook }}
+{{- if .Values.allInOne.enabled }}
+  {{- $podSecurityContext = .Values.allInOne.podSecurityContext }}
+  {{- $containerSecurityContext = .Values.allInOne.containerSecurityContext }}
+  {{- $nodeSelector = .Values.allInOne.nodeSelector }}
+  {{- $tolerations = .Values.allInOne.tolerations }}
+  {{- $createBucketsHook = .Values.allInOne.s3.createBucketsHook }}
+{{- else if .Values.s3.createBuckets }}
+  {{- $createBucketsHook = .Values.s3.createBucketsHook }}
+{{- end }}
 
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
   {{- if .Values.allInOne.s3.enabled }}
-    {{- $s3Enabled = true }}
     {{- if .Values.allInOne.s3.createBuckets }}
       {{- $createBuckets = .Values.allInOne.s3.createBuckets }}
     {{- end }}
@@ -17,7 +43,6 @@
 {{- else if .Values.master.enabled }}
   {{- /* Check if embedded (in filer) or standalone S3 gateway is enabled */}}
   {{- if or .Values.filer.s3.enabled .Values.s3.enabled }}
-    {{- $s3Enabled = true }}
     {{- if .Values.s3.createBuckets }}
       {{- $createBuckets = .Values.s3.createBuckets }}
       {{- $enableAuth = .Values.s3.enableAuth }}
@@ -30,41 +55,53 @@
   {{- end }}
 {{- end }}
 
-{{- if and $s3Enabled $createBuckets }}
+{{- /* Shared with networkpolicy.yaml, which renders this Job's policy exactly
+       when the Job itself renders. */}}
+{{- if include "seaweedfs.bucketHookEnabled" . }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: "{{ $.Release.Name }}-bucket-hook"
   labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: bucket-hook
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     metadata:
       name: "{{ .Release.Name }}"
       labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
         app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: bucket-hook
     spec:
-      restartPolicy: Never
-      {{- if .Values.filer.podSecurityContext.enabled }}
-      securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- with $createBucketsHook.affinity }}
+      affinity:
+        {{ tpl . $ | indent 8 | trim }}
       {{- end }}
+      restartPolicy: Never
+      {{- if $podSecurityContext.enabled }}
+      securityContext: {{- omit $podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      {{- with coalesce $createBucketsHook.tolerations $tolerations }}
+      tolerations:
+        {{ tpl . $ | indent 8 | trim }}
+      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
       - name: post-install-job
-        image: {{ template "master.image" . }}
+        image: {{ template "seaweedfs.master.image" . }}
+        imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
-          - name: WEED_CLUSTER_DEFAULT
-            value: "sw"
-          - name: WEED_CLUSTER_SW_MASTER
-            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
-          - name: WEED_CLUSTER_SW_FILER
-            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -79,10 +116,33 @@ spec:
                 fieldPath: metadata.namespace
           - name: SEAWEEDFS_FULLNAME
             value: "{{ include "seaweedfs.fullname" . }}"
+          {{- /* Carries the JWT signing keys when they are set as environment
+                 overrides rather than in security.toml. */}}
+          {{- range $key := keys $bucketEnvVars | sortAlpha }}
+          {{- $value := index $bucketEnvVars $key }}
+          {{- if not (has $key (list "WEED_CLUSTER_DEFAULT" $clusterMasterKey $clusterFilerKey)) }}
+          - name: {{ $key }}
+          {{- if kindIs "string" $value }}
+            value: {{ tpl $value $ | quote }}
+          {{- else }}
+            valueFrom:
+              {{ toYaml $value | nindent 14 | trim }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- /* Computed, as in all-in-one: the values pick the cluster alias,
+                 the chart still owns the endpoints the script waits on. */}}
+          - name: WEED_CLUSTER_DEFAULT
+            value: {{ $clusterAlias | quote }}
+          - name: {{ $clusterMasterKey }}
+            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
+          - name: {{ $clusterFilerKey }}
+            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
         command:
           - "/bin/sh"
           - "-ec"
           - |
+            set -o pipefail
             wait_for_service() {
               local url=$1
               local max_attempts=60  # 5 minutes total (5s * 60)
@@ -90,7 +150,7 @@ spec:
               
               echo "Waiting for service at $url..."
               while [ $attempt -le $max_attempts ]; do
-                if wget -q --spider "$url" >/dev/null 2>&1; then
+                if curl -sS -o /dev/null --max-time 5 "$url" >/dev/null 2>&1; then
                   echo "Service at $url is up!"
                   return 0
                 fi
@@ -102,19 +162,58 @@ spec:
               exit 1
             }
             {{- if .Values.allInOne.enabled }}
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.allInOne.readinessProbe.httpGet.path }}"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterMasterKey }}{{ .Values.allInOne.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterFilerKey }}{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- else }}
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterMasterKey }}{{ .Values.master.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterFilerKey }}{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
-          {{- range $createBuckets }}
-            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ .name }}"; then
-              echo "Bucket '{{ .name }}' already exists, skipping creation."
+            {{- range $createBuckets }}
+            {{- $bucketName := .name }}
+            {{- $bucketLock := or .lock .objectLock .withLock }}
+            bucket_list=$(/bin/echo 's3.bucket.list' | /usr/bin/weed shell) || { echo "Error listing s3 buckets"; exit 1; }
+            {{- /* One awk: grep -q exits early, awk takes SIGPIPE, pipefail fails the test. */}}
+            if printf '%s\n' "$bucket_list" | awk -v bucket="{{ $bucketName }}" '$1 "" == bucket { found = 1 } END { exit !found }'; then
+              echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
             else
-              echo "Creating bucket '{{ .name }}'..."
-              /bin/echo "s3.bucket.create --name {{ .name }}" | /usr/bin/weed shell
+              echo "Creating bucket '{{ $bucketName }}'..."
+              /bin/echo 's3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}' | /usr/bin/weed shell
             fi
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketLock := or .lock .objectLock .withLock }}
+          {{- if $bucketLock }}
+            /bin/echo 's3.bucket.lock -name {{ .name }} -enable' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketVersioning := "" }}
+          {{- if kindIs "bool" .versioning }}
+            {{- if .versioning }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- else }}
+              {{- $bucketVersioning = "Suspended" }}
+            {{- end }}
+          {{- else if kindIs "string" .versioning }}
+            {{- $versioningLower := lower .versioning }}
+            {{- if eq $versioningLower "enabled" "enable" "true" }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- else if eq $versioningLower "suspended" "disable" "false" }}
+              {{- $bucketVersioning = "Suspended" }}
+            {{- else if or (eq .versioning "Enabled") (eq .versioning "Suspended") }}
+              {{- $bucketVersioning = .versioning }}
+            {{- else }}
+              {{- fail (printf "Invalid versioning value for bucket %s: %s. Must be 'Enabled' or 'Suspended'" .name .versioning) }}
+            {{- end }}
+          {{- end }}
+          {{- if $bucketVersioning }}
+            /bin/echo 's3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- if .ttl }}
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
+          {{- end }}
           {{- end }}
           {{- range $createBuckets }}
           {{- if .anonymousRead }}
@@ -126,26 +225,49 @@ spec:
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if $enableAuth }}
+        {{- if or (and $containerSecurityContext.enabled $containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
         volumeMounts:
+          {{- include "seaweedfs.tmpDirVolumeMount" (list . $containerSecurityContext "" "") | nindent 10 }}
+          {{- if $enableAuth }}
           - name: config-users
             mountPath: /etc/sw
             readOnly: true
+          {{- end }}
+          {{- if include "seaweedfs.securityConfigEnabled" . }}
+          - name: security-config
+            readOnly: true
+            mountPath: /etc/seaweedfs/security.toml
+            subPath: security.toml
+          {{- end }}
+          {{- if .Values.global.seaweedfs.enableSecurity }}
+          - name: ca-cert
+            readOnly: true
+            mountPath: /usr/local/share/ca-certificates/ca/
+          - name: client-cert
+            readOnly: true
+            mountPath: /usr/local/share/ca-certificates/client/
+          {{- end }}
         {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
-          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          {{- if and .Values.global.seaweedfs.monitoring.enabled .Values.master.metricsPort }}
           - containerPort: {{ .Values.master.metricsPort }}
             name: metrics
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
-        {{- if .Values.filer.containerSecurityContext.enabled }}
-        securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+        {{- with coalesce .Values.allInOne.s3.createBucketsHook.resources .Values.s3.createBucketsHook.resources .Values.filer.s3.createBucketsHook.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
         {{- end }}
-    {{- if $enableAuth }}
+        {{- if $containerSecurityContext.enabled }}
+        securityContext: {{- omit $containerSecurityContext "enabled" | toYaml | nindent 12 }}
+        {{- end }}
+    {{- if or (and $containerSecurityContext.enabled $containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . $containerSecurityContext "" "" false) | nindent 8 }}
+        {{- if $enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
@@ -154,5 +276,23 @@ spec:
             {{- else }}
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
+        {{- end }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
+        - name: security-config
+          configMap:
+            name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
+        - name: ca-cert
+          secret:
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
+        - name: client-cert
+          secret:
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- end }}
     {{- end }}
+      {{- with coalesce $createBucketsHook.nodeSelector $nodeSelector }}
+      nodeSelector:
+        {{ tpl . $ | indent 8 | trim }}
+      {{- end }}
 {{- end }}

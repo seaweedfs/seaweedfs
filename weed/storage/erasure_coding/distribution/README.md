@@ -30,8 +30,8 @@ fmt.Println(dist.Summary())
 // Replication: replication=110 (DCs:2, Racks/DC:2, Nodes/Rack:1)
 // Distribution Plan:
 //   Data Centers: 2 (target 7 shards each, max 9)
-//   Racks per DC: 2 (target 4 shards each, max 6)
-//   Nodes per Rack: 1 (target 4 shards each, max 6)
+//   Racks per DC: 2 (target 4 shards each, max 4)
+//   Nodes per Rack: 1 (target 4 shards each, max 4)
 ```
 
 ### Custom EC Ratios (seaweed-enterprise)

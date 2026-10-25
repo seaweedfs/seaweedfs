@@ -13,6 +13,16 @@
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
 #max_file_name_length = 255
+# for S3: how long to wait before deleting an empty folder.
+# increase this if using tools like Spark that create temporary directories.
+#s3.empty_folder_cleanup_delay = "2m"
+# where the filer's internal system metadata log chunks are stored.
+# By default the log follows the filer's -collection flag; set this to keep
+# the internal log in its own collection, out of the default one.
+# Keep the target stable: log chunks written under an older value are not
+# moved, and old log entries keep referencing that collection's volumes.
+#metaLog.collection = "filer-meta"
+#metaLog.replication = ""
 
 ####################################################
 # The following are filer store options
@@ -23,12 +33,22 @@ recursive_delete = false
 # faster than previous leveldb, recommended.
 enabled = true
 dir = "./filerldb2"                    # directory to store level db files
+# optional tuning, applied to each of the 8 partitioned stores
+# block_cache_size_mb = 32             # sorted-table read cache
+# write_buffer_size_mb = 16            # memtable size before flushing to disk
+# block_size_kb = 4                    # uncompressed block ('page') size inside table files
+# compaction_table_size_mb = 2         # target size of generated table files
 
 [leveldb3]
 # similar to leveldb2.
 # each bucket has its own meta store.
 enabled = false
 dir = "./filerldb3"                    # directory to store level db files
+# optional tuning, applied to the default store and each bucket store
+# block_cache_size_mb = 32             # sorted-table read cache
+# write_buffer_size_mb = 16            # memtable size before flushing to disk
+# block_size_kb = 4                    # uncompressed block ('page') size inside table files
+# compaction_table_size_mb = 2         # target size of generated table files
 
 [rocksdb]
 # local on disk, similar to leveldb
@@ -55,20 +75,27 @@ enabled = false
 # [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
 dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
 enable_tls = false
-ca_crt = ""                # ca.crt dir when enable_tls set true
-client_crt = ""            # mysql client.crt dir when enable_tls set true
-client_key = ""            # mysql client.key dir when enable_tls set true
+ca_crt = ""                       # path to CA cert (PEM) — optional; if empty, the system trust store is used
+client_crt = ""                   # path to client cert (PEM) — only when server requires mTLS; must be set together with client_key
+client_key = ""                   # path to client key (PEM)  — only when server requires mTLS; must be set together with client_crt
+tls_insecure_skip_verify = false  # skip server cert verification (use only for testing or with self-signed certs)
+tls_server_name = ""              # override SNI / cert hostname; leave empty to use `hostname` above
 hostname = "localhost"
 port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
+# Default uses the row-alias form (`AS new`) added in MySQL 8.0.19 and is the
+# preferred syntax there. For MariaDB (any version) and MySQL 5.7, override
+# with the form below — MariaDB does not support row aliases in
+# INSERT ... ON DUPLICATE KEY UPDATE:
+# upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE `meta` = VALUES(`meta`)"""
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [mysql2]  # or memsql, tidb
@@ -87,7 +114,7 @@ port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 interpolateParams = false
@@ -96,13 +123,9 @@ enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
-# CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT,
-#   name        VARCHAR(65535),
-#   directory   VARCHAR(65535),
-#   meta        bytea,
-#   PRIMARY KEY (dirhash, name)
-# );
+# createTable = true          # auto-create filemeta with the default schema
+# createTable = false         # skip table creation (default; for restricted DB roles)
+# createTable = """CREATE TABLE IF NOT EXISTS "%s" (...)"""  # custom template
 enabled = false
 hostname = "localhost"
 port = 5432
@@ -117,7 +140,7 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
@@ -156,7 +179,7 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 10
+connection_max_idle = 50
 connection_max_open = 50
 connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
@@ -220,6 +243,23 @@ client_cert_path = ""
 client_key_path = ""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
+# Connection tuning, accepted by every redis filer store section. Each key keeps the go-redis
+# default when left at 0, and a timeout cannot be turned off - a filer that never times out a read
+# is what stalls a failover. Shorter read timeouts make the filer notice a dead redis sooner, which
+# matters most for the sentinel store: every pooled connection to the old master has to time out
+# before a failover is absorbed.
+# max_retries = 0                        # 0 is three retries, -1 disables retrying
+# min_retry_backoff_millisecond = 0      # default 8
+# max_retry_backoff_millisecond = 0      # default 512
+# dial_timeout_millisecond = 0           # default 5000
+# read_timeout_millisecond = 0           # default 3000
+# write_timeout_millisecond = 0          # default 3000, follows read_timeout_millisecond
+# pool_size = 0                          # default 10 per CPU
+# pool_timeout_millisecond = 0           # default read_timeout_millisecond + 1000
+# min_idle_conns = 0
+# max_idle_conns = 0
+# conn_max_idle_time_seconds = 0         # default 1800
+# conn_max_lifetime_seconds = 0          # default unlimited
 
 [redis2_sentinel]
 enabled = false
@@ -227,6 +267,9 @@ addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
 masterName = "master"
 username = ""
 password = ""
+# credentials used to authenticate against the sentinel nodes themselves (if they require auth)
+sentinel_username = ""
+sentinel_password = ""
 database = 0
 # prefix for filer redis keys
 keyPrefix = ""
@@ -234,6 +277,7 @@ enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
 client_key_path = ""
+# see [redis2] for the connection tuning keys
 
 [redis_cluster2]
 enabled = false
@@ -254,7 +298,7 @@ ca_cert_path = ""
 client_cert_path = ""
 client_key_path = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = false
+useReadOnly = false
 # automatically use the closest Redis server for reads
 routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
@@ -343,6 +387,21 @@ option_pool_size = 0
 database = "seaweedfs"
 
 [elastic7]
+enabled = false
+servers = [
+    "http://localhost1:9200",
+    "http://localhost2:9200",
+    "http://localhost3:9200",
+]
+username = ""
+password = ""
+sniff_enabled = false
+healthcheck_enabled = false
+# increase the value is recommend, be sure the value in Elastic is greater or equal here
+index.max_result_window = 10000
+
+# for Elasticsearch 8.x clusters
+[elastic8]
 enabled = false
 servers = [
     "http://localhost1:9200",

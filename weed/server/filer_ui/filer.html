@@ -170,7 +170,7 @@
 
     {{ if .ShouldDisplayLoadMore }}
     <div class="row">
-        <a href={{ print .Path "?limit=" .Limit "&lastFileName=" .LastFileName }} >
+        <a href="{{ printpath .Path }}?limit={{ .Limit }}&lastFileName={{ queryEscape .LastFileName }}" >
         Load more
         </a>
     </div>

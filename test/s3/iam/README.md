@@ -83,7 +83,7 @@ The S3 IAM integration tests validate the complete end-to-end functionality of:
 
 ### Prerequisites
 
-1. **Go 1.19+** with modules enabled
+1. **Go 1.26+** with modules enabled
 2. **SeaweedFS Binary** (`weed`) built with IAM support
 3. **Test Dependencies**:
    ```bash
@@ -425,7 +425,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v3
         with:
-          go-version: '1.19'
+          go-version-file: 'go.mod'
       
       - name: Build SeaweedFS
         run: go build -o weed ./main.go

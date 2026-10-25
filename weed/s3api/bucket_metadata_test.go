@@ -79,7 +79,8 @@ var (
 	}
 
 	//load filer is
-	loadFilerBucket = make(map[string]int, 1)
+	loadFilerBucket     = make(map[string]int, 1)
+	loadFilerBucketLock sync.Mutex
 	//override `loadBucketMetadataFromFiler` to avoid really load from filer
 )
 
@@ -169,25 +170,25 @@ func TestBuildBucketMetadata(t *testing.T) {
 	for _, tc := range tcs {
 		resultBucketMetadata := buildBucketMetadata(iam, tc.filerEntry)
 		if !reflect.DeepEqual(resultBucketMetadata, tc.expectBucketMetadata) {
-			t.Fatalf("result is unexpect: \nresult: %v, \nexpect: %v", resultBucketMetadata, tc.expectBucketMetadata)
+			t.Fatalf("result is unexpected: \nresult: %v, \nexpect: %v", resultBucketMetadata, tc.expectBucketMetadata)
 		}
 	}
 }
 
 func TestGetBucketMetadata(t *testing.T) {
+	original := loadBucketMetadataFromFiler
+	t.Cleanup(func() { loadBucketMetadataFromFiler = original })
 	loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
 		time.Sleep(time.Second)
+		loadFilerBucketLock.Lock()
 		loadFilerBucket[bucketName] = loadFilerBucket[bucketName] + 1
+		loadFilerBucketLock.Unlock()
 		return &BucketMetaData{
 			Name: bucketName,
 		}, nil
 	}
 
-	br := &BucketRegistry{
-		metadataCache: make(map[string]*BucketMetaData),
-		notFound:      make(map[string]struct{}),
-		s3a:           nil,
-	}
+	br := NewBucketRegistry(nil)
 
 	//start 40 goroutine for
 	var wg sync.WaitGroup

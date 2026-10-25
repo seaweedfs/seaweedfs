@@ -317,6 +317,60 @@ func TestStorageSlotChangeCapacityCalculation(t *testing.T) {
 	assert.Equal(t, int32(0), reservedShard, "Should show 0 reserved shard slots")
 }
 
+func TestGetDisksWithEffectiveCapacity_UnknownEmptyDiskFallback(t *testing.T) {
+	activeTopology := NewActiveTopology(10)
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "empty-node",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										DiskId:         0,
+										Type:           "hdd",
+										VolumeCount:    0,
+										MaxVolumeCount: 0,
+									},
+								},
+							},
+							{
+								Id: "used-node",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										DiskId:         0,
+										Type:           "hdd",
+										VolumeCount:    1,
+										MaxVolumeCount: 0,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := activeTopology.UpdateTopology(topologyInfo)
+	assert.NoError(t, err)
+
+	available := activeTopology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 1)
+	assert.Len(t, available, 1, "only the empty unknown-capacity disk should be treated as provisionally available")
+	if len(available) == 1 {
+		assert.Equal(t, "empty-node", available[0].NodeID)
+		assert.Equal(t, uint32(0), available[0].DiskID)
+	}
+
+	assert.Equal(t, int64(1), activeTopology.GetEffectiveAvailableCapacity("empty-node", 0))
+	assert.Equal(t, int64(0), activeTopology.GetEffectiveAvailableCapacity("used-node", 0))
+}
+
 // TestECMultipleTargets demonstrates proper handling of EC operations with multiple targets
 func TestECMultipleTargets(t *testing.T) {
 	activeTopology := NewActiveTopology(10)

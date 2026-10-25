@@ -26,6 +26,7 @@ type Worker struct {
 	config         *types.WorkerConfig
 	registry       *tasks.TaskRegistry
 	cmds           chan workerCommand
+	done           chan struct{} // closed when managerLoop exits, so senders stop blocking
 	state          *workerState
 	taskLogHandler *tasks.TaskLogHandler
 }
@@ -172,6 +173,13 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	// Use the global unified registry that already has all tasks registered
 	registry := tasks.GetGlobalTaskRegistry()
 
+	// Ensure the base working directory exists
+	if config.BaseWorkingDir != "" {
+		if err := os.MkdirAll(config.BaseWorkingDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create base working directory %s: %v", config.BaseWorkingDir, err)
+		}
+	}
+
 	// Initialize task log handler
 	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
 	// Ensure the base task log directory exists to avoid errors when admin requests logs
@@ -186,6 +194,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 		registry:       registry,
 		taskLogHandler: taskLogHandler,
 		cmds:           make(chan workerCommand),
+		done:           make(chan struct{}),
 	}
 
 	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetAll()))
@@ -285,24 +294,35 @@ out:
 
 		}
 	}
+	// The loop no longer receives. Wake any task goroutine still trying to
+	// report into w.cmds so it returns instead of blocking forever.
+	close(w.done)
+}
+
+// dispatch delivers a fire-and-forget command to the manager loop, aborting
+// if the worker has stopped. Returns false when the loop is gone, so task
+// goroutines that outlive a forced shutdown don't block on it forever.
+func (w *Worker) dispatch(cmd workerCommand) bool {
+	select {
+	case w.cmds <- cmd:
+		return true
+	case <-w.done:
+		return false
+	}
 }
 
 func (w *Worker) getTaskLoad() int {
 	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetTaskLoad,
-		data:   respCh,
-		resp:   nil,
+	if !w.dispatch(workerCommand{action: ActionGetTaskLoad, data: respCh}) {
+		return 0
 	}
 	return <-respCh
 }
 
 func (w *Worker) setTask(task *types.TaskInput) error {
 	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionSetTask,
-		data:   task,
-		resp:   resp,
+	if !w.dispatch(workerCommand{action: ActionSetTask, data: task, resp: resp}) {
+		return fmt.Errorf("worker is stopping")
 	}
 	if err := <-resp; err != nil {
 		glog.Errorf("TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
@@ -317,18 +337,16 @@ func (w *Worker) setTask(task *types.TaskInput) error {
 }
 
 func (w *Worker) removeTask(task *types.TaskInput) int {
-	w.cmds <- workerCommand{
-		action: ActionRemoveTask,
-		data:   task.ID,
+	if !w.dispatch(workerCommand{action: ActionRemoveTask, data: task.ID}) {
+		return 0
 	}
 	return w.getTaskLoad()
 }
 
 func (w *Worker) getAdmin() AdminClient {
 	respCh := make(chan AdminClient, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetAdmin,
-		data:   respCh,
+	if !w.dispatch(workerCommand{action: ActionGetAdmin, data: respCh}) {
+		return nil
 	}
 	return <-respCh
 }
@@ -374,31 +392,6 @@ func (w *Worker) setReqTick(tick *time.Ticker) *time.Ticker {
 		data:   tick,
 	}
 	return w.getReqTick()
-}
-
-func (w *Worker) getStartTime() time.Time {
-	respCh := make(chan time.Time, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStartTime,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getCompletedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetCompletedTasks,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getFailedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetFailedTasks,
-		data:   respCh,
-	}
-	return <-respCh
 }
 
 // getTaskLoggerConfig returns the task logger configuration with worker's log directory
@@ -483,16 +476,14 @@ func (w *Worker) handleStart(cmd workerCommand) {
 }
 
 func (w *Worker) Stop() error {
-	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionStop,
-		resp:   resp,
-	}
-	if err := <-resp; err != nil {
-		return err
-	}
+	// Snapshot the admin client BEFORE ActionStop terminates the manager loop.
+	// Once the loop exits, getAdmin/getTaskLoad return zero values (they abort
+	// on w.done) rather than the real client, so grab it while it's still live.
+	adminClient := w.getAdmin()
 
-	// Wait for tasks to finish
+	// Best-effort task drain: wait up to 30s for in-flight tasks to finish.
+	// Still done BEFORE ActionStop so getTaskLoad can round-trip through the
+	// manager loop.
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 out:
@@ -505,8 +496,20 @@ out:
 		}
 	}
 
-	// Disconnect from admin server
-	if adminClient := w.getAdmin(); adminClient != nil {
+	// Terminate the manager loop. A second Stop (e.g. an admin-shutdown timer
+	// racing an explicit Stop) finds the loop already gone, so abort on w.done
+	// instead of blocking on a send no one will receive.
+	resp := make(chan error)
+	select {
+	case w.cmds <- workerCommand{action: ActionStop, resp: resp}:
+		if err := <-resp; err != nil {
+			return err
+		}
+	case <-w.done:
+	}
+
+	// Disconnect from admin server.
+	if adminClient != nil {
 		if err := adminClient.Disconnect(); err != nil {
 			glog.Errorf("Error disconnecting from admin server: %v", err)
 		}
@@ -536,27 +539,6 @@ func (w *Worker) handleStop(cmd workerCommand) {
 	cmd.resp <- nil
 }
 
-// RegisterTask registers a task factory
-func (w *Worker) RegisterTask(taskType types.TaskType, factory types.TaskFactory) {
-	w.registry.Register(taskType, factory)
-}
-
-// GetCapabilities returns the worker capabilities
-func (w *Worker) GetCapabilities() []types.TaskType {
-	return w.config.Capabilities
-}
-
-// GetStatus returns the current worker status
-func (w *Worker) GetStatus() types.WorkerStatus {
-	respCh := make(statusResponse, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStatus,
-		data:   respCh,
-		resp:   nil,
-	}
-	return <-respCh
-}
-
 // HandleTask handles a task execution
 func (w *Worker) HandleTask(task *types.TaskInput) error {
 	glog.V(1).Infof("Worker %s received task %s (type: %s, volume: %d)",
@@ -570,26 +552,6 @@ func (w *Worker) HandleTask(task *types.TaskInput) error {
 	go w.executeTask(task)
 
 	return nil
-}
-
-// SetCapabilities sets the worker capabilities
-func (w *Worker) SetCapabilities(capabilities []types.TaskType) {
-	w.config.Capabilities = capabilities
-}
-
-// SetMaxConcurrent sets the maximum concurrent tasks
-func (w *Worker) SetMaxConcurrent(max int) {
-	w.config.MaxConcurrent = max
-}
-
-// SetHeartbeatInterval sets the heartbeat interval
-func (w *Worker) SetHeartbeatInterval(interval time.Duration) {
-	w.config.HeartbeatInterval = interval
-}
-
-// SetTaskRequestInterval sets the task request interval
-func (w *Worker) SetTaskRequestInterval(interval time.Duration) {
-	w.config.TaskRequestInterval = interval
 }
 
 // SetAdminClient sets the admin client
@@ -616,8 +578,10 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.id, task.ID, task.Type, task.VolumeID, task.Server, task.Collection, startTime.Format(time.RFC3339))
 
 	// Report task start to admin server
-	if err := w.getAdmin().UpdateTaskProgress(task.ID, 0.0); err != nil {
-		glog.V(1).Infof("Failed to report task start to admin: %v", err)
+	if admin := w.getAdmin(); admin != nil {
+		if err := admin.UpdateTaskProgress(task.ID, 0.0); err != nil {
+			glog.V(1).Infof("Failed to report task start to admin: %v", err)
+		}
 	}
 
 	// Determine task-specific working directory (BaseWorkingDir is guaranteed to be non-empty)
@@ -677,6 +641,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
+	taskInstance.SetWorkingDir(taskWorkingDir)
 
 	// If we have a file logger, adapt it so task WithFields logs are captured into file
 	if fileLogger != nil {
@@ -689,8 +654,10 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	taskInstance.SetProgressCallback(func(progress float64, stage string) {
 		// Report progress updates to admin server
 		glog.V(2).Infof("Task %s progress: %.1f%% - %s", task.ID, progress, stage)
-		if err := w.getAdmin().UpdateTaskProgress(task.ID, progress); err != nil {
-			glog.V(1).Infof("Failed to report task progress to admin: %v", err)
+		if admin := w.getAdmin(); admin != nil {
+			if err := admin.UpdateTaskProgress(task.ID, progress); err != nil {
+				glog.V(1).Infof("Failed to report task progress to admin: %v", err)
+			}
 		}
 		if fileLogger != nil {
 			// Use meaningful stage description or fallback to generic message
@@ -712,9 +679,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	}
 	if err != nil {
 		w.completeTask(task.ID, false, err.Error())
-		w.cmds <- workerCommand{
-			action: ActionIncTaskFail,
-		}
+		w.dispatch(workerCommand{action: ActionIncTaskFail})
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
 		if fileLogger != nil {
 			fileLogger.LogStatus("failed", err.Error())
@@ -726,19 +691,19 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 			fileLogger.Sync()
 		}
 		w.completeTask(task.ID, true, "")
-		w.cmds <- workerCommand{
-			action: ActionIncTaskComplete,
-		}
+		w.dispatch(workerCommand{action: ActionIncTaskComplete})
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
 	}
 }
 
 // completeTask reports task completion to admin server
 func (w *Worker) completeTask(taskID string, success bool, errorMsg string) {
-	if w.getAdmin() != nil {
-		if err := w.getAdmin().CompleteTask(taskID, success, errorMsg); err != nil {
-			glog.Errorf("Failed to report task completion: %v", err)
-		}
+	admin := w.getAdmin()
+	if admin == nil {
+		return
+	}
+	if err := admin.CompleteTask(taskID, success, errorMsg); err != nil {
+		glog.Errorf("Failed to report task completion: %v", err)
 	}
 }
 
@@ -774,17 +739,19 @@ func (w *Worker) taskRequestLoop() {
 
 // sendHeartbeat sends heartbeat to admin server
 func (w *Worker) sendHeartbeat() {
-	if w.getAdmin() != nil {
-		if err := w.getAdmin().SendHeartbeat(w.id, &types.WorkerStatus{
-			WorkerID:      w.id,
-			Status:        "active",
-			Capabilities:  w.config.Capabilities,
-			MaxConcurrent: w.config.MaxConcurrent,
-			CurrentLoad:   w.getTaskLoad(),
-			LastHeartbeat: time.Now(),
-		}); err != nil {
-			glog.Warningf("Failed to send heartbeat: %v", err)
-		}
+	admin := w.getAdmin()
+	if admin == nil {
+		return
+	}
+	if err := admin.SendHeartbeat(w.id, &types.WorkerStatus{
+		WorkerID:      w.id,
+		Status:        "active",
+		Capabilities:  w.config.Capabilities,
+		MaxConcurrent: w.config.MaxConcurrent,
+		CurrentLoad:   w.getTaskLoad(),
+		LastHeartbeat: time.Now(),
+	}); err != nil {
+		glog.Warningf("Failed to send heartbeat: %v", err)
 	}
 }
 
@@ -798,11 +765,12 @@ func (w *Worker) requestTasks() {
 		return // Already at capacity
 	}
 
-	if w.getAdmin() != nil {
+	admin := w.getAdmin()
+	if admin != nil {
 		glog.V(4).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
 			w.id, currentLoad, w.config.MaxConcurrent, w.config.Capabilities)
 
-		task, err := w.getAdmin().RequestTask(w.id, w.config.Capabilities)
+		task, err := admin.RequestTask(w.id, w.config.Capabilities)
 		if err != nil {
 			glog.V(2).Infof("TASK REQUEST FAILED: Worker %s failed to request task: %v", w.id, err)
 			return
@@ -820,29 +788,6 @@ func (w *Worker) requestTasks() {
 	}
 }
 
-// GetTaskRegistry returns the task registry
-func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
-	return w.registry
-}
-
-// registerWorker registers the worker with the admin server
-func (w *Worker) registerWorker() {
-	workerInfo := &types.WorkerData{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
-	}
-
-	if err := w.getAdmin().RegisterWorker(workerInfo); err != nil {
-		glog.Warningf("Failed to register worker (will retry on next heartbeat): %v", err)
-	} else {
-		glog.Infof("Worker %s registered successfully with admin server", w.id)
-	}
-}
-
 // connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
@@ -857,7 +802,8 @@ func (w *Worker) connectionMonitorLoop() {
 			return
 		case <-ticker.C:
 			// Monitor connection status and log changes
-			currentConnectionStatus := w.getAdmin() != nil && w.getAdmin().IsConnected()
+			admin := w.getAdmin()
+			currentConnectionStatus := admin != nil && admin.IsConnected()
 
 			if currentConnectionStatus != lastConnectionStatus {
 				if currentConnectionStatus {
@@ -875,34 +821,6 @@ func (w *Worker) connectionMonitorLoop() {
 			}
 		}
 	}
-}
-
-// GetConfig returns the worker configuration
-func (w *Worker) GetConfig() *types.WorkerConfig {
-	return w.config
-}
-
-// GetPerformanceMetrics returns performance metrics
-func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
-
-	uptime := time.Since(w.getStartTime())
-	var successRate float64
-	totalTasks := w.getCompletedTasks() + w.getFailedTasks()
-	if totalTasks > 0 {
-		successRate = float64(w.getCompletedTasks()) / float64(totalTasks) * 100
-	}
-
-	return &types.WorkerPerformance{
-		TasksCompleted:  w.getCompletedTasks(),
-		TasksFailed:     w.getFailedTasks(),
-		AverageTaskTime: 0, // Would need to track this
-		Uptime:          uptime,
-		SuccessRate:     successRate,
-	}
-}
-
-func (w *Worker) GetAdmin() AdminClient {
-	return w.getAdmin()
 }
 
 // messageProcessingLoop processes incoming admin messages
@@ -1019,11 +937,7 @@ func (w *Worker) handleTaskLogRequest(request *worker_pb.TaskLogRequest) {
 func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
 	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
 
-	w.cmds <- workerCommand{
-		action: ActionCancelTask,
-		data:   cancellation.TaskId,
-		resp:   nil,
-	}
+	w.dispatch(workerCommand{action: ActionCancelTask, data: cancellation.TaskId})
 }
 
 // handleAdminShutdown processes admin shutdown notifications

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"io"
 )
@@ -24,7 +24,7 @@ func init() {
 }
 
 type commandVolumeList struct {
-	collectionPattern *string
+	collectionMatcher *wildcard.CollectionMatcher
 	dataCenter        *string
 	rack              *string
 	dataNode          *string
@@ -54,7 +54,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeListCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbosityLevel := volumeListCommand.Int("v", 5, "verbose mode: 0, 1, 2, 3, 4, 5")
-	c.collectionPattern = volumeListCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := volumeListCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	c.readonly = volumeListCommand.Bool("readonly", false, "show only readonly volumes")
 	c.writable = volumeListCommand.Bool("writable", false, "show only writable volumes")
 	c.volumeId = volumeListCommand.Uint64("volumeId", 0, "show only volume id")
@@ -64,6 +64,10 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if err = volumeListCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*collectionPattern); err != nil {
+		return err
 	}
 
 	// collect topology information
@@ -132,7 +136,90 @@ func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.Top
 		s.add(c.writeDataCenterInfo(writer, dc, verbosityLevel))
 	}
 	output(verbosityLevel >= 0, writer, "%+v \n", s)
+	// Scan the full topology (ignoring any -collection/-volumeId/-dataCenter
+	// filters) so this cluster-health warning always fires.
+	writeDuplicateVolumeIdWarning(writer, findDuplicateVolumeIds(t))
 	return s
+}
+
+// findDuplicateVolumeIds returns volume ids that appear under more than one
+// collection, mapped to the sorted list of collections they live in. Volume
+// ids are meant to be globally unique; a duplicate means the master handed out
+// an id already in use by another collection (historically after losing its
+// max-volume-id counter on restart, see the master resumeState flag). Such ids
+// are dangerous: collection.delete on one collection destroys that collection's
+// copy, and any operation keyed on the bare id (lookup, move, vacuum) is
+// ambiguous. Both normal volumes and EC shards are scanned. Replicas of the
+// same volume share a collection, so they collapse into a single entry and do
+// not register as duplicates.
+func findDuplicateVolumeIds(t *master_pb.TopologyInfo) map[uint32][]string {
+	// Duplicates are rare, so track only the first collection seen per id and
+	// allocate a set lazily on the first clash. Keeps allocations O(duplicates)
+	// rather than O(volumes), which matters on clusters with millions of ids.
+	firstCollectionByVid := make(map[uint32]string)
+	collectionsByVid := make(map[uint32]map[string]struct{})
+	note := func(vid uint32, collection string) {
+		if collections := collectionsByVid[vid]; collections != nil {
+			collections[collection] = struct{}{}
+			return
+		}
+		first, seen := firstCollectionByVid[vid]
+		if !seen {
+			firstCollectionByVid[vid] = collection
+			return
+		}
+		if first == collection {
+			return
+		}
+		collectionsByVid[vid] = map[string]struct{}{first: {}, collection: {}}
+	}
+	for _, dc := range t.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, dn := range rack.DataNodeInfos {
+				for _, disk := range dn.DiskInfos {
+					for _, vi := range disk.VolumeInfos {
+						note(vi.Id, vi.Collection)
+					}
+					for _, ec := range disk.EcShardInfos {
+						note(ec.Id, ec.Collection)
+					}
+				}
+			}
+		}
+	}
+	duplicates := make(map[uint32][]string)
+	for vid, collections := range collectionsByVid {
+		names := make([]string, 0, len(collections))
+		for name := range collections {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		duplicates[vid] = names
+	}
+	return duplicates
+}
+
+func writeDuplicateVolumeIdWarning(writer io.Writer, duplicates map[uint32][]string) {
+	if len(duplicates) == 0 {
+		return
+	}
+	vids := make([]uint32, 0, len(duplicates))
+	for vid := range duplicates {
+		vids = append(vids, vid)
+	}
+	slices.Sort(vids)
+	fmt.Fprintf(writer, "\nWARNING: %d volume id(s) exist in more than one collection. "+
+		"Deleting one collection (e.g. collection.delete) will destroy that collection's data on these shared ids, "+
+		"and lookups/moves on the bare id are ambiguous. Verify before any destructive operation:\n", len(vids))
+	for _, vid := range vids {
+		collections := duplicates[vid]
+		for i, name := range collections {
+			if name == "" {
+				collections[i] = `"" (default)`
+			}
+		}
+		fmt.Fprintf(writer, "  volume %d in collections: %s\n", vid, strings.Join(collections, ", "))
+	}
 }
 
 func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo, verbosityLevel int) statistics {
@@ -141,12 +228,17 @@ func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.D
 		return strings.Compare(a.Id, b.Id)
 	})
 	dataCenterInfoFound := false
+	dataCenterHeaderPrinted := false
 	for _, r := range t.RackInfos {
 		if *c.rack != "" && *c.rack != r.Id {
 			continue
 		}
 		s.add(c.writeRackInfo(writer, r, verbosityLevel, func() {
+			if dataCenterHeaderPrinted {
+				return
+			}
 			output(verbosityLevel >= 1, writer, "  DataCenter %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+			dataCenterHeaderPrinted = true
 		}))
 		if !dataCenterInfoFound && !s.isEmpty() {
 			dataCenterInfoFound = true
@@ -162,13 +254,18 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 		return strings.Compare(a.Id, b.Id)
 	})
 	rackInfoFound := false
+	rackHeaderPrinted := false
 	for _, dn := range t.DataNodeInfos {
 		if *c.dataNode != "" && *c.dataNode != dn.Id {
 			continue
 		}
 		s.add(c.writeDataNodeInfo(writer, dn, verbosityLevel, func() {
 			outCenterInfo()
+			if rackHeaderPrinted {
+				return
+			}
 			output(verbosityLevel >= 2, writer, "    Rack %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+			rackHeaderPrinted = true
 		}))
 		if !rackInfoFound && !s.isEmpty() {
 			rackInfoFound = true
@@ -181,14 +278,38 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 func (c *commandVolumeList) writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo, verbosityLevel int, outRackInfo func()) statistics {
 	var s statistics
 	diskInfoFound := false
+	headerPrinted := false
+	// DataNodeInfo.DiskInfos keys by disk type, so a node with several disks
+	// of the same type collapses into a single entry. Split each one back
+	// into per-physical-disk views (using the DiskId carried on each
+	// VolumeInfo / EcShardInfo) so the verbose Disk block shows one entry
+	// per physical disk instead of summing them all under "id:0". headerPrinted
+	// guards against the inner callback firing once per split disk and
+	// emitting the DataNode header on every iteration.
 	for _, diskType := range sortMapKey(t.DiskInfos) {
-		diskInfo := t.DiskInfos[diskType]
-		s.add(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
-			outRackInfo()
-			output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
-		}))
-		if !diskInfoFound && !s.isEmpty() {
-			diskInfoFound = true
+		perDiskInfos := t.DiskInfos[diskType].SplitByPhysicalDisk()
+		slices.SortFunc(perDiskInfos, func(a, b *master_pb.DiskInfo) int {
+			switch {
+			case a.DiskId < b.DiskId:
+				return -1
+			case a.DiskId > b.DiskId:
+				return 1
+			default:
+				return 0
+			}
+		})
+		for _, diskInfo := range perDiskInfos {
+			s.add(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
+				if headerPrinted {
+					return
+				}
+				outRackInfo()
+				output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
+				headerPrinted = true
+			}))
+			if !diskInfoFound && !s.isEmpty() {
+				diskInfoFound = true
+			}
 		}
 	}
 	output(diskInfoFound && verbosityLevel >= 3, writer, "      DataNode %s %+v \n", t.Id, s)
@@ -199,19 +320,11 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	if *c.readonly && !readOnly {
 		return true
 	}
-	if *c.writable && (readOnly || volumeSize == -1 || c.volumeSizeLimitMb >= uint64(volumeSize)) {
+	if *c.writable && (readOnly || volumeSize == -1 || (c.volumeSizeLimitMb > 0 && uint64(volumeSize) >= c.volumeSizeLimitMb*util.MiByte)) {
 		return true
 	}
-	if *c.collectionPattern != "" {
-		var matched bool
-		if *c.collectionPattern == CollectionDefault {
-			matched = (collection == "")
-		} else {
-			matched, _ = filepath.Match(*c.collectionPattern, collection)
-		}
-		if !matched {
-			return true
-		}
+	if !c.collectionMatcher.Matches(collection) {
+		return true
 	}
 	if *c.volumeId > 0 && *c.volumeId != uint64(volumeId) {
 		return true

@@ -223,36 +223,3 @@ func (h *TaskLogHandler) readTaskLogEntries(logDir string, request *worker_pb.Ta
 
 	return pbEntries, nil
 }
-
-// ListAvailableTaskLogs returns a list of available task log directories
-func (h *TaskLogHandler) ListAvailableTaskLogs() ([]string, error) {
-	entries, err := os.ReadDir(h.baseLogDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read base log directory: %w", err)
-	}
-
-	var taskDirs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			taskDirs = append(taskDirs, entry.Name())
-		}
-	}
-
-	return taskDirs, nil
-}
-
-// CleanupOldLogs removes old task logs beyond the specified limit
-func (h *TaskLogHandler) CleanupOldLogs(maxTasks int) error {
-	config := TaskLoggerConfig{
-		BaseLogDir: h.baseLogDir,
-		MaxTasks:   maxTasks,
-	}
-
-	// Create a temporary logger to trigger cleanup
-	tempLogger := &FileTaskLogger{
-		config: config,
-	}
-
-	tempLogger.cleanupOldLogs()
-	return nil
-}

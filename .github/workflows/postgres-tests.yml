@@ -3,12 +3,28 @@ name: "PostgreSQL Gateway Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/server/postgres/**'
+      - 'weed/query/**'
+      - 'weed/mq/**'
+      - 'test/postgres/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/postgres-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/server/postgres/**'
+      - 'weed/query/**'
+      - 'weed/mq/**'
+      - 'test/postgres/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/postgres-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/postgres-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 permissions:
   contents: read
@@ -23,19 +39,26 @@ jobs:
         working-directory: test/postgres
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
+        cache: ${{ runner.environment == 'github-hosted' }}
+        go-version: ^1.26
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
+
+    - name: Configure Docker Hub mirror
+      run: |
+        echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart docker
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Cache Docker layers
-      uses: actions/cache@v5
+      if: runner.environment == 'github-hosted'
+      uses: actions/cache@v6
       with:
         path: /tmp/.buildx-cache
         key: ${{ runner.os }}-buildx-postgres-${{ github.sha }}
@@ -62,7 +85,7 @@ jobs:
 
     - name: Archive logs
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: postgres-logs
         path: test/postgres/postgres-output.log

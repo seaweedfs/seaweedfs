@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -55,17 +57,6 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// proxy to volume servers
-	var fileId string
-	if strings.HasPrefix(r.RequestURI, "/?proxyChunkId=") {
-		fileId = r.RequestURI[len("/?proxyChunkId="):]
-	}
-	if fileId != "" {
-		fs.proxyToVolumeServer(w, r, fileId)
-		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
-		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
-		return
-	}
 	requestMethod := r.Method
 	defer func(method *string) {
 		stats.FilerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
@@ -76,6 +67,19 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
+	}
+
+	// proxy to volume servers, after the gate: this is the one port operators
+	// expose, and the branch reaches any needle in the cluster by file id.
+	if r.URL.Path == "/" {
+		if fileId := r.URL.Query().Get(util_http.ProxyChunkIdParam); fileId != "" {
+			fs.proxyToVolumeServer(w, r, fileId)
+			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
+			// Name the deferred observation after the proxy rather than
+			// observing a second time, which would count the request twice.
+			requestMethod = stats.ChunkProxy
+			return
+		}
 	}
 
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
@@ -210,62 +214,62 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied
 func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool) bool {
+	return fs.checkJwtAuthorization(r, isWrite, jwtScopedRequestPaths(r))
+}
 
-	if !isWrite && r.URL.Path == "/" {
-		return true
+// checkJwtAuthorization verifies the request carries a valid filer JWT for the
+// requested access level and, for prefix-restricted tokens, that every path in
+// scopedPaths falls within AllowedPrefixes.
+func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scopedPaths []string) bool {
+	claims, ok := fs.authenticateFilerJwt(r, isWrite)
+	if !ok {
+		return false
 	}
+	return authorizeFilerJwtPaths(r, claims, scopedPaths)
+}
+
+// authenticateFilerJwt verifies the JWT signature and method claims. A nil claims
+// with ok true means authentication is disabled for this access level. Splitting
+// authentication from path authorization lets a handler load an indirect resource
+// (the TUS session target) only after the caller's credential is verified.
+func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*security.SeaweedFilerClaims, bool) {
 
 	var signingKey security.SigningKey
-
 	if isWrite {
-		if len(fs.filerGuard.SigningKey) == 0 {
-			return true
-		} else {
-			signingKey = fs.filerGuard.SigningKey
-		}
+		signingKey = fs.filerGuard.SigningKey()
 	} else {
-		if len(fs.filerGuard.ReadSigningKey) == 0 {
-			return true
-		} else {
-			signingKey = fs.filerGuard.ReadSigningKey
-		}
+		signingKey = fs.filerGuard.ReadSigningKey()
+	}
+	if len(signingKey) == 0 {
+		return nil, true
 	}
 
 	tokenStr := security.GetJwt(r)
 	if tokenStr == "" {
 		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
-		return false
+		return nil, false
 	}
 
 	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{})
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
-		return false
+		return nil, false
 	}
 	if !token.Valid {
 		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
-		return false
+		return nil, false
 	}
 
 	claims, ok := token.Claims.(*security.SeaweedFilerClaims)
 	if !ok {
 		glog.V(1).Infof("jwt claims not of type *SeaweedFilerClaims from %s", r.RemoteAddr)
-		return false
+		return nil, false
+	}
+	if claims.SessionId != "" {
+		glog.V(1).Infof("jwt is an STS session token, not a filer credential, from %s", r.RemoteAddr)
+		return nil, false
 	}
 
-	if len(claims.AllowedPrefixes) > 0 {
-		hasPrefix := false
-		for _, prefix := range claims.AllowedPrefixes {
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				hasPrefix = true
-				break
-			}
-		}
-		if !hasPrefix {
-			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, r.URL.Path)
-			return false
-		}
-	}
 	if len(claims.AllowedMethods) > 0 {
 		hasMethod := false
 		for _, method := range claims.AllowedMethods {
@@ -276,11 +280,83 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 		}
 		if !hasMethod {
 			glog.V(1).Infof("jwt method not allowed from %s: %v", r.RemoteAddr, r.Method)
-			return false
+			return nil, false
 		}
 	}
 
+	return claims, true
+}
+
+// authorizeFilerJwtPaths checks the resource scope after authentication. A
+// prefix-restricted token must name at least one resource path; an empty list
+// fails closed, so a caller that cannot resolve its target never falls open.
+func authorizeFilerJwtPaths(r *http.Request, claims *security.SeaweedFilerClaims, scopedPaths []string) bool {
+	if claims == nil || len(claims.AllowedPrefixes) == 0 {
+		return true
+	}
+	if len(scopedPaths) == 0 {
+		glog.V(1).Infof("jwt resource path missing from %s", r.RemoteAddr)
+		return false
+	}
+	for _, p := range scopedPaths {
+		if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
+			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
+			return false
+		}
+	}
 	return true
+}
+
+// jwtScopedRequestPaths returns every filer path a request touches that must be
+// covered by the JWT AllowedPrefixes: the write target (r.URL.Path) plus any
+// copy/move source named by the cp.from / mv.from query parameters.
+func jwtScopedRequestPaths(r *http.Request) []string {
+	paths := []string{r.URL.Path}
+	if query := r.URL.Query(); query.Has("cp.from") || query.Has("mv.from") {
+		if from := query.Get("cp.from"); from != "" {
+			paths = append(paths, from)
+		}
+		if from := query.Get("mv.from"); from != "" {
+			paths = append(paths, from)
+		}
+	}
+	return paths
+}
+
+// anyComponentPrefixMatches reports whether p is within any of the prefixes.
+func anyComponentPrefixMatches(prefixes []string, p string) bool {
+	for _, prefix := range prefixes {
+		if pathHasComponentPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathHasComponentPrefix reports whether reqPath is contained within the
+// directory subtree denoted by prefix, treating both as "/"-separated
+// path components. Both inputs are normalised with path.Clean to neutralise
+// "." and ".." segments and collapse duplicate slashes. A prefix of "/"
+// matches any path.
+func pathHasComponentPrefix(reqPath, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	cleanedPath := path.Clean(reqPath)
+	if cleanedPath == "." {
+		cleanedPath = "/"
+	}
+	cleanedPrefix := path.Clean(prefix)
+	if cleanedPrefix == "." {
+		cleanedPrefix = "/"
+	}
+	if cleanedPrefix == "/" {
+		return true
+	}
+	if cleanedPath == cleanedPrefix {
+		return true
+	}
+	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {

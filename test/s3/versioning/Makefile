@@ -1,7 +1,7 @@
 # S3 API Test Makefile
 # This Makefile provides comprehensive targets for running S3 versioning tests
 
-.PHONY: help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-comprehensive test-all clean logs check-deps
+.PHONY: all test help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-regressions test-versioning-comprehensive test-all clean logs check-deps
 
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
@@ -10,7 +10,17 @@ MASTER_PORT := 9333
 VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
-TEST_PATTERN := TestVersioning
+# Run every test in the suite by default. "TestVersioning" used to leave whole
+# tests (bucket creation, suspended delete, directory/version listing) ungated.
+# Opt-in stress tests are matched by "." but self-skip without ENABLE_STRESS_TESTS
+# (they run with it set in their own targets), so they don't actually execute here.
+TEST_PATTERN := .
+
+.DEFAULT_GOAL := help
+
+all: test
+
+test: test-with-server
 
 # Default target
 help:
@@ -25,6 +35,7 @@ help:
 	@echo "  stop-server            - Stop SeaweedFS server"
 	@echo "  test-versioning        - Run all versioning tests"
 	@echo "  test-versioning-quick  - Run core versioning tests only"
+	@echo "  test-versioning-regressions - Run targeted versioning regression tests"
 	@echo "  test-versioning-simple - Run tests without server management"
 	@echo "  test-versioning-comprehensive - Run comprehensive versioning tests"
 	@echo "  test-all               - Run all S3 API tests"
@@ -83,6 +94,7 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
 	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT) -s3.config=../../../docker/compose/s3.json"
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-dir=./test-volume-data \
 		-s3.port=$(S3_PORT) \
 		-s3.config=../../../docker/compose/s3.json \
@@ -179,6 +191,12 @@ test-versioning-quick: check-deps
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers" .
 	@echo "✅ Core versioning tests completed"
 
+# Targeted regressions for conditional mutation, multipart, copy, and suspended delete flows.
+test-versioning-regressions: check-deps
+	@echo "Running targeted S3 versioning regression tests..."
+	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestVersioningCompleteMultipartUploadIsIdempotent|TestVersioningSelfCopyMetadataReplaceCreatesNewVersion|TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion|TestSuspendedDeleteCreatesDeleteMarker" .
+	@echo "✅ Targeted versioning regression tests completed"
+
 # All versioning tests
 test-versioning: check-deps
 	@echo "Running all S3 versioning tests..."
@@ -211,14 +229,14 @@ test-with-server: start-server
 # Test with different configurations
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
-	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
+	@echo "Testing with delete bucket not empty allowed..."
+	@$(WEED_BINARY) mini -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
+	@$(WEED_BINARY) mini -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config2.pid ]; then kill -TERM $$(cat weed-config2.pid) 2>/dev/null || true; rm -f weed-config2.pid; fi
@@ -262,6 +280,7 @@ debug-server:
 	@$(MAKE) stop-server
 	@mkdir -p ./test-volume-data
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-debug \
 		-s3.port=$(S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
@@ -306,6 +325,7 @@ health-check:
 start-server-simple: check-deps
 	@echo "Starting SeaweedFS server (simple mode)..."
 	@$(WEED_BINARY) mini \
+		-ip=127.0.0.1 -ip.bind=127.0.0.1 \
 		-dir=$(SERVER_DIR) \
 		-s3 \
 		-s3.port=$(S3_PORT) \
@@ -314,7 +334,7 @@ start-server-simple: check-deps
 		echo $$! > weed-server.pid
 	
 	@echo "Waiting for S3 server to be ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 90); do \
 		if echo | nc -z localhost $(S3_PORT); then \
 			echo "S3 server is ready!"; \
 			exit 0; \

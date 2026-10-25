@@ -18,7 +18,7 @@ func TestJWTAuthForWriteAndRead(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -81,7 +81,7 @@ func TestJWTAuthRejectsFidMismatch(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -161,7 +161,7 @@ func TestJWTAuthRejectsExpiredTokens(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -209,7 +209,7 @@ func TestJWTAuthViaQueryParamAndCookie(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -249,7 +249,7 @@ func TestJWTTokenSourcePrecedenceQueryOverHeader(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -299,7 +299,7 @@ func TestJWTTokenSourcePrecedenceHeaderOverCookie(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -345,7 +345,7 @@ func TestJWTTokenSourcePrecedenceQueryOverCookie(t *testing.T) {
 	}
 
 	profile := matrix.P3()
-	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	clusterHarness := framework.StartVolumeCluster(t, profile)
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

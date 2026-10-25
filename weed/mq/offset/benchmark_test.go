@@ -2,11 +2,9 @@ package offset
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
@@ -60,151 +58,6 @@ func BenchmarkBatchOffsetAssignment(b *testing.B) {
 			}
 		})
 	}
-}
-
-// BenchmarkSQLOffsetStorage benchmarks SQL storage operations
-func BenchmarkSQLOffsetStorage(b *testing.B) {
-	// Create temporary database
-	tmpFile, err := os.CreateTemp("", "benchmark_*.db")
-	if err != nil {
-		b.Fatalf("Failed to create temp database: %v", err)
-	}
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
-
-	db, err := CreateDatabase(tmpFile.Name())
-	if err != nil {
-		b.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	storage, err := NewSQLOffsetStorage(db)
-	if err != nil {
-		b.Fatalf("Failed to create SQL storage: %v", err)
-	}
-	defer storage.Close()
-
-	partition := &schema_pb.Partition{
-		RingSize:   1024,
-		RangeStart: 0,
-		RangeStop:  31,
-		UnixTimeNs: time.Now().UnixNano(),
-	}
-
-	partitionKey := partitionKey(partition)
-
-	b.Run("SaveCheckpoint", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.SaveCheckpoint("test-namespace", "test-topic", partition, int64(i))
-		}
-	})
-
-	b.Run("LoadCheckpoint", func(b *testing.B) {
-		storage.SaveCheckpoint("test-namespace", "test-topic", partition, 1000)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.LoadCheckpoint("test-namespace", "test-topic", partition)
-		}
-	})
-
-	b.Run("SaveOffsetMapping", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.SaveOffsetMapping(partitionKey, int64(i), int64(i*1000), 100)
-		}
-	})
-
-	// Pre-populate for read benchmarks
-	for i := 0; i < 1000; i++ {
-		storage.SaveOffsetMapping(partitionKey, int64(i), int64(i*1000), 100)
-	}
-
-	b.Run("GetHighestOffset", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.GetHighestOffset("test-namespace", "test-topic", partition)
-		}
-	})
-
-	b.Run("LoadOffsetMappings", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.LoadOffsetMappings(partitionKey)
-		}
-	})
-
-	b.Run("GetOffsetMappingsByRange", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			start := int64(i % 900)
-			end := start + 100
-			storage.GetOffsetMappingsByRange(partitionKey, start, end)
-		}
-	})
-
-	b.Run("GetPartitionStats", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			storage.GetPartitionStats(partitionKey)
-		}
-	})
-}
-
-// BenchmarkInMemoryVsSQL compares in-memory and SQL storage performance
-func BenchmarkInMemoryVsSQL(b *testing.B) {
-	partition := &schema_pb.Partition{
-		RingSize:   1024,
-		RangeStart: 0,
-		RangeStop:  31,
-		UnixTimeNs: time.Now().UnixNano(),
-	}
-
-	// In-memory storage benchmark
-	b.Run("InMemory", func(b *testing.B) {
-		storage := NewInMemoryOffsetStorage()
-		manager, err := NewPartitionOffsetManager("test-namespace", "test-topic", partition, storage)
-		if err != nil {
-			b.Fatalf("Failed to create partition manager: %v", err)
-		}
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			manager.AssignOffset()
-		}
-	})
-
-	// SQL storage benchmark
-	b.Run("SQL", func(b *testing.B) {
-		tmpFile, err := os.CreateTemp("", "benchmark_sql_*.db")
-		if err != nil {
-			b.Fatalf("Failed to create temp database: %v", err)
-		}
-		tmpFile.Close()
-		defer os.Remove(tmpFile.Name())
-
-		db, err := CreateDatabase(tmpFile.Name())
-		if err != nil {
-			b.Fatalf("Failed to create database: %v", err)
-		}
-		defer db.Close()
-
-		storage, err := NewSQLOffsetStorage(db)
-		if err != nil {
-			b.Fatalf("Failed to create SQL storage: %v", err)
-		}
-		defer storage.Close()
-
-		manager, err := NewPartitionOffsetManager("test-namespace", "test-topic", partition, storage)
-		if err != nil {
-			b.Fatalf("Failed to create partition manager: %v", err)
-		}
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			manager.AssignOffset()
-		}
-	})
 }
 
 // BenchmarkOffsetSubscription benchmarks subscription operations

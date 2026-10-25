@@ -1,11 +1,14 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -26,6 +29,9 @@ func init() {
 func RegisterErasureCodingTask() {
 	// Create configuration instance
 	config := NewDefaultConfig()
+
+	// Create shared gRPC dial option using TLS configuration
+	dialOpt := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
@@ -50,9 +56,13 @@ func RegisterErasureCodingTask() {
 				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
+				dialOpt,
 			), nil
 		},
-		DetectionFunc:  Detection,
+		DetectionFunc: func(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
+			results, _, err := Detection(context.Background(), metrics, clusterInfo, config, 0)
+			return results, err
+		},
 		ScanInterval:   1 * time.Hour,
 		SchedulingFunc: Scheduling,
 		MaxConcurrent:  1,

@@ -21,6 +21,7 @@ type MemChunk struct {
 	chunkSize       int64
 	logicChunkIndex LogicChunkIndex
 	activityScore   *ActivityScore
+	lastWriteTsNs   atomic.Int64
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -50,6 +51,7 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	n = copy(mc.buf[innerOffset:], src)
 	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	mc.activityScore.MarkWrite()
+	mc.lastWriteTsNs.Store(tsNs)
 
 	return
 }
@@ -65,10 +67,6 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) 
 		if logicStart < logicStop {
 			copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
 			maxStop = max(maxStop, logicStop)
-
-			if t.TsNs >= tsNs {
-				println("read new data1", t.TsNs-tsNs, "ns")
-			}
 		}
 	}
 	mc.activityScore.MarkRead()
@@ -83,6 +81,13 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
+func (mc *MemChunk) IsContiguouslyWritten() bool {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	return mc.usage.IsContiguouslyWritten()
+}
+
 func (mc *MemChunk) ActivityScore() int64 {
 	return mc.activityScore.ActivityScore()
 }
@@ -92,6 +97,10 @@ func (mc *MemChunk) WrittenSize() int64 {
 	defer mc.RUnlock()
 
 	return mc.usage.WrittenSize()
+}
+
+func (mc *MemChunk) LastWriteTsNs() int64 {
+	return mc.lastWriteTsNs.Load()
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {

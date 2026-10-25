@@ -3,12 +3,28 @@ name: "Kafka Gateway Tests"
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-tests.yml'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'weed/mq/**'
+      - 'weed/pb/mq_pb/**'
+      - 'weed/pb/schema_pb/**'
+      - 'test/kafka/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/kafka-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/kafka-tests
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 # Force different runners for better isolation
 env:
@@ -27,7 +43,7 @@ jobs:
       matrix:
         container-id: [unit-tests-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 1.0 --memory 1g --hostname kafka-unit-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -35,13 +51,14 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
+        cache: ${{ runner.environment == 'github-hosted' }}
+        go-version: ^1.26
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Setup Container Environment
       run: |
@@ -71,7 +88,7 @@ jobs:
       matrix:
         container-id: [integration-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 2.0 --memory 2g --ulimit nofile=1024:1024 --hostname kafka-integration-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 2
@@ -80,13 +97,14 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
+        cache: ${{ runner.environment == 'github-hosted' }}
+        go-version: ^1.26
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Setup Integration Container Environment
       run: |
@@ -118,7 +136,7 @@ jobs:
       matrix:
         container-id: [e2e-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 2.0 --memory 2g --hostname kafka-e2e-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 2
@@ -127,13 +145,13 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
-        cache: true
+        go-version: ^1.26
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -297,7 +315,7 @@ jobs:
       matrix:
         container-id: [consumer-group-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 1.0 --memory 2g --ulimit nofile=512:512 --hostname kafka-consumer-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -306,13 +324,13 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
-        cache: true
+        go-version: ^1.26
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -445,7 +463,7 @@ jobs:
         # Test consumer group functionality with explicit timeout
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
-        timeout 240s go test -v -run "^TestConsumerGroups" -timeout 180s ./integration/... || echo "Test execution timed out or failed"
+        timeout 240s go test -v -run "^TestConsumerGroups" -timeout 180s ./integration/...
       env:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
@@ -459,7 +477,7 @@ jobs:
       matrix:
         container-id: [client-compat-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 1.0 --memory 1.5g --shm-size 256m --hostname kafka-client-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -468,13 +486,13 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
-        cache: true
+        go-version: ^1.26
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -617,7 +635,7 @@ jobs:
       matrix:
         container-id: [smq-integration-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 1.0 --memory 2g --hostname kafka-smq-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -626,13 +644,13 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
-        cache: true
+        go-version: ^1.26
+        cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-path: |
           **/go.sum
       id: go
@@ -778,7 +796,7 @@ jobs:
       matrix:
         container-id: [protocol-1]
     container:
-      image: golang:1.24-alpine
+      image: golang:1.26-alpine
       options: --cpus 1.0 --memory 1g --tmpfs /tmp:exec --hostname kafka-protocol-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -787,13 +805,14 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
-        go-version: ^1.24
+        cache: ${{ runner.environment == 'github-hosted' }}
+        go-version: ^1.26
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Setup Protocol Container Environment
       run: |

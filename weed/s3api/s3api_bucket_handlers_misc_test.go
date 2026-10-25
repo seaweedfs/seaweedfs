@@ -1,0 +1,365 @@
+package s3api
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/require"
+)
+
+func newMiscTestServer(t *testing.T, bucket string) *S3ApiServer {
+	t.Helper()
+	s3a := &S3ApiServer{
+		iam:               &IdentityAccessManagement{isAuthEnabled: true},
+		bucketConfigCache: NewBucketConfigCache(time.Minute),
+	}
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
+	return s3a
+}
+
+func newBucketRequest(method, bucket, query, body string) *http.Request {
+	req := httptest.NewRequest(method, "/"+bucket+"?"+query, strings.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+	return req
+}
+
+func TestHasExplicitBucketACL(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "none", headers: nil, want: false},
+		{name: "private is default", headers: map[string]string{s3_constants.AmzCannedAcl: "private"}, want: false},
+		{name: "canned public-read", headers: map[string]string{s3_constants.AmzCannedAcl: "public-read"}, want: true},
+		{name: "canned case-insensitive private", headers: map[string]string{s3_constants.AmzCannedAcl: "PRIVATE"}, want: false},
+		{name: "grant read", headers: map[string]string{s3_constants.AmzAclRead: `id="x"`}, want: true},
+		{name: "grant full control", headers: map[string]string{s3_constants.AmzAclFullControl: `id="x"`}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newBucketRequest(http.MethodPut, "b", "", "")
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			if got := hasExplicitBucketACL(req); got != tc.want {
+				t.Fatalf("hasExplicitBucketACL = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetBucketPolicyStatusIsPublic(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			name: "public allow star",
+			raw:  `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}`,
+			want: true,
+		},
+		{
+			name: "deny is not public",
+			raw:  `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}`,
+			want: false,
+		},
+		{
+			name: "condition makes it non-public",
+			raw:  `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"IpAddress":{"aws:SourceIp":"10.0.0.0/8"}}}]}`,
+			want: false,
+		},
+		{
+			name: "specific principal is not public",
+			raw:  `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"arn:aws:iam::1:user/a","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}`,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var doc policy_engine.PolicyDocument
+			if err := json.Unmarshal([]byte(tc.raw), &doc); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got := isPolicyPublic(&doc); got != tc.want {
+				t.Fatalf("isPolicyPublic = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPutBucketRequestPaymentBucketOwner(t *testing.T) {
+	s3a := newMiscTestServer(t, "b")
+	body := `<RequestPaymentConfiguration><Payer>BucketOwner</Payer></RequestPaymentConfiguration>`
+	req := newBucketRequest(http.MethodPut, "b", "requestPayment=", body)
+	rec := httptest.NewRecorder()
+
+	s3a.PutBucketRequestPaymentHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
+	s3a := newMiscTestServer(t, "b")
+	body := `<RequestPaymentConfiguration><Payer>Requester</Payer></RequestPaymentConfiguration>`
+	req := newBucketRequest(http.MethodPut, "b", "requestPayment=", body)
+	rec := httptest.NewRecorder()
+
+	s3a.PutBucketRequestPaymentHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "MalformedXML") {
+		t.Fatalf("body missing MalformedXML: %s", rec.Body.String())
+	}
+}
+
+func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := &S3ApiServer{
+		bucketRegistry: NewBucketRegistry(nil),
+	}
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name: "b",
+		Owner: &s3.Owner{
+			ID: &ownerID,
+		},
+	})
+	body := `<OwnershipControls><Rule></Rule></OwnershipControls>`
+	req := newBucketRequest(http.MethodPut, "b", "ownershipControls=", body)
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	rec := httptest.NewRecorder()
+
+	s3a.PutBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "InvalidRequest") {
+		t.Fatalf("body missing InvalidRequest: %s", rec.Body.String())
+	}
+}
+
+func TestGetBucketOwnershipControlsDefaultsToBucketOwnerEnforced(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := newMiscTestServer(t, "b")
+	s3a.bucketRegistry = NewBucketRegistry(nil)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name:  "b",
+		Owner: &s3.Owner{ID: &ownerID},
+	})
+	req := newBucketRequest(http.MethodGet, "b", "ownershipControls=", "")
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+		Name:    "admin",
+		Account: &AccountAdmin,
+		Actions: []Action{s3_constants.ACTION_ADMIN},
+	}))
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "<ObjectOwnership>"+s3_constants.OwnershipBucketOwnerEnforced+"</ObjectOwnership>") {
+		t.Fatalf("body missing default ownership: %s", rec.Body.String())
+	}
+}
+
+func TestGetBucketAccelerateConfiguration(t *testing.T) {
+	s3a := newMiscTestServer(t, "b")
+	req := newBucketRequest(http.MethodGet, "b", "accelerate=", "")
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketAccelerateConfigurationHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body, err := io.ReadAll(rec.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "<AccelerateConfiguration") {
+		t.Fatalf("missing root element: %s", got)
+	}
+	if !strings.Contains(got, "<Status>Suspended</Status>") {
+		t.Fatalf("missing Suspended status: %s", got)
+	}
+	if !strings.Contains(got, `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`) {
+		t.Fatalf("missing xmlns: %s", got)
+	}
+}
+
+func TestGetBucketLogging(t *testing.T) {
+	s3a := newMiscTestServer(t, "b")
+	req := newBucketRequest(http.MethodGet, "b", "logging=", "")
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketLoggingHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, "<BucketLoggingStatus") {
+		t.Fatalf("missing root element: %s", got)
+	}
+	if strings.Contains(got, "<LoggingEnabled") {
+		t.Fatalf("unexpected LoggingEnabled element: %s", got)
+	}
+	if !strings.Contains(got, `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`) {
+		t.Fatalf("missing xmlns: %s", got)
+	}
+}
+
+func TestGetBucketLocationInvalidBucketName(t *testing.T) {
+	// AWS answers 400 InvalidBucketName for a malformed bucket name rather than
+	// the 404 NoSuchBucket an unknown-but-valid name gets.
+	s3a := &S3ApiServer{}
+	req := httptest.NewRequest(http.MethodGet, "/invalid%20bucket%20name?location=", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "invalid bucket name"})
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketLocationHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "InvalidBucketName") {
+		t.Fatalf("body = %s, want InvalidBucketName", rec.Body.String())
+	}
+}
+
+func TestHandleAutoCreateBucketDisabled(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+		t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+	}
+}
+
+func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{AutoCreateBucket: true}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestUploadMissingBucketAutoCreateDisabled(t *testing.T) {
+	cases := []struct {
+		name    string
+		method  string
+		object  string
+		handler func(*S3ApiServer, http.ResponseWriter, *http.Request)
+	}{
+		{"put object", http.MethodPut, "/key", (*S3ApiServer).PutObjectHandler},
+		{"put directory marker", http.MethodPut, "/dir/", (*S3ApiServer).PutObjectHandler},
+		{"new multipart upload", http.MethodPost, "/key", (*S3ApiServer).NewMultipartUploadHandler},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := &S3ApiServer{
+				option:            &S3ApiServerOption{},
+				iam:               &IdentityAccessManagement{},
+				bucketConfigCache: NewBucketConfigCache(time.Minute),
+			}
+			s3a.bucketConfigCache.SetNegativeCache("missing")
+			req := httptest.NewRequest(tc.method, "/missing"+tc.object, strings.NewReader(""))
+			req = mux.SetURLVars(req, map[string]string{"bucket": "missing", "object": tc.object})
+			rec := httptest.NewRecorder()
+
+			tc.handler(s3a, rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+			}
+			if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+				t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAuthWithPublicReadHonorsPolicyDeny(t *testing.T) {
+	const bucket = "public-deny"
+	s3a := newMiscTestServer(t, bucket)
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, IsPublicRead: true})
+	s3a.policyEngine = NewBucketPolicyEngine()
+
+	called := false
+	handler := s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) { called = true }, s3_constants.ACTION_LIST)
+	serve := func() *httptest.ResponseRecorder {
+		called = false
+		rr := httptest.NewRecorder()
+		handler(rr, newBucketRequest(http.MethodGet, bucket, "list-type=2", ""))
+		return rr
+	}
+	setPolicy := func(statements ...string) {
+		doc := `{"Version":"2012-10-17","Statement":[` + strings.Join(statements, ",") + `]}`
+		require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy(bucket, doc))
+	}
+	arn := fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	denyList := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:ListBucket","Resource":"%s"}`, arn)
+	denyGet := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"%s/*"}`, arn)
+	allowList := fmt.Sprintf(`{"Effect":"Allow","Principal":"*","Action":"s3:ListBucket","Resource":"%s"}`, arn)
+
+	setPolicy(denyList)
+	rr := serve()
+	require.False(t, called, "anonymous ListObjectsV2 reached the handler despite an explicit ListBucket Deny")
+	require.Equal(t, http.StatusForbidden, rr.Code)
+
+	setPolicy(denyGet)
+	rr = serve()
+	require.True(t, called, "an unrelated Deny must not block the ACL public-read grant")
+
+	setPolicy(denyList, allowList)
+	rr = serve()
+	require.False(t, called, "explicit Deny must beat a matching Allow")
+
+	setPolicy(allowList)
+	rr = serve()
+	require.True(t, called, "explicit Allow must still permit anonymous listing")
+
+	// Object requests defer to the handler's phase-2 recheck, which evaluates
+	// tag conditions against the fetched entry — a tag-conditional Deny must
+	// not terminate them here on a missing value.
+	tagDeny := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"%s/*","Condition":{"StringNotEquals":{"s3:ExistingObjectTag/classification":"public"}}}`, arn)
+	setPolicy(tagDeny)
+	called = false
+	rr = httptest.NewRecorder()
+	objectReq := newBucketRequest(http.MethodGet, bucket, "", "")
+	objectReq = mux.SetURLVars(objectReq, map[string]string{"bucket": bucket, "object": "secret/x"})
+	s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) { called = true }, s3_constants.ACTION_READ)(rr, objectReq)
+	require.True(t, called, "anonymous object request on a public bucket must reach the handler's tag-aware recheck")
+}

@@ -3,14 +3,19 @@ package azure
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAzureStorageClientBasic tests basic Azure storage client operations
@@ -133,7 +138,7 @@ func TestAzureStorageClientBasic(t *testing.T) {
 				"x-amz-meta-new-key":  []byte("new-value"),
 			},
 		}
-		err := azClient.UpdateFileMetadata(loc, oldEntry, newEntry)
+		_, err := azClient.UpdateFileMetadata(loc, oldEntry, newEntry)
 		if err != nil {
 			t.Fatalf("Failed to update metadata: %v", err)
 		}
@@ -349,6 +354,47 @@ func TestAzureRemoteStorageMaker(t *testing.T) {
 	}
 }
 
+func TestResolveAzureAccount(t *testing.T) {
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "envaccount")
+	t.Setenv("AZURE_STORAGE_ACCESS_KEY", "ZW52a2V5")
+
+	accountName, accountKey := resolveAzureAccount(&remote_pb.RemoteConf{})
+	if accountName != "envaccount" || accountKey != "ZW52a2V5" {
+		t.Errorf("expected the environment account, got %q/%q", accountName, accountKey)
+	}
+
+	// a configured identity keeps a leftover environment key out of the way
+	accountName, accountKey = resolveAzureAccount(&remote_pb.RemoteConf{
+		AzureAccountName: "testaccount",
+		AzureClientId:    "11111111-1111-1111-1111-111111111111",
+	})
+	if accountName != "testaccount" {
+		t.Errorf("expected the configured account name, got %q", accountName)
+	}
+	if accountKey != "" {
+		t.Errorf("expected no account key alongside a client id, got %q", accountKey)
+	}
+}
+
+// An account name without a key authenticates with Entra ID
+func TestAzureRemoteStorageMakerWithoutAccountKey(t *testing.T) {
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "")
+	t.Setenv("AZURE_STORAGE_ACCESS_KEY", "")
+
+	maker := azureRemoteStorageMaker{}
+	conf := &remote_pb.RemoteConf{
+		Name:             "test",
+		AzureAccountName: "testaccount",
+	}
+	client, err := maker.Make(conf)
+	if err != nil {
+		t.Fatalf("Failed to create client without an account key: %v", err)
+	}
+	if client.(*azureRemoteStorageClient).client == nil {
+		t.Error("Expected a blob client")
+	}
+}
+
 // Test error cases
 func TestAzureStorageClientErrors(t *testing.T) {
 	// Test with invalid credentials
@@ -376,5 +422,64 @@ func TestAzureStorageClientErrors(t *testing.T) {
 	_, err = azClient.ReadFile(loc, 0, 10)
 	if err == nil {
 		t.Log("Expected error with invalid credentials on ReadFile, but got none (might be cached)")
+	}
+}
+
+func TestAzureRemoteStorageClientImplementsInterface(t *testing.T) {
+	var _ remote_storage.RemoteStorageClient = (*azureRemoteStorageClient)(nil)
+}
+
+func TestAzureErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
+	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
+	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
+// azureErrorRoundTripper answers every request with an Azure blob error.
+type azureErrorRoundTripper struct {
+	statusCode int
+	code       string
+}
+
+func (e *azureErrorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	body := `<?xml version="1.0" encoding="utf-8"?><Error><Code>` + e.code + `</Code><Message>m</Message></Error>`
+	return &http.Response{
+		StatusCode: e.statusCode,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header: http.Header{
+			"Content-Type":    []string{"application/xml"},
+			"X-Ms-Error-Code": []string{e.code},
+		},
+		Request: req,
+	}, nil
+}
+
+func TestAzureReadNotFoundClassification(t *testing.T) {
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "container", Path: "/obj.bin"}
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		size       int64
+		notFound   bool
+	}{
+		{"missing blob", http.StatusNotFound, "BlobNotFound", 10, true},
+		{"missing blob, read to end", http.StatusNotFound, "BlobNotFound", 0, true},
+		{"missing container", http.StatusNotFound, "ContainerNotFound", 10, false},
+		{"auth failure", http.StatusForbidden, "AuthenticationFailed", 10, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := &remote_pb.RemoteConf{Name: "test", AzureAccountName: "testaccount", AzureAccountKey: "dGVzdGtleQ=="}
+			rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: &azureErrorRoundTripper{statusCode: tt.statusCode, code: tt.code}})
+			require.NoError(t, err)
+
+			_, err = rs.ReadFile(loc, 0, tt.size)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "err: %v", err)
+		})
 	}
 }

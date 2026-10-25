@@ -8,12 +8,12 @@ import (
 templ Admin(data dash.AdminData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+            <i class="bi bi-speedometer2 me-2"></i>Dashboard
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
-                 				<a href="/object-store/buckets" class="btn btn-sm btn-primary">
-					<i class="fas fa-cube me-1"></i>Object Store Buckets
+                 				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-primary">
+					<i class="bi bi-box me-1"></i>Object Store Buckets
                 </a>
 
             </div>
@@ -21,7 +21,8 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
-        <!-- Summary Cards -->
+        <!-- Summary Cards — each carries an inline sparkline of recent history
+             from the admin's own snapshots (no Prometheus required). -->
         <div class="row mb-4">
             <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
@@ -31,14 +32,15 @@ templ Admin(data dash.AdminData) {
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
                                     Total Volumes
                                 </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                <div class="h5 mb-0 font-weight-bold text-body-emphasis">
                                     {fmt.Sprintf("%d", data.TotalVolumes)}
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                                <i class="bi bi-database icon-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Volumes)
                     </div>
                 </div>
             </div>
@@ -48,17 +50,18 @@ templ Admin(data dash.AdminData) {
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Total Files
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1" title="Chunks stored in volumes. A file is split into one or more chunks, so this is not the number of files.">
+                                    Total Chunks
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {formatNumber(data.TotalFiles)}
+                                    {formatNumber(data.TotalChunks)}
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-file fa-2x text-gray-300"></i>
+                                <i class="bi bi-boxes icon-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.Chunks)
                     </div>
                 </div>
             </div>
@@ -76,9 +79,10 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
+                        @templ.Raw(data.Trends.DiskUsed)
                     </div>
                 </div>
             </div>
@@ -96,7 +100,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-cogs fa-2x text-gray-300"></i>
+                                <i class="bi bi-gear-wide-connected icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -119,7 +123,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
+                                <i class="bi bi-layers icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -139,16 +143,163 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-puzzle-piece fa-2x text-gray-300"></i>
+                                <i class="bi bi-puzzle icon-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.EcShards)
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Active Tasks
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.TasksValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="bi bi-list-check icon-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Tasks)
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { data.Trends.WorkersValue }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="bi bi-people-fill icon-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                        @templ.Raw(data.Trends.Workers)
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Tiers -->
+        if len(data.TierStats) > 0 {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">
+                                <i class="bi bi-layers me-2"></i>Storage Tiers
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover" width="100%" cellspacing="0">
+                                    <thead>
+                                        <tr>
+                                            <th>Tier</th>
+                                            <th>Volumes</th>
+                                            <th>EC Shards</th>
+                                            <th>Data Size</th>
+                                            <th>Disk Used</th>
+                                            <th>Capacity</th>
+                                            <th>Usage</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, tier := range data.TierStats {
+                                            <tr>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <i class="bi bi-cloud me-1 text-info"></i>{tier.Name}
+                                                        <span class="badge bg-info text-white ms-1">remote</span>
+                                                    } else {
+                                                        <i class="bi bi-device-hdd me-1 text-muted"></i>{tier.Name}
+                                                    }
+                                                </td>
+                                                <td>{fmt.Sprintf("%d", tier.VolumeCount)}</td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {fmt.Sprintf("%d", tier.EcShardCount)}
+                                                    }
+                                                </td>
+                                                <td>{formatBytes(tier.DataSize)}</td>
+                                                <td>
+                                                    if tier.IsRemote || tier.DiskUsed == 0 {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {formatBytes(tier.DiskUsed)}
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {formatBytes(tier.DiskCapacity)}
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        <div class="d-flex align-items-center">
+                                                            <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
+                                                                <div class="progress-bar" role="progressbar"
+                                                                     style={fmt.Sprintf("width: %d%%", tier.UsagePercent())}>
+                                                                </div>
+                                                            </div>
+                                                            <span class="ms-2 text-nowrap">{fmt.Sprintf("%d%%", tier.UsagePercent())}</span>
+                                                        </div>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
+        }
 
-            <!-- Empty columns to balance the row -->
-            <div class="col-xl-3 col-md-6 mb-4"></div>
-            <div class="col-xl-3 col-md-6 mb-4"></div>
+        <!-- Mount Clients -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-plug me-2"></i>Mount Clients
+                        </h6>
+                        <a href={ dash.PUrl(ctx, "/cluster/mount-clients") } class="btn btn-sm btn-outline-primary">
+                            View Details <i class="bi bi-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-plug icon-2x text-gray-300 me-3"></i>
+                            <div>
+                                <div class="h4 mb-0 font-weight-bold text-gray-800">{fmt.Sprintf("%d", data.TotalMountClients)}</div>
+                                <div class="text-xs text-muted text-uppercase">Connected FUSE/VFS mount clients</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Master Nodes Status -->
@@ -157,7 +308,7 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-server me-2"></i>Master Nodes
+                            <i class="bi bi-server me-2"></i>Master Nodes
                         </h6>
                     </div>
                     <div class="card-body">
@@ -173,9 +324,9 @@ templ Admin(data dash.AdminData) {
                                     for _, master := range data.MasterNodes {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", master.Address))} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", master.Address))} target="_blank">
                                                     {master.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>
@@ -199,12 +350,12 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-chart-pie me-2"></i>Cluster
+                            <i class="bi bi-pie-chart me-2"></i>Cluster
                         </h6>
                     </div>
                     <div class="card-body text-center">
                         <div class="row">
-                            <div class="col-3">
+                            <div class="col">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.MasterNodes))}</h5>
@@ -212,7 +363,7 @@ templ Admin(data dash.AdminData) {
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-3">
+                            <div class="col">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.VolumeServers))}</h5>
@@ -220,7 +371,7 @@ templ Admin(data dash.AdminData) {
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-3">
+                            <div class="col">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.FilerNodes))}</h5>
@@ -228,7 +379,15 @@ templ Admin(data dash.AdminData) {
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-3">
+                            <div class="col">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h5>{fmt.Sprintf("%d", len(data.S3Nodes))}</h5>
+                                        <small class="text-muted">S3 Servers</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.MessageBrokers))}</h5>
@@ -248,16 +407,16 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-database me-2"></i>Volume Servers
+                            <i class="bi bi-database me-2"></i>Volume Servers
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="/volumes">View Details</a>
-                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/volumes") }>View Details</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/cluster") }>Topology View</a>
                             </div>
                         </div>
                     </div>
@@ -272,7 +431,7 @@ templ Admin(data dash.AdminData) {
                                         <th>Rack</th>
                                         <th>Volumes</th>
                                         <th>EC Shards</th>
-                                        <th>Capacity</th>
+                                        <th>Usage / Capacity</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -280,19 +439,21 @@ templ Admin(data dash.AdminData) {
                                         <tr>
                                             <td>{vs.ID}</td>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", vs.GetDisplayAddress()))} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", vs.GetDisplayAddress()))} target="_blank">
                                                     {vs.GetDisplayAddress()}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>{vs.DataCenter}</td>
                                             <td>{vs.Rack}</td>
                                             <td>
-                                                <div class="progress" style="height: 20px;">
-                                                    <div class="progress-bar" role="progressbar" 
-                                                         style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
-                                                        {fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes)}
+                                                <div class="d-flex align-items-center">
+                                                    <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
+                                                        <div class="progress-bar" role="progressbar" 
+                                                             style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
+                                                        </div>
                                                     </div>
+                                                    <span class="ms-2 text-nowrap">{fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes)}</span>
                                                 </div>
                                             </td>
                                             <td>
@@ -305,13 +466,19 @@ templ Admin(data dash.AdminData) {
                                                     <span class="text-muted">-</span>
                                                 }
                                             </td>
-                                            <td>{formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}</td>
+                                            <td>
+                                                {formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}
+                                                if vs.RemoteSize > 0 {
+                                                    <br/>
+                                                    <small class="text-muted"><i class="bi bi-cloud me-1"></i>{formatBytes(vs.RemoteSize)} remote</small>
+                                                }
+                                            </td>
                                         </tr>
                                     }
                                     if len(data.VolumeServers) == 0 {
                                         <tr>
                                             <td colspan="7" class="text-center text-muted py-4">
-                                                <i class="fas fa-info-circle me-2"></i>
+                                                <i class="bi bi-info-circle me-2"></i>
                                                 No volume servers found
                                             </td>
                                         </tr>
@@ -330,16 +497,16 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-folder me-2"></i>Filer Nodes
+                            <i class="bi bi-folder me-2"></i>Filer Nodes
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="/filer">File Browser</a>
-                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/filer") }>File Browser</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/cluster") }>Topology View</a>
                             </div>
                         </div>
                     </div>
@@ -358,9 +525,9 @@ templ Admin(data dash.AdminData) {
                                     for _, filer := range data.FilerNodes {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", filer.Address))} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("//%s", filer.Address))} target="_blank">
                                                     {filer.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>{filer.DataCenter}</td>
@@ -371,8 +538,60 @@ templ Admin(data dash.AdminData) {
                                     if len(data.FilerNodes) == 0 {
                                         <tr>
                                             <td colspan="4" class="text-center text-muted py-4">
-                                                <i class="fas fa-info-circle me-2"></i>
+                                                <i class="bi bi-info-circle me-2"></i>
                                                 No filer nodes found
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- S3 Servers -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-cloud me-2"></i>S3 Servers
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/cluster/s3") }>View Details</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Data Center</th>
+                                        <th>Last Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, s3Node := range data.S3Nodes {
+                                        <tr>
+                                            <td>{s3Node.Address}</td>
+                                            <td>{s3Node.DataCenter}</td>
+                                            <td>{s3Node.LastUpdated.Format("2006-01-02 15:04:05")}</td>
+                                        </tr>
+                                    }
+                                    if len(data.S3Nodes) == 0 {
+                                        <tr>
+                                            <td colspan="3" class="text-center text-muted py-4">
+                                                <i class="bi bi-info-circle me-2"></i>
+                                                No S3 servers found
                                             </td>
                                         </tr>
                                     }
@@ -388,7 +607,7 @@ templ Admin(data dash.AdminData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>

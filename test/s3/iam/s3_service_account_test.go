@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -338,14 +340,28 @@ func TestServiceAccountValidation(t *testing.T) {
 // callIAMAPI is a helper to make IAM API calls
 func callIAMAPI(t *testing.T, action string, params url.Values) (*http.Response, error) {
 	params.Set("Action", action)
+	body := params.Encode()
 
 	req, err := http.NewRequest(http.MethodPost, TestIAMEndpoint+"/",
-		strings.NewReader(params.Encode()))
+		strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Sign with SigV4 when admin credentials are provided via env vars.
+	// IAM write APIs (CreateUser, CreateServiceAccount, etc.) require an
+	// authenticated admin caller; unsigned requests get routed to the STS
+	// fallback and rejected as an unknown action.
+	if accessKey := os.Getenv("STS_TEST_ACCESS_KEY"); accessKey != "" {
+		secretKey := os.Getenv("STS_TEST_SECRET_KEY")
+		creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
+		signer := v4.NewSigner(creds)
+		if _, err := signer.Sign(req, strings.NewReader(body), "iam", "us-east-1", time.Now()); err != nil {
+			return nil, fmt.Errorf("failed to sign IAM request: %w", err)
+		}
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)

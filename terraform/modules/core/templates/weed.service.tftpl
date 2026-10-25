@@ -1,0 +1,39 @@
+[Unit]
+Description=SeaweedFS ${role} (${name})
+Documentation=https://github.com/seaweedfs/seaweedfs/wiki
+After=network-online.target
+Wants=network-online.target
+%{ for path in requires_mounts_for ~}
+RequiresMountsFor=${path}
+%{ endfor ~}
+
+[Service]
+Type=simple
+User=${run_as_user}
+Group=${run_as_user}
+ExecStart=${exec_start}
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+TimeoutStopSec=60
+# Hardening (OpenShift SCC analogs; relax via the hardening variable)
+NoNewPrivileges=${no_new_privileges}
+%{ if protect_system ~}
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+%{ for path in read_write_paths ~}
+ReadWritePaths=${path}
+%{ endfor ~}
+%{ endif ~}
+%{ if cap_drop_all ~}
+CapabilityBoundingSet=
+AmbientCapabilities=
+%{ endif ~}
+EnvironmentFile=-${env_file}
+%{ for k, v in environment ~}
+Environment="${k}=${v}"
+%{ endfor ~}
+
+[Install]
+WantedBy=multi-user.target

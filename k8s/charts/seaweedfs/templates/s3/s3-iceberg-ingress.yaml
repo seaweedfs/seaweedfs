@@ -41,6 +41,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: s3-iceberg
+    {{- with .Values.s3.icebergIngress.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   {{- if .Values.s3.icebergIngress.className }}
   ingressClassName: {{ .Values.s3.icebergIngress.className | quote }}

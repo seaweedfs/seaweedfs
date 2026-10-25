@@ -22,14 +22,17 @@ var Commands = []*Command{
 	cmdFilerCat,
 	cmdFilerCopy,
 	cmdFilerMetaBackup,
+	cmdFilerMetaScan,
 	cmdFilerMetaTail,
 	cmdFilerRemoteGateway,
 	cmdFilerRemoteSynchronize,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
+	cmdFilerSyncVerify,
 	cmdFix,
 	cmdFuse,
 	cmdIam,
+	cmdImage,
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMini,
@@ -37,12 +40,10 @@ var Commands = []*Command{
 	cmdMqAgent,
 	cmdMqBroker,
 	cmdMqKafkaGateway,
-	cmdDB,
 	cmdS3,
 	cmdScaffold,
 	cmdServer,
 	cmdShell,
-	cmdSql,
 	cmdUpdate,
 	cmdUpload,
 	cmdVersion,
@@ -96,4 +97,18 @@ func (c *Command) Usage() {
 // it is a documentation pseudo-command such as importpath.
 func (c *Command) Runnable() bool {
 	return c.Run != nil
+}
+
+// Recorded, not os.Exit'ed, so the failure still travels through main's
+// shutdown path. The highest requested status wins.
+var commandExitStatus int
+
+func SetCommandExitStatus(n int) {
+	if n > commandExitStatus {
+		commandExitStatus = n
+	}
+}
+
+func CommandExitStatus() int {
+	return commandExitStatus
 }

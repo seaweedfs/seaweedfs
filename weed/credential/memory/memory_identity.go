@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 func (store *MemoryStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -21,9 +22,26 @@ func (store *MemoryStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiC
 
 	// Convert all users to identities
 	for _, user := range store.users {
-		// Deep copy the identity to avoid mutation issues
-		identityCopy := store.deepCopyIdentity(user)
-		config.Identities = append(config.Identities, identityCopy)
+		config.Identities = append(config.Identities, store.deepCopyIdentity(user))
+	}
+
+	// Add all policies
+	for name, doc := range store.policies {
+		content, _ := json.Marshal(doc)
+		config.Policies = append(config.Policies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	// Groups are written via CreateGroup / AddUserToGroup / AttachGroupPolicy
+	// (never via SaveConfiguration), so they live in store.groups regardless
+	// of the bulk-config path. Surface them here so consumers that reload
+	// through cm.LoadConfiguration see a faithful snapshot — without this,
+	// iam.groups would never repopulate on memory-store reloads and group
+	// policy evaluation would silently no-op.
+	for _, g := range store.groups {
+		config.Groups = append(config.Groups, cloneGroup(g))
 	}
 
 	return config, nil
@@ -40,16 +58,23 @@ func (store *MemoryStore) SaveConfiguration(ctx context.Context, config *iam_pb.
 	// Clear existing data
 	store.users = make(map[string]*iam_pb.Identity)
 	store.accessKeys = make(map[string]string)
+	store.policies = make(map[string]policy_engine.PolicyDocument)
 
 	// Add all identities
 	for _, identity := range config.Identities {
-		// Deep copy to avoid mutation issues
-		identityCopy := store.deepCopyIdentity(identity)
-		store.users[identity.Name] = identityCopy
+		store.users[identity.Name] = store.deepCopyIdentity(identity)
 
 		// Index access keys
 		for _, credential := range identity.Credentials {
 			store.accessKeys[credential.AccessKey] = identity.Name
+		}
+	}
+
+	// Add all policies
+	for _, policy := range config.Policies {
+		var doc policy_engine.PolicyDocument
+		if err := json.Unmarshal([]byte(policy.Content), &doc); err == nil {
+			store.policies[policy.Name] = doc
 		}
 	}
 
@@ -117,6 +142,14 @@ func (store *MemoryStore) UpdateUser(ctx context.Context, username string, ident
 		return credential.ErrUserNotFound
 	}
 
+	if identity.Name != username {
+		// Rename: the destination name must not already be taken, matching
+		// RenameUser's collision check.
+		if _, clash := store.users[identity.Name]; clash {
+			return credential.ErrUserAlreadyExists
+		}
+	}
+
 	// Remove old access keys from index
 	for _, cred := range existingUser.Credentials {
 		delete(store.accessKeys, cred.AccessKey)
@@ -131,11 +164,15 @@ func (store *MemoryStore) UpdateUser(ctx context.Context, username string, ident
 
 	// Deep copy to avoid mutation issues
 	identityCopy := store.deepCopyIdentity(identity)
-	store.users[username] = identityCopy
+	if identityCopy.Name != username {
+		// Rename: re-key the record, the way filer_etc does (delete old, save new).
+		delete(store.users, username)
+	}
+	store.users[identityCopy.Name] = identityCopy
 
 	// Re-index access keys
 	for _, cred := range identity.Credentials {
-		store.accessKeys[cred.AccessKey] = username
+		store.accessKeys[cred.AccessKey] = identityCopy.Name
 	}
 
 	return nil
@@ -161,6 +198,46 @@ func (store *MemoryStore) DeleteUser(ctx context.Context, username string) error
 
 	// Remove user
 	delete(store.users, username)
+	delete(store.inlinePolicies, username)
+
+	return nil
+}
+
+// RenameUser implements credential.UserRenamer for the memory store.
+// Renames the user and re-points access-key and inline-policy indexes
+// to the new name. The whole operation is performed under the store
+// lock so it is atomic with respect to concurrent reads.
+func (store *MemoryStore) RenameUser(ctx context.Context, oldName, newName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+	if oldName == newName {
+		return nil
+	}
+
+	user, exists := store.users[oldName]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+	if _, clash := store.users[newName]; clash {
+		return credential.ErrUserAlreadyExists
+	}
+
+	user.Name = newName
+	store.users[newName] = user
+	delete(store.users, oldName)
+
+	for _, cred := range user.Credentials {
+		store.accessKeys[cred.AccessKey] = newName
+	}
+
+	if policies, ok := store.inlinePolicies[oldName]; ok {
+		store.inlinePolicies[newName] = policies
+		delete(store.inlinePolicies, oldName)
+	}
 
 	return nil
 }
@@ -284,6 +361,7 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
@@ -295,8 +373,91 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
 	return &copy
+}
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *MemoryStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	// Verify policy exists
+	if _, exists := store.policies[policyName]; !exists {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			return credential.ErrPolicyAlreadyAttached
+		}
+	}
+
+	user.PolicyNames = append(user.PolicyNames, policyName)
+	return nil
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *MemoryStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	found := false
+	var newPolicies []string
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicies = append(newPolicies, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	user.PolicyNames = newPolicies
+	return nil
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *MemoryStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return nil, credential.ErrUserNotFound
+	}
+
+	// Return copy to prevent mutation
+	result := make([]string, len(user.PolicyNames))
+	copy(result, user.PolicyNames)
+	return result, nil
 }

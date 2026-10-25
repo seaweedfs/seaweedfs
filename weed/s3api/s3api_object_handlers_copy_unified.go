@@ -7,13 +7,23 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 )
 
 // executeUnifiedCopyStrategy executes the appropriate copy strategy based on encryption state
-// Returns chunks and destination metadata that should be applied to the destination entry
-func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+// Returns chunks and destination metadata that should be applied to the destination entry.
+// replacesSource says the destination entry is the source entry, which is what lets the
+// key-rotation strategy hand back the source chunks instead of copying them.
+func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string, replacesSource bool) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+	// Per-chunk copy must see data chunks: a manifest chunk copied raw becomes
+	// object data. Resolved manifests stay with the source.
+	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		return nil, nil, fmt.Errorf("resolve source manifest chunks: %w", err)
+	}
+
 	// Detect encryption state (using entry-aware detection for multipart objects)
 	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
 	dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
@@ -45,7 +55,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 		return chunks, nil, err
 
 	case CopyStrategyKeyRotation:
-		return s3a.executeKeyRotation(entry, r, state)
+		return s3a.executeKeyRotation(entry, r, state, dstBucket, dstPath, replacesSource)
 
 	case CopyStrategyEncrypt:
 		return s3a.executeEncryptCopy(entry, r, state, dstBucket, dstPath)
@@ -90,29 +100,32 @@ func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 }
 
 // executeKeyRotation handles key rotation for same-object copies
-func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string, replacesSource bool) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// For key rotation, we only need to update metadata, not re-copy chunks
 	// This is a significant optimization for same-object key changes
 
 	if state.SrcSSEC && state.DstSSEC {
 		// SSE-C key rotation - need to handle new key/IV, use reencrypt logic
-		return s3a.executeReencryptCopy(entry, r, state, "", "")
+		return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 	}
 
-	if state.SrcSSEKMS && state.DstSSEKMS {
+	// Handing back the source chunks leaves the destination sharing needles nothing
+	// refcounts, so it is only safe when the destination overwrites the source entry.
+	// A versioned rotation writes a new version beside the source and has to reencrypt.
+	if state.SrcSSEKMS && state.DstSSEKMS && replacesSource {
 		// SSE-KMS key rotation - return existing chunks, metadata will be updated by caller
 		return entry.GetChunks(), nil, nil
 	}
 
 	// Fallback to reencrypt if we can't do metadata-only rotation
-	return s3a.executeReencryptCopy(entry, r, state, "", "")
+	return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 }
 
 // executeEncryptCopy handles plain → encrypted copies
 func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	if state.DstSSEC {
 		// Use existing SSE-C copy logic
-		return s3a.copyChunksWithSSEC(entry, r)
+		return s3a.copyChunksWithSSEC(entry, r, dstPath)
 	}
 
 	if state.DstSSEKMS {
@@ -145,7 +158,7 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Use chunk-by-chunk approach for all cross-encryption scenarios (consistent behavior)
 	if state.SrcSSEC && state.DstSSEC {
-		return s3a.copyChunksWithSSEC(entry, r)
+		return s3a.copyChunksWithSSEC(entry, r, dstPath)
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
@@ -172,5 +185,31 @@ func (s3a *S3ApiServer) applyCopyBucketDefaultEncryption(state *EncryptionState,
 				state.DstSSES3 = true
 			}
 		}
+	}
+}
+
+// applyCopyBucketDefaultEncryptionHeaders surfaces a bucket's default
+// encryption as request headers, so multi-chunk copy paths that only read
+// request headers honor it too.
+func applyCopyBucketDefaultEncryptionHeaders(r *http.Request, cfg *s3_pb.EncryptionConfiguration) {
+	if cfg == nil {
+		return
+	}
+	switch cfg.SseAlgorithm {
+	case EncryptionTypeKMS:
+		r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+		// aws:kms with no configured key resolves the AWS default, the same
+		// fallback applySSEKMSDefaultEncryption uses for uploads; an empty
+		// key ID here would let the copy paths take their plaintext branch.
+		keyID := cfg.KmsKeyId
+		if keyID == "" {
+			keyID = s3_constants.SSEKMSDefaultKeyID
+		}
+		r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
+		if cfg.BucketKeyEnabled {
+			r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
+		}
+	case EncryptionTypeAES256:
+		r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
 	}
 }

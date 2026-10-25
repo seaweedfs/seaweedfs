@@ -2,6 +2,8 @@
 package auth
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"golang.org/x/crypto/ssh"
 )
@@ -17,11 +19,16 @@ type Manager struct {
 	userStore          user.Store
 	passwordAuth       *PasswordAuthenticator
 	publicKeyAuth      *PublicKeyAuthenticator
+	certificateAuth    *CertificateAuthenticator
 	enabledAuthMethods []string
 }
 
-// NewManager creates a new authentication manager
-func NewManager(userStore user.Store, enabledAuthMethods []string) *Manager {
+// NewManager creates a new authentication manager.
+//
+// trustedUserCAKeysFile is the path to a file containing trusted CA public
+// keys (OpenSSH authorized_keys format). It is required when "certificate"
+// is listed in enabledAuthMethods and ignored otherwise.
+func NewManager(userStore user.Store, enabledAuthMethods []string, trustedUserCAKeysFile string) (*Manager, error) {
 	manager := &Manager{
 		userStore:          userStore,
 		enabledAuthMethods: enabledAuthMethods,
@@ -30,6 +37,7 @@ func NewManager(userStore user.Store, enabledAuthMethods []string) *Manager {
 	// Initialize authenticators based on enabled methods
 	passwordEnabled := false
 	publicKeyEnabled := false
+	certificateEnabled := false
 
 	for _, method := range enabledAuthMethods {
 		switch method {
@@ -37,13 +45,21 @@ func NewManager(userStore user.Store, enabledAuthMethods []string) *Manager {
 			passwordEnabled = true
 		case "publickey":
 			publicKeyEnabled = true
+		case "certificate":
+			certificateEnabled = true
 		}
 	}
 
 	manager.passwordAuth = NewPasswordAuthenticator(userStore, passwordEnabled)
 	manager.publicKeyAuth = NewPublicKeyAuthenticator(userStore, publicKeyEnabled)
 
-	return manager
+	certAuth, err := NewCertificateAuthenticator(userStore, certificateEnabled, trustedUserCAKeysFile)
+	if err != nil {
+		return nil, fmt.Errorf("init certificate auth: %w", err)
+	}
+	manager.certificateAuth = certAuth
+
+	return manager, nil
 }
 
 // GetSSHServerConfig returns an SSH server config with the appropriate authentication methods
@@ -55,8 +71,13 @@ func (m *Manager) GetSSHServerConfig() *ssh.ServerConfig {
 		config.PasswordCallback = m.passwordAuth.Authenticate
 	}
 
-	// Add public key authentication if enabled
-	if m.publicKeyAuth.Enabled() {
+	// Wire the public-key channel. Certificate auth, when enabled, takes
+	// over the channel entirely (MinIO/OpenSSH-style): plain public keys
+	// are rejected even if "publickey" is also listed in enabledAuthMethods.
+	switch {
+	case m.certificateAuth.Enabled():
+		config.PublicKeyCallback = m.certificateAuth.Authenticate
+	case m.publicKeyAuth.Enabled():
 		config.PublicKeyCallback = m.publicKeyAuth.Authenticate
 	}
 

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       rocksdb_version:
-        description: 'RocksDB git tag or branch to build (e.g. v10.10.1)'
+        description: 'RocksDB git tag or branch to build (e.g. v11.1.2)'
         required: true
-        default: 'v10.10.1'
+        default: 'v11.1.2'
       seaweedfs_ref:
         description: 'SeaweedFS git tag, branch, or commit to build'
         required: true
@@ -16,16 +16,24 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.image_tag || format('rocksdb_{0}_seaweedfs_{1}', github.event.inputs.rocksdb_version, github.event.inputs.seaweedfs_ref) }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 
 jobs:
   build-rocksdb-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v2
 
       - name: Prepare Docker tag
         id: tag
@@ -82,19 +90,20 @@ jobs:
           echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v1
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v1
 
       - name: Login to Docker Hub
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v1
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v2
         with:
           context: ./docker
           push: true
@@ -108,3 +117,8 @@ jobs:
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
+
+      - name: Sign
+        uses: ./.github/actions/sign-image
+        with:
+          images: chrislusf/seaweedfs@${{ steps.build.outputs.digest }}

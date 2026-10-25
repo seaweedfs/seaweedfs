@@ -1,0 +1,3035 @@
+//! Heartbeat client: registers the volume server with the master.
+//!
+//! Implements the bidirectional streaming `SendHeartbeat` RPC to the master,
+//! matching Go's `server/volume_grpc_client_to_master.go`.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use tokio::sync::broadcast;
+use tracing::{error, info, warn};
+
+use super::grpc_client::{GrpcDialOptions, connect_channel, master_client};
+use super::volume_server::VolumeServerState;
+use crate::pb::master_pb;
+use crate::pb::volume_server_pb;
+use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
+use crate::storage::store::Store;
+use crate::storage::types::{NeedleId, VolumeId};
+use crate::storage::volume_report::VolumeReportKey;
+use crate::storage::volume_report_hash::report_hash;
+
+const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
+const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
+const MAX_TTL_VOLUME_REMOVAL_DELAY: u32 = 10;
+
+/// Configuration for the heartbeat client.
+#[derive(Clone)]
+pub struct HeartbeatConfig {
+    pub ip: String,
+    pub port: u16,
+    pub grpc_port: u16,
+    pub public_url: String,
+    pub data_center: String,
+    pub rack: String,
+    pub master_addresses: Vec<String>,
+    pub pulse_seconds: u64,
+}
+
+/// Run the heartbeat loop using VolumeServerState.
+///
+/// Mirrors Go's `volume_grpc_client_to_master.go` heartbeat():
+/// - On leader redirect: sleep 3s, then connect directly to the new leader
+/// - On duplicate UUID error: exponential backoff (2s, 4s, 8s), exit after 3 retries
+/// - On other errors: sleep pulse interval, reset to seed master list iteration
+pub async fn run_heartbeat_with_state(
+    config: HeartbeatConfig,
+    state: Arc<VolumeServerState>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) {
+    info!(
+        "Starting heartbeat to master nodes: {:?}",
+        config.master_addresses
+    );
+
+    let pulse = Duration::from_secs(config.pulse_seconds.max(1));
+    let mut new_leader: Option<String> = None;
+    let mut duplicate_retry_count: u32 = 0;
+
+    loop {
+        for master_addr in &config.master_addresses {
+            if is_stopping(&state) {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
+                info!("Heartbeat stopping");
+                return;
+            }
+            if shutdown_rx.try_recv().is_ok() {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
+                info!("Heartbeat shutting down");
+                return;
+            }
+
+            // If we have a leader redirect, sleep 3s then connect to the leader
+            // instead of iterating through the seed list
+            let target_addr = if let Some(ref leader) = new_leader {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                leader.clone()
+            } else {
+                master_addr.clone()
+            };
+
+            let grpc_addr = to_grpc_address(&target_addr);
+            info!("Connecting heartbeat to master {}", grpc_addr);
+
+            // Determine what action to take after the heartbeat attempt.
+            // We convert the error to a string immediately so the non-Send
+            // Box<dyn Error> is dropped before any .await point.
+            enum PostAction {
+                LeaderRedirect(String),
+                Done,
+                SleepDuplicate(Duration),
+                SleepPulse,
+            }
+            let action = match do_heartbeat(
+                &config,
+                &state,
+                &grpc_addr,
+                &target_addr,
+                pulse,
+                &mut shutdown_rx,
+            )
+            .await
+            {
+                Ok(Some(leader)) => {
+                    info!("Master leader changed to {}", leader);
+                    PostAction::LeaderRedirect(leader)
+                }
+                Ok(None) => {
+                    duplicate_retry_count = 0;
+                    PostAction::Done
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    // Drop `e` (non-Send) before any .await
+                    drop(e);
+                    warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
+
+                    if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
+                        if duplicate_retry_count >= MAX_DUPLICATE_UUID_RETRIES {
+                            error!(
+                                "Shut down Volume Server due to persistent duplicate volume directories after 3 retries"
+                            );
+                            error!(
+                                "Please check if another volume server is using the same directory"
+                            );
+                            std::process::exit(1);
+                        }
+                        let retry_delay = duplicate_uuid_retry_delay(duplicate_retry_count);
+                        duplicate_retry_count += 1;
+                        warn!(
+                            "Waiting {:?} before retrying due to duplicate UUID detection (attempt {}/3)...",
+                            retry_delay, duplicate_retry_count
+                        );
+                        PostAction::SleepDuplicate(retry_delay)
+                    } else {
+                        duplicate_retry_count = 0;
+                        PostAction::SleepPulse
+                    }
+                }
+            };
+
+            match action {
+                PostAction::LeaderRedirect(leader) => {
+                    new_leader = Some(leader);
+                    break;
+                }
+                PostAction::Done => {
+                    new_leader = None;
+                }
+                PostAction::SleepDuplicate(delay) => {
+                    new_leader = None;
+                    tokio::time::sleep(delay).await;
+                }
+                PostAction::SleepPulse => {
+                    new_leader = None;
+                    // The lookup spends part of the retry delay rather than
+                    // adding to it.
+                    let retry_at = tokio::time::Instant::now() + pulse;
+                    refresh_leader_from_peers(&config, &state, pulse).await;
+                    tokio::time::sleep_until(retry_at).await;
+                }
+            }
+
+            // If we connected to a leader (not seed list), break out after one attempt
+            // so we either reconnect to the new leader or fall back to seed list
+            if new_leader.is_some() {
+                break;
+            }
+        }
+
+        // If we have a leader redirect, skip the sleep and reconnect immediately
+        if new_leader.is_some() {
+            continue;
+        }
+
+        tokio::select! {
+            _ = tokio::time::sleep(pulse) => {}
+            _ = shutdown_rx.recv() => {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
+                info!("Heartbeat shutting down");
+                return;
+            }
+        }
+    }
+}
+
+/// Convert a master address to a gRPC `host:port` target.
+///
+/// Mirrors Go's `pb.ServerToGrpcAddress()`:
+/// - `host:port.grpcPort` returns `host:grpcPort` (explicit gRPC port).
+/// - `host:port` returns `host:(port+10000)` (Go's default offset).
+/// - Anything that fails to parse is returned unchanged.
+pub fn to_grpc_address(master_addr: &str) -> String {
+    if let Some((host, port_str)) = master_addr.rsplit_once(':') {
+        // "host:port.grpcPort" — the part after the last '.' is the gRPC port.
+        if let Some((_, grpc_port)) = port_str.rsplit_once('.')
+            && grpc_port.parse::<u16>().is_ok()
+        {
+            return format!("{}:{}", host, grpc_port);
+        }
+        if let Ok(port) = port_str.parse::<u16>() {
+            let grpc_port = port + 10000;
+            return format!("{}:{}", host, grpc_port);
+        }
+    }
+    master_addr.to_string()
+}
+
+/// Call GetMasterConfiguration on seed masters before starting the heartbeat loop.
+/// Mirrors Go's `checkWithMaster()` in `volume_grpc_client_to_master.go`.
+/// Retries across all seed masters with a 1790ms sleep between rounds (matching Go).
+/// Stores metrics address/interval from the response into server state.
+async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) {
+    loop {
+        for master_addr in &config.master_addresses {
+            let grpc_addr = to_grpc_address(master_addr);
+            match try_get_master_configuration(&grpc_addr, state.outgoing_grpc_tls.as_ref()).await {
+                Ok(resp) => {
+                    let changed = apply_metrics_push_settings(
+                        state,
+                        &resp.metrics_address,
+                        resp.metrics_interval_seconds,
+                    );
+                    if changed {
+                        state.metrics_notify.notify_waiters();
+                    }
+                    apply_storage_backends(&resp.storage_backends);
+                    info!(
+                        "Got master configuration from {}: metrics_address={}, metrics_interval={}s",
+                        master_addr, resp.metrics_address, resp.metrics_interval_seconds
+                    );
+                    return;
+                }
+                Err(e) => {
+                    warn!("checkWithMaster {}: {}", master_addr, e);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(1790)).await;
+    }
+}
+
+pub async fn prime_master_configuration(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) {
+    check_with_master(config, state).await;
+}
+
+pub async fn try_get_master_configuration(
+    grpc_addr: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Result<master_pb::GetMasterConfigurationResponse, Box<dyn std::error::Error>> {
+    let channel = connect_channel(grpc_addr, tls, GrpcDialOptions::unary()).await?;
+    let mut client = master_client(channel);
+    let resp = client
+        .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
+        .await?;
+    Ok(resp.into_inner())
+}
+
+/// Publish the leader the configured masters report, so lookups stop going
+/// to the master the heartbeat just lost while the loop retries. Without an
+/// answer inside `timeout` the published master is cleared: the lost master
+/// is dead or no longer leader, and a follower answers lookups from its own
+/// cache rather than refusing them. Mirrors Go's refreshLeaderFromPeers.
+async fn refresh_leader_from_peers(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    timeout: Duration,
+) {
+    let lookup = lookup_leader_from_peers(
+        &config.master_addresses,
+        state.outgoing_grpc_tls.as_ref(),
+    );
+    match tokio::time::timeout(timeout, lookup).await {
+        Ok(Some(leader)) => publish_current_master(state, &leader).await,
+        _ => state.current_master_url.write().await.clear(),
+    }
+}
+
+/// Ask each seed master for the raft leader and return the first answer, or
+/// None when none replies with one. Mirrors Go's
+/// `operation.LookupRaftLeaderMaster`.
+pub async fn lookup_leader_from_peers(
+    master_addrs: &[String],
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Option<String> {
+    for master_addr in master_addrs {
+        let grpc_addr = to_grpc_address(master_addr);
+        if let Ok(resp) = try_get_master_configuration(&grpc_addr, tls).await
+            && !resp.leader.is_empty()
+        {
+            return Some(resp.leader);
+        }
+    }
+    None
+}
+
+fn is_stopping(state: &VolumeServerState) -> bool {
+    *state.is_stopping.read().unwrap()
+}
+
+/// Store the master lookups should go to, in the address form it was
+/// announced in — `host:port` or `host:port.grpcPort` — so an explicit gRPC
+/// port survives to the gRPC callers, mirroring Go's setCurrentMaster.
+/// The heartbeat calls this only for a master known to lead.
+async fn publish_current_master(state: &Arc<VolumeServerState>, master: &str) {
+    *state.current_master_url.write().await = master.to_string();
+}
+
+fn duplicate_uuid_retry_delay(retry_count: u32) -> Duration {
+    Duration::from_secs((1u64 << retry_count) * 2)
+}
+
+fn duplicate_directories(store: &Store, duplicated_uuids: &[String]) -> Vec<String> {
+    let mut duplicate_dirs = Vec::new();
+    for loc in &store.locations {
+        if duplicated_uuids
+            .iter()
+            .any(|uuid| uuid == &loc.directory_uuid)
+        {
+            duplicate_dirs.push(loc.directory.clone());
+        }
+    }
+    duplicate_dirs
+}
+
+fn apply_master_volume_options(store: &Store, hb_resp: &master_pb::HeartbeatResponse) -> bool {
+    if hb_resp.volume_digest_supported {
+        store.volume_report.accept_deltas();
+    }
+    if hb_resp.resend_full_volume_list {
+        info!("master asked for the full volume list");
+        store.volume_report.request_full_list();
+    }
+    let mut volume_opts_changed = false;
+    if store.get_preallocate() != hb_resp.preallocate {
+        store.set_preallocate(hb_resp.preallocate);
+        volume_opts_changed = true;
+    }
+    if hb_resp.volume_size_limit > 0
+        && store.volume_size_limit.load(Ordering::Relaxed) != hb_resp.volume_size_limit
+    {
+        store
+            .volume_size_limit
+            .store(hb_resp.volume_size_limit, Ordering::Relaxed);
+        volume_opts_changed = true;
+    }
+
+    volume_opts_changed
+}
+
+type EcShardDeltaKey = (u32, String, u32, u32);
+
+fn collect_ec_shard_delta_messages(
+    store: &Store,
+) -> HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage> {
+    let mut messages = HashMap::new();
+
+    for (disk_id, loc) in store.locations.iter().enumerate() {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
+            for shard in ec_vol.shards.iter().flatten() {
+                messages.insert(
+                    (
+                        ec_vol.volume_id.0,
+                        ec_vol.collection.clone(),
+                        disk_id as u32,
+                        shard.shard_id as u32,
+                    ),
+                    master_pb::VolumeEcShardInformationMessage {
+                        id: ec_vol.volume_id.0,
+                        collection: ec_vol.collection.clone(),
+                        ec_index_bits: 1u32 << shard.shard_id,
+                        shard_sizes: vec![shard.file_size()],
+                        disk_type: ec_vol.disk_type.to_string(),
+                        expire_at_sec: ec_vol.expire_at_sec,
+                        disk_id: disk_id as u32,
+                        encode_ts_ns: ec_vol.encode_ts_ns,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+
+    messages
+}
+
+fn diff_ec_shard_delta_messages(
+    previous: &HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    current: &HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+) -> (
+    Vec<master_pb::VolumeEcShardInformationMessage>,
+    Vec<master_pb::VolumeEcShardInformationMessage>,
+) {
+    let mut new_ec_shards = Vec::new();
+    let mut deleted_ec_shards = Vec::new();
+
+    for (key, message) in current {
+        if previous.get(key) != Some(message) {
+            new_ec_shards.push(message.clone());
+        }
+    }
+
+    for (key, message) in previous {
+        if !current.contains_key(key) {
+            let mut deleted = message.clone();
+            deleted.shard_sizes = vec![0];
+            tracing::info!(
+                volume_id = deleted.id,
+                disk_id = deleted.disk_id,
+                ec_index_bits = deleted.ec_index_bits,
+                "deletes ec shards"
+            );
+            deleted_ec_shards.push(deleted);
+        }
+    }
+
+    (new_ec_shards, deleted_ec_shards)
+}
+
+/// A volume heartbeat carries no shard list, only the expired shards it
+/// deleted, so that is all it may take out of the delta baseline.
+fn forget_reported_ec_deletions(
+    last_ec_shards: &mut HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    heartbeat: &master_pb::Heartbeat,
+) {
+    last_ec_shards.retain(|(id, collection, disk_id, shard_id), _| {
+        !heartbeat.deleted_ec_shards.iter().any(|deleted| {
+            deleted.id == *id
+                && deleted.collection == *collection
+                && deleted.disk_id == *disk_id
+                && deleted.ec_index_bits & (1u32 << shard_id) != 0
+        })
+    });
+}
+
+/// Perform one heartbeat session with a master server.
+async fn do_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    grpc_addr: &str,
+    current_master: &str,
+    pulse: Duration,
+    shutdown_rx: &mut broadcast::Receiver<()>,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let channel = connect_channel(
+        grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
+    )
+    .await?;
+
+    let mut client = master_client(channel);
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
+
+    // Keep track of what we sent, to generate delta updates
+    let (initial_hb, initial_volumes) = off_runtime(config, state, |config, state| {
+        // This master may know nothing about this server, and has not yet said
+        // whether it understands digests, so start from the whole list.
+        state.store.read().unwrap().volume_report.reset();
+        collect_heartbeat_with_snapshot(config, state)
+    })
+    .await?;
+    let mut last_volumes: HashMap<u32, VolumeIdentity> = volume_identities(&initial_volumes);
+
+    // Send initial heartbeats BEFORE calling send_heartbeat to avoid deadlock:
+    // the server won't send response headers until it receives the first message,
+    // but send_heartbeat().await waits for response headers.
+    tx.send(initial_hb).await?;
+    let (initial_ec_hb, mut last_ec_shards) = ec_tick_pass(config, state).await?;
+    tx.send(initial_ec_hb).await?;
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
+
+    info!("Heartbeat stream established with {}", grpc_addr);
+    if is_stopping(state) {
+        state.is_heartbeating.store(false, Ordering::Relaxed);
+        send_deregister_heartbeat(config, state, &tx).await;
+        info!("Heartbeat stopping");
+        return Ok(None);
+    }
+    state.is_heartbeating.store(true, Ordering::Relaxed);
+
+    let mut volume_tick = tokio::time::interval(pulse);
+    let mut ec_tick = tokio::time::interval(pulse * 17);
+    volume_tick.tick().await;
+    ec_tick.tick().await;
+
+    let mut confirmed_leader = false;
+    loop {
+        tokio::select! {
+            resp = response_stream.message() => {
+                match resp {
+                    Ok(Some(hb_resp)) => {
+                        // A reply names the leader or comes from it, so it
+                        // settles where lookups go before anything else on the
+                        // reply is handled: a follower reply carries no other
+                        // fields, and a leader stays the lookup target even
+                        // when it rejects this registration. Mirrors Go.
+                        if !hb_resp.leader.is_empty() {
+                            if super::volume_server::to_http_address(current_master)
+                                != super::volume_server::to_http_address(&hb_resp.leader)
+                            {
+                                publish_current_master(state, &hb_resp.leader).await;
+                                return Ok(Some(hb_resp.leader));
+                            }
+                        } else if !confirmed_leader {
+                            // The leader answers every new stream without
+                            // naming a leader, so this peer is the one lookups
+                            // go to.
+                            confirmed_leader = true;
+                            publish_current_master(state, current_master).await;
+                        }
+                        if !hb_resp.duplicated_uuids.is_empty() {
+                            let uuids = hb_resp.duplicated_uuids.clone();
+                            let duplicate_dirs = off_runtime(config, state, move |_, state| {
+                                duplicate_directories(&state.store.read().unwrap(), &uuids)
+                            })
+                            .await?;
+                            error!(
+                                "Master reported duplicate volume directories: {:?}",
+                                duplicate_dirs
+                            );
+                            return Err(format!(
+                                "{}: {:?}",
+                                DUPLICATE_UUID_RETRY_MESSAGE, duplicate_dirs
+                            )
+                            .into());
+                        }
+                        let echo_max_volume_id = hb_resp.max_volume_id;
+                        let echo_topology_id = hb_resp.topology_id.clone();
+                        off_runtime(config, state, move |_, state| {
+                            let store = state.store.read().unwrap();
+                            store.update_max_volume_id_seen(echo_max_volume_id);
+                            store.update_last_seen_topology_id(&echo_topology_id);
+                        })
+                        .await?;
+                        let options_changed =
+                            volume_options_pass(config, state, &hb_resp).await?;
+                        if options_changed && maybe_adjust_volume_max(config, state).await? {
+                            let (adjusted_hb, adjusted_volumes) =
+                                off_runtime(config, state, collect_heartbeat_with_snapshot)
+                                    .await?;
+                            last_volumes = volume_identities(&adjusted_volumes);
+                            forget_reported_ec_deletions(&mut last_ec_shards, &adjusted_hb);
+                            if tx.send(adjusted_hb).await.is_err() {
+                                return Ok(None);
+                            }
+                        }
+                        let metrics_changed = apply_metrics_push_settings(
+                            state,
+                            &hb_resp.metrics_address,
+                            hb_resp.metrics_interval_seconds,
+                        );
+                        if metrics_changed {
+                            state.metrics_notify.notify_waiters();
+                        }
+                    }
+                    Ok(None) => return Ok(None),
+                    Err(e) => return Err(Box::new(e)),
+                }
+            }
+
+            _ = volume_tick.tick() => {
+                maybe_adjust_volume_max(config, state).await?;
+                let (current_hb, current_volumes) =
+                    off_runtime(config, state, collect_heartbeat_with_snapshot).await?;
+                last_volumes = volume_identities(&current_volumes);
+                forget_reported_ec_deletions(&mut last_ec_shards, &current_hb);
+                if tx.send(current_hb).await.is_err() {
+                    return Ok(None);
+                }
+            }
+
+            _ = ec_tick.tick() => {
+                let (current_ec_hb, current_ec_shards) = ec_tick_pass(config, state).await?;
+                last_ec_shards = current_ec_shards;
+                if tx.send(current_ec_hb).await.is_err() {
+                    return Ok(None);
+                }
+            }
+
+            _ = state.volume_state_notify.notified() => {
+                if is_stopping(state) {
+                    state.is_heartbeating.store(false, Ordering::Relaxed);
+                    send_deregister_heartbeat(config, state, &tx).await;
+                    info!("Heartbeat stopping");
+                    return Ok(None);
+                }
+                let (held_volumes, current_ec_shards) = notify_pass(config, state).await?;
+                let current_volumes = volume_identities(&held_volumes);
+
+                let mut new_vols = Vec::new();
+                let mut del_vols = Vec::new();
+
+                for (id, vol) in &current_volumes {
+                    if let Some(previous) = last_volumes.get(id) {
+                        if previous != vol {
+                            del_vols.push(previous.to_short_message(*id));
+                            new_vols.push(vol.to_short_message(*id));
+                        }
+                    } else {
+                        new_vols.push(vol.to_short_message(*id));
+                    }
+                }
+
+                for (id, vol) in &last_volumes {
+                    if !current_volumes.contains_key(id) {
+                        del_vols.push(vol.to_short_message(*id));
+                    }
+                }
+
+                let (new_ec_shards, deleted_ec_shards) =
+                    diff_ec_shard_delta_messages(&last_ec_shards, &current_ec_shards);
+
+                // Collect current state for state-only or combined delta heartbeats.
+                // Mirrors Go's StateUpdateChan case which sends state changes immediately.
+                let current_state = Some(volume_server_pb::VolumeServerState {
+                    maintenance: state.maintenance.load(Ordering::Relaxed),
+                    version: state.state_version.load(Ordering::Relaxed),
+                });
+
+                if !new_vols.is_empty()
+                    || !del_vols.is_empty()
+                    || !new_ec_shards.is_empty()
+                    || !deleted_ec_shards.is_empty()
+                {
+                    let delta_hb = master_pb::Heartbeat {
+                        ip: config.ip.clone(),
+                        port: config.port as u32,
+                        grpc_port: config.grpc_port as u32,
+                        public_url: config.public_url.clone(),
+                        data_center: config.data_center.clone(),
+                        rack: config.rack.clone(),
+                        new_volumes: new_vols,
+                        deleted_volumes: del_vols,
+                        new_ec_shards,
+                        deleted_ec_shards,
+                        state: current_state,
+                        ..Default::default()
+                    };
+                    if tx.send(delta_hb).await.is_err() {
+                        return Ok(None);
+                    }
+                    last_volumes = current_volumes;
+                    last_ec_shards = current_ec_shards;
+                } else {
+                    // State-only heartbeat (e.g., MarkReadonly/MarkWritable changed state
+                    // without adding/removing volumes). Mirrors Go's StateUpdateChan case.
+                    let state_hb = master_pb::Heartbeat {
+                        ip: config.ip.clone(),
+                        port: config.port as u32,
+                        grpc_port: config.grpc_port as u32,
+                        data_center: config.data_center.clone(),
+                        rack: config.rack.clone(),
+                        state: current_state,
+                        ..Default::default()
+                    };
+                    if tx.send(state_hb).await.is_err() {
+                        return Ok(None);
+                    }
+                }
+            }
+
+            _ = shutdown_rx.recv() => {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
+                send_deregister_heartbeat(config, state, &tx).await;
+                info!("Sent deregistration heartbeat");
+                return Ok(None);
+            }
+        }
+    }
+}
+
+async fn send_deregister_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    tx: &tokio::sync::mpsc::Sender<master_pb::Heartbeat>,
+) {
+    let empty = match off_runtime(config, state, deregister_heartbeat).await {
+        Ok(empty) => empty,
+        Err(e) => {
+            warn!("Deregistration heartbeat not built: {}", e);
+            return;
+        }
+    };
+    let _ = tx.send(empty).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+}
+
+fn deregister_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> master_pb::Heartbeat {
+    let store = state.store.read().unwrap();
+    // Deregister: no effective max computed, fall back to configured max.
+    let (location_uuids, disk_tags) = collect_location_metadata(&store, &[]);
+    master_pb::Heartbeat {
+        id: store.id.clone(),
+        ip: config.ip.clone(),
+        port: config.port as u32,
+        public_url: config.public_url.clone(),
+        max_file_key: 0,
+        data_center: config.data_center.clone(),
+        rack: config.rack.clone(),
+        has_no_volumes: true,
+        has_no_ec_shards: true,
+        grpc_port: config.grpc_port as u32,
+        location_uuids,
+        disk_tags,
+        ..Default::default()
+    }
+}
+
+fn apply_metrics_push_settings(
+    state: &VolumeServerState,
+    address: &str,
+    interval_seconds: u32,
+) -> bool {
+    let mut runtime = state.metrics_runtime.write().unwrap();
+    if runtime.push_gateway.address == address
+        && runtime.push_gateway.interval_seconds == interval_seconds
+    {
+        return false;
+    }
+    runtime.push_gateway.address = address.to_string();
+    runtime.push_gateway.interval_seconds = interval_seconds;
+    true
+}
+
+/// Registers the master's S3 storage backends in the process-wide tier
+/// registry, the single place both the tier-move handlers and `Volume` itself
+/// resolve a backend from.
+fn apply_storage_backends(storage_backends: &[master_pb::StorageBackend]) {
+    if storage_backends.is_empty() {
+        return;
+    }
+
+    let mut registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+        .write()
+        .unwrap();
+    for backend in storage_backends {
+        if backend.r#type != "s3" {
+            continue;
+        }
+
+        let properties = &backend.properties;
+        let config = S3TierConfig {
+            access_key: properties
+                .get("aws_access_key_id")
+                .cloned()
+                .unwrap_or_default(),
+            secret_key: properties
+                .get("aws_secret_access_key")
+                .cloned()
+                .unwrap_or_default(),
+            region: properties.get("region").cloned().unwrap_or_default(),
+            bucket: properties.get("bucket").cloned().unwrap_or_default(),
+            endpoint: properties.get("endpoint").cloned().unwrap_or_default(),
+            storage_class: properties.get("storage_class").cloned().unwrap_or_default(),
+            force_path_style: parse_bool_property(properties.get("force_path_style")),
+        };
+
+        let backend_id = if backend.id.is_empty() {
+            "default"
+        } else {
+            backend.id.as_str()
+        };
+        register_s3_backend(&mut registry, backend, backend_id, &config);
+    }
+}
+
+fn register_s3_backend(
+    registry: &mut crate::remote_storage::s3_tier::S3TierRegistry,
+    backend: &master_pb::StorageBackend,
+    backend_id: &str,
+    config: &S3TierConfig,
+) {
+    let qualified_name = format!("{}.{}", backend.r#type, backend_id);
+    if registry.get(&qualified_name).is_none() {
+        registry.register(qualified_name, S3TierBackend::new(config));
+    }
+    if backend_id == "default" && registry.get(&backend.r#type).is_none() {
+        registry.register(backend.r#type.clone(), S3TierBackend::new(config));
+    }
+}
+
+fn parse_bool_property(value: Option<&String>) -> bool {
+    value
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "t" | "true" | "y" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
+/// What a mount or unmount delta has to name, which is far less than the
+/// information message the heartbeat carries. A server holding millions of
+/// volumes cannot keep a whole message for each just to notice one leave; the
+/// Go report state keeps the same fields for the same reason.
+#[derive(Clone, PartialEq)]
+struct VolumeIdentity {
+    collection: String,
+    disk_type: String,
+    version: u32,
+    replica_placement: u32,
+    ttl: u32,
+    disk_id: u32,
+    read_only: bool,
+    read_only_can_delete: bool,
+}
+
+impl VolumeIdentity {
+    fn of(v: &master_pb::VolumeInformationMessage) -> Self {
+        Self {
+            collection: v.collection.clone(),
+            disk_type: v.disk_type.clone(),
+            version: v.version,
+            replica_placement: v.replica_placement,
+            ttl: v.ttl,
+            disk_id: v.disk_id,
+            read_only: v.read_only,
+            read_only_can_delete: v.read_only_can_delete,
+        }
+    }
+
+    fn to_short_message(&self, id: u32) -> master_pb::VolumeShortInformationMessage {
+        master_pb::VolumeShortInformationMessage {
+            id,
+            collection: self.collection.clone(),
+            version: self.version,
+            replica_placement: self.replica_placement,
+            ttl: self.ttl,
+            disk_type: self.disk_type.clone(),
+            disk_id: self.disk_id,
+            read_only: self.read_only,
+            read_only_can_delete: self.read_only_can_delete,
+        }
+    }
+}
+
+fn volume_identities(
+    volumes: &[master_pb::VolumeInformationMessage],
+) -> HashMap<u32, VolumeIdentity> {
+    volumes
+        .iter()
+        .map(|v| (v.id, VolumeIdentity::of(v)))
+        .collect()
+}
+
+/// Runs a store pass on the blocking pool, so waiting for the store lock
+/// parks no runtime worker.
+async fn off_runtime<T: Send + 'static>(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    pass: impl FnOnce(&HeartbeatConfig, &Arc<VolumeServerState>) -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let (config, state) = (config.clone(), state.clone());
+    tokio::task::spawn_blocking(move || pass(&config, &state)).await
+}
+
+/// Applies the master's volume options; whether they changed.
+async fn volume_options_pass(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+    hb_resp: &master_pb::HeartbeatResponse,
+) -> Result<bool, tokio::task::JoinError> {
+    let hb_resp = hb_resp.clone();
+    off_runtime(config, state, move |_, state| {
+        apply_master_volume_options(&state.store.read().unwrap(), &hb_resp)
+    })
+    .await
+}
+
+/// The held volumes and EC shards a state notification is diffed from.
+async fn notify_pass(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> Result<
+    (
+        Vec<master_pb::VolumeInformationMessage>,
+        HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    ),
+    tokio::task::JoinError,
+> {
+    off_runtime(config, state, |config, state| {
+        let volumes = collect_volume_snapshot(config, state);
+        #[cfg(test)]
+        {
+            let store_id = state.store.read().unwrap().id.clone();
+            read_phase_hook::park(read_phase_hook::Point::BeforeNotifyEcRead, &store_id);
+        }
+        let shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        (volumes, shards)
+    })
+    .await
+}
+
+/// Go's MaybeAdjustVolumeMax: statvfs on every auto-sized disk, a stat per
+/// writable volume.
+async fn maybe_adjust_volume_max(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> Result<bool, tokio::task::JoinError> {
+    off_runtime(config, state, |_, state| {
+        state.store.read().unwrap().maybe_adjust_volume_max()
+    })
+    .await
+}
+
+/// The EC heartbeat and the shard list later deltas are diffed against,
+/// under one guard so no mount lands between them unreported.
+async fn ec_tick_pass(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> Result<
+    (
+        master_pb::Heartbeat,
+        HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    ),
+    tokio::task::JoinError,
+> {
+    off_runtime(config, state, |config, state| {
+        let store = state.store.read().unwrap();
+        (
+            collect_ec_heartbeat(config, &store),
+            collect_ec_shard_delta_messages(&store),
+        )
+    })
+    .await
+}
+
+/// Collect volume information into a Heartbeat message.
+fn collect_heartbeat_with_snapshot(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> (
+    master_pb::Heartbeat,
+    Vec<master_pb::VolumeInformationMessage>,
+) {
+    let (_, expired_ec) = state.store.read().unwrap().find_expired_ec_volumes();
+    let mut deleted_ec_shards = Vec::new();
+    if !expired_ec.is_empty() {
+        deleted_ec_shards = state
+            .store
+            .write()
+            .unwrap()
+            .remove_expired_ec_volumes(expired_ec)
+            .0;
+    }
+    #[cfg(test)]
+    {
+        let store_id = state.store.read().unwrap().id.clone();
+        read_phase_hook::park(read_phase_hook::Point::BeforeVolumePass, &store_id);
+    }
+    let (heartbeat, volumes, actions) = {
+        let store = state.store.read().unwrap();
+        #[cfg(test)]
+        read_phase_hook::park(read_phase_hook::Point::VolumePass, &store.id);
+        // Taken with the volume list: a shard mounted since the EC phase must
+        // not go out as "no EC shards", which clears it on the master.
+        let has_no_ec_shards = !has_reportable_ec_shards(&store);
+        build_heartbeat_with_ec_status(config, &store, deleted_ec_shards, has_no_ec_shards, true)
+    };
+    apply_volume_actions(state, actions);
+    (heartbeat, volumes)
+}
+
+/// Lists the volumes the server holds without touching reporting state or
+/// expiring anything, for callers that only need to diff against a previous
+/// snapshot and send a message of their own.
+fn collect_volume_snapshot(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> Vec<master_pb::VolumeInformationMessage> {
+    let (_, volumes, actions) = build_heartbeat_with_ec_status(
+        config,
+        &state.store.read().unwrap(),
+        Vec::new(),
+        true,
+        false,
+    );
+    apply_volume_actions(state, actions);
+    volumes
+}
+
+/// Store changes a heartbeat pass decides on under the read lock, applied
+/// under a short write lock afterwards. Entries are (disk index, volume id).
+#[derive(Default)]
+struct VolumeActions {
+    delete_expired: Vec<(usize, VolumeId)>,
+    quarantine: Vec<(usize, VolumeId)>,
+}
+
+fn apply_volume_actions(state: &VolumeServerState, actions: VolumeActions) {
+    if actions.delete_expired.is_empty() && actions.quarantine.is_empty() {
+        return;
+    }
+    apply_volume_actions_to(&mut state.store.write().unwrap(), actions);
+}
+
+/// Each target is re-checked: it may have been written to, replaced or removed
+/// since the read pass chose it.
+fn apply_volume_actions_to(store: &mut Store, actions: VolumeActions) {
+    let volume_size_limit = store.volume_size_limit.load(Ordering::Relaxed);
+    for (disk_id, vid) in actions.delete_expired {
+        let Some(loc) = store.locations.get_mut(disk_id) else {
+            continue;
+        };
+        let still_expired = loc.find_volume(vid).is_some_and(|vol| {
+            !vol.should_quarantine()
+                && vol.is_expired(vol.dat_file_size().unwrap_or(0), volume_size_limit)
+                && vol.is_expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY)
+        });
+        if still_expired {
+            let _ = loc.delete_volume(vid, false, false, false);
+        }
+    }
+    for (disk_id, vid) in actions.quarantine {
+        if let Some(vol) = store
+            .locations
+            .get_mut(disk_id)
+            .and_then(|loc| loc.find_volume(vid))
+            && vol.should_quarantine()
+        {
+            vol.set_no_write_or_delete(true);
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_phase_hook {
+    use std::sync::Mutex;
+    use std::sync::mpsc::Receiver;
+    use tokio::sync::oneshot::Sender;
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Point {
+        /// Between the EC phase and the volume pass, holding no lock.
+        BeforeVolumePass,
+        /// Inside the volume pass, holding the store read lock.
+        VolumePass,
+        /// Between the notify branch's volume snapshot and its EC read.
+        BeforeNotifyEcRead,
+    }
+
+    type Park = (Point, String, Sender<()>, Receiver<()>);
+    static ARMED: Mutex<Vec<Park>> = Mutex::new(Vec::new());
+
+    /// Parks the next pass over the store with this id at `point`, announcing
+    /// itself on `entered` and waiting until `release` is dropped.
+    pub(super) fn arm(point: Point, store_id: &str, entered: Sender<()>, release: Receiver<()>) {
+        ARMED
+            .lock()
+            .unwrap()
+            .push((point, store_id.to_string(), entered, release));
+    }
+
+    pub(super) fn park(point: Point, store_id: &str) {
+        let armed = {
+            let mut armed = ARMED.lock().unwrap();
+            armed
+                .iter()
+                .position(|(p, id, _, _)| *p == point && !id.is_empty() && id == store_id)
+                .map(|i| armed.swap_remove(i))
+        };
+        if let Some((_, _, entered, release)) = armed {
+            let _ = entered.send(());
+            let _ = release.recv();
+        }
+    }
+}
+
+/// The heartbeat alone, without the volume snapshot the send loop pairs it
+/// with. Only the tests want it that way; the loop calls
+/// collect_heartbeat_with_snapshot directly.
+#[cfg(test)]
+fn collect_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> master_pb::Heartbeat {
+    collect_heartbeat_with_snapshot(config, state).0
+}
+
+fn collect_location_metadata(
+    store: &Store,
+    disk_max_by_id: &[i32],
+) -> (Vec<String>, Vec<master_pb::DiskTag>) {
+    let location_uuids = store
+        .locations
+        .iter()
+        .map(|loc| loc.directory_uuid.clone())
+        .collect();
+    let disk_tags = store
+        .locations
+        .iter()
+        .enumerate()
+        .map(|(disk_id, loc)| {
+            let max_volume_count = disk_max_by_id
+                .get(disk_id)
+                .copied()
+                .unwrap_or_else(|| loc.max_volume_count.load(Ordering::Relaxed));
+            master_pb::DiskTag {
+                disk_id: disk_id as u32,
+                tags: loc.tags.clone(),
+                r#type: loc.disk_type.to_string(),
+                max_volume_count: max_volume_count as i64,
+            }
+        })
+        .collect();
+    (location_uuids, disk_tags)
+}
+
+/// Whether a heartbeat would report any EC shard: Go's non-empty
+/// `ecVolumeMessages` from `deleteExpiredEcVolumes`.
+fn has_reportable_ec_shards(store: &Store) -> bool {
+    store.locations.iter().any(|loc| {
+        loc.ec_volumes().any(|(_, ec_vol)| {
+            !ec_vol.is_time_to_destroy()
+                && !ec_vol.should_quarantine()
+                && ec_vol.shards.iter().any(Option::is_some)
+        })
+    })
+}
+
+#[cfg(test)]
+fn build_heartbeat(config: &HeartbeatConfig, store: &mut Store) -> master_pb::Heartbeat {
+    let has_no_ec_shards = collect_live_ec_shards(store, false).is_empty();
+    let (heartbeat, _, actions) =
+        build_heartbeat_with_ec_status(config, store, Vec::new(), has_no_ec_shards, true);
+    apply_volume_actions_to(store, actions);
+    heartbeat
+}
+
+/// Returns the heartbeat to send, every volume held, and the store changes
+/// the pass decided on. The caller derives mount and unmount deltas by diffing
+/// successive snapshots, so it must not be handed the partial list a heartbeat
+/// may carry.
+fn build_heartbeat_with_ec_status(
+    config: &HeartbeatConfig,
+    store: &Store,
+    deleted_ec_shards: Vec<master_pb::VolumeEcShardInformationMessage>,
+    has_no_ec_shards: bool,
+    commit_report: bool,
+) -> (
+    master_pb::Heartbeat,
+    Vec<master_pb::VolumeInformationMessage>,
+    VolumeActions,
+) {
+    #[derive(Default)]
+    struct ReadOnlyCounts {
+        is_read_only: u32,
+        no_write_or_delete: u32,
+        no_write_can_delete: u32,
+        is_disk_space_low: u32,
+    }
+
+    let mut volumes = Vec::new();
+    // Covers every volume held, whether or not this heartbeat names it, so the
+    // master can tell whether applying what it was sent leaves it current.
+    // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
+    let mut volume_digest: u64 = 0;
+    let mut quarantined_volumes: u32 = 0;
+    let (send_full_list, report_generation, report_pass) = store.volume_report.begin();
+    let mut changed_volumes = Vec::new();
+    let mut max_file_key = NeedleId(0);
+    let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
+    let mut disk_total_bytes: HashMap<String, u64> = HashMap::new();
+    let mut disk_free_bytes: HashMap<String, u64> = HashMap::new();
+
+    // Collect per-collection disk size and read-only counts for metrics
+    let mut disk_sizes: HashMap<String, (u64, u64)> = HashMap::new(); // (normal, deleted)
+    let mut ro_counts: HashMap<String, ReadOnlyCounts> = HashMap::new();
+
+    let volume_size_limit = store.volume_size_limit.load(Ordering::Relaxed);
+
+    // Per-disk effective max for DiskTag, captured alongside the per-type sum.
+    let mut disk_max_by_id = vec![0i32; store.locations.len()];
+    let mut actions = VolumeActions::default();
+
+    for (disk_id, loc) in store.locations.iter().enumerate() {
+        let disk_type_str = loc.disk_type.to_string();
+        let mut effective_max_count = loc.max_volume_count.load(Ordering::Relaxed);
+        if loc.is_disk_space_low.load(Ordering::Relaxed) {
+            let used_slots = loc.volumes_len() as i32
+                + loc
+                    .ec_shard_count()
+                    .div_ceil(crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                    as i32;
+            effective_max_count = used_slots;
+        }
+        if effective_max_count < 0 {
+            effective_max_count = 0;
+        }
+        *max_volume_counts.entry(disk_type_str.clone()).or_insert(0) += effective_max_count as u32;
+        disk_max_by_id[disk_id] = effective_max_count;
+        // Sum capacity per disk type; assumes one location per filesystem. Locations
+        // sharing a mount over-report absolute bytes but not the used ratio the gate
+        // uses. Mirrors weed/storage/store.go.
+        *disk_total_bytes.entry(disk_type_str.clone()).or_insert(0) +=
+            loc.disk_total_bytes.load(Ordering::Relaxed);
+        *disk_free_bytes.entry(disk_type_str).or_insert(0) +=
+            loc.disk_free_bytes.load(Ordering::Relaxed);
+
+        for (_, vol) in loc.iter_volumes() {
+            let cur_max = vol.max_file_key();
+            if cur_max > max_file_key {
+                max_file_key = cur_max;
+            }
+
+            let volume_size = vol.dat_file_size().unwrap_or(0);
+            let mut should_delete_volume = false;
+
+            if vol.should_quarantine() {
+                let (_, io_count, io_quarantined) = vol.get_io_error_state();
+                if !io_quarantined {
+                    vol.mark_io_quarantined();
+                    warn!(
+                        "Volume {} quarantined after {} consecutive IO errors",
+                        vol.id.0, io_count
+                    );
+                }
+                quarantined_volumes += 1;
+                actions.quarantine.push((disk_id, vol.id));
+                continue;
+            } else if !vol.is_expired(volume_size, volume_size_limit) {
+                // Detect phantom volumes: the .dat was unlinked from disk but is still
+                // held open as a deleted FD, so the volume keeps serving and heartbeating
+                // while no disk-path operation can ever succeed. Skip remote-tiered volumes,
+                // whose .dat legitimately lives in cloud storage. Only a present .dat is
+                // cached for 30s; a missing one is re-checked every heartbeat so the volume
+                // stays suppressed until the file returns. See issues/10004
+                if vol.file_count() > 0 && !vol.has_remote_file() {
+                    const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or(Duration::ZERO)
+                        .as_nanos() as i64;
+                    if now_ns - vol.last_disk_check_ns.load(Ordering::Relaxed)
+                        > DISK_CHECK_INTERVAL_NS
+                    {
+                        if !Path::new(&vol.file_name(".dat")).exists() {
+                            warn!(
+                                "Volume {}: data file {} missing (held open as deleted FD) - not reporting to master",
+                                vol.id.0,
+                                vol.file_name(".dat")
+                            );
+                            continue;
+                        }
+                        vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
+                    }
+                }
+
+                let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
+                let volume_message = master_pb::VolumeInformationMessage {
+                    id: vol.id.0,
+                    size: volume_size,
+                    collection: vol.collection.clone(),
+                    file_count: vol.file_count() as u64,
+                    delete_count: vol.deleted_count() as u64,
+                    deleted_byte_count: vol.deleted_size(),
+                    read_only: vol.is_read_only(),
+                    read_only_can_delete: vol.is_no_write_can_delete(),
+                    replica_placement: vol.super_block().replica_placement.to_byte() as u32,
+                    version: vol.super_block().version.0 as u32,
+                    ttl: vol.super_block().ttl.to_u32(),
+                    compact_revision: vol.super_block().compaction_revision as u32,
+                    // The .dat mtime, as Go reports: the shell's quiet-period
+                    // gates read this as "last touched", which a delete has to
+                    // count towards even though the TTL clock ignores it.
+                    modified_at_second: vol.dat_file_mod_time() as i64,
+                    disk_type: loc.disk_type.to_string(),
+                    disk_id: disk_id as u32,
+                    remote_storage_name,
+                    remote_storage_key,
+                };
+                let hash = report_hash(&volume_message);
+                volume_digest ^= hash;
+                let key: VolumeReportKey = (volume_message.disk_id, volume_message.id);
+                // A snapshot must leave the reporting state as it found it, so
+                // it asks rather than marks.
+                let is_news = if commit_report {
+                    store.volume_report.record(key, hash, report_pass)
+                } else {
+                    store.volume_report.changed(key, hash)
+                };
+                if send_full_list || is_news {
+                    changed_volumes.push(volume_message.clone());
+                }
+                volumes.push(volume_message);
+            } else if vol.is_expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+                actions.delete_expired.push((disk_id, vol.id));
+                should_delete_volume = true;
+            }
+
+            // Track disk size by collection. A volume on its way out is left
+            // out: an entry here is also what says the collection is still on
+            // this server.
+            if !should_delete_volume {
+                let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
+                entry.0 += volume_size;
+                entry.1 += vol.deleted_size();
+            }
+
+            // An entry here is what says the collection is still on this
+            // server, so a volume on its way out must not make one.
+            if !should_delete_volume {
+                let read_only = ro_counts.entry(vol.collection.clone()).or_default();
+                if vol.is_read_only() {
+                    read_only.is_read_only += 1;
+                    if vol.is_no_write_or_delete() {
+                        read_only.no_write_or_delete += 1;
+                    }
+                    if vol.is_no_write_can_delete() {
+                        read_only.no_write_can_delete += 1;
+                    }
+                    if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                        read_only.is_disk_space_low += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Update disk size and read-only gauges
+    for (col, (normal, deleted)) in &disk_sizes {
+        crate::metrics::DISK_SIZE_GAUGE
+            .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_NORMAL])
+            .set(*normal as f64);
+        crate::metrics::DISK_SIZE_GAUGE
+            .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_DELETED_BYTES])
+            .set(*deleted as f64);
+    }
+    for (col, counts) in &ro_counts {
+        crate::metrics::READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_IS_READ_ONLY])
+            .set(counts.is_read_only as f64);
+        crate::metrics::READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_NO_WRITE_OR_DELETE])
+            .set(counts.no_write_or_delete as f64);
+        crate::metrics::READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_NO_WRITE_CAN_DELETE])
+            .set(counts.no_write_can_delete as f64);
+        crate::metrics::READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_IS_DISK_SPACE_LOW])
+            .set(counts.is_disk_space_low as f64);
+    }
+    // ro_counts has an entry for every collection that kept a volume through
+    // this pass, including the ones counting zero read-only volumes.
+    {
+        let mut reported = store.reported_collections.lock().unwrap();
+        for col in reported.iter() {
+            if !ro_counts.contains_key(col) {
+                crate::metrics::delete_volume_server_collection_metrics(col);
+            }
+        }
+        *reported = ro_counts.keys().cloned().collect();
+    }
+    // Update max volumes gauge
+    let total_max: i64 = max_volume_counts.values().map(|v| *v as i64).sum();
+    crate::metrics::MAX_VOLUMES.set(total_max);
+
+    // Only when this heartbeat is going to be sent: marking volumes reported
+    // and then discarding the message would leave the master never told.
+    if commit_report {
+        store.volume_report.commit(report_pass, report_generation);
+    }
+
+    // has_no_volumes says the server holds nothing, so it may only be derived
+    // from a full list. Deriving it from a changed-only heartbeat would make a
+    // quiet one read as an empty server and drop every volume on it.
+    let (heartbeat_volumes, changed_volumes, has_no_volumes) = if send_full_list {
+        (changed_volumes, Vec::new(), volumes.is_empty())
+    } else {
+        (Vec::new(), changed_volumes, false)
+    };
+    let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
+
+    let mut quarantined_ec_shards: u32 = 0;
+    for loc in &store.locations {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                quarantined_ec_shards += ec_vol.shard_count() as u32;
+            }
+        }
+    }
+
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["volume"])
+        .set(quarantined_volumes as i64);
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["ec_shard"])
+        .set(quarantined_ec_shards as i64);
+
+    let heartbeat = master_pb::Heartbeat {
+        id: store.id.clone(),
+        ip: config.ip.clone(),
+        port: config.port as u32,
+        public_url: config.public_url.clone(),
+        max_file_key: max_file_key.0,
+        data_center: config.data_center.clone(),
+        rack: config.rack.clone(),
+        admin_port: config.port as u32,
+        volumes: heartbeat_volumes,
+        changed_volumes,
+        volume_digest: Some(volume_digest),
+        deleted_ec_shards,
+        has_no_volumes,
+        has_no_ec_shards,
+        max_volume_counts,
+        disk_total_bytes,
+        disk_free_bytes,
+        grpc_port: config.grpc_port as u32,
+        location_uuids,
+        disk_tags,
+        max_volume_id_seen: store.max_volume_id_seen(),
+        last_seen_topology_id: store.last_seen_topology_id(),
+        ..Default::default()
+    };
+    (heartbeat, volumes, actions)
+}
+
+fn collect_live_ec_shards(
+    store: &Store,
+    update_metrics: bool,
+) -> Vec<master_pb::VolumeEcShardInformationMessage> {
+    let mut ec_shards = Vec::new();
+    let mut ec_sizes: HashMap<String, u64> = HashMap::new();
+
+    for (disk_id, loc) in store.locations.iter().enumerate() {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
+            for message in ec_vol.to_volume_ec_shard_information_messages(disk_id as u32) {
+                if update_metrics {
+                    let total_size: u64 = message
+                        .shard_sizes
+                        .iter()
+                        .map(|size| (*size).max(0) as u64)
+                        .sum();
+                    *ec_sizes.entry(message.collection.clone()).or_insert(0) += total_size;
+                }
+                ec_shards.push(message);
+            }
+        }
+    }
+
+    if update_metrics {
+        for (col, size) in &ec_sizes {
+            crate::metrics::DISK_SIZE_GAUGE
+                .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC])
+                .set(*size as f64);
+        }
+        let mut reported = store.reported_ec_collections.lock().unwrap();
+        for col in reported.iter() {
+            if !ec_sizes.contains_key(col) {
+                let _ = crate::metrics::DISK_SIZE_GAUGE
+                    .remove_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC]);
+            }
+        }
+        *reported = ec_sizes.keys().cloned().collect();
+    }
+
+    ec_shards
+}
+
+/// Collect EC shard information into a Heartbeat message.
+fn collect_ec_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartbeat {
+    let ec_shards = collect_live_ec_shards(store, true);
+
+    let has_no = ec_shards.is_empty();
+    master_pb::Heartbeat {
+        ip: config.ip.clone(),
+        port: config.port as u32,
+        grpc_port: config.grpc_port as u32,
+        data_center: config.data_center.clone(),
+        rack: config.rack.clone(),
+        ec_shards,
+        has_no_ec_shards: has_no,
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::MinFreeSpace;
+    use crate::config::ReadMode;
+    use crate::metrics::{
+        DISK_SIZE_GAUGE, DISK_SIZE_LABEL_DELETED_BYTES, DISK_SIZE_LABEL_EC, DISK_SIZE_LABEL_NORMAL,
+        READ_ONLY_LABEL_IS_DISK_SPACE_LOW, READ_ONLY_LABEL_IS_READ_ONLY,
+        READ_ONLY_LABEL_NO_WRITE_CAN_DELETE, READ_ONLY_LABEL_NO_WRITE_OR_DELETE,
+        READ_ONLY_VOLUME_GAUGE,
+    };
+    use crate::security::{Guard, SigningKey};
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::types::{DiskType, VolumeId};
+    use crate::storage::volume::VolumeSpec;
+    use std::sync::RwLock;
+    use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_config() -> HeartbeatConfig {
+        HeartbeatConfig {
+            ip: "127.0.0.1".to_string(),
+            port: 8080,
+            grpc_port: 18080,
+            public_url: "127.0.0.1:8080".to_string(),
+            data_center: "dc1".to_string(),
+            rack: "rack1".to_string(),
+            master_addresses: Vec::new(),
+            pulse_seconds: 5,
+        }
+    }
+
+    fn test_state_with_store(store: Store) -> Arc<VolumeServerState> {
+        Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: std::sync::atomic::AtomicBool::new(false),
+            state_version: std::sync::atomic::AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+            inflight_download_data_timeout: std::time::Duration::from_secs(60),
+            inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+            inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
+            is_heartbeating: std::sync::atomic::AtomicBool::new(false),
+            has_master: true,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            read_mode: ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
+            master_url: String::new(),
+            master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: std::sync::RwLock::new(Default::default()),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: true,
+            read_buffer_size_bytes: 4 * 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
+        })
+    }
+
+    #[test]
+    fn test_to_grpc_address_default_offset() {
+        assert_eq!(to_grpc_address("10.0.0.1:9333"), "10.0.0.1:19333");
+        assert_eq!(to_grpc_address("localhost:9333"), "localhost:19333");
+    }
+
+    #[test]
+    fn test_to_grpc_address_explicit_grpc_port() {
+        // host:port.grpcPort form — gRPC port is what's after the dot.
+        assert_eq!(to_grpc_address("10.85.183.6:5300.6300"), "10.85.183.6:6300");
+        assert_eq!(
+            to_grpc_address("master.local:9333.19333"),
+            "master.local:19333"
+        );
+    }
+
+    #[test]
+    fn test_to_grpc_address_returns_input_when_unparseable() {
+        assert_eq!(to_grpc_address(""), "");
+        assert_eq!(to_grpc_address("no-port"), "no-port");
+        assert_eq!(to_grpc_address("host:not-a-port"), "host:not-a-port");
+    }
+
+    #[test]
+    fn test_build_heartbeat_includes_store_identity_and_disk_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.id = "volume-node-a".to_string();
+        store
+            .add_location(
+                dir,
+                dir,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                vec!["fast".to_string(), "ssd".to_string()],
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(7),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        assert_eq!(heartbeat.id, "volume-node-a");
+        assert_eq!(heartbeat.volumes.len(), 1);
+        assert!(!heartbeat.has_no_volumes);
+        assert_eq!(
+            heartbeat.location_uuids,
+            vec![store.locations[0].directory_uuid.clone()]
+        );
+        assert_eq!(heartbeat.disk_tags.len(), 1);
+        assert_eq!(heartbeat.disk_tags[0].disk_id, 0);
+        assert_eq!(
+            heartbeat.disk_tags[0].tags,
+            vec!["fast".to_string(), "ssd".to_string()]
+        );
+        assert_eq!(
+            heartbeat.disk_tags[0].r#type,
+            DiskType::HardDrive.to_string()
+        );
+        assert_eq!(heartbeat.disk_tags[0].max_volume_count, 3);
+    }
+
+    #[test]
+    fn test_build_heartbeat_disk_tag_reflects_disk_space_low_override() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                vec![],
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(7),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // Low disk space caps the per-disk max at used slots (1 volume, 0 EC).
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.disk_tags[0].max_volume_count, 1);
+        assert_eq!(
+            heartbeat.max_volume_counts[&DiskType::HardDrive.to_string()],
+            1
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_marks_empty_store_as_has_no_volumes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.id = "volume-node-b".to_string();
+        store
+            .add_location(
+                dir,
+                dir,
+                2,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        assert!(heartbeat.volumes.is_empty());
+        assert!(heartbeat.has_no_volumes);
+    }
+
+    // The digest must cover exactly the volumes the heartbeat carries. A volume
+    // reported but left out of the digest, or the reverse, makes the master's
+    // comparison disagree forever. An empty store still reports a digest, so
+    // the master can tell it from a server that computes none.
+    fn reporting_store(dir: &str, count: u32) -> Store {
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                16,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        for id in 1..=count {
+            store
+                .add_volume(
+                    VolumeId(id),
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        collection: "pics",
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        store.volume_report.reset();
+        store
+    }
+
+    // Until the master says it compares digests it may be one that reads a
+    // partial list as the whole truth, so it keeps getting the whole list.
+    #[test]
+    fn test_heartbeat_sends_full_list_until_the_master_accepts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+
+        for _ in 0..3 {
+            let heartbeat = build_heartbeat(&test_config(), &mut store);
+            assert_eq!(heartbeat.volumes.len(), 2);
+            assert!(heartbeat.changed_volumes.is_empty());
+        }
+    }
+
+    // The one that would be catastrophic: a heartbeat with nothing to report
+    // must not look like a server that has lost every volume.
+    #[test]
+    fn test_quiet_heartbeat_does_not_look_like_an_empty_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        let full = build_heartbeat(&test_config(), &mut store);
+
+        let quiet = build_heartbeat(&test_config(), &mut store);
+        assert!(quiet.volumes.is_empty());
+        assert!(quiet.changed_volumes.is_empty());
+        assert!(!quiet.has_no_volumes);
+        // The digest still covers everything held, not just what was sent.
+        assert_eq!(quiet.volume_digest, full.volume_digest);
+    }
+
+    #[test]
+    fn test_heartbeat_reports_only_what_changed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store
+            .add_volume(
+                VolumeId(3),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert!(heartbeat.volumes.is_empty());
+        assert_eq!(heartbeat.changed_volumes.len(), 1);
+        assert_eq!(heartbeat.changed_volumes[0].id, 3);
+    }
+
+    #[test]
+    fn test_heartbeat_returns_to_the_full_list_on_request() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store.volume_report.request_full_list();
+        let resent = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(resent.volumes.len(), 2);
+        assert!(resent.changed_volumes.is_empty());
+
+        let next = build_heartbeat(&test_config(), &mut store);
+        assert!(next.volumes.is_empty());
+    }
+
+    // A request that lands while a heartbeat is being built asked about a later
+    // state than that heartbeat carries, so it must survive being committed over.
+    #[test]
+    fn test_full_list_request_during_collection_survives() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        let (full, generation, pass) = store.volume_report.begin();
+        assert!(!full);
+        store.volume_report.request_full_list();
+        store.volume_report.commit(pass, generation);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.volumes.len(), 2);
+    }
+
+    // Taking a snapshot must not mark volumes as told to a master that is
+    // getting a different message.
+    #[test]
+    fn test_snapshot_does_not_mark_volumes_reported() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store
+            .add_volume(
+                VolumeId(3),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // What the notify path does: collect a snapshot, send a message of its own.
+        let snapshot =
+            build_heartbeat_with_ec_status(&test_config(), &store, Vec::new(), true, false).1;
+        assert_eq!(snapshot.len(), 3);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.changed_volumes.len(), 1);
+        assert_eq!(heartbeat.changed_volumes[0].id, 3);
+    }
+
+    #[test]
+    fn test_build_heartbeat_digests_exactly_what_it_reports() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let empty = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(empty.volume_digest, Some(0));
+
+        for vid in [VolumeId(1), VolumeId(2)] {
+            store
+                .add_volume(
+                    vid,
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        collection: "pics",
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.volumes.len(), 2);
+
+        let expected = heartbeat.volumes.iter().fold(0u64, |acc, m| {
+            acc ^ crate::storage::volume_report_hash::report_hash(m)
+        });
+        assert_eq!(heartbeat.volume_digest, Some(expected));
+        assert_ne!(heartbeat.volume_digest, Some(0));
+    }
+
+    #[test]
+    fn test_build_heartbeat_tracks_go_read_only_labels_and_disk_id() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(17),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "heartbeat_metrics_case",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, Ordering::Relaxed);
+
+        {
+            let (_, volume) = store.find_volume(VolumeId(17)).unwrap();
+            volume.set_read_only().unwrap();
+            volume
+                .update_remote_files(|files| files.push(Default::default()))
+                .unwrap();
+        }
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        let collection = "heartbeat_metrics_case";
+        let disk_type = store.locations[0].disk_type.to_string();
+
+        assert_eq!(heartbeat.volumes.len(), 1);
+        assert_eq!(heartbeat.volumes[0].disk_id, 0);
+        assert_eq!(heartbeat.max_volume_counts[&disk_type], 1);
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_IS_READ_ONLY])
+                .get(),
+            1.0
+        );
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_NO_WRITE_OR_DELETE])
+                .get(),
+            0.0
+        );
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_NO_WRITE_CAN_DELETE])
+                .get(),
+            1.0
+        );
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_IS_DISK_SPACE_LOW])
+                .get(),
+            1.0
+        );
+        assert_eq!(
+            DISK_SIZE_GAUGE
+                .with_label_values(&[collection, DISK_SIZE_LABEL_NORMAL])
+                .get(),
+            crate::storage::super_block::SUPER_BLOCK_SIZE as f64
+        );
+        assert_eq!(
+            DISK_SIZE_GAUGE
+                .with_label_values(&[collection, DISK_SIZE_LABEL_DELETED_BYTES])
+                .get(),
+            0.0
+        );
+    }
+
+    fn collection_series(gauge: &prometheus::GaugeVec, collection: &str) -> usize {
+        use prometheus::core::Collector;
+        gauge
+            .collect()
+            .iter()
+            .flat_map(|family| family.get_metric().to_vec())
+            .filter(|metric| {
+                metric.get_label().iter().any(|label| {
+                    label.get_name() == "collection" && label.get_value() == collection
+                })
+            })
+            .count()
+    }
+
+    // The per-collection gauges are only ever set for collections the heartbeat
+    // still finds on this server. A volume.balance that moves a collection's
+    // last volume off a server used to leave its read-only count - marked
+    // read-only for the move, moments before it went - standing on that server
+    // until a restart, with nothing in volume.list to match it.
+    #[test]
+    fn test_build_heartbeat_clears_metrics_of_departed_collection() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let collection = "heartbeat_departed_case";
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(21),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        {
+            let (_, volume) = store.find_volume(VolumeId(21)).unwrap();
+            volume.set_read_only().unwrap();
+        }
+
+        build_heartbeat(&test_config(), &mut store);
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_IS_READ_ONLY])
+                .get(),
+            1.0
+        );
+
+        assert!(store.unmount_volume(VolumeId(21)).unwrap());
+        build_heartbeat(&test_config(), &mut store);
+
+        assert_eq!(
+            collection_series(&READ_ONLY_VOLUME_GAUGE, collection),
+            0,
+            "read-only series left after the collection left the server"
+        );
+        assert_eq!(
+            collection_series(&DISK_SIZE_GAUGE, collection),
+            0,
+            "disk size series left after the collection left the server"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_reports_disk_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        // Populate the cached physical-capacity fields from a real statvfs probe.
+        store.locations[0].check_disk_space();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        let disk_type = store.locations[0].disk_type.to_string();
+
+        assert!(
+            heartbeat
+                .disk_total_bytes
+                .get(&disk_type)
+                .copied()
+                .unwrap_or(0)
+                > 0,
+            "expected nonzero disk_total_bytes for the temp filesystem"
+        );
+        assert!(
+            heartbeat.disk_free_bytes.contains_key(&disk_type),
+            "expected a disk_free_bytes entry for the disk type"
+        );
+    }
+
+    #[test]
+    fn test_collect_ec_heartbeat_sets_go_metadata_and_ec_metrics() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let shard_path = format!("{}/ec_metrics_case_27.ec00", dir);
+        std::fs::write(&shard_path, b"ec-shard").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/ec_metrics_case_27.ecx", dir), [0u8; 16]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0], "")
+            .unwrap();
+
+        let state = test_state_with_store(store);
+        let heartbeat = collect_ec_heartbeat(&test_config(), &state.store.read().unwrap());
+
+        assert_eq!(heartbeat.ec_shards.len(), 1);
+        assert!(!heartbeat.has_no_ec_shards);
+        assert_eq!(heartbeat.ec_shards[0].disk_id, 0);
+        assert_eq!(
+            heartbeat.ec_shards[0].disk_type,
+            state.store.read().unwrap().locations[0]
+                .disk_type
+                .to_string()
+        );
+        assert_eq!(heartbeat.ec_shards[0].ec_index_bits, 1);
+        assert_eq!(heartbeat.ec_shards[0].shard_sizes, vec![8]);
+        assert_eq!(
+            DISK_SIZE_GAUGE
+                .with_label_values(&["ec_metrics_case", DISK_SIZE_LABEL_EC])
+                .get(),
+            8.0
+        );
+    }
+
+    #[test]
+    fn test_collect_heartbeat_deletes_expired_ec_volumes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        std::fs::write(format!("{}/expired_heartbeat_ec_31.ec00", dir), b"expired").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/expired_heartbeat_ec_31.ecx", dir), [0u8; 16]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0], "")
+            .unwrap();
+        store
+            .find_ec_volume_mut(VolumeId(31))
+            .unwrap()
+            .expire_at_sec = 1;
+
+        let state = test_state_with_store(store);
+        let heartbeat = collect_heartbeat(&test_config(), &state);
+
+        assert!(heartbeat.has_no_ec_shards);
+        assert_eq!(heartbeat.deleted_ec_shards.len(), 1);
+        assert_eq!(heartbeat.deleted_ec_shards[0].id, 31);
+        assert!(!state.store.read().unwrap().has_ec_volume(VolumeId(31)));
+    }
+
+    #[test]
+    fn test_collect_heartbeat_excludes_expired_volume_until_removal_delay() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store.volume_size_limit.store(1, Ordering::Relaxed);
+        store
+            .add_volume(
+                VolumeId(41),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "expired_volume_case",
+                    ttl: Some(crate::storage::needle::ttl::TTL::read("20m").unwrap()),
+                    preallocate: 1024,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let dat_path = {
+            let (_, volume) = store.find_volume(VolumeId(41)).unwrap();
+            volume.set_last_io_error_for_test(None);
+            volume.set_last_modified_ts_for_test(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .saturating_sub(21 * 60),
+            );
+            volume.dat_path()
+        };
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&dat_path)
+            .unwrap()
+            .set_len((crate::storage::super_block::SUPER_BLOCK_SIZE + 1) as u64)
+            .unwrap();
+        let volume_size_limit = store.volume_size_limit.load(Ordering::Relaxed);
+        let (_, volume) = store.find_volume(VolumeId(41)).unwrap();
+        assert!(volume.is_expired(volume.dat_file_size().unwrap_or(0), volume_size_limit));
+        assert!(!volume.is_expired_long_enough(10));
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        assert!(heartbeat.volumes.is_empty());
+        assert!(store.has_volume(VolumeId(41)));
+    }
+
+    #[test]
+    fn test_collect_heartbeat_deletes_io_error_volume() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(51),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "io_error_case",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (_, volume) = store.find_volume(VolumeId(51)).unwrap();
+        volume.set_last_io_error_for_test(Some("input/output error"));
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        // A sustained IO error quarantines the volume: it stays mounted
+        // (so healthz can observe the quarantine state) but is not
+        // advertised to the master.
+        assert!(heartbeat.volumes.is_empty());
+        assert!(store.has_volume(VolumeId(51)));
+        let (_, volume) = store.find_volume(VolumeId(51)).unwrap();
+        assert!(volume.is_no_write_or_delete());
+    }
+
+    // The pass only reads the store, so it must not shut out the readers that
+    // serve traffic while it stats every volume.
+    #[tokio::test]
+    async fn test_heartbeat_collection_leaves_the_store_readable() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.id = "heartbeat-read-phase-park".to_string();
+        let state = test_state_with_store(store);
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        read_phase_hook::arm(
+            read_phase_hook::Point::VolumePass,
+            "heartbeat-read-phase-park",
+            entered_tx,
+            release_rx,
+        );
+        let collection = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                off_runtime(&test_config(), &state, collect_heartbeat_with_snapshot).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(10), entered_rx)
+            .await
+            .expect("the pass never reached its read phase")
+            .unwrap();
+
+        let readable = state.store.try_read().is_ok();
+        drop(release_tx);
+        let (heartbeat, volumes) = collection.await.unwrap().unwrap();
+
+        assert!(readable, "a parked heartbeat pass shut out store readers");
+        assert_eq!(heartbeat.volumes.len(), 2);
+        assert_eq!(volumes.len(), 2);
+    }
+
+    /// Holds the store write lock on another thread until `release` is
+    /// dropped, or for 3s so a parked runtime fails the test instead of
+    /// hanging it. The flag turns true just before the lock is let go.
+    fn hold_store_write_lock(
+        state: &Arc<VolumeServerState>,
+    ) -> (
+        std::sync::mpsc::Sender<()>,
+        Arc<std::sync::atomic::AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let (state, released) = (state.clone(), released.clone());
+            std::thread::spawn(move || {
+                let guard = state.store.write().unwrap();
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(Duration::from_secs(3));
+                released.store(true, Ordering::SeqCst);
+                drop(guard);
+            })
+        };
+        held_rx.recv().unwrap();
+        (release_tx, released, writer)
+    }
+
+    // The heartbeat task shares a worker with other tasks; on this
+    // single-threaded runtime, a pass that waits for the store on the worker
+    // stops everything else until the writer lets go.
+    #[tokio::test]
+    async fn test_ec_tick_pass_waits_for_the_store_off_the_runtime() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let mut store = reporting_store(dir, 0);
+        std::fs::write(format!("{}/ec_tick_off_runtime_41.ec00", dir), b"shard").unwrap();
+        std::fs::write(format!("{}/ec_tick_off_runtime_41.ecx", dir), [0u8; 16]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(41), "ec_tick_off_runtime", &[0], "")
+            .unwrap();
+        let state = test_state_with_store(store);
+
+        let (release, released, writer) = hold_store_write_lock(&state);
+        let pass = {
+            let state = state.clone();
+            tokio::spawn(async move { ec_tick_pass(&test_config(), &state).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ran_while_held = !released.load(Ordering::SeqCst);
+        drop(release);
+        writer.join().unwrap();
+        let (heartbeat, shards) = pass.await.unwrap().unwrap();
+
+        assert!(
+            ran_while_held,
+            "the EC pass parked the runtime on the store lock"
+        );
+        assert_eq!(heartbeat.ec_shards.len(), 1);
+        assert_eq!(shards.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_volume_max_adjustment_waits_for_the_store_off_the_runtime() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 1);
+        // Auto-sized, so the adjustment stats the disk and the volume.
+        store.locations[0].original_max_volume_count = 0;
+        store.locations[0]
+            .max_volume_count
+            .store(0, Ordering::Relaxed);
+        store
+            .volume_size_limit
+            .store(1024 * 1024, Ordering::Relaxed);
+        let state = test_state_with_store(store);
+
+        let (release, released, writer) = hold_store_write_lock(&state);
+        let adjust = {
+            let state = state.clone();
+            tokio::spawn(async move { maybe_adjust_volume_max(&test_config(), &state).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ran_while_held = !released.load(Ordering::SeqCst);
+        drop(release);
+        writer.join().unwrap();
+        let changed = adjust.await.unwrap().unwrap();
+
+        assert!(
+            ran_while_held,
+            "the adjustment parked the runtime on the store lock"
+        );
+        assert!(changed);
+        assert!(
+            state.store.read().unwrap().locations[0]
+                .max_volume_count
+                .load(Ordering::Relaxed)
+                >= 1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_volume_options_wait_for_the_store_off_the_runtime() {
+        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        state
+            .store
+            .read()
+            .unwrap()
+            .volume_size_limit
+            .store(1024, Ordering::Relaxed);
+        let hb_resp = master_pb::HeartbeatResponse {
+            volume_size_limit: 2048,
+            preallocate: true,
+            ..Default::default()
+        };
+
+        let (release, released, writer) = hold_store_write_lock(&state);
+        let apply = {
+            let state = state.clone();
+            tokio::spawn(async move { volume_options_pass(&test_config(), &state, &hb_resp).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ran_while_held = !released.load(Ordering::SeqCst);
+        drop(release);
+        writer.join().unwrap();
+        let changed = apply.await.unwrap().unwrap();
+
+        assert!(
+            ran_while_held,
+            "applying volume options parked the runtime on the store lock"
+        );
+        assert!(changed);
+        let store = state.store.read().unwrap();
+        assert!(store.get_preallocate());
+        assert_eq!(store.volume_size_limit.load(Ordering::Relaxed), 2048);
+    }
+
+    // The writer arrives between the volume snapshot and the EC read.
+    #[tokio::test]
+    async fn test_state_notification_waits_for_the_store_off_the_runtime() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let mut store = reporting_store(dir, 1);
+        store.id = "notify-off-runtime".to_string();
+        let state = test_state_with_store(store);
+        mount_test_ec_shard(&state, dir, "notify_off_runtime", 42);
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+        read_phase_hook::arm(
+            read_phase_hook::Point::BeforeNotifyEcRead,
+            "notify-off-runtime",
+            entered_tx,
+            resume_rx,
+        );
+        let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let (state, released) = (state.clone(), released.clone());
+            std::thread::spawn(move || {
+                entered_rx.blocking_recv().unwrap();
+                let guard = state.store.write().unwrap();
+                drop(resume_tx);
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(Duration::from_secs(3));
+                released.store(true, Ordering::SeqCst);
+                drop(guard);
+            })
+        };
+        let pass = {
+            let state = state.clone();
+            tokio::spawn(async move { notify_pass(&test_config(), &state).await })
+        };
+        tokio::time::timeout(Duration::from_secs(10), held_rx)
+            .await
+            .expect("the notify pass never reached its EC read")
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ran_while_held = !released.load(Ordering::SeqCst);
+        drop(release_tx);
+        writer.join().unwrap();
+        let (volumes, shards) = pass.await.unwrap().unwrap();
+
+        assert!(
+            ran_while_held,
+            "the notify pass parked the runtime on the store lock"
+        );
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(shards.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_deregister_heartbeat_waits_for_the_store_off_the_runtime() {
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.id = "deregister-off-runtime".to_string();
+        let state = test_state_with_store(store);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        let (release, released, writer) = hold_store_write_lock(&state);
+        let deregister = {
+            let state = state.clone();
+            tokio::spawn(
+                async move { send_deregister_heartbeat(&test_config(), &state, &tx).await },
+            )
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ran_while_held = !released.load(Ordering::SeqCst);
+        drop(release);
+        writer.join().unwrap();
+        deregister.await.unwrap();
+        let heartbeat = rx.recv().await.unwrap();
+
+        assert!(
+            ran_while_held,
+            "the deregistration heartbeat parked the runtime on the store lock"
+        );
+        assert_eq!(heartbeat.id, "deregister-off-runtime");
+        assert!(heartbeat.has_no_volumes && heartbeat.has_no_ec_shards);
+    }
+
+    // What the read pass decided on can go stale before the write lock is
+    // taken: each action must re-check its target, not act on whatever now
+    // holds the id.
+    #[test]
+    fn test_volume_actions_skip_volumes_changed_since_the_read_pass() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store.volume_size_limit.store(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        for id in [61, 62, 63] {
+            store
+                .add_volume(
+                    VolumeId(id),
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        collection: "stale_action_case",
+                        ttl: Some(crate::storage::needle::ttl::TTL::read("20m").unwrap()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let (_, volume) = store.find_volume(VolumeId(id)).unwrap();
+            volume.set_last_io_error_for_test(None);
+            volume.set_last_modified_ts_for_test(now.saturating_sub(60 * 60));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(volume.dat_path())
+                .unwrap()
+                .set_len((crate::storage::super_block::SUPER_BLOCK_SIZE + 1) as u64)
+                .unwrap();
+        }
+        store
+            .add_volume(
+                VolumeId(64),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "stale_action_case",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (_, volume) = store.find_volume(VolumeId(64)).unwrap();
+        volume.set_last_io_error_for_test(Some("input/output error"));
+
+        let (heartbeat, _, actions) =
+            build_heartbeat_with_ec_status(&test_config(), &store, Vec::new(), true, true);
+        assert!(heartbeat.volumes.is_empty());
+        assert_eq!(actions.delete_expired.len(), 3);
+        assert_eq!(actions.quarantine, vec![(0, VolumeId(64))]);
+
+        // Between the phases: 61 is deleted by someone else, 62 and 64 are
+        // replaced by fresh copies under the same ids; 63 is left alone.
+        store
+            .delete_volume(VolumeId(61), false, false, false)
+            .unwrap();
+        for id in [62, 64] {
+            store
+                .delete_volume(VolumeId(id), false, false, false)
+                .unwrap();
+            store
+                .add_volume(
+                    VolumeId(id),
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        collection: "stale_action_case",
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+
+        apply_volume_actions_to(&mut store, actions);
+
+        assert!(!store.has_volume(VolumeId(61)));
+        assert!(store.has_volume(VolumeId(62)), "a fresh copy was deleted");
+        assert!(
+            !store.has_volume(VolumeId(63)),
+            "the expired volume survived"
+        );
+        let (_, fresh) = store.find_volume(VolumeId(64)).unwrap();
+        assert!(
+            !fresh.is_no_write_or_delete(),
+            "a fresh copy was quarantined"
+        );
+    }
+
+    // A shard mounted after the EC phase is held when the volume list is
+    // taken; reporting "no EC shards" alongside it would clear it on the master.
+    #[tokio::test]
+    async fn test_ec_shard_mounted_after_the_ec_phase_is_not_reported_absent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let mut store = reporting_store(dir, 1);
+        store.id = "heartbeat-ec-mount-between-passes".to_string();
+        let state = test_state_with_store(store);
+        std::fs::write(format!("{}/ec_mount_race_73.ec00", dir), b"shard").unwrap();
+        std::fs::write(format!("{}/ec_mount_race_73.ecx", dir), [0u8; 16]).unwrap();
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        read_phase_hook::arm(
+            read_phase_hook::Point::BeforeVolumePass,
+            "heartbeat-ec-mount-between-passes",
+            entered_tx,
+            release_rx,
+        );
+        let collection = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                off_runtime(&test_config(), &state, collect_heartbeat_with_snapshot).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(10), entered_rx)
+            .await
+            .expect("the pass never finished its EC phase")
+            .unwrap();
+
+        state.store.write().unwrap().locations[0]
+            .mount_ec_shards(VolumeId(73), "ec_mount_race", &[0], "")
+            .unwrap();
+        drop(release_tx);
+        let (heartbeat, _) = collection.await.unwrap().unwrap();
+
+        assert!(
+            !heartbeat.has_no_ec_shards,
+            "a mounted EC shard was reported absent"
+        );
+    }
+
+    fn mount_test_ec_shard(state: &VolumeServerState, dir: &str, collection: &str, id: u32) {
+        std::fs::write(format!("{}/{}_{}.ec00", dir, collection, id), b"shard").unwrap();
+        std::fs::write(format!("{}/{}_{}.ecx", dir, collection, id), [0u8; 16]).unwrap();
+        state.store.write().unwrap().locations[0]
+            .mount_ec_shards(VolumeId(id), collection, &[0], "")
+            .unwrap();
+    }
+
+    /// One pass of the loop's volume tick, then of its notify branch: the
+    /// EC delta the notify branch would send.
+    fn ec_delta_after_volume_tick(
+        state: &Arc<VolumeServerState>,
+        last_ec_shards: &mut HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    ) -> (
+        master_pb::Heartbeat,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+    ) {
+        let (heartbeat, _) = collect_heartbeat_with_snapshot(&test_config(), state);
+        forget_reported_ec_deletions(last_ec_shards, &heartbeat);
+        let current = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        let (new_ec_shards, deleted_ec_shards) =
+            diff_ec_shard_delta_messages(last_ec_shards, &current);
+        (heartbeat, new_ec_shards, deleted_ec_shards)
+    }
+
+    // A volume heartbeat carries no shard list, so a mount or unmount it
+    // collects past must still go out as the notify branch's delta.
+    #[test]
+    fn test_ec_shard_change_before_a_volume_heartbeat_still_goes_out_as_a_delta() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let state = test_state_with_store(reporting_store(dir, 1));
+        mount_test_ec_shard(&state, dir, "ec_delta_kept", 91);
+        mount_test_ec_shard(&state, dir, "ec_delta_unmounted", 92);
+        let mut last_ec_shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+
+        mount_test_ec_shard(&state, dir, "ec_delta_mounted", 93);
+        state
+            .store
+            .write()
+            .unwrap()
+            .unmount_ec_shards(VolumeId(92), &[0]);
+        let (heartbeat, new_ec_shards, deleted_ec_shards) =
+            ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+
+        assert!(heartbeat.ec_shards.is_empty() && !heartbeat.has_no_ec_shards);
+        assert_eq!(
+            new_ec_shards.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![93],
+            "a mount collected past by the volume heartbeat was never sent"
+        );
+        assert_eq!(
+            deleted_ec_shards.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![92],
+            "an unmount collected past by the volume heartbeat was never sent"
+        );
+    }
+
+    // The volume heartbeat already told the master about the expired EC
+    // volume it destroyed; the next delta must not repeat it.
+    #[test]
+    fn test_ec_volume_expired_by_a_volume_heartbeat_is_not_deleted_again() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let state = test_state_with_store(reporting_store(dir, 0));
+        mount_test_ec_shard(&state, dir, "ec_delta_kept", 94);
+        mount_test_ec_shard(&state, dir, "ec_delta_expired", 95);
+        let mut last_ec_shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        state
+            .store
+            .write()
+            .unwrap()
+            .find_ec_volume_mut(VolumeId(95))
+            .unwrap()
+            .expire_at_sec = 1;
+
+        let (heartbeat, new_ec_shards, deleted_ec_shards) =
+            ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+
+        assert_eq!(heartbeat.deleted_ec_shards.len(), 1);
+        assert_eq!(heartbeat.deleted_ec_shards[0].id, 95);
+        assert!(new_ec_shards.is_empty());
+        assert!(
+            deleted_ec_shards.is_empty(),
+            "an expired EC volume was reported deleted twice"
+        );
+        assert_eq!(last_ec_shards.len(), 1);
+    }
+
+    #[test]
+    fn test_expired_ec_volume_gone_before_removal_is_not_reported_deleted() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        for id in [71, 72] {
+            std::fs::write(format!("{}/stale_ec_case_{}.ec00", dir, id), b"expired").unwrap();
+            std::fs::write(format!("{}/stale_ec_case_{}.ecx", dir, id), [0u8; 16]).unwrap();
+            store.locations[0]
+                .mount_ec_shards(VolumeId(id), "stale_ec_case", &[0], "")
+                .unwrap();
+            store
+                .find_ec_volume_mut(VolumeId(id))
+                .unwrap()
+                .expire_at_sec = 1;
+        }
+
+        let (ec_shards, mut expired) = store.find_expired_ec_volumes();
+        expired.sort();
+        assert!(ec_shards.is_empty());
+        assert_eq!(expired, vec![(0, VolumeId(71)), (0, VolumeId(72))]);
+
+        // Between the phases: 71 is destroyed by someone else, 72 is remounted
+        // without an expiry.
+        store.remove_ec_volume(VolumeId(71)).unwrap().destroy();
+        store.remove_ec_volume(VolumeId(72)).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(72), "stale_ec_case", &[0], "")
+            .unwrap();
+        let (deleted, still_held) = store.remove_expired_ec_volumes(expired);
+
+        assert!(deleted.is_empty());
+        assert_eq!(still_held.len(), 1);
+        assert_eq!(still_held[0].id, 72);
+        assert!(store.has_ec_volume(VolumeId(72)));
+    }
+
+    #[test]
+    fn test_build_heartbeat_includes_remote_storage_name_and_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(71),
+                DiskType::HardDrive,
+                &VolumeSpec {
+                    collection: "remote_volume_case",
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (_, volume) = store.find_volume(VolumeId(71)).unwrap();
+        volume
+            .update_remote_files(|files| {
+                files.push(crate::storage::volume::PbRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "archive".to_string(),
+                    key: "volumes/71.dat".to_string(),
+                    ..Default::default()
+                })
+            })
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        assert_eq!(heartbeat.volumes.len(), 1);
+        assert_eq!(heartbeat.volumes[0].remote_storage_name, "s3.archive");
+        assert_eq!(heartbeat.volumes[0].remote_storage_key, "volumes/71.dat");
+    }
+
+    // Not hermetic, and cannot be made so cheaply: `register_s3_backend` skips
+    // a name that is already registered, so had another test put `s3` or
+    // `s3.default` in the process-wide registry first, this would pass without
+    // proving that this call registered anything. Removing them afterwards is
+    // no better — unlike the tier tests' unique ids, the bare `s3` alias is the
+    // production one. Nothing else in the tree registers those two names.
+    #[test]
+    fn test_apply_storage_backends_registers_s3_default_aliases() {
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.  Just register our entries and verify them.
+
+        apply_storage_backends(&[master_pb::StorageBackend {
+            r#type: "s3".to_string(),
+            id: "default".to_string(),
+            properties: std::collections::HashMap::from([
+                ("aws_access_key_id".to_string(), "access".to_string()),
+                ("aws_secret_access_key".to_string(), "secret".to_string()),
+                ("bucket".to_string(), "bucket-a".to_string()),
+                ("region".to_string(), "us-west-2".to_string()),
+                ("endpoint".to_string(), "http://127.0.0.1:8333".to_string()),
+                ("storage_class".to_string(), "STANDARD".to_string()),
+                ("force_path_style".to_string(), "false".to_string()),
+            ]),
+        }]);
+
+        let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .read()
+            .unwrap();
+        assert!(registry.get("s3.default").is_some());
+        assert!(registry.get("s3").is_some());
+    }
+
+    #[test]
+    fn test_apply_storage_backends_ignores_unsupported_types() {
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.
+
+        apply_storage_backends(&[master_pb::StorageBackend {
+            r#type: "rclone".to_string(),
+            id: "default".to_string(),
+            properties: std::collections::HashMap::new(),
+        }]);
+
+        // Only check that the unsupported type was not added to the global
+        // registry.  Other tests may have their own entries present.
+        let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .read()
+            .unwrap();
+        assert!(registry.get("rclone.default").is_none());
+        assert!(registry.get("rclone").is_none());
+    }
+
+    #[test]
+    fn test_apply_metrics_push_settings_updates_runtime_state() {
+        let store = Store::new(NeedleMapKind::InMemory);
+        let state = test_state_with_store(store);
+
+        assert!(apply_metrics_push_settings(&state, "pushgateway:9091", 15,));
+        {
+            let runtime = state.metrics_runtime.read().unwrap();
+            assert_eq!(runtime.push_gateway.address, "pushgateway:9091");
+            assert_eq!(runtime.push_gateway.interval_seconds, 15);
+        }
+
+        assert!(!apply_metrics_push_settings(&state, "pushgateway:9091", 15,));
+    }
+
+    #[test]
+    fn test_duplicate_uuid_retry_delay_matches_go_backoff() {
+        assert_eq!(duplicate_uuid_retry_delay(0), Duration::from_secs(2));
+        assert_eq!(duplicate_uuid_retry_delay(1), Duration::from_secs(4));
+        assert_eq!(duplicate_uuid_retry_delay(2), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn test_duplicate_directories_maps_master_uuids_to_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                1,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let duplicate_dirs = duplicate_directories(
+            &store,
+            &[
+                store.locations[0].directory_uuid.clone(),
+                "missing-uuid".to_string(),
+            ],
+        );
+
+        assert_eq!(duplicate_dirs, vec![dir.to_string()]);
+    }
+
+    #[test]
+    fn test_apply_master_volume_options_updates_preallocate_and_size_limit() {
+        let store = Store::new(NeedleMapKind::InMemory);
+        store.volume_size_limit.store(1024, Ordering::Relaxed);
+
+        let changed = apply_master_volume_options(
+            &store,
+            &master_pb::HeartbeatResponse {
+                volume_size_limit: 2048,
+                preallocate: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(store.get_preallocate());
+        assert_eq!(store.volume_size_limit.load(Ordering::Relaxed), 2048);
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_diff_ec_shard_delta_messages_reports_mounts_and_unmounts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let previous = collect_ec_shard_delta_messages(&store);
+
+        std::fs::write(format!("{}/ec_delta_case_81.ec00", dir), b"delta").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/ec_delta_case_81.ecx", dir), [0u8; 16]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0], "")
+            .unwrap();
+        let current = collect_ec_shard_delta_messages(&store);
+        let (new_ec_shards, deleted_ec_shards) = diff_ec_shard_delta_messages(&previous, &current);
+
+        assert_eq!(new_ec_shards.len(), 1);
+        assert!(deleted_ec_shards.is_empty());
+        assert_eq!(new_ec_shards[0].ec_index_bits, 1);
+        assert_eq!(new_ec_shards[0].shard_sizes, vec![5]);
+
+        let (new_after_delete, deleted_after_delete) =
+            diff_ec_shard_delta_messages(&current, &HashMap::new());
+        assert!(new_after_delete.is_empty());
+        assert_eq!(deleted_after_delete.len(), 1);
+        assert_eq!(deleted_after_delete[0].ec_index_bits, 1);
+        assert_eq!(deleted_after_delete[0].shard_sizes, vec![0]);
+    }
+}
