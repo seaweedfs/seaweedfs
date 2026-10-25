@@ -50,9 +50,14 @@ func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers 
 // ShowFileBrowser renders the file browser page
 func (h *FileBrowserHandlers) ShowFileBrowser(w http.ResponseWriter, r *http.Request) {
 	// Get path from query parameter, default to root
-	path := defaultQuery(r.URL.Query().Get("path"), "/")
-	// Normalize Windows-style paths for consistency
-	path = util.CleanWindowsPath(path)
+	dirPath := path.Clean(util.CleanWindowsPath(defaultQuery(r.URL.Query().Get("path"), "/")))
+	if !strings.HasPrefix(dirPath, "/") {
+		dirPath = "/" + dirPath
+	}
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) && restrictedBrowserPath(dirPath) {
+		http.Redirect(w, r, dash.P(r.Context(), "/admin?error=Insufficient permissions"), http.StatusSeeOther)
+		return
+	}
 
 	// Get pagination parameters
 	lastFileName := r.URL.Query().Get("lastFileName")
@@ -66,7 +71,7 @@ func (h *FileBrowserHandlers) ShowFileBrowser(w http.ResponseWriter, r *http.Req
 	}
 
 	// Get file browser data with cursor-based pagination
-	browserData, err := h.adminServer.GetFileBrowser(path, "", lastFileName, pageSize)
+	browserData, err := h.adminServer.GetFileBrowser(dirPath, "", lastFileName, pageSize)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to get file browser data: "+err.Error())
 		return
@@ -364,6 +369,28 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 	return cleanPath, nil
 }
 
+// restrictedBrowserPath reports whether a cleaned path lies inside the filer's
+// /etc tree, which holds the credential store and cluster configuration.
+func restrictedBrowserPath(cleanPath string) bool {
+	return cleanPath == strings.TrimSuffix(filer.DirectoryEtcRoot, "/") ||
+		strings.HasPrefix(cleanPath, filer.DirectoryEtcRoot)
+}
+
+// cleanReadPath validates the request's path parameter; read-only sessions are
+// denied the /etc tree so the file browser cannot serve stored credentials.
+func (h *FileBrowserHandlers) cleanReadPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	cleanPath, err := h.validateAndCleanFilePath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) && restrictedBrowserPath(cleanPath) {
+		writeJSONError(w, http.StatusForbidden, "Access to this path requires admin access")
+		return "", false
+	}
+	return cleanPath, true
+}
+
 // fetchFileContent fetches file content via the filer gRPC service. It is
 // used for the "view as text" path, so the maxBytes cap matches the 1 MB
 // limit the caller already applies before invoking us.
@@ -377,9 +404,8 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 // gRPC service, so the admin file browser keeps working even when the filer
 // is started with -disableHttp=true.
 func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Request) {
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		writeJSONError(w, http.StatusBadRequest, "File path is required")
+	filePath, ok := h.cleanReadPath(w, r)
+	if !ok {
 		return
 	}
 	inline := r.URL.Query().Get("inline") == "true"
@@ -419,9 +445,8 @@ func (t *responseWriteTracker) Write(p []byte) (int, error) {
 
 // ViewFile handles file viewing requests (for text files, images, etc.)
 func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		writeJSONError(w, http.StatusBadRequest, "File path is required")
+	filePath, ok := h.cleanReadPath(w, r)
+	if !ok {
 		return
 	}
 
@@ -524,9 +549,8 @@ func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
 
 // GetFileProperties handles file properties requests
 func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.Request) {
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		writeJSONError(w, http.StatusBadRequest, "File path is required")
+	filePath, ok := h.cleanReadPath(w, r)
+	if !ok {
 		return
 	}
 
@@ -630,23 +654,21 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 // FullEntry stream — the format weed shell fs.meta.load reads. Directories are
 // walked recursively via the filer BFS metadata stream.
 func (h *FileBrowserHandlers) ExportMetadata(w http.ResponseWriter, r *http.Request) {
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		writeJSONError(w, http.StatusBadRequest, "File path is required")
+	cleanPath, ok := h.cleanReadPath(w, r)
+	if !ok {
 		return
 	}
-	cleanPath, err := h.validateAndCleanFilePath(filePath)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+	excludedPrefixes := []string{filer.SystemLogDir}
+	if dash.IsReadOnlyRole(dash.RoleFromContext(r.Context())) {
+		excludedPrefixes = append(excludedPrefixes, strings.TrimSuffix(filer.DirectoryEtcRoot, "/"))
 	}
 
 	tracker := &responseWriteTracker{ResponseWriter: w}
 
-	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.TraverseBfsMetadata(r.Context(), &filer_pb.TraverseBfsMetadataRequest{
 			Directory:        cleanPath,
-			ExcludedPrefixes: []string{filer.SystemLogDir},
+			ExcludedPrefixes: excludedPrefixes,
 		})
 		if err != nil {
 			return err

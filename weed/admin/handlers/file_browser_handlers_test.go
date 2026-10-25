@@ -46,6 +46,54 @@ func TestValidateAndCleanFilePath_RejectsEmpty(t *testing.T) {
 	}
 }
 
+func TestCleanReadPath_DeniesEtcForReadOnly(t *testing.T) {
+	h := &FileBrowserHandlers{}
+
+	denied := []string{"/etc", "/etc/iam", "/etc/iam/identities/root.json",
+		"/etc/s3/kek.json", "/etc/../etc/iam/identity.json", "/a/../../etc/x"}
+	for _, p := range denied {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/download?path="+p, nil)
+		req = req.WithContext(dash.WithAuthContext(req.Context(), "ro", dash.RoleReadOnly, "csrf"))
+		w := httptest.NewRecorder()
+
+		if _, ok := h.cleanReadPath(w, req); ok {
+			t.Errorf("path %q: expected denial for read-only session", p)
+			continue
+		}
+		if w.Code != http.StatusForbidden {
+			t.Errorf("path %q: expected 403, got %d", p, w.Code)
+		}
+	}
+}
+
+func TestCleanReadPath_AllowsEtcForAdminAndNorRole(t *testing.T) {
+	h := &FileBrowserHandlers{}
+
+	for _, role := range []string{"admin", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/download?path=/etc/iam/identities/root.json", nil)
+		req = req.WithContext(dash.WithAuthContext(req.Context(), "u", role, "csrf"))
+		w := httptest.NewRecorder()
+
+		if _, ok := h.cleanReadPath(w, req); !ok {
+			t.Errorf("role %q: expected /etc path to be allowed, got %d", role, w.Code)
+		}
+	}
+}
+
+func TestCleanReadPath_AllowsReadOnlyOutsideEtc(t *testing.T) {
+	h := &FileBrowserHandlers{}
+
+	for _, p := range []string{"/buckets/foo/bar.txt", "/etcx/file", "/etcetera", "/"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/download?path="+p, nil)
+		req = req.WithContext(dash.WithAuthContext(req.Context(), "ro", dash.RoleReadOnly, "csrf"))
+		w := httptest.NewRecorder()
+
+		if _, ok := h.cleanReadPath(w, req); !ok {
+			t.Errorf("path %q: expected allowed for read-only session, got %d", p, w.Code)
+		}
+	}
+}
+
 func TestListFolders_RejectsPathOutsideBuckets(t *testing.T) {
 	h := &FileBrowserHandlers{adminServer: &dash.AdminServer{}}
 
@@ -62,4 +110,3 @@ func TestListFolders_RejectsPathOutsideBuckets(t *testing.T) {
 		}
 	}
 }
-
