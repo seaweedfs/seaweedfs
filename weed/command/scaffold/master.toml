@@ -66,8 +66,8 @@ disable = false           # disables volume growth if true
 # allocation_deferral = "15s" # hold the first volume id allocation after a fresh
                             # topology id is minted, giving a rebuilt master's
                             # veteran volume servers time to report. The hold
-                            # lifts early once heartbeats stay clean for one
-                            # pulse. "0s" disables it (e.g. test setups).
+                            # lifts early once heartbeats stay clean for two
+                            # pulses. "0s" disables it (e.g. test setups).
 
 # configuration flags for replication
 [master.replication]

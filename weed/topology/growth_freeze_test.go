@@ -150,13 +150,13 @@ func TestAllocationDelayEarlyRelease(t *testing.T) {
 
 	topo.DeferAllocation(time.Minute)
 	wait := topo.allocationDelay()
-	if wait <= 0 || wait > time.Second {
-		t.Fatalf("quiet window should bound the deferral near one pulse, got %v", wait)
+	if wait <= 0 || wait > 2*time.Second {
+		t.Fatalf("quiet window should bound the deferral near two pulses, got %v", wait)
 	}
 
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(2100 * time.Millisecond)
 	if wait := topo.allocationDelay(); wait > 0 {
-		t.Fatalf("a quiet pulse should release the deferral early, got %v", wait)
+		t.Fatalf("two quiet pulses should release the deferral early, got %v", wait)
 	}
 }
 
@@ -164,9 +164,9 @@ func TestAllocationDelayExtendedByEvidence(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 1, false)
 
 	topo.DeferAllocation(time.Minute)
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 	topo.NoteAllocationEvidence()
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 	if wait := topo.allocationDelay(); wait <= 0 {
 		t.Fatal("evidence should extend the deferral past the original quiet deadline")
 	}

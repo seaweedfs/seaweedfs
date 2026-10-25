@@ -1593,7 +1593,7 @@ func (t *Topology) DeferAllocation(d time.Duration) {
 
 // NoteAllocationEvidence records a heartbeat signal that could still carry
 // prior cluster state — a server joining or reporting held volumes, a raised
-// id bound, or a foreign topology id. The deferral lifts one pulse after the
+// id bound, or a foreign topology id. The deferral lifts two pulses after the
 // last such signal, so a cluster with nothing left to report stops waiting.
 func (t *Topology) NoteAllocationEvidence() {
 	t.allocationEvidenceSince.Store(time.Now().UnixNano())
@@ -1619,7 +1619,7 @@ func (t *Topology) allocationDelay() time.Duration {
 	if deadline == 0 {
 		return 0
 	}
-	if quietUntil := t.allocationEvidenceSince.Load() + int64(t.pulse)*int64(time.Second); quietUntil < deadline {
+	if quietUntil := t.allocationEvidenceSince.Load() + 2*int64(t.pulse)*int64(time.Second); quietUntil < deadline {
 		deadline = quietUntil
 	}
 	return time.Until(time.Unix(0, deadline))
