@@ -268,6 +268,7 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 		if err := f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); err != nil {
 			glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
 			if tsNs > rec.changeTsNs.Load() {
+				rec.changeGen.Store(f.pathCommitGen.Load())
 				rec.changeTsNs.Store(tsNs)
 			}
 		} else if rec.changeTsNs.Load() <= tsNs {
@@ -309,6 +310,10 @@ type metaTsPendingRec struct {
 	mu         sync.Mutex
 	changeTsNs atomic.Int64
 	deleteTsNs atomic.Int64
+	// changeGen is the records' generation changeTsNs was failed under: a
+	// generation bump before the repair lands fences it like any record of
+	// that generation, so it must not be written or read as a newer one.
+	changeGen atomic.Uint64
 }
 
 // pendingRec returns the live pending record for key, locked for mutation,
@@ -356,10 +361,16 @@ func (f *Filer) repairMetaPathTs(path util.FullPath) {
 		rec := f.pendingRec(key)
 		var tsErr, delErr error
 		if tsNs := rec.changeTsNs.Load(); tsNs > 0 {
-			value := make([]byte, 8)
-			util.Uint64toBytes(value, uint64(tsNs))
-			if tsErr = f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); tsErr == nil {
+			if rec.changeGen.Load() != f.pathCommitGen.Load() {
+				// A generation bump since the failure fences the owed
+				// record like any record of its generation; drop it.
 				rec.changeTsNs.Store(0)
+			} else {
+				value := make([]byte, 8)
+				util.Uint64toBytes(value, uint64(tsNs))
+				if tsErr = f.Store.KvPut(ctx, f.recordKey(metaPathTsPrefix, path), value); tsErr == nil {
+					rec.changeTsNs.Store(0)
+				}
 			}
 		}
 		if tsNs := rec.deleteTsNs.Load(); tsNs > 0 {
@@ -386,14 +397,18 @@ func (f *Filer) repairMetaPathTs(path util.FullPath) {
 }
 
 // pendingPathTsNs returns the newest pending commit timestamp for path and
-// the newest pending delete timestamp.
+// the newest pending delete timestamp. A change owed under another
+// generation is fenced like the records of that generation.
 func (f *Filer) pendingPathTsNs(path util.FullPath) (changeTsNs, deleteTsNs int64) {
 	cur, ok := f.metaTsPending.Load(string(path))
 	if !ok {
 		return 0, 0
 	}
 	rec := cur.(*metaTsPendingRec)
-	return rec.changeTsNs.Load(), rec.deleteTsNs.Load()
+	if rec.changeGen.Load() == f.pathCommitGen.Load() {
+		changeTsNs = rec.changeTsNs.Load()
+	}
+	return changeTsNs, rec.deleteTsNs.Load()
 }
 
 // CommitTsNs returns the newest commit timestamp known for path — the
