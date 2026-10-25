@@ -231,7 +231,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			continue
 		}
 
-		if (dn == nil && heartbeat.Ip != "") || reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId()) {
+		priorState := reportsPriorClusterState(heartbeat, ms.Topo.GetTopologyId(), ms.Topo.GetMaxVolumeId())
+		if (dn == nil && heartbeat.Ip != "") || priorState {
 			ms.Topo.NoteAllocationEvidence()
 		}
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
@@ -247,6 +248,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			if heartbeat.Ip == "" {
 				continue
 			} // ToDo must be removed after update major version
+			if addr := util.JoinHostPort(heartbeat.Ip, int(heartbeat.Port)); !ms.Topo.AdmitVolumeReporter(addr) {
+				err := fmt.Errorf("volume server %s rejected: this master admits a single volume-server reporter", addr)
+				glog.Warningf("SendHeartbeat: %v", err)
+				return err
+			}
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
@@ -361,8 +367,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		// A full volume list is the heartbeat section that settles what a
 		// reporter holds; once applied, a post-mint allocation hold kept for
-		// prior cluster state has nothing left to wait for.
-		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
+		// prior cluster state has nothing left to wait for. A report carrying
+		// such state is itself the evidence the hold exists for, so it keeps
+		// the window for other veterans still due.
+		if (len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes) && !priorState {
 			ms.Topo.NoteInventoryApplied()
 		}
 

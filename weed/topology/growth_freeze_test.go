@@ -236,3 +236,16 @@ func TestQueuedTopologyReportFreezesBeforeGateOpens(t *testing.T) {
 	}
 }
 
+func TestSingleReporterAdmission(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	if !topo.AdmitVolumeReporter("10.0.0.1:8080") {
+		t.Fatal("without opt-in any reporter is admitted")
+	}
+	topo.ReleaseAllocationOnFirstReport("10.0.0.1:8080")
+	if !topo.AdmitVolumeReporter("10.0.0.1:8080") {
+		t.Fatal("the pinned reporter should be admitted")
+	}
+	if topo.AdmitVolumeReporter("10.0.0.2:8080") {
+		t.Fatal("a foreign reporter should be refused")
+	}
+}

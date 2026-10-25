@@ -83,11 +83,13 @@ type MasterOptions struct {
 	shutdownCtx context.Context
 	// releaseAllocOnFirstReport lifts the post-mint allocation hold as soon as
 	// one full volume-server inventory has been applied. weed mini sets it in
-	// single-master mode: the embedded volume server is then the only possible
-	// reporter, so the warmup window after a fresh topology id is dead time.
+	// single-master mode, with singleReporterAddr pinning the embedded volume
+	// server as the only admitted reporter: any other volume server is refused,
+	// so the warmup window after a fresh topology id is dead time.
 	// Standalone weed master / weed server can face late-arriving veterans and
 	// must keep the window.
 	releaseAllocOnFirstReport bool
+	singleReporterAddr        string
 }
 
 func init() {
@@ -497,5 +499,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		TelemetryEnabled:          *m.telemetryEnabled,
 		SingleMaster:              isSingleMasterMode(*m.peers),
 		ReleaseAllocOnFirstReport: m.releaseAllocOnFirstReport,
+		SingleVolumeReporter:      m.singleReporterAddr,
 	}
 }

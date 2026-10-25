@@ -108,6 +108,7 @@ type Topology struct {
 	// volume list has been synced into this topology.
 	releaseAllocOnReport atomic.Bool
 	inventoryApplied     atomic.Bool
+	singleReporter       atomic.Value // string
 
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
@@ -1606,12 +1607,26 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 }
 
 // ReleaseAllocationOnFirstReport opts the topology into lifting the post-mint
-// allocation hold once one full volume-server inventory has been applied. Only
-// valid where a single volume server can carry prior cluster state (weed
-// mini's embedded server): its first heartbeat already raises the id bound or
-// trips the growth freeze, so the quiet-pulse tail is dead time.
-func (t *Topology) ReleaseAllocationOnFirstReport() {
+// allocation hold once one full volume-server inventory has been applied, and
+// pins the admitted volume-server reporter: the early release is only sound
+// when a single embedded server (weed mini) can carry prior cluster state, so
+// every other reporter must be refused rather than silently trusted.
+func (t *Topology) ReleaseAllocationOnFirstReport(onlyReporter ...string) {
+	if len(onlyReporter) > 0 {
+		t.singleReporter.Store(onlyReporter[0])
+	}
 	t.releaseAllocOnReport.Store(true)
+}
+
+// AdmitVolumeReporter enforces the single-reporter restriction the early
+// release relies on: a late-arriving foreign server would carry cluster state
+// the dropped hold was meant to wait for.
+func (t *Topology) AdmitVolumeReporter(addr string) bool {
+	if !t.releaseAllocOnReport.Load() {
+		return true
+	}
+	expected, _ := t.singleReporter.Load().(string)
+	return expected == "" || expected == addr
 }
 
 // NoteInventoryApplied marks a heartbeat's full volume list as applied to this
