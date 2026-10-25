@@ -20,9 +20,10 @@ import (
 
 // ShardDistributionOptions controls DistributeEcShards concurrency.
 // MaxShardTransfers:
-//   - nil / unset: no global cap; one in-flight per (destNode, disk_id) if the
-//     assignment has a disk id, otherwise per destNode (host:port, not rack)
-//   - 0: historical sequential nested loops
+//   - nil / unset: no global cap; one in-flight per (destNode, disk_id), or
+//     per destNode (host:port, not rack) when any target leaves disk choice
+//     to the receiver (disk_id 0)
+//   - N<=0: historical sequential nested loops
 //   - N>0: global cap of N, still at most one in-flight per key
 type ShardDistributionOptions struct {
 	MaxShardTransfers *int
@@ -293,6 +294,19 @@ func distributeEcShardsSequential(volumeID uint32, collection string, shardAssig
 }
 
 func collectShardJobs(shardAssignment map[string][]string, shardFiles map[string]string, shardDisks map[string]map[string]uint32, log logger) (map[string][]shardJob, error) {
+	// disk_id 0 leaves placement to the receiver's auto-select, which can land
+	// on a disk another queued stream is pinned to — serialize every transfer
+	// to that server under one key.
+	autoPlacement := make(map[string]bool)
+	for destNode, assignedShards := range shardAssignment {
+		for _, shardType := range assignedShards {
+			if diskID, ok := lookupShardDisk(shardDisks, destNode, shardType); ok && diskID == 0 {
+				autoPlacement[destNode] = true
+				break
+			}
+		}
+	}
+
 	byKey := make(map[string][]shardJob)
 	for destNode, assignedShards := range shardAssignment {
 		withFields(log, map[string]interface{}{
@@ -315,6 +329,9 @@ func collectShardJobs(shardAssignment map[string][]string, shardFiles map[string
 				hasDisk:   hasDisk,
 			}
 			key := shardTransferKey(job)
+			if autoPlacement[destNode] {
+				key = destNode
+			}
 			byKey[key] = append(byKey[key], job)
 		}
 	}

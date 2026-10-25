@@ -182,8 +182,8 @@ func TestDistributeEcShardsZeroIsSequential(t *testing.T) {
 func TestDistributeEcShardsNoCapParallelByKey(t *testing.T) {
 	files := writeShardFiles(t, "ec00", "ec01", "ec02", "ec03")
 	targets := []*worker_pb.TaskTarget{
-		shardTarget("full-01:8080", 0, 0),
-		shardTarget("full-01:8080", 1, 1),
+		shardTarget("full-01:8080", 1, 0),
+		shardTarget("full-01:8080", 2, 1),
 		shardTarget("full-02:8080", 0, 2),
 		shardTarget("full-02:8081", 0, 3), // same rack host, different destNode
 	}
@@ -244,11 +244,43 @@ func TestDistributeEcShardsSameDiskQueued(t *testing.T) {
 	}
 }
 
+func TestDistributeEcShardsAutoDiskSerializesServer(t *testing.T) {
+	files := writeShardFiles(t, "ec00", "ec01", "ec02")
+	targets := []*worker_pb.TaskTarget{
+		shardTarget("full-01:8080", 0, 0), // disk picked by the receiver
+		shardTarget("full-01:8080", 1, 1),
+		shardTarget("full-02:8080", 1, 2),
+	}
+	rec := newFlightRecorder()
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runDistribute(t, targets, files, rec, nil)
+		errCh <- err
+	}()
+
+	waitEnters(t, rec, 2)
+	rec.mu.Lock()
+	if rec.maxFlight != 2 {
+		rec.mu.Unlock()
+		t.Fatalf("auto-placement server must serialize: in-flight=%d, want 2 (one per server)", rec.maxFlight)
+	}
+	rec.mu.Unlock()
+	rec.release()
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.sent) != 3 {
+		t.Fatalf("sent %d, want 3", len(rec.sent))
+	}
+}
+
 func TestDistributeEcShardsTwoDisksTwoStreams(t *testing.T) {
 	files := writeShardFiles(t, "ec00", "ec01")
 	targets := []*worker_pb.TaskTarget{
-		shardTarget("full-01:8080", 0, 0),
-		shardTarget("full-01:8080", 1, 1),
+		shardTarget("full-01:8080", 1, 0),
+		shardTarget("full-01:8080", 2, 1),
 	}
 	rec := newFlightRecorder()
 	errCh := make(chan error, 1)
@@ -273,10 +305,10 @@ func TestDistributeEcShardsTwoDisksTwoStreams(t *testing.T) {
 func TestDistributeEcShardsCapNeverExceedsN(t *testing.T) {
 	files := writeShardFiles(t, "ec00", "ec01", "ec02", "ec03")
 	targets := []*worker_pb.TaskTarget{
-		shardTarget("full-01:8080", 0, 0),
-		shardTarget("full-01:8080", 1, 1),
-		shardTarget("full-02:8080", 0, 2),
-		shardTarget("full-02:8080", 1, 3),
+		shardTarget("full-01:8080", 1, 0),
+		shardTarget("full-01:8080", 2, 1),
+		shardTarget("full-02:8080", 1, 2),
+		shardTarget("full-02:8080", 2, 3),
 	}
 	rec := newFlightRecorder()
 	errCh := make(chan error, 1)
