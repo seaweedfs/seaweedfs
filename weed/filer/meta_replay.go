@@ -57,22 +57,28 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		if err != nil || newer {
 			return err
 		}
-		glog.V(4).Infof("deleting %v", oldPath)
+		newEntry := FromPbEntry(dir, message.NewEntry)
+		newEntry.CommitTsNs = resp.TsNs
+		if message.OldEntry.IsDirectory {
+			// A directory update upserts in place: the path never sits
+			// deleted between store calls, so a failed retry cannot leave
+			// it without ordering — a tombstone would instead read as a
+			// subtree delete that suppresses the children's own records,
+			// and a directory has no chunks or hard links for a delete to
+			// release.
+			glog.V(4).Infof("updating %v", newPath)
+			return f.Store.InsertEntry(ctx, newEntry)
+		}
 		// Record the delete before the insert too: if the insert fails and
 		// the event is retried later, the path sits deleted in between —
 		// without the tombstone a stale peer create could resurrect it in
-		// the gap. A directory update skips it: its children stay in place,
-		// and a tombstone reads as a subtree delete that would suppress
-		// their own records — the re-inserted entry's stamp orders the path.
-		if !message.OldEntry.IsDirectory {
-			f.notePathChange(oldPath, resp.TsNs, true)
-		}
+		// the gap.
+		glog.V(4).Infof("deleting %v", oldPath)
+		f.notePathChange(oldPath, resp.TsNs, true)
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
 		glog.V(4).Infof("creating %v", newPath)
-		newEntry := FromPbEntry(dir, message.NewEntry)
-		newEntry.CommitTsNs = resp.TsNs
 		if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 			return err
 		}
