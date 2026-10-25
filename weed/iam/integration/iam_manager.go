@@ -849,13 +849,14 @@ func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProvide
 			continue
 		}
 		out[arn] = &OIDCProviderRecord{
-			AccountID:               stsConfig.AccountId,
-			ARN:                     arn,
-			URL:                     issuer,
-			ClientIDs:               extractClientIDs(pc.Config),
-			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
-			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
-			PolicyClaim:             extractString(pc.Config, "policyClaim"),
+			AccountID:                  stsConfig.AccountId,
+			ARN:                        arn,
+			URL:                        issuer,
+			ClientIDs:                  extractClientIDs(pc.Config),
+			Thumbprints:                extractStringList(pc.Config, "thumbprints"),
+			AllowedPrincipalTagKeys:    extractStringList(pc.Config, "allowedPrincipalTagKeys"),
+			PolicyClaim:                extractString(pc.Config, "policyClaim"),
+			JTIReplayProtectionEnabled: extractBool(pc.Config, sts.ConfigFieldJTIReplayProtectionEnabled),
 			// No CreatedAt: a config-file provider has no creation time the
 			// server could report consistently across restarts.
 		}
@@ -1055,14 +1056,15 @@ func (m *IAMManager) oidcProviderStillReferenced(provider *oidc.OIDCProvider) bo
 // from, so a refresh rebuilds the provider only when that content changed.
 func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
 	key, _ := json.Marshal(struct {
-		ARN                     string
-		AccountID               string
-		URL                     string
-		ClientIDs               []string
-		Thumbprints             []string
-		AllowedPrincipalTagKeys []string
-		PolicyClaim             string
-	}{rec.ARN, rec.AccountID, rec.URL, rec.ClientIDs, rec.Thumbprints, rec.AllowedPrincipalTagKeys, rec.PolicyClaim})
+		ARN                        string
+		AccountID                  string
+		URL                        string
+		ClientIDs                  []string
+		Thumbprints                []string
+		AllowedPrincipalTagKeys    []string
+		PolicyClaim                string
+		JTIReplayProtectionEnabled *bool
+	}{rec.ARN, rec.AccountID, rec.URL, rec.ClientIDs, rec.Thumbprints, rec.AllowedPrincipalTagKeys, rec.PolicyClaim, rec.JTIReplayProtectionEnabled})
 	sum := sha256.Sum256(key)
 	return hex.EncodeToString(sum[:])
 }
@@ -1072,11 +1074,12 @@ func oidcProviderFingerprint(rec *OIDCProviderRecord) string {
 // record's name — so records that differ only in identity reuse one provider.
 func oidcProviderConfigFingerprint(rec *OIDCProviderRecord) string {
 	key, _ := json.Marshal(&oidc.OIDCConfig{
-		Issuer:                  rec.URL,
-		ClientIDs:               rec.ClientIDs,
-		Thumbprints:             rec.Thumbprints,
-		AllowedPrincipalTagKeys: rec.AllowedPrincipalTagKeys,
-		PolicyClaim:             rec.PolicyClaim,
+		Issuer:                     rec.URL,
+		ClientIDs:                  rec.ClientIDs,
+		Thumbprints:                rec.Thumbprints,
+		AllowedPrincipalTagKeys:    rec.AllowedPrincipalTagKeys,
+		PolicyClaim:                rec.PolicyClaim,
+		JTIReplayProtectionEnabled: rec.JTIReplayProtectionEnabled,
 	})
 	sum := sha256.Sum256(key)
 	return hex.EncodeToString(sum[:])
@@ -1095,6 +1098,10 @@ func buildOIDCProviderFromRecord(rec *OIDCProviderRecord) (*oidc.OIDCProvider, e
 		Thumbprints:             append([]string(nil), rec.Thumbprints...),
 		AllowedPrincipalTagKeys: append([]string(nil), rec.AllowedPrincipalTagKeys...),
 		PolicyClaim:             rec.PolicyClaim,
+	}
+	if rec.JTIReplayProtectionEnabled != nil {
+		enabled := *rec.JTIReplayProtectionEnabled
+		cfg.JTIReplayProtectionEnabled = &enabled
 	}
 	provider := oidc.NewOIDCProvider(rec.ARN)
 	if err := provider.Initialize(cfg); err != nil {
@@ -1169,6 +1176,18 @@ func extractString(cfg map[string]interface{}, key string) string {
 	}
 	s, _ := cfg[key].(string)
 	return s
+}
+
+// extractBool reads a single bool field from the provider's static config
+// map; missing or non-bool values produce nil.
+func extractBool(cfg map[string]interface{}, key string) *bool {
+	if cfg == nil {
+		return nil
+	}
+	if b, ok := cfg[key].(bool); ok {
+		return &b
+	}
+	return nil
 }
 
 // getFilerAddress returns the current filer address using the provider function

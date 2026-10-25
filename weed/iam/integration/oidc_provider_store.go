@@ -74,6 +74,10 @@ type OIDCProviderRecord struct {
 	// derive their effective policies from this JWT claim.
 	PolicyClaim string `json:"policyClaim,omitempty"`
 
+	// JTIReplayProtectionEnabled overrides the server default for this
+	// provider; nil means replay protection is on.
+	JTIReplayProtectionEnabled *bool `json:"jtiReplayProtectionEnabled,omitempty"`
+
 	// Tags is the AWS-style tag set attached to the IAM resource itself
 	// (audit/inventory metadata, not propagated into sessions).
 	Tags map[string]string `json:"tags,omitempty"`
@@ -638,6 +642,10 @@ func copyOIDCProviderRecord(rec *OIDCProviderRecord) *OIDCProviderRecord {
 	}
 	if rec.AllowedPrincipalTagKeys != nil {
 		cp.AllowedPrincipalTagKeys = append([]string(nil), rec.AllowedPrincipalTagKeys...)
+	}
+	if rec.JTIReplayProtectionEnabled != nil {
+		enabled := *rec.JTIReplayProtectionEnabled
+		cp.JTIReplayProtectionEnabled = &enabled
 	}
 	if rec.Tags != nil {
 		cp.Tags = make(map[string]string, len(rec.Tags))
