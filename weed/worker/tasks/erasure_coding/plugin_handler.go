@@ -703,13 +703,12 @@ func maxShardTransfersFromValues(values map[string]*plugin_pb.ConfigValue) *int 
 		return nil
 	}
 	n := pluginworker.ReadInt64Config(values, "max_shard_transfers", 0)
-	if n < 0 {
-		n = 0
-	}
+	v := 0
 	if n > math.MaxInt32 {
-		n = math.MaxInt32
+		v = math.MaxInt32
+	} else if n > 0 {
+		v = int(n)
 	}
-	v := int(n)
 	return &v
 }
 
