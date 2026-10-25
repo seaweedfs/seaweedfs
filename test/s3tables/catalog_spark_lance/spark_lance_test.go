@@ -239,7 +239,13 @@ func (env *environment) tableBucketExists(t *testing.T, bucket string) bool {
 	t.Helper()
 
 	url := fmt.Sprintf("http://%s:%d/v1/namespace/%s/exists", env.bindIP, env.lancePort, bucket)
-	resp, err := http.Post(url, "application/json", strings.NewReader("{}"))
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build the namespace exists request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", env.accessKey+":"+env.secretKey)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ask the namespace whether %s exists: %v", bucket, err)
 	}

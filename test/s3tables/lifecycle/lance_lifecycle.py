@@ -83,7 +83,13 @@ def tally(dataset):
 
 def resolve(args):
     """Ask the namespace where the table lives, the way the worker does."""
-    namespace = ln.connect("rest", {"uri": args.namespace_url})
+    namespace = ln.connect(
+        "rest",
+        {
+            "uri": args.namespace_url,
+            "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+        },
+    )
     table_id = [args.bucket, args.namespace, args.table]
     described = namespace.describe_table(ln.DescribeTableRequest(id=table_id))
     return namespace, table_id, described.location, storage_options(args, described)
@@ -115,7 +121,13 @@ def main():
     args = parser.parse_args()
 
     if args.phase == "write":
-        namespace = ln.connect("rest", {"uri": args.namespace_url})
+        namespace = ln.connect(
+            "rest",
+            {
+                "uri": args.namespace_url,
+                "header.x-api-key": f"{args.access_key}:{args.secret_key}",
+            },
+        )
         for parent in ([args.bucket], [args.bucket, args.namespace]):
             namespace.create_namespace(ln.CreateNamespaceRequest(id=parent, mode="EXIST_OK"))
         table_id = [args.bucket, args.namespace, args.table]

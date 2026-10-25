@@ -46,6 +46,10 @@ def main():
         .config("spark.sql.catalog.lance", "org.lance.spark.LanceNamespaceSparkCatalog")
         .config("spark.sql.catalog.lance.impl", "rest")
         .config("spark.sql.catalog.lance.uri", args.namespace_url)
+        .config(
+            "spark.sql.catalog.lance.headers.x-api-key",
+            f"{args.access_key}:{args.secret_key}",
+        )
         .config("spark.sql.catalog.lance.storage.aws_endpoint", args.s3_endpoint)
         .config("spark.sql.catalog.lance.storage.allow_http", "true")
         .config("spark.sql.catalog.lance.storage.aws_access_key_id", args.access_key)
