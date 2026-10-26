@@ -441,7 +441,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	*/
 
-	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse) error
+	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse, int64) error
 	lastPersistTime := time.Now()
 	lastTsNs := startFrom
 	// replayFloorTsNs is the earliest event this session gave up replaying.
@@ -513,7 +513,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		glog.V(0).Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
 		var counter int64
 		var synced bool
-		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) error {
+		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse, peerTsNs int64) error {
 			if err := replicateMetadataChange(f, peer, event, stopChan); err != nil {
 				if errors.Is(err, errPeerSubscriptionStopped) {
 					return err
@@ -522,16 +522,16 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				// the reconnect resume point cannot pass, while the stream
 				// keeps flowing: blocking on an event that can never replay
 				// would stall every later event from this peer.
-				if replayFloorTsNs == 0 || event.TsNs < replayFloorTsNs {
-					replayFloorTsNs = event.TsNs
+				if replayFloorTsNs == 0 || peerTsNs < replayFloorTsNs {
+					replayFloorTsNs = peerTsNs
 				}
 				return nil
 			}
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
-				if err := ma.updateOffset(f, peer, peerSignature, persistableTsNs(event.TsNs)); err == nil {
-					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
-						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
+				if err := ma.updateOffset(f, peer, peerSignature, persistableTsNs(peerTsNs)); err == nil {
+					if peerTsNs < time.Now().Add(-2*time.Minute).UnixNano() {
+						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, peerTsNs), float64(counter)/60.0)
 					} else if !synced {
 						synced = true
 						glog.V(0).Infof("synced with %s", peer)
@@ -554,12 +554,22 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
-		if err := ma.MetaLogBuffer.AddDataToBuffer([]byte(dir), data, event.TsNs); err != nil {
+		peerTsNs := event.TsNs
+		if event.MutationTsNs == 0 {
+			// Older peers predate the field; their TsNs was the commit stamp,
+			// so Replay must keep ordering by it after TsNs is restamped.
+			event.MutationTsNs = peerTsNs
+		}
+		tsNs, err := ma.MetaLogBuffer.AddDataToBufferAndGetTs([]byte(dir), data, event.TsNs)
+		if err != nil {
 			glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
 			return err
 		}
+		// The event now sits at tsNs in the local stream; offset tracking
+		// still needs the peer's own position, so it is passed separately.
+		event.TsNs = tsNs
 		if maybeReplicateMetadataChange != nil {
-			if err := maybeReplicateMetadataChange(event); err != nil {
+			if err := maybeReplicateMetadataChange(event, peerTsNs); err != nil {
 				return err
 			}
 		}
@@ -606,13 +616,14 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return errPeerSubscriptionStopped
 			default:
 			}
+			peerTsNs := event.TsNs
 			if err := processEventFn(event); err != nil {
 				glog.V(0).Infof("SubscribeLocalMetadata process %s -> %s ts_ns=%d: %v", filer_pb.MetadataEventSourceFullPath(event), filer_pb.MetadataEventTargetFullPath(event), event.TsNs, err)
 				return fmt.Errorf("process %s -> %s ts_ns=%d: %w", filer_pb.MetadataEventSourceFullPath(event), filer_pb.MetadataEventTargetFullPath(event), event.TsNs, err)
 			}
 			f.onMetadataChangeEvent(event)
-			lastTsNs = event.TsNs
-			ma.advancePeerWatermark(peer, event.TsNs)
+			lastTsNs = peerTsNs
+			ma.advancePeerWatermark(peer, peerTsNs)
 			return nil
 		}
 

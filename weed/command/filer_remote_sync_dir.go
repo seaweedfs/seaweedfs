@@ -193,6 +193,7 @@ func reshapeCrossMountRename(mountedDir string, resp *filer_pb.SubscribeMetadata
 			Directory:         message.NewParentPath,
 			EventNotification: &filer_pb.EventNotification{NewEntry: message.NewEntry, NewParentPath: message.NewParentPath, Signatures: message.Signatures},
 			TsNs:              resp.TsNs,
+			MutationTsNs:      resp.MutationTsNs,
 		}, true
 	case oldInMount:
 		if isRemoteOnly(message.OldEntry) {
@@ -204,6 +205,7 @@ func reshapeCrossMountRename(mountedDir string, resp *filer_pb.SubscribeMetadata
 			Directory:         resp.Directory,
 			EventNotification: &filer_pb.EventNotification{OldEntry: message.OldEntry, Signatures: message.Signatures},
 			TsNs:              resp.TsNs,
+			MutationTsNs:      resp.MutationTsNs,
 		}, true
 	default:
 		return nil, false

@@ -195,6 +195,35 @@ func TestReplayAppliesEventNewerThanLocalEntry(t *testing.T) {
 	}
 }
 
+// A delayed peer write is delivered under its bumped stream position, which
+// sorts after a newer local commit; Replay must order on MutationTsNs so the
+// older mutation cannot overwrite the newer local entry.
+func TestReplayOrdersByMutationStampNotStreamPosition(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{
+		FullPath:   path,
+		Attr:       Attr{Mtime: now},
+		Content:    []byte("newer local write"),
+		CommitTsNs: now.UnixNano(),
+	}
+
+	event := overwriteEvent("/dir", "file", now.Add(time.Minute).UnixNano(), "stale peer write")
+	event.MutationTsNs = now.Add(-time.Minute).UnixNano()
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	entry, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "newer local write" {
+		t.Fatalf("content = %q, want local write kept", entry.Content)
+	}
+}
+
 func TestReplaySkipsDeleteOlderThanLocalEntry(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
@@ -917,8 +946,8 @@ func TestReplayDirectoryDeleteSweepsRemoteObjects(t *testing.T) {
 	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/f.txt" {
 		t.Fatalf("expected one remote delete of /d/f.txt, got %v", stub.deleteCalls)
 	}
-	if got := f.remoteTombstones.dirs["/buckets/mybucket/d"]; got != event.TsNs {
-		t.Fatalf("dir tombstone stamped %d, want the event ts %d", got, event.TsNs)
+	if got := f.remoteTombstones.dirs["/buckets/mybucket/d"]; got.commitTsNs != event.TsNs {
+		t.Fatalf("dir tombstone stamped %+v, want the event ts %d", got, event.TsNs)
 	}
 }
 
@@ -1353,7 +1382,7 @@ func TestReplaySweepKeepsRemoteOnlyOwnerOfPath(t *testing.T) {
 	}
 	sweep := &folderSweep{chunksByPath: make(map[util.FullPath][]*filer_pb.FileChunk)}
 	message := &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true}}
-	kept, err := f.deleteSweptChild(ctx, stale, message, 0, sweep, false, true)
+	kept, err := f.deleteSweptChild(ctx, stale, message, 0, 0, sweep, false, true)
 	if err != nil {
 		t.Fatalf("deleteSweptChild: %v", err)
 	}
