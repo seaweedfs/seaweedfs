@@ -939,22 +939,34 @@ async fn proxy_request(
     // a client HEAD must not turn into a GET download at the replica).
     let mut req_builder = state.http_client.request(info.method.clone(), &target_url);
 
-    // Forward the original headers, as Go does — minus hop-by-hop fields,
-    // which Go's inbound request drops into dedicated fields. Host must be the
-    // replica's, and Content-Length/Transfer-Encoding describe a body this
-    // request does not carry; forwarding them stalls the peer's read.
+    // Forward the original headers, as Go does — minus hop-by-hop fields.
+    // Host must be the replica's, and Content-Length/Transfer-Encoding describe
+    // a body this request does not carry; forwarding them stalls the peer's
+    // read. Connection also nominates per-request fields to drop (RFC 9110
+    // 7.6.1).
+    let mut hop_by_hop: std::collections::HashSet<String> = info
+        .original_headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|token| token.trim().to_ascii_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect();
+    for fixed in [
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "te",
+        "trailer",
+        "upgrade",
+    ] {
+        hop_by_hop.insert(fixed.to_string());
+    }
     for (name, value) in &info.original_headers {
-        if matches!(
-            name.as_str(),
-            "host"
-                | "content-length"
-                | "transfer-encoding"
-                | "connection"
-                | "keep-alive"
-                | "te"
-                | "trailer"
-                | "upgrade"
-        ) {
+        if hop_by_hop.contains(name.as_str()) {
             continue;
         }
         req_builder = req_builder.header(name.clone(), value.clone());
@@ -5658,7 +5670,11 @@ mod tests {
         );
         original_headers.insert(
             header::CONNECTION,
-            header::HeaderValue::from_static("keep-alive"),
+            header::HeaderValue::from_static("keep-alive, x-hop-marker"),
+        );
+        original_headers.insert(
+            "x-hop-marker",
+            header::HeaderValue::from_static("private"),
         );
         let info = ProxyRequestInfo {
             method: Method::GET,
@@ -5679,7 +5695,12 @@ mod tests {
                 .any(|(n, v)| n == "range" && v == "bytes=0-3"),
             "Range was not forwarded: {headers:?}"
         );
-        for dropped in ["content-length", "transfer-encoding", "connection"] {
+        for dropped in [
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "x-hop-marker",
+        ] {
             assert!(
                 !headers.iter().any(|(n, _)| n == dropped),
                 "hop-by-hop header {dropped} reached the replica: {headers:?}"
