@@ -153,52 +153,8 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
 mod tests {
     use super::*;
     use crate::table::VectorTable;
-    use arrow_array::{FixedSizeListArray, RecordBatchIterator, StringArray, types::Float32Type};
-    use arrow_schema::{DataType, Field, Schema};
-    use std::sync::Arc;
+    use crate::testing::{DIM, write_dataset};
     use tempfile::TempDir;
-
-    const DIM: usize = 4;
-
-    fn vector_column(vectors: &[Vec<f32>]) -> FixedSizeListArray {
-        FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-            vectors
-                .iter()
-                .map(|v| Some(v.iter().copied().map(Some).collect::<Vec<_>>())),
-            DIM as i32,
-        )
-    }
-
-    async fn write_dataset(dir: &TempDir, vectors: &[Vec<f32>], tags: &[&str]) -> Dataset {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("key", DataType::Utf8, false),
-            Field::new(
-                "vector",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    DIM as i32,
-                ),
-                false,
-            ),
-            Field::new("tag", DataType::Utf8, true),
-        ]));
-        let keys: Vec<String> = (0..vectors.len()).map(|i| format!("k{i}")).collect();
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from(keys)),
-                Arc::new(vector_column(vectors)),
-                Arc::new(StringArray::from(
-                    tags.iter().map(|t| Some(t.to_string())).collect::<Vec<_>>(),
-                )),
-            ],
-        )
-        .unwrap();
-        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        Dataset::write(reader, dir.path().to_str().unwrap(), None)
-            .await
-            .unwrap()
-    }
 
     fn l2(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()

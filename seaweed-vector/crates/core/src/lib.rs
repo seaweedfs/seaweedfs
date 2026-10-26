@@ -7,6 +7,8 @@
 
 pub mod query;
 pub mod table;
+#[cfg(test)]
+mod testing;
 
 pub use query::{Hit, Query};
 pub use table::VectorTable;
