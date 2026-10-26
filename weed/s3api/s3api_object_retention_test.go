@@ -990,6 +990,56 @@ func TestGetObjectEntryPreservesTransientErrors(t *testing.T) {
 	}
 }
 
+// A transport failure whose status text happens to carry the filer not-found
+// sentinel (e.g. a proxy re-wrapping a miss as Unavailable) is a failed read,
+// not a miss - LookupEntry must not normalize it to ErrNotFound.
+func TestGetObjectEntryPreservesUnavailableWithNotFoundMessage(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key": status.Error(codes.Unavailable, filer_pb.ErrNotFound.Error()),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "")
+	if err == nil {
+		t.Fatal("expected error for unavailable lookup")
+	}
+	if errors.Is(err, ErrObjectNotFound) || errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("unavailable lookup must not collapse to not-found: %v", err)
+	}
+}
+
+// A pre-versioning object under a now-versioned bucket has no .versions
+// directory; when the plain-object fallback read fails transiently, that
+// failure must surface instead of the directory's not-found error.
+func TestGetObjectEntryPreservesTransientFallbackError(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+			},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key": status.Error(codes.Unavailable, "filer overloaded"),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "")
+	if err == nil {
+		t.Fatal("expected error for transient fallback lookup failure")
+	}
+	if errors.Is(err, ErrObjectNotFound) || errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("transient fallback error must not collapse to not-found: %v", err)
+	}
+}
+
 func TestGetObjectEntryInvalidVersionIdStillNotFound(t *testing.T) {
 	f := &retentionTestFiler{
 		entries: map[string]*filer_pb.Entry{
