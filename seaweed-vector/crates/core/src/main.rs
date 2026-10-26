@@ -45,7 +45,7 @@ enum Command {
     Query {
         id: String,
         /// Comma-separated floats, e.g. --vector 0.1,0.2,0.3,0.4
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         vector: String,
         #[arg(long, default_value = "10")]
         k: usize,
