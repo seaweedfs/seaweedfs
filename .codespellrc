@@ -20,4 +20,5 @@ ignore-regex = \b[a-z]+[A-Z]\w*\b|\b[A-Z][a-z]+[A-Z]\w*\b
 # unknwon: GitHub username / Go module path (`github.com/unknwon/goconfig`)
 # atleast: CLI mode literal string in test/benchmark/fuse_db/bin/sqlite_verify.py
 # sme: local variable for a *streamMutateError in mount tests
-ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther,thirdparty,unknwon,atleast,sme
+# nin: AWS S3 Vectors "$nin" filter operator literal (API-defined, cannot rename)
+ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther,thirdparty,unknwon,atleast,sme,nin

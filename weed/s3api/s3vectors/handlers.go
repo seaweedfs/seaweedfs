@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,6 +197,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 			Arn       string `json:"arn"`
 			Name      string `json:"name"`
 			CreatedAt string `json:"createdAt"`
+			Format    string `json:"format"`
 		} `json:"tableBuckets"`
 		ContinuationToken string `json:"continuationToken"`
 	}
@@ -209,6 +211,11 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 	}
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken}
 	for _, b := range resp.TableBuckets {
+		// Buckets pre-dating declared formats accept any format; only a bucket
+		// that declared another format is excluded here.
+		if b.Format != "" && b.Format != s3tables.FormatLance {
+			continue
+		}
 		created, _ := time.Parse(time.RFC3339, b.CreatedAt)
 		out.VectorBuckets = append(out.VectorBuckets, &VectorBucket{
 			VectorBucketArn:  s.vectorBucketArn(b.Name),
@@ -284,8 +291,10 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		"dimension":      fmt.Sprint(req.Dimension),
 		"distanceMetric": req.DistanceMetric,
 	}
-	if keys, err := json.Marshal(req.MetadataConfiguration.NonFilterableMetadataKeys); req.MetadataConfiguration != nil && err == nil {
-		metadata["nonFilterableMetadataKeys"] = string(keys)
+	if req.MetadataConfiguration != nil {
+		if keys, err := json.Marshal(req.MetadataConfiguration.NonFilterableMetadataKeys); err == nil {
+			metadata["nonFilterableMetadataKeys"] = string(keys)
+		}
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	var nsResp map[string]interface{}
@@ -569,44 +578,38 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	// AWS exposes a static split: segmentIndex/segmentCount divides the full
-	// listing. The engine service does not know AWS segments, so page through
-	// the whole index here and slice the caller's share — O(index) per call,
-	// acceptable for the MVP.
-	if req.SegmentCount > 0 {
-		var all []*vector_pb.Vector
-		token := ""
-		for {
-			page, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
-				Table:          tableID(arns.bucket, arns.index),
-				MaxResults:     1000,
-				NextToken:      token,
-				ReturnData:     req.ReturnData,
-				ReturnMetadata: req.ReturnMetadata,
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
-				return
-			}
-			all = append(all, page.Vectors...)
-			if page.NextToken == "" {
-				break
-			}
-			token = page.NextToken
-		}
-		var out []*vector_pb.Vector
-		for i, v := range all {
-			if i%int(req.SegmentCount) == int(req.SegmentIndex) {
-				out = append(out, v)
-			}
-		}
-		writeJSON(w, http.StatusOK, &ListVectorsResponse{
-			Vectors: toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
-		})
-		return
-	}
 	if req.MaxResults < 0 {
 		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be non-negative")
+		return
+	}
+	// AWS exposes a static split: segmentIndex/segmentCount divides the full
+	// listing. The engine service does not know AWS segments, so page through
+	// the index here and keep only the caller's share — O(index) per call,
+	// acceptable for the MVP. The engine's next_token is a row offset, so the
+	// caller's token is the offset to resume scanning from.
+	if req.SegmentCount > 0 {
+		if req.SegmentIndex < 0 || req.SegmentIndex >= req.SegmentCount {
+			writeError(w, http.StatusBadRequest, "ValidationException", "segmentIndex must be in [0, segmentCount)")
+			return
+		}
+		var offset uint64
+		if req.NextToken != "" {
+			var err error
+			if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
+				writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
+				return
+			}
+		}
+		out, nextToken, err := s.listSegmentVectors(r.Context(), tableID(arns.bucket, arns.index),
+			offset, req.MaxResults, uint64(req.SegmentCount), uint64(req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, &ListVectorsResponse{
+			NextToken: nextToken,
+			Vectors:   toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
+		})
 		return
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
@@ -624,6 +627,61 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		NextToken: resp.NextToken,
 		Vectors:   toOutputVectors(resp.Vectors, req.ReturnData, req.ReturnMetadata),
 	})
+}
+
+// Mirrors the engine's page sizing so a segmented listing pages like a plain
+// one does.
+const (
+	vectorsDefaultPage = 500
+	vectorsMaxPage     = 1000
+)
+
+// listSegmentVectors scans the index from offset, keeping the rows that fall
+// in the caller's segment until limit are collected or the index runs out.
+// The engine's next_token is a row offset, so the returned token is the offset
+// scanning resumes from.
+func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table, offset uint64, maxResults int, segmentCount, segmentIndex uint64, returnData, returnMetadata bool) ([]*vector_pb.Vector, string, error) {
+	limit := maxResults
+	if limit <= 0 {
+		limit = vectorsDefaultPage
+	} else if limit > vectorsMaxPage {
+		limit = vectorsMaxPage
+	}
+	var out []*vector_pb.Vector
+	nextToken := ""
+	token := strconv.FormatUint(offset, 10)
+	for {
+		page, err := s.vectors.ListVectors(ctx, &vector_pb.ListVectorsRequest{
+			Table:          table,
+			MaxResults:     vectorsMaxPage,
+			NextToken:      token,
+			ReturnData:     returnData,
+			ReturnMetadata: returnMetadata,
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		base := offset
+		offset += uint64(len(page.Vectors))
+		full := false
+		for j, v := range page.Vectors {
+			if (base+uint64(j))%segmentCount == segmentIndex {
+				out = append(out, v)
+				if len(out) == limit {
+					if j+1 < len(page.Vectors) || page.NextToken != "" {
+						nextToken = strconv.FormatUint(base+uint64(j)+1, 10)
+					}
+					full = true
+					break
+				}
+			}
+		}
+		if full || len(page.Vectors) == 0 || page.NextToken == "" {
+			break
+		}
+		token = page.NextToken
+	}
+	return out, nextToken, nil
 }
 
 func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
@@ -729,19 +787,19 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				if !ok {
 					return "", fmt.Errorf("%s expects a list", op)
 				}
-				lits := make([]string, 0, len(list))
+				terms := make([]string, 0, len(list))
 				for _, item := range list {
 					lit, err := sqlLiteral(item)
 					if err != nil {
 						return "", err
 					}
-					lits = append(lits, lit)
+					terms = append(terms, lit)
 				}
 				neg := ""
 				if op == "$nin" {
 					neg = "NOT "
 				}
-				parts = append(parts, fmt.Sprintf("%s%s in (%s)", neg, col, strings.Join(lits, ", ")))
+				parts = append(parts, fmt.Sprintf("%s%s in (%s)", neg, col, strings.Join(terms, ", ")))
 			case "$lt", "$lte", "$gt", "$gte":
 				lit, err := sqlLiteral(operand)
 				if err != nil {
