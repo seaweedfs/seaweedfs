@@ -96,3 +96,30 @@ func (v *Volume) rebuildIdxFile() error {
 	}
 	return fsyncDir(filepath.Dir(idxFileName))
 }
+
+// rebuildIdxToTempFile writes the volume's .idx rows to a new temporary file
+// and returns it rewound for reading, for a volume whose index directory
+// cannot hold the rebuilt index. The caller owns the file and its path.
+func (v *Volume) rebuildIdxToTempFile() (*os.File, error) {
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", v.FileName(".dat"), err)
+	}
+	tmpFile, err := os.CreateTemp("", "weed-idx-*")
+	if err != nil {
+		return nil, err
+	}
+	writer := bufio.NewWriter(tmpFile)
+	scanner := &VolumeFileScanner4RebuildIdx{writer: writer, datSize: datSize, version: v.Version()}
+	if scanErr := ScanVolumeFileFrom(scanner.version, v.DataBackend, int64(v.SuperBlock.BlockSize()), scanner); scanErr != nil {
+		err = scanErr
+	} else if err = writer.Flush(); err == nil {
+		_, err = tmpFile.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return nil, fmt.Errorf("rebuild %s from %s: %w", v.FileName(".idx"), v.FileName(".dat"), err)
+	}
+	return tmpFile, nil
+}

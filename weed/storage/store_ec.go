@@ -89,6 +89,14 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 	)
 	for _, loc := range s.Locations {
 		owned := ownedEcShardCount(loc, vid, shardIds)
+		if loc.readOnlyMount {
+			// A read-only owner still owns the shard: placing another copy
+			// on a writable sibling would register it on two disks.
+			if owned > 0 {
+				return nil
+			}
+			continue
+		}
 		freeCount := ecFreeShardCount(loc, dataShardCount)
 		if owned == 0 {
 			if loc.isDiskSpaceLow.Load() {

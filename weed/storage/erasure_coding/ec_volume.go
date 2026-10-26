@@ -221,7 +221,14 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 	default:
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx (or %s.ecx): %w", localBaseFileName, sharedBaseFileName, os.ErrNotExist)
 	}
-	if ev.ecxFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecx", os.O_RDWR); err != nil {
+	// A mounted read-only index directory keeps every shard readable: open
+	// the sealed index read-only and the journal read-only or not at all.
+	indexDirReadOnly := util.IsReadOnlyMount(ev.ecxActualDir)
+	ecxFlag := os.O_RDWR
+	if indexDirReadOnly {
+		ecxFlag = os.O_RDONLY
+	}
+	if ev.ecxFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecx", ecxFlag); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
@@ -239,35 +246,55 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 	// final inode, and it stops any compaction from replacing the file under
 	// this handle.
 	ev.ecjHold = acquireEcjHold(indexBaseFileName + ".ecj")
-	if ev.ecjFile, err = openEcjFile(indexBaseFileName + ".ecj"); err != nil {
+	if indexDirReadOnly {
+		// The journal cannot be created or appended on a read-only mount.
+		// Seed the deleted set from whatever is there, then drop the handle:
+		// a later delete reports no writable journal through the nil check.
+		if ev.ecjFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecj", os.O_RDONLY); err != nil {
+			if !os.IsNotExist(err) {
+				ev.Close()
+				return nil, fmt.Errorf("cannot read ec volume journal %s.ecj: %w", indexBaseFileName, err)
+			}
+			err = nil
+		}
+	} else if ev.ecjFile, err = openEcjFile(indexBaseFileName + ".ecj"); err != nil {
 		ev.Close()
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
 	}
-	if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {
-		ev.ecjFileSize = ecjFi.Size()
-	} else {
-		glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
+	if ev.ecjFile != nil {
+		if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {
+			ev.ecjFileSize = ecjFi.Size()
+		} else {
+			glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
+		}
 	}
 	// Truncate a torn tail before the loader runs: appends land at the
 	// physical end, so a trailing partial record would misalign every later
-	// delete and lose it on the next mount.
-	if ragged := ev.ecjFileSize % int64(types.NeedleIdSize); ragged != 0 {
-		whole := ev.ecjFileSize - ragged
-		glog.Warningf("ec volume %d: truncating torn .ecj tail %d -> %d bytes", vid, ev.ecjFileSize, whole)
-		if truncErr := ev.ecjFile.Truncate(whole); truncErr != nil {
-			ev.Close()
-			return nil, fmt.Errorf("ec volume %d: repair torn .ecj tail: %w", vid, truncErr)
+	// delete and lose it on the next mount. A read-only mount cannot repair
+	// it; the loader already skips the partial record.
+	if !indexDirReadOnly {
+		if ragged := ev.ecjFileSize % int64(types.NeedleIdSize); ragged != 0 {
+			whole := ev.ecjFileSize - ragged
+			glog.Warningf("ec volume %d: truncating torn .ecj tail %d -> %d bytes", vid, ev.ecjFileSize, whole)
+			if truncErr := ev.ecjFile.Truncate(whole); truncErr != nil {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: repair torn .ecj tail: %w", vid, truncErr)
+			}
+			if syncErr := ev.ecjFile.Sync(); syncErr != nil {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: sync .ecj after tail repair: %w", vid, syncErr)
+			}
+			ev.ecjFileSize = whole
 		}
-		if syncErr := ev.ecjFile.Sync(); syncErr != nil {
-			ev.Close()
-			return nil, fmt.Errorf("ec volume %d: sync .ecj after tail repair: %w", vid, syncErr)
-		}
-		ev.ecjFileSize = whole
 	}
 	ev.deletedNeedles = make(map[types.NeedleId]struct{})
 	loadErr := ev.loadDeletedNeedlesFromEcj(ecjOps.readAt)
 	if loadErr != nil {
 		glog.Warningf("ec volume %d: load deleted needles from .ecj: %v", vid, loadErr)
+	}
+	if indexDirReadOnly && ev.ecjFile != nil {
+		ev.ecjFile.Close()
+		ev.ecjFile = nil
 	}
 
 	// read volume info. Prefer .vif at the data dir (where shards live), but

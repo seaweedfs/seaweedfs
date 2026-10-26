@@ -15,6 +15,7 @@ import (
 	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/syndtr/goleveldb/leveldb/storage"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -36,6 +37,7 @@ type LevelDB3Store struct {
 	dbs      map[string]*leveldb.DB
 	dbsLock  sync.RWMutex
 	ReadOnly bool
+	emptyDB  *leveldb.DB
 
 	blockCacheSizeMB      int
 	writeBufferSizeMB     int
@@ -104,8 +106,14 @@ func (store *LevelDB3Store) buildOptions(name string) *opt.Options {
 func (store *LevelDB3Store) initialize(dir string) (err error) {
 	glog.Infof("filer store leveldb3 dir: %s", dir)
 	os.MkdirAll(dir, 0755)
-	if err := weed_util.TestFolderWritable(dir); err != nil {
-		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+	if weed_util.IsReadOnlyMount(dir) {
+		glog.V(0).Infof("filer store %s is on a read-only filesystem, opening it read-only", dir)
+		store.ReadOnly = true
+	}
+	if !store.ReadOnly {
+		if err := weed_util.TestFolderWritable(dir); err != nil {
+			return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+		}
 	}
 	store.dir = dir
 
@@ -173,9 +181,30 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 
 	store.dbsLock.RUnlock()
 
+	// A bucket with no db directory has no entries. Opening it read-only
+	// cannot create the directory, so serve its reads from an empty
+	// in-memory db; the store's write methods refuse mutations.
+	if store.ReadOnly && !weed_util.FolderExists(fmt.Sprintf("%s/%s", store.dir, bucket)) {
+		db, err := store.emptyBucketDB()
+		return db, bucket, shortPath, err
+	}
+
 	db, err := store.createDB(bucket)
 
 	return db, bucket, shortPath, err
+}
+
+func (store *LevelDB3Store) emptyBucketDB() (*leveldb.DB, error) {
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+	if store.emptyDB == nil {
+		db, err := leveldb.Open(storage.NewMemStorage(), nil)
+		if err != nil {
+			return nil, err
+		}
+		store.emptyDB = db
+	}
+	return store.emptyDB, nil
 }
 
 func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {
@@ -232,6 +261,9 @@ func writeOptions(ctx context.Context) *opt.WriteOptions {
 
 func (store *LevelDB3Store) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
+	if store.ReadOnly {
+		return fmt.Errorf("filer store leveldb3 is read-only")
+	}
 	db, _, shortPath, err := store.findDB(entry.FullPath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
@@ -299,6 +331,9 @@ func (store *LevelDB3Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 
 func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 
+	if store.ReadOnly {
+		return fmt.Errorf("filer store leveldb3 is read-only")
+	}
 	db, _, shortPath, err := store.findDB(fullpath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
@@ -317,6 +352,9 @@ func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 
 func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 
+	if store.ReadOnly {
+		return fmt.Errorf("filer store leveldb3 is read-only")
+	}
 	db, bucket, shortPath, err := store.findDB(fullpath, true)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
@@ -449,5 +487,8 @@ func hashToBytes(dir string) []byte {
 func (store *LevelDB3Store) Shutdown() {
 	for _, db := range store.dbs {
 		db.Close()
+	}
+	if store.emptyDB != nil {
+		store.emptyDB.Close()
 	}
 }

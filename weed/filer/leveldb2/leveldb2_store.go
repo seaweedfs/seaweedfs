@@ -93,8 +93,14 @@ func (store *LevelDB2Store) buildOptions() *opt.Options {
 func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	glog.Infof("filer store leveldb2 dir: %s", dir)
 	os.MkdirAll(dir, 0755)
-	if err := weed_util.TestFolderWritable(dir); err != nil {
-		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+	if weed_util.IsReadOnlyMount(dir) {
+		glog.V(0).Infof("filer store %s is on a read-only filesystem, opening it read-only", dir)
+		store.ReadOnly = true
+	}
+	if !store.ReadOnly {
+		if err := weed_util.TestFolderWritable(dir); err != nil {
+			return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+		}
 	}
 
 	opts := store.buildOptions()

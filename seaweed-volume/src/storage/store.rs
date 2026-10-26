@@ -295,7 +295,7 @@ impl Store {
             if effective_free <= 0 {
                 continue;
             }
-            if loc.is_disk_space_low.load(Ordering::Relaxed) {
+            if loc.is_disk_space_low.load(Ordering::Relaxed) || loc.read_only_mount {
                 continue;
             }
             if !has_room_for_new_volume(
@@ -330,7 +330,7 @@ impl Store {
 
         let mut best: Option<(usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
-            if !pred(loc) || loc.is_disk_space_low.load(Ordering::Relaxed) {
+            if !pred(loc) || loc.is_disk_space_low.load(Ordering::Relaxed) || loc.read_only_mount {
                 continue;
             }
 
@@ -471,6 +471,14 @@ impl Store {
         let mut best: Option<(usize, u8, usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
             let owned = owned_ec_shard_count(loc, vid, shard_ids);
+            if loc.read_only_mount {
+                // A read-only owner still owns the shard: placing another
+                // copy on a writable sibling would register it on two disks.
+                if owned > 0 {
+                    return None;
+                }
+                continue;
+            }
             let free = ec_free_shard_count(loc, data_shard_count);
             if owned == 0 {
                 if loc.is_disk_space_low.load(Ordering::Relaxed) {

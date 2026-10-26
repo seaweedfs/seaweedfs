@@ -10,7 +10,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::config::MinFreeSpace;
 use crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars;
@@ -40,6 +40,10 @@ pub struct DiskLocation {
     volumes: HashMap<VolumeId, Arc<Volume>>,
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
+    /// Go's `DiskLocation.readOnlyMount`: dir or idx_dir is on a read-only
+    /// filesystem. Volumes load read-only and the location offers no free
+    /// slots. Fixed at startup.
+    pub read_only_mount: bool,
     pub available_space: AtomicU64,
     /// Headroom promised to in-flight copies that statfs cannot see yet.
     /// Probes keep it out of available_space so they cannot re-spend it; a
@@ -71,11 +75,19 @@ impl DiskLocation {
             fs::create_dir_all(idx_directory)?;
             idx_directory.to_string()
         };
+        let read_only_mount = is_read_only_mount(directory) || is_read_only_mount(&idx_dir);
+        if read_only_mount {
+            info!(
+                "{} is on a read-only filesystem: its volumes load read-only, no new volumes",
+                directory
+            );
+        }
         let directory_uuid = Self::generate_directory_uuid(directory)?;
 
         Ok(DiskLocation {
             directory: directory.to_string(),
             idx_directory: idx_dir,
+            read_only_mount,
             directory_uuid,
             disk_type,
             tags,
@@ -102,8 +114,35 @@ impl DiskLocation {
         }
 
         let dir_uuid = uuid::Uuid::new_v4().to_string();
-        fs::write(path, &dir_uuid)?;
-        Ok(dir_uuid)
+        match fs::write(&path, &dir_uuid) {
+            Ok(()) => Ok(dir_uuid),
+            // The uuid file cannot be written on a read-only mount; derive a
+            // stable one from the directory plus its device and host so
+            // restarts report the same id and independent disks at the same
+            // path differ.
+            Err(_) if is_read_only_mount(directory) => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                directory.hash(&mut h);
+                if let Ok(meta) = fs::metadata(directory) {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        meta.dev().hash(&mut h);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = meta;
+                    }
+                }
+                if let Ok(host) = std::env::var("HOSTNAME") {
+                    host.hash(&mut h);
+                }
+                let derived = (h.finish() as u128) << 64 | h.finish() as u128;
+                Ok(uuid::Uuid::from_u128(derived).to_string())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     // ---- Volume management ----
@@ -720,6 +759,9 @@ impl DiskLocation {
     /// Matches Go's FindFreeLocation formula:
     ///   free = ((MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()) / DataShardsCount
     pub fn free_volume_count(&self) -> i32 {
+        if self.read_only_mount {
+            return 0;
+        }
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let max = self.max_volume_count.load(Ordering::Relaxed);
         let free_count = (max as i64 - self.volumes.len() as i64) * DATA_SHARDS_COUNT as i64
@@ -1177,6 +1219,27 @@ impl DiskLocation {
             ec_vol.close();
         }
     }
+}
+
+/// Mirror of Go's `util.IsReadOnlyMount`: access(2) with W_OK answers EROFS
+/// for a filesystem mounted read-only regardless of the permission bits, and
+/// also for root, unlike a permission-bits check.
+#[cfg(unix)]
+pub(crate) fn is_read_only_mount(path: &str) -> bool {
+    use std::ffi::CString;
+    let c_path = match CString::new(path.as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if unsafe { libc::access(c_path.as_ptr(), libc::W_OK) } == 0 {
+        return false;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(libc::EROFS)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn is_read_only_mount(_path: &str) -> bool {
+    false
 }
 
 /// Get total and free disk space for a given path.

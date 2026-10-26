@@ -197,6 +197,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s", v.FileName(".dat"))
 		}
+		// The permission bits still allow writing on a read-only mount; open the
+		// .dat read-only there so the volume loads as noWriteOrDelete.
+		if canWrite && util.IsReadOnlyMount(v.dir) {
+			canWrite = false
+		}
 		var dataFile *os.File
 		if canWrite {
 			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE)
@@ -254,6 +259,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.dirIdx = v.dir
 			}
 		}
+		var rebuiltIdx *os.File
 		// check volume idx files
 		if err := v.checkIdxFile(); err != nil {
 			// A remote-tiered volume with a stray .vif but no .idx must not
@@ -265,10 +271,23 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			// A changed -dir.idx leaves the new directory without an index.
 			// The .dat still holds every row, so rebuild rather than exit.
 			if rebuildErr := v.rebuildIdxFile(); rebuildErr != nil {
-				glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
-				return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
+				if !util.IsReadOnlyMount(v.dirIdx) {
+					glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
+					return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
+				}
+				// The index dir cannot take the rebuilt .idx: rebuild its
+				// rows to a temp file and index .dat in memory instead of
+				// skipping the volume. Writes stay blocked by noWriteOrDelete.
+				if rebuiltIdx, err = v.rebuildIdxToTempFile(); err != nil {
+					glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), err)
+					return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), err)
+				}
+				defer os.Remove(rebuiltIdx.Name())
+				v.noWriteOrDelete = true
+				glog.V(0).Infof("volume %d: %s is missing on a read-only mount; indexing %s in memory", v.Id, v.FileName(".idx"), v.FileName(".dat"))
+			} else {
+				glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 			}
-			glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 		}
 		// Recover rows that deletes on a tiered read-only volume overwrote at
 		// the front of .idx. Best effort: a volume that cannot be repaired is
@@ -278,8 +297,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else if restored > 0 {
 			glog.V(0).Infof("volume %d: recovered %d overwritten %s rows from %s", v.Id, restored, v.FileName(".idx"), v.FileName(".dat"))
 		}
+		if !v.noWriteOrDelete && util.IsReadOnlyMount(v.dirIdx) {
+			v.noWriteOrDelete = true
+		}
 		var indexFile *os.File
-		if v.noWriteOrDelete {
+		if rebuiltIdx != nil {
+			indexFile = rebuiltIdx
+		} else if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
 			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDONLY); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
@@ -315,7 +339,17 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// to v.nm yields a non-nil interface over a nil receiver. Clear v.nm
 		// and close indexFile so the defer cleanup keys off v.nm cleanly.
 		if v.noWriteOrDelete || v.noWriteCanDelete {
-			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
+			if util.IsReadOnlyMount(v.dirIdx) && !isSortedFileFresh(v.IndexFileName()+".sdx", indexFile) {
+				// No usable .sdx and none can be written: index .idx in memory.
+				// Writes and deletes stay blocked by noWriteOrDelete.
+				if v.nm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
+					glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
+					v.nm = nil
+				}
+				// The map keeps indexFile only for appends this volume
+				// refuses; release the descriptor like SortedFileNeedleMap.
+				indexFile.Close()
+			} else if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 				v.nm = nil
 				indexFile.Close()

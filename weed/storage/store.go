@@ -323,7 +323,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 		if filterFn != nil && !filterFn(location) {
 			continue
 		}
-		if location.isDiskSpaceLow.Load() {
+		if location.isDiskSpaceLow.Load() || location.readOnlyMount {
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
@@ -476,7 +476,7 @@ func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
 // hasFreeDiskLocation checks if a disk location has free space
 func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
 	// Check if disk space is low first
-	if location.isDiskSpaceLow.Load() {
+	if location.isDiskSpaceLow.Load() || location.readOnlyMount {
 		return false
 	}
 
@@ -592,7 +592,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 		var deleteVids []needle.VolumeId
 		effectiveMaxCount := location.MaxVolumeCount
-		if location.isDiskSpaceLow.Load() {
+		if location.isDiskSpaceLow.Load() || location.readOnlyMount {
 			usedSlots := int32(location.LocalVolumesLen())
 			usedSlots += int32(erasure_coding.VolumeSlots(int64(location.EcShardCount())))
 			effectiveMaxCount = usedSlots
