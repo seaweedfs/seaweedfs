@@ -125,6 +125,10 @@ func newFilerWithFakeMaster(t *testing.T) (*Filer, *hookedStore, *collectionDele
 		LocalMetaLogBuffer: log_buffer.NewLogBuffer("test", time.Minute,
 			func(*log_buffer.LogBuffer, time.Time, time.Time, []byte, int64, int64) {}, nil, func() {}),
 	}
+	t.Cleanup(func() {
+		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
+	})
 	return f, store, master
 }
 
