@@ -27,15 +27,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	"google.golang.org/grpc"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -731,6 +731,7 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		*s3opt.bindIp, *s3opt.portVectors, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
 	if err != nil {
 		glog.Errorf("S3 Vectors listener on %s error: %v", listenAddress, err)
+		conn.Close()
 		return nil
 	}
 
