@@ -939,8 +939,24 @@ async fn proxy_request(
     // a client HEAD must not turn into a GET download at the replica).
     let mut req_builder = state.http_client.request(info.method.clone(), &target_url);
 
-    // Forward all original headers as raw bytes, as Go does.
+    // Forward the original headers, as Go does — minus hop-by-hop fields,
+    // which Go's inbound request drops into dedicated fields. Host must be the
+    // replica's, and Content-Length/Transfer-Encoding describe a body this
+    // request does not carry; forwarding them stalls the peer's read.
     for (name, value) in &info.original_headers {
+        if matches!(
+            name.as_str(),
+            "host"
+                | "content-length"
+                | "transfer-encoding"
+                | "connection"
+                | "keep-alive"
+                | "te"
+                | "trailer"
+                | "upgrade"
+        ) {
+            continue;
+        }
         req_builder = req_builder.header(name.clone(), value.clone());
     }
 
@@ -5574,6 +5590,108 @@ mod tests {
         }
         assert_eq!(head_count.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(get_count.load(AtomicOrdering::SeqCst), 1);
+
+        server.abort();
+    }
+
+    /// End-to-end headers like Range reach the replica; hop-by-hop headers do
+    /// not — a forwarded Content-Length or Host describes this hop, not the
+    /// replica's, and a lying Content-Length stalls the peer's body read.
+    #[tokio::test]
+    async fn test_proxy_request_drops_hop_by_hop_headers() {
+        use axum::{Router, routing::get};
+        use std::sync::Arc as StdArc;
+        use std::sync::Mutex;
+
+        let seen = StdArc::new(Mutex::new(Vec::new()));
+        let app = {
+            let seen = seen.clone();
+            Router::new().route(
+                "/{*path}",
+                get(move |request: axum::extract::Request| {
+                    let seen = seen.clone();
+                    async move {
+                        let headers: Vec<(String, String)> = request
+                            .headers()
+                            .iter()
+                            .map(|(k, v)| {
+                                (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect();
+                        seen.lock().unwrap().push(headers);
+                        request
+                            .headers()
+                            .get(header::RANGE)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string()
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: String::new(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let mut original_headers = HeaderMap::new();
+        original_headers.insert(header::RANGE, header::HeaderValue::from_static("bytes=0-3"));
+        original_headers.insert(
+            header::HOST,
+            header::HeaderValue::from_static("client-facing:8080"),
+        );
+        original_headers.insert(
+            header::CONTENT_LENGTH,
+            header::HeaderValue::from_static("999"),
+        );
+        original_headers.insert(
+            header::TRANSFER_ENCODING,
+            header::HeaderValue::from_static("chunked"),
+        );
+        original_headers.insert(
+            header::CONNECTION,
+            header::HeaderValue::from_static("keep-alive"),
+        );
+        let info = ProxyRequestInfo {
+            method: Method::GET,
+            original_headers,
+            original_query: String::new(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let response = proxy_request(&streaming_test_state(), &info, &target).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let seen = seen.lock().unwrap();
+        let headers = seen.first().expect("peer saw a request");
+        assert!(
+            headers
+                .iter()
+                .any(|(n, v)| n == "range" && v == "bytes=0-3"),
+            "Range was not forwarded: {headers:?}"
+        );
+        for dropped in ["content-length", "transfer-encoding", "connection"] {
+            assert!(
+                !headers.iter().any(|(n, _)| n == dropped),
+                "hop-by-hop header {dropped} reached the replica: {headers:?}"
+            );
+        }
+        // The peer must see its own host, not the client's.
+        let host = headers
+            .iter()
+            .find(|(n, _)| n == "host")
+            .map(|(_, v)| v.as_str())
+            .expect("replica request has a host header");
+        assert_eq!(host, addr.to_string());
 
         server.abort();
     }
