@@ -85,13 +85,13 @@ type ListTablesResponse struct {
 // CreateTableRequest is sent to POST /v1/namespaces/{namespace}/tables.
 // Uses iceberg-go types for Schema, PartitionSpec, and SortOrder.
 type CreateTableRequest struct {
-	Name          string                 `json:"name"`
-	Location      string                 `json:"location,omitempty"`
-	Schema        *iceberg.Schema        `json:"schema,omitempty"`
-	PartitionSpec *iceberg.PartitionSpec `json:"partition-spec,omitempty"`
-	WriteOrder    *table.SortOrder       `json:"write-order,omitempty"`
-	StageCreate   bool                   `json:"stage-create,omitempty"`
-	Properties    iceberg.Properties     `json:"properties,omitempty"`
+	Name          string                        `json:"name"`
+	Location      string                        `json:"location,omitempty"`
+	Schema        *iceberg.Schema               `json:"schema,omitempty"`
+	PartitionSpec *iceberg.UnboundPartitionSpec `json:"partition-spec,omitempty"`
+	WriteOrder    *table.UnboundSortOrder       `json:"write-order,omitempty"`
+	StageCreate   bool                          `json:"stage-create,omitempty"`
+	Properties    iceberg.Properties            `json:"properties,omitempty"`
 }
 
 // RegisterTableRequest is sent to POST /v1/namespaces/{namespace}/register.
