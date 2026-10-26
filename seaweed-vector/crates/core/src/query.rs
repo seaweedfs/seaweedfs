@@ -55,6 +55,14 @@ pub async fn get(
     let Some(key_column) = &table.key_column else {
         bail!("the table has no key column to look up");
     };
+    // key_column goes into the SQL filter verbatim; a resolved VectorTable
+    // always holds a real column name, but do not rely on that here.
+    if !key_column
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        bail!("key column {key_column} is not a plain identifier");
+    }
     if keys.is_empty() {
         return Ok(Vec::new());
     }
@@ -133,6 +141,9 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
             .column_by_name(name)
             .and_then(|c| c.as_any().downcast_ref::<StringArray>())
     });
+    if table.key_column.is_some() && keys.is_none() {
+        bail!("key column did not come back as Utf8");
+    }
     (0..batch.num_rows())
         .map(|i| {
             Ok(Hit {

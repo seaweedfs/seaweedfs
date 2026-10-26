@@ -52,9 +52,12 @@ pub(crate) fn resolve_schema(
 
     let key_column = match key_column {
         Some(name) => {
-            schema
+            let field = schema
                 .field_with_name(name)
                 .with_context(|| format!("no such column {name}"))?;
+            if field.data_type() != &DataType::Utf8 {
+                bail!("key column {name} is not Utf8");
+            }
             Some(name.to_string())
         }
         None => detect_key_column(schema),
