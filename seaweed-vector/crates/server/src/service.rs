@@ -403,6 +403,16 @@ impl VectorService for VectorServer {
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(invalid)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
+        // The index's configured metric lives in the vector field's metadata.
+        let distance = match dataset
+            .schema()
+            .field(VECTOR_COLUMN)
+            .and_then(|f| f.metadata.get("distance_metric").map(String::as_str))
+        {
+            Some("COSINE") => DistanceType::Cosine,
+            Some("DOT_PRODUCT") => DistanceType::Dot,
+            _ => DistanceType::L2,
+        };
         let query = Query {
             vector: req.query_vector,
             k: req.top_k.max(1) as usize,
@@ -412,30 +422,49 @@ impl VectorService for VectorServer {
                 Some(req.filter)
             },
             postfilter: req.postfilter,
-            distance: DistanceType::L2,
+            distance,
             nprobes: None,
         };
         let hits = query::ann(&dataset, &resolved, &query)
             .await
             .map_err(internal)?;
+        // One batched read for every hit's metadata; keyed by the hit key so
+        // row order does not matter.
+        let mut metas: std::collections::HashMap<String, Option<Struct>> =
+            std::collections::HashMap::new();
+        if req.return_metadata && !hits.is_empty() {
+            let row_ids: Vec<u64> = hits.iter().map(|h| h.row_id).collect();
+            let batch = dataset
+                .take_rows(
+                    &row_ids,
+                    ProjectionRequest::from_columns(
+                        [KEY_COLUMN, METADATA_COLUMN],
+                        dataset.schema(),
+                    ),
+                )
+                .await
+                .map_err(internal)?;
+            let keys = batch
+                .column_by_name(KEY_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let meta_col = batch
+                .column_by_name(METADATA_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            if let (Some(keys), Some(meta_col)) = (keys, meta_col) {
+                for i in 0..batch.num_rows() {
+                    metas.insert(
+                        keys.value(i).to_string(),
+                        if meta_col.is_null(i) {
+                            None
+                        } else {
+                            parse_struct(meta_col.value(i)).ok()
+                        },
+                    );
+                }
+            }
+        }
         let mut vectors = Vec::with_capacity(hits.len());
         for hit in &hits {
-            let metadata = if req.return_metadata {
-                let batch = dataset
-                    .take_rows(
-                        &[hit.row_id],
-                        ProjectionRequest::from_columns([METADATA_COLUMN], dataset.schema()),
-                    )
-                    .await
-                    .map_err(internal)?;
-                batch
-                    .column_by_name(METADATA_COLUMN)
-                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                    .filter(|m| !m.is_null(0))
-                    .and_then(|m| parse_struct(m.value(0)).ok())
-            } else {
-                None
-            };
             vectors.push(pb::QueryResult {
                 key: hit.key.clone(),
                 distance: if req.return_distance {
@@ -443,7 +472,7 @@ impl VectorService for VectorServer {
                 } else {
                     0.0
                 },
-                metadata,
+                metadata: metas.remove(&hit.key).flatten(),
             });
         }
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
