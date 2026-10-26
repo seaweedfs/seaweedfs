@@ -109,12 +109,14 @@ message QueryVectorsRequest {
   bool postfilter = 5;
   bool return_metadata = 6;
   bool return_distance = 7;
+  bool return_data = 8;
 }
 
 message QueryResult {
   string key = 1;
   float distance = 2;
   google.protobuf.Struct metadata = 3;
+  repeated float data = 4;
 }
 
 message QueryVectorsResponse {

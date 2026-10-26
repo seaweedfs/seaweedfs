@@ -824,6 +824,7 @@ type QueryVectorsRequest struct {
 	Postfilter     bool `protobuf:"varint,5,opt,name=postfilter,proto3" json:"postfilter,omitempty"`
 	ReturnMetadata bool `protobuf:"varint,6,opt,name=return_metadata,json=returnMetadata,proto3" json:"return_metadata,omitempty"`
 	ReturnDistance bool `protobuf:"varint,7,opt,name=return_distance,json=returnDistance,proto3" json:"return_distance,omitempty"`
+	ReturnData     bool `protobuf:"varint,8,opt,name=return_data,json=returnData,proto3" json:"return_data,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -907,11 +908,19 @@ func (x *QueryVectorsRequest) GetReturnDistance() bool {
 	return false
 }
 
+func (x *QueryVectorsRequest) GetReturnData() bool {
+	if x != nil {
+		return x.ReturnData
+	}
+	return false
+}
+
 type QueryResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Distance      float32                `protobuf:"fixed32,2,opt,name=distance,proto3" json:"distance,omitempty"`
 	Metadata      *structpb.Struct       `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	Data          []float32              `protobuf:"fixed32,4,rep,packed,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -963,6 +972,13 @@ func (x *QueryResult) GetDistance() float32 {
 func (x *QueryResult) GetMetadata() *structpb.Struct {
 	if x != nil {
 		return x.Metadata
+	}
+	return nil
+}
+
+func (x *QueryResult) GetData() []float32 {
+	if x != nil {
+		return x.Data
 	}
 	return nil
 }
@@ -1063,7 +1079,7 @@ const file_vector_proto_rawDesc = "" +
 	"\x13ListVectorsResponse\x12+\n" +
 	"\avectors\x18\x01 \x03(\v2\x11.vector_pb.VectorR\avectors\x12\x1d\n" +
 	"\n" +
-	"next_token\x18\x02 \x01(\tR\tnextToken\"\xff\x01\n" +
+	"next_token\x18\x02 \x01(\tR\tnextToken\"\xa0\x02\n" +
 	"\x13QueryVectorsRequest\x12&\n" +
 	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12!\n" +
 	"\fquery_vector\x18\x02 \x03(\x02R\vqueryVector\x12\x13\n" +
@@ -1073,11 +1089,14 @@ const file_vector_proto_rawDesc = "" +
 	"postfilter\x18\x05 \x01(\bR\n" +
 	"postfilter\x12'\n" +
 	"\x0freturn_metadata\x18\x06 \x01(\bR\x0ereturnMetadata\x12'\n" +
-	"\x0freturn_distance\x18\a \x01(\bR\x0ereturnDistance\"p\n" +
+	"\x0freturn_distance\x18\a \x01(\bR\x0ereturnDistance\x12\x1f\n" +
+	"\vreturn_data\x18\b \x01(\bR\n" +
+	"returnData\"\x84\x01\n" +
 	"\vQueryResult\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1a\n" +
 	"\bdistance\x18\x02 \x01(\x02R\bdistance\x123\n" +
-	"\bmetadata\x18\x03 \x01(\v2\x17.google.protobuf.StructR\bmetadata\"H\n" +
+	"\bmetadata\x18\x03 \x01(\v2\x17.google.protobuf.StructR\bmetadata\x12\x12\n" +
+	"\x04data\x18\x04 \x03(\x02R\x04data\"H\n" +
 	"\x14QueryVectorsResponse\x120\n" +
 	"\avectors\x18\x01 \x03(\v2\x16.vector_pb.QueryResultR\avectors*V\n" +
 	"\x0eDistanceMetric\x12\x1f\n" +
