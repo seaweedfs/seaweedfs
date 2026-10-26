@@ -21,7 +21,7 @@ pub struct IndexCoverage {
     pub unindexed_rows: usize,
 }
 
-/// Coverage for every index built on `vector_column`, newest version only.
+/// Coverage for every index built on `vector_column` at this version.
 pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<IndexCoverage>> {
     let field = dataset
         .schema()
