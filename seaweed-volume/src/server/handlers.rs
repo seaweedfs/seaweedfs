@@ -555,16 +555,21 @@ async fn lookup_volume(
         .send()
         .await
         .map_err(|e| format!("lookup request failed: {}", e))?;
+    let status = resp.status();
     let result: LookupResult = resp
         .json()
         .await
         .map_err(|e| format!("lookup parse failed: {}", e))?;
-    // Mirror Go: a per-volume error in the master reply (e.g. a missing
-    // volume) means "no locations" and answers 404 downstream — it does not
-    // surface as a lookup failure, which proxy mode answers 500.
     if let Some(err) = result.error
         && !err.is_empty()
     {
+        // Mirror Go: a missing volume arrives as a per-volume error in an
+        // answered lookup (HTTP 404), meaning "no locations" — a real master
+        // failure (e.g. 503 while warming up) stays an error so proxy mode
+        // can tell missing data (404) from a failed lookup (500).
+        if status != StatusCode::NOT_FOUND {
+            return Err(err);
+        }
         tracing::debug!("volume {} lookup: {}", volume_id, err);
     }
     Ok(result.locations.unwrap_or_default())
@@ -5371,18 +5376,29 @@ mod tests {
     /// in the lookup body. Go's LookupResult.Error never becomes the Go error
     /// return — the volume server treats it as empty locations and replies
     /// 404. Surfacing it as Err would make proxy-mode reads answer 500.
+    /// A lookup answered with any other failure status (e.g. 503 while the
+    /// master warms up) stays an error, like Go's transport-level failure.
     #[tokio::test]
     async fn test_lookup_volume_missing_volume_returns_empty() {
         use axum::{Router, routing::get};
 
         let app = Router::new().route(
             "/dir/lookup",
-            get(|| async move {
+            get(|axum::extract::Query(params): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >| async move {
+                let (status, error) = match params.get("volumeId").map(String::as_str) {
+                    Some("7") => (StatusCode::NOT_FOUND, "volume id 7 not found"),
+                    _ => (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "service warming up, please retry",
+                    ),
+                };
                 (
-                    axum::http::StatusCode::NOT_FOUND,
+                    status,
                     axum::Json(serde_json::json!({
-                        "volumeOrFileId": "7",
-                        "error": "volume id 7 not found"
+                        "volumeOrFileId": params.get("volumeId"),
+                        "error": error
                     })),
                 )
             }),
@@ -5401,6 +5417,11 @@ mod tests {
             .await
             .expect("missing volume is not a lookup failure");
         assert!(locations.is_empty());
+
+        let err = super::lookup_volume(&client, "http", &master_url, 8)
+            .await
+            .expect_err("master failure is a lookup failure");
+        assert!(err.contains("warming up"));
 
         server.abort();
     }
