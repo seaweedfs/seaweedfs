@@ -94,7 +94,7 @@ func bucketOwnerAccountId(accountManager AccountManager, entry *filer_pb.Entry) 
 }
 
 func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *BucketMetaData {
-	entryJson, _ := json.Marshal(entry)
+	entryJson, _ := json.Marshal(filer_pb.ScrubCipherKeys(entry))
 	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
 		Name:          entry.Name,
