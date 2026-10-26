@@ -6079,6 +6079,10 @@ pub fn scan_volume_file(
     Ok(())
 }
 
+/// Whether `preallocate_file` reserves blocks on this platform; off Linux it
+/// is a no-op, so a create must not be charged for space it will not reserve.
+pub(crate) const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+
 /// Reserve disk blocks for a file without changing its visible size.
 /// On Linux, uses `fallocate(FALLOC_FL_KEEP_SIZE)` to actually reserve blocks.
 /// On other platforms, this is a no-op.

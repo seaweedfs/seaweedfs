@@ -20,7 +20,9 @@ use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE, SuperBlock};
 use crate::storage::types::*;
-use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
+use crate::storage::volume::{
+    CompactionJob, PREALLOCATE_SUPPORTED, VifVolumeInfo, Volume, VolumeError, VolumeSpec,
+};
 
 /// Mirrors Go's ensureCompactVolumeSpace, per filesystem: the new .dat lands
 /// next to the old one and the new .idx next to the old index, so when the
@@ -63,13 +65,15 @@ const VOLUME_CREATE_IDX_BYTES: u64 = 4 << 20;
 /// Mirrors Go's hasRoomForNewVolume: a preallocated volume reserves its full
 /// size up front, so it must fit in the free space above the min-free-space
 /// floor. Reads the disk now rather than the once-a-probe is_disk_space_low
-/// flag. A volume without preallocation reserves nothing.
+/// flag. A volume without preallocation reserves nothing, as does one on a
+/// platform where preallocate_file is a no-op.
 fn has_room_for_new_volume(
     location: &DiskLocation,
     preallocate: u64,
+    preallocate_supported: bool,
     disk_stats_of: fn(&str) -> (u64, u64),
 ) -> bool {
-    if preallocate == 0 {
+    if preallocate == 0 || !preallocate_supported {
         return true;
     }
     let (all, free) = disk_stats_of(&location.directory);
@@ -110,6 +114,10 @@ pub struct Store {
     /// Reads (total, free) for a directory; a field so a test can stand in
     /// for a disk that is full or near its floor. Go: diskStatusOf.
     disk_stats_of: fn(&str) -> (u64, u64),
+    /// Whether a create actually reserves `preallocate` on this platform; a
+    /// field so a test can exercise the guard off Linux. Go:
+    /// createVolumeFilePreallocates.
+    preallocate_supported: bool,
 }
 
 impl Store {
@@ -134,6 +142,7 @@ impl Store {
             vid_stamp_lock: Mutex::new(()),
             vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
             disk_stats_of: super::disk_location::get_disk_stats,
+            preallocate_supported: PREALLOCATE_SUPPORTED,
         }
     }
 
@@ -288,7 +297,12 @@ impl Store {
             if loc.is_disk_space_low.load(Ordering::Relaxed) {
                 continue;
             }
-            if !has_room_for_new_volume(loc, preallocate, self.disk_stats_of) {
+            if !has_room_for_new_volume(
+                loc,
+                preallocate,
+                self.preallocate_supported,
+                self.disk_stats_of,
+            ) {
                 continue;
             }
             if best.is_none() || effective_free > best.unwrap().1 {
@@ -2102,6 +2116,8 @@ mod tests {
             )
             .unwrap();
         store.disk_stats_of = fake_disk_stats;
+        // The fake disk behaves like fallocate on Linux: pretend creates reserve.
+        store.preallocate_supported = true;
         store
     }
 
@@ -2127,6 +2143,27 @@ mod tests {
                 .is_err()
         );
         assert!(!store.has_volume(VolumeId(1)));
+    }
+
+    // Mirrors Go's TestAddVolumeAllowsPreallocationWhereUnsupported: where
+    // preallocate_file is a no-op the reservation never happens, so it must
+    // not hold the create back.
+    #[test]
+    fn test_add_volume_allows_preallocation_where_unsupported() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let mut store = headroom_store(dir, floor + MIB, floor);
+        store.preallocate_supported = false;
+
+        let spec = VolumeSpec {
+            preallocate: 8 * MIB,
+            ..VolumeSpec::default()
+        };
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
+            .unwrap();
     }
 
     // Mirrors Go's TestAddVolumeAllowsPlainVolumeAboveFloor and
