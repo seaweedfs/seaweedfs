@@ -32,7 +32,11 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 
-fn schema_for(dimension: usize, metric: pb::DistanceMetric) -> Arc<Schema> {
+fn schema_for(
+    dimension: usize,
+    metric: pb::DistanceMetric,
+    non_filterable: &[String],
+) -> Arc<Schema> {
     let vector_field = Field::new(
         VECTOR_COLUMN,
         DataType::FixedSizeList(
@@ -49,10 +53,21 @@ fn schema_for(dimension: usize, metric: pb::DistanceMetric) -> Arc<Schema> {
         .into_iter()
         .collect(),
     );
+    let mut metadata_field = Field::new(METADATA_COLUMN, DataType::Utf8, true);
+    if !non_filterable.is_empty() {
+        metadata_field = metadata_field.with_metadata(
+            [(
+                "non_filterable_metadata_keys".to_string(),
+                serde_json::to_string(non_filterable).unwrap_or_default(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+    }
     Arc::new(Schema::new(vec![
         Field::new(KEY_COLUMN, DataType::Utf8, false),
         vector_field,
-        Field::new(METADATA_COLUMN, DataType::Utf8, true),
+        metadata_field,
     ]))
 }
 
@@ -244,7 +259,7 @@ impl VectorService for VectorServer {
             .map_err(internal)?;
         let mut options = self.fallback.clone();
         options.extend(description.storage_options.clone());
-        let schema = schema_for(dimension, metric);
+        let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);
         let dataset = Dataset::write(
@@ -542,7 +557,8 @@ mod tests {
                 metadata: None,
             },
         ];
-        let schema = schema_for(4, pb::DistanceMetric::L2);
+        let schema = schema_for(4, pb::DistanceMetric::L2, &[]);
         assert!(batch_of(&vectors, 4, schema).is_err());
     }
+
 }
