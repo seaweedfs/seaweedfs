@@ -13,6 +13,9 @@ pub struct IndexCoverage {
     pub index_name: String,
     /// Physical index segments: the IndexMetadata deltas sharing the name.
     pub segments: usize,
+    /// False when any delta of this index lacks a fragment bitmap: the index
+    /// exists but which fragments it covers is unknown.
+    pub coverage_known: bool,
     pub indexed_fragments: Vec<u64>,
     pub unindexed_fragments: Vec<u64>,
     pub unindexed_rows: usize,
@@ -24,18 +27,15 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
         .schema()
         .field(vector_column)
         .with_context(|| format!("no such column {vector_column}"))?;
-    let mut by_name: BTreeMap<String, Vec<RoaringBitmap>> = BTreeMap::new();
+    let mut by_name: BTreeMap<String, Vec<Option<RoaringBitmap>>> = BTreeMap::new();
     for index in dataset.load_indices().await?.iter() {
         if index.fields != [field.id] {
             continue;
         }
-        let Some(bitmap) = &index.fragment_bitmap else {
-            continue;
-        };
         by_name
             .entry(index.name.clone())
             .or_default()
-            .push(bitmap.clone());
+            .push(index.fragment_bitmap.clone());
     }
     let all: RoaringBitmap = dataset
         .fragments()
@@ -50,9 +50,11 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
     Ok(by_name
         .into_iter()
         .map(|(name, bitmaps)| {
-            let indexed: RoaringBitmap = bitmaps
-                .iter()
-                .fold(RoaringBitmap::new(), |acc, b| acc | b);
+            let coverage_known = bitmaps.iter().all(|b| b.is_some());
+            let mut indexed = RoaringBitmap::new();
+            for bitmap in bitmaps.iter().flatten() {
+                indexed |= bitmap;
+            }
             // The bitmap records what the index covered when built; fragments
             // the manifest has since dropped are not part of this version.
             let indexed = indexed & &all;
@@ -60,6 +62,7 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
             IndexCoverage {
                 index_name: name,
                 segments: bitmaps.len(),
+                coverage_known,
                 indexed_fragments: indexed.iter().map(|id| id as u64).collect(),
                 unindexed_rows: unindexed.iter().map(|id| rows[&id]).sum(),
                 unindexed_fragments: unindexed.iter().map(|id| id as u64).collect(),
