@@ -1,0 +1,28 @@
+# Vector query engine for SeaweedFS Lance table buckets.
+#
+# `core` is the engine: open a table through the Lance namespace and run
+# top-K over it. The crate layout follows vector_buckets.md; a `server`
+# crate with the VectorService gRPC endpoint lands with the S3 Vectors
+# milestone.
+[workspace]
+resolver = "2"
+members = ["crates/core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# The edition needs 1.85; the lance dependency tree needs more. Same floor as
+# seaweed-worker, which this workspace path-depends on.
+rust-version = "1.94.1"
+
+# No common root manifest links this tree to seaweed-worker or
+# seaweed-common; keep the lint policy identical to theirs.
+[workspace.lints.clippy]
+needless_update = "allow"
+undocumented_unsafe_blocks = "warn"
+
+[workspace.dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,34 @@
+[package]
+name = "weed-vector-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Vector query engine over SeaweedFS Lance table buckets"
+
+[lib]
+name = "weed_vector_core"
+
+[dependencies]
+# The catalog client and dataset-opening helper the maintenance worker uses.
+# A path dependency because the two trees are separate cargo workspaces with
+# no common root manifest.
+weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
+lance = { version = "10", default-features = false, features = ["aws"] }
+lance-index = "10"
+lance-linalg = "10"
+lance-table = "10"
+arrow-array = "58"
+arrow-schema = "58"
+roaring = "0.11"
+anyhow.workspace = true
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
