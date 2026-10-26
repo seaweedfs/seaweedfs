@@ -99,7 +99,7 @@ func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataR
 		return
 	}
 
-	glog.V(0).Infof("processing %v", event)
+	glog.V(0).Infof("processing %s ts_ns=%d", event.Directory, event.TsNs)
 	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}

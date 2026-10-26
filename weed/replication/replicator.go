@@ -108,7 +108,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return r.sink.CreateEntry(oldSinkKey, newEntry, message.Signatures)
 	}
 	if oldEntry == nil && newEntry == nil {
-		glog.V(0).Infof("weird message %+v", message)
+		glog.V(0).Infof("weird message %v: no old or new entry", key)
 		return nil
 	}
 

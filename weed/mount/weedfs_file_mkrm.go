@@ -437,7 +437,7 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		SkipCheckParentDirectory: true,
 	}
 
-	glog.V(1).Infof("createFile: %v", request)
+	glog.V(1).Infof("createFile: %s", entryFullPath)
 	resp, err := wfs.streamCreateEntry(context.Background(), request)
 	if err != nil {
 		glog.V(0).Infof("createFile %s: %v", entryFullPath, err)

@@ -481,7 +481,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse, renameNewPath util.FullPath, renameNewPathLock **cluster.LiveLock) error {
 	// comes from filer StreamRenameEntry, can only be create or delete entry
 
-	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
+	glog.V(4).Infof("dir Rename %s/%s -> %s/%s", resp.Directory, resp.EventNotification.GetOldEntry().GetName(), resp.EventNotification.GetNewParentPath(), resp.EventNotification.GetNewEntry().GetName())
 
 	if resp.EventNotification.NewEntry != nil {
 		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {

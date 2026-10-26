@@ -44,7 +44,7 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
 		resp, err := LookupEntry(ctx, client, request)
 		if err != nil {
-			glog.V(3).InfofCtx(ctx, "read %s %v: %v", fullFilePath, resp, err)
+			glog.V(3).InfofCtx(ctx, "read %s: %v", fullFilePath, err)
 			return err
 		}
 
@@ -337,7 +337,7 @@ func MkFile(ctx context.Context, filerClient FilerClient, parentDirectoryPath st
 
 		glog.V(1).InfofCtx(ctx, "create file: %s/%s", parentDirectoryPath, fileName)
 		if err := CreateEntry(ctx, client, request); err != nil {
-			glog.V(0).InfofCtx(ctx, "create file %v:%v", request, err)
+			glog.V(0).InfofCtx(ctx, "create file %s/%s: %v", parentDirectoryPath, fileName, err)
 			return fmt.Errorf("create file %s/%s: %w", parentDirectoryPath, fileName, err)
 		}
 

@@ -134,7 +134,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		var resolveManifestErr error
 		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks, fh.wfs.option.ConcurrentReaders, fh.wfs.CacheInvalidator(), fh.wfs.manifestCache, fh.wfs.readerCacheBudget)
 		if resolveManifestErr != nil {
-			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
+			glog.Warningf("failed to resolve manifest chunks in %+v", filer_pb.ScrubCipherKeys(entry))
 		}
 	} else {
 		glog.Fatalf("setting file handle entry to nil")
