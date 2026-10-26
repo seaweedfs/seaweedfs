@@ -284,8 +284,10 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		"dimension":      fmt.Sprint(req.Dimension),
 		"distanceMetric": req.DistanceMetric,
 	}
-	if keys, err := json.Marshal(req.MetadataConfiguration.NonFilterableMetadataKeys); req.MetadataConfiguration != nil && err == nil {
-		metadata["nonFilterableMetadataKeys"] = string(keys)
+	if req.MetadataConfiguration != nil {
+		if keys, err := json.Marshal(req.MetadataConfiguration.NonFilterableMetadataKeys); err == nil {
+			metadata["nonFilterableMetadataKeys"] = string(keys)
+		}
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	var nsResp map[string]interface{}
