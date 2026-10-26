@@ -138,9 +138,12 @@ async fn main() -> Result<()> {
         } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
-            let vector =
-                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())
-                    .ok();
+            let resolved =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref());
+            let vector = match resolved {
+                Err(e) if vector_column.is_some() || key_column.is_some() => return Err(e),
+                r => r.ok(),
+            };
             let coverages = match &vector {
                 Some(v) => coverage::coverage(&dataset, &v.vector_column).await?,
                 None => Vec::new(),
@@ -241,3 +244,4 @@ async fn main() -> Result<()> {
     }
     Ok(())
 }
+
