@@ -2,11 +2,23 @@
 
 package util
 
-import "golang.org/x/sys/unix"
+import (
+	"os"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
 
 // IsReadOnlyMount reports whether path is on a filesystem mounted read-only.
 // access(2) with W_OK answers EROFS for that case regardless of the permission
 // bits, and also for root, unlike TestFolderWritable and CheckFile.
 func IsReadOnlyMount(path string) bool {
 	return unix.Access(path, unix.W_OK) == unix.EROFS
+}
+
+// DirOwnedBySelf reports whether the directory info belongs to the current
+// user. Content under os.TempDir is only trusted when it does.
+func DirOwnedBySelf(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
 }

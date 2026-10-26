@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"fmt"
 	"io/fs"
@@ -232,8 +233,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	// start raftServer
-	metaDir := util.ResolvePath(path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port)))
-	if util.IsReadOnlyMount(*masterOption.metaFolder) {
+	metaFolder := util.ResolvePath(*masterOption.metaFolder)
+	metaDir := path.Join(metaFolder, fmt.Sprintf("m%d", *masterOption.port))
+	if util.IsReadOnlyMount(metaFolder) {
 		// raft rewrites conf/state even to start. Run it from a private copy and
 		// allocate no volume ids, so nothing is lost when the copy is dropped.
 		roCopy, err := copyDirForReadOnly(metaDir)
@@ -421,10 +423,23 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 }
 
-// copyDirForReadOnly copies the master's raft directory (a few KB) into a new
-// temporary directory. A missing src yields an empty copy.
+// copyDirForReadOnly copies the master's raft directory (a few KB) into a
+// writable directory under os.TempDir keyed by src, and returns its path.
+// A previous copy is reused so a restart keeps the votes and committed
+// entries the frozen -mdir could not record; it is rebuilt only when the
+// on-disk state is newer, i.e. the mount was writable in between. A missing
+// src yields an empty copy.
 func copyDirForReadOnly(src string) (string, error) {
-	dst, err := os.MkdirTemp("", "weed-master-ro-")
+	sum := sha1.Sum([]byte(src))
+	dst := filepath.Join(os.TempDir(), fmt.Sprintf("weed-master-ro-%x", sum[:8]))
+	if fi, err := os.Stat(dst); err == nil && fi.IsDir() &&
+		fi.Mode().Perm() == 0700 && util.DirOwnedBySelf(fi) {
+		if !newestMtime(dst).Before(newestMtime(src)) {
+			return dst, nil
+		}
+		os.RemoveAll(dst)
+	}
+	staging, err := os.MkdirTemp("", "weed-master-ro-")
 	if err != nil {
 		return "", err
 	}
@@ -439,9 +454,9 @@ func copyDirForReadOnly(src string) (string, error) {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		target := filepath.Join(staging, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
+			return os.MkdirAll(target, 0700)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -449,7 +464,29 @@ func copyDirForReadOnly(src string) (string, error) {
 		}
 		return os.WriteFile(target, data, 0600)
 	})
-	return dst, err
+	if err != nil {
+		os.RemoveAll(staging)
+		return "", err
+	}
+	if err = os.Rename(staging, dst); err != nil {
+		return staging, nil
+	}
+	return dst, nil
+}
+
+// newestMtime returns the latest modification time under dir, or the zero
+// time for a missing or empty one.
+func newestMtime(dir string) (latest time.Time) {
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info, statErr := d.Info(); statErr == nil && info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+		return nil
+	})
+	return latest
 }
 
 func isSingleMasterMode(peers string) bool {
