@@ -26,10 +26,17 @@ func (k *LogQueue) Initialize(configuration util.Configuration, prefix string) (
 func (k *LogQueue) SendMessage(key string, message proto.Message) (err error) {
 
 	// entries carry per-chunk cipher keys; log names only
+	if resp, ok := message.(*filer_pb.SubscribeMetadataResponse); ok {
+		_ = k.SendMessage(key, resp.GetEventNotification())
+		for _, event := range resp.GetEvents() {
+			_ = k.SendMessage(key, event)
+		}
+		return nil
+	}
 	if event, ok := message.(*filer_pb.EventNotification); ok {
 		glog.V(0).Infof("%v: %q -> %q", key, event.GetOldEntry().GetName(), event.GetNewEntry().GetName())
 		return nil
 	}
-	glog.V(0).Infof("%v: %+v", key, message)
+	glog.V(0).Infof("%v: %T", key, message)
 	return nil
 }
