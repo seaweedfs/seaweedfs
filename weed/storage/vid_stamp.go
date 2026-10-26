@@ -104,7 +104,9 @@ func (s *Store) saveVidStamps() {
 	}
 	failed := false
 	for _, location := range s.Locations {
-		if location.readOnlyMount {
+		// The stamp lives on the data directory, which stays writable when
+		// only IdxDirectory is read-only.
+		if util.IsReadOnlyMount(location.Directory) {
 			continue
 		}
 		if err := writeVidStamp(location.Directory, stamp); err != nil {
