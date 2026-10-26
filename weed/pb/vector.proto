@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package vector_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/vector_pb";
+
+import "google/protobuf/struct.proto";
+
+// The shared contract between the Go S3 gateway and the vector query engine.
+// The public S3 Vectors API stays an AWS contract; this RPC is the internal
+// boundary the design doc gives both editions.
+service VectorService {
+  rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
+  rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
+  rpc PutVectors(PutVectorsRequest) returns (PutVectorsResponse);
+  rpc GetVectors(GetVectorsRequest) returns (GetVectorsResponse);
+  rpc DeleteVectors(DeleteVectorsRequest) returns (DeleteVectorsResponse);
+  rpc ListVectors(ListVectorsRequest) returns (ListVectorsResponse);
+  rpc QueryVectors(QueryVectorsRequest) returns (QueryVectorsResponse);
+}
+
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+  L2 = 1;
+  COSINE = 2;
+  DOT_PRODUCT = 3;
+}
+
+// Table addresses a Lance table through the namespace: the id parts as the
+// namespace catalog joins them.
+message Table {
+  repeated string id = 1;
+  // Dataset version to pin reads to; 0 means latest.
+  uint64 version = 2;
+}
+
+message CreateIndexRequest {
+  Table table = 1;
+  uint32 dimension = 2;
+  DistanceMetric distance_metric = 3;
+  repeated string non_filterable_metadata_keys = 4;
+}
+
+message CreateIndexResponse {
+  uint64 version = 1;
+}
+
+message DropIndexRequest {
+  Table table = 1;
+}
+
+message DropIndexResponse {}
+
+message Vector {
+  string key = 1;
+  repeated float data = 2;
+  // JSON-typed metadata: numbers carry double precision, as on the wire.
+  google.protobuf.Struct metadata = 3;
+}
+
+message PutVectorsRequest {
+  Table table = 1;
+  repeated Vector vectors = 2;
+}
+
+message PutVectorsResponse {
+  uint64 version = 1;
+}
+
+message GetVectorsRequest {
+  Table table = 1;
+  repeated string keys = 2;
+  bool return_data = 3;
+  bool return_metadata = 4;
+}
+
+message GetVectorsResponse {
+  repeated Vector vectors = 1;
+}
+
+message DeleteVectorsRequest {
+  Table table = 1;
+  repeated string keys = 2;
+}
+
+message DeleteVectorsResponse {
+  uint64 version = 1;
+}
+
+message ListVectorsRequest {
+  Table table = 1;
+  uint32 max_results = 2;
+  string next_token = 3;
+  bool return_data = 4;
+  bool return_metadata = 5;
+}
+
+message ListVectorsResponse {
+  repeated Vector vectors = 1;
+  string next_token = 2;
+}
+
+message QueryVectorsRequest {
+  Table table = 1;
+  repeated float query_vector = 2;
+  uint32 top_k = 3;
+  // Lance SQL filter; empty means unfiltered. Metadata is one JSON
+  // `metadata` column, so the gateway translates S3 Vectors filter
+  // expressions onto it before they land here.
+  string filter = 4;
+  // Lance's post-filter escape hatch; off prefilters, matching S3 Vectors.
+  bool postfilter = 5;
+  bool return_metadata = 6;
+  bool return_distance = 7;
+  bool return_data = 8;
+}
+
+message QueryResult {
+  string key = 1;
+  float distance = 2;
+  google.protobuf.Struct metadata = 3;
+  repeated float data = 4;
+}
+
+message QueryVectorsResponse {
+  repeated QueryResult vectors = 1;
+}
