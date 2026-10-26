@@ -640,11 +640,15 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					lastTsNs, 0, pb.PathFilter{PathPrefix: "/"},
 					func(event *filer_pb.SubscribeMetadataResponse) error {
 						return processOne(event)
+					}, func(tsNs int64) {
+						if tsNs > lastTsNs {
+							lastTsNs = tsNs
+						}
 					})
 				if readErr != nil {
 					return fmt.Errorf("%w from %s: %w", pb.ErrLogFileRead, peer, readErr)
 				}
-				if lastTs > 0 {
+				if lastTs > lastTsNs {
 					lastTsNs = lastTs
 				}
 				pendingRefs = nil

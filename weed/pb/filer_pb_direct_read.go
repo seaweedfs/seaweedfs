@@ -49,12 +49,19 @@ type PathFilter struct {
 //
 // Filers are read in parallel (one goroutine per filer), each streaming
 // entries through a bounded channel.
+//
+// progressFn, when non-nil, reports checkpoints the caller may resume from:
+// a timestamp is emitted once the merge has moved past it, so every entry
+// carrying it is already settled and the exclusive startTsNs filter cannot
+// skip a straggler sharing it. A stream dropped partway through then resumes
+// at the last checkpoint instead of re-reading the whole ref set.
 func ReadLogFileRefs(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
 	startTsNs, stopTsNs int64,
 	filter PathFilter,
 	processEventFn ProcessMetadataFunc,
+	progressFn func(tsNs int64),
 ) (lastTsNs int64, err error) {
 
 	if len(refs) == 0 {
@@ -78,7 +85,7 @@ func ReadLogFileRefs(
 		return
 	}
 
-	return readFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, filter, processEventFn)
+	return readFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, filter, processEventFn, progressFn)
 }
 
 // readFilersMerged reads files from each filer in parallel (one producer
@@ -92,6 +99,7 @@ func readFilersMerged(
 	startTsNs, stopTsNs int64,
 	filter PathFilter,
 	processEventFn ProcessMetadataFunc,
+	progressFn func(tsNs int64),
 ) (lastTsNs int64, err error) {
 
 	type filerStream struct {
@@ -139,6 +147,13 @@ func readFilersMerged(
 		}(perFiler[filerId], entryCh)
 	}
 
+	progress := func(tsNs int64) {
+		if progressFn != nil {
+			progressFn(tsNs)
+		}
+	}
+	var pendingProgress int64
+
 	// Seed the min-heap with the first entry from each filer
 	pq := &logEntryHeap{}
 	heap.Init(pq)
@@ -169,6 +184,14 @@ func readFilersMerged(
 		if err != nil {
 			return
 		}
+		// Checkpoint a timestamp only once the merge moves past it: per-filer
+		// streams are ts-ordered, so an entry above pendingProgress proves no
+		// stream can still deliver a tied entry the exclusive resume filter
+		// would then skip.
+		if pendingProgress > 0 && item.entry.TsNs > pendingProgress {
+			progress(pendingProgress)
+		}
+		pendingProgress = item.entry.TsNs
 
 		select {
 		case entry, ok := <-streams[item.filerIdx].entryCh:
@@ -181,9 +204,13 @@ func readFilersMerged(
 	}
 
 	// All channels closed: every producer has finished (setFatal, if any,
-	// happened before its close).
+	// happened before its close). The tail timestamp is settled now - no
+	// stream can still deliver a tie.
 	if fe := fatal(); fe != nil {
 		return lastTsNs, fe
+	}
+	if pendingProgress > 0 {
+		progress(pendingProgress)
 	}
 	return
 }

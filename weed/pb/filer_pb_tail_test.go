@@ -1,8 +1,10 @@
 package pb
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -10,7 +12,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeSubscribeStream plays back a scripted sequence of responses, one per Recv.
@@ -439,6 +443,54 @@ func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
 	}
 }
 
+// A drained ref batch must leave StartTsNs at the settled checkpoint even when
+// the last entry's own timestamp lags its log position, so the next drain does
+// not re-read the settled prefix.
+func TestChunkDrainCursorKeepsProgressCheckpoint(t *testing.T) {
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/watched",
+		TsNs:      100,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "file"},
+		},
+	}
+	eventData, err := proto.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	entryData, err := (&filer_pb.LogEntry{TsNs: 300, Data: eventData}).MarshalVT()
+	if err != nil {
+		t.Fatalf("marshal log entry: %v", err)
+	}
+	var buf bytes.Buffer
+	var sizeBuf [4]byte
+	util.Uint32toBytes(sizeBuf[:], uint32(len(entryData)))
+	buf.Write(sizeBuf[:])
+	buf.Write(entryData)
+
+	option := &MetadataFollowOption{
+		ClientName: "mount",
+		StartTsNs:  0,
+		PathPrefix: "/",
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
+		},
+	}
+	stream := &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{
+		{LogFileRefs: []*filer_pb.LogFileChunkRef{
+			{FilerId: "f0", Chunks: []*filer_pb.FileChunk{{FileId: "1,01"}}},
+		}},
+	}}
+	if err := makeSubscribeMetadataFunc(option, func(*filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if option.StartTsNs != 300 {
+		t.Fatalf("expected StartTsNs at the settled checkpoint 300, got %d", option.StartTsNs)
+	}
+}
+
 // blockingFilerClient returns a stream whose Recv parks until the subscribe
 // context ends, standing in for a quiet source stream during a sink outage.
 type blockingFilerClient struct {
@@ -485,5 +537,70 @@ func TestFilerSyncResubscribeSignalEndsStream(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("follower did not end after the resubscribe signal")
+	}
+}
+
+// A dropped stream mid-replay must keep the checkpoints the drain already
+// settled: the resubscribe's SinceNs resumes at the last settled entry
+// instead of re-reading the whole ref set.
+func TestChunkReplayCheckpointSurvivesReconnect(t *testing.T) {
+	var events []*filer_pb.SubscribeMetadataResponse
+	for i, ts := range []int64{101, 102, 103, 104} {
+		events = append(events, makeSubEvent("/watched", fmt.Sprintf("f%d", i), ts))
+	}
+	logData := buildLogFileData(events)
+	refsResp := &filer_pb.SubscribeMetadataResponse{
+		LogFileRefs: []*filer_pb.LogFileChunkRef{{
+			FilerId: "f0",
+			Chunks:  []*filer_pb.FileChunk{{FileId: "log-1"}},
+		}},
+	}
+	markerResp := &filer_pb.SubscribeMetadataResponse{
+		EventNotification: &filer_pb.EventNotification{},
+		TsNs:              200,
+	}
+	option := &MetadataFollowOption{
+		ClientName: "mount",
+		StartTsNs:  100,
+		PathPrefix: "/watched/",
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(logData)), nil
+		},
+	}
+
+	var sinceNs []int64
+	client := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			sinceNs = append(sinceNs, req.SinceNs)
+		},
+		stream: &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{refsResp, markerResp}},
+	}
+
+	count := 0
+	wantErr := fmt.Errorf("apply boom")
+	err := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		count++
+		if count == 3 {
+			return wantErr
+		}
+		return nil
+	})(client)
+	if !errors.Is(err, ErrLogFileRead) {
+		t.Fatalf("expected ErrLogFileRead, got %v", err)
+	}
+	// Entries 101 and 102 settled; 102's checkpoint emits when 103 pops, but
+	// 103 failed first, so the last checkpoint is 101.
+	if option.StartTsNs != 101 {
+		t.Fatalf("StartTsNs = %d, want 101", option.StartTsNs)
+	}
+
+	client.stream = &fakeSubscribeStream{}
+	if err := makeSubscribeMetadataFunc(option, func(*filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})(client); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 101 {
+		t.Fatalf("expected subscribes at 100 then 101, got %v", sinceNs)
 	}
 }
