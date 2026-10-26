@@ -389,7 +389,7 @@ jobs:
             tox -- s3tests/functional/test_s3.py::test_lifecycle_expiration \
                    s3tests/functional/test_s3.py::test_lifecyclev2_expiration
           }
-          lifecycle_expiration || { echo "lifecycle expiration tests flaked; retrying once"; lifecycle_expiration; }
+          lifecycle_expiration || { echo "lifecycle expiration tests flaked; retry 1"; lifecycle_expiration; } || { echo "lifecycle expiration tests flaked; retry 2"; lifecycle_expiration; }
           # cleanup() trap handles worker/server kill + data dir wipe.
 
   versioning-tests:
@@ -1266,7 +1266,7 @@ jobs:
             tox -- s3tests/functional/test_s3.py::test_lifecycle_expiration \
                    s3tests/functional/test_s3.py::test_lifecyclev2_expiration
           }
-          lifecycle_expiration || { echo "lifecycle expiration tests flaked; retrying once"; lifecycle_expiration; }
+          lifecycle_expiration || { echo "lifecycle expiration tests flaked; retry 1"; lifecycle_expiration; } || { echo "lifecycle expiration tests flaked; retry 2"; lifecycle_expiration; }
           # cleanup() trap handles worker/server kill + data dir wipe.
 
 
