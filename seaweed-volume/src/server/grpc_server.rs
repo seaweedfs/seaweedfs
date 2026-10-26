@@ -5740,11 +5740,12 @@ impl VolumeGrpcService {
             needed_space = preallocate_size as u64;
         }
 
-        // Find a free disk location using Go's Store.FindFreeLocation
+        // Find a free disk location using Go's Store.ReserveFreeLocation
         // semantics; the slot of the replica being replaced counts as free.
         let (data_base, idx_base, selected_disk_type) = {
             let mut store = self.state.store.write().unwrap();
-            let Some(loc_idx) = store.find_free_location_predicate(
+            let Some(loc_idx) = store.reserve_free_location(
+                needed_space,
                 |loc| {
                     loc.disk_type == requested_disk_type
                         && loc.available_space.load(Ordering::Relaxed) > needed_space

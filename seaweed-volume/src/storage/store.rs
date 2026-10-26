@@ -356,6 +356,39 @@ impl Store {
         best.map(|(i, _)| i)
     }
 
+    /// Mirrors Go's Store.ReserveFreeLocation: a copy's pick and its .dat
+    /// reservation are separate steps, so verify live space under the store
+    /// lock and charge need against the cached free space, or a second copy
+    /// can spend the same headroom before the first reservation lands.
+    pub fn reserve_free_location<F>(
+        &self,
+        need: u64,
+        pred: F,
+        replace_vid: Option<VolumeId>,
+    ) -> Option<usize>
+    where
+        F: Fn(&DiskLocation) -> bool,
+    {
+        let loc_idx = self.find_free_location_predicate(
+            |loc| {
+                if loc.available_space.load(Ordering::Relaxed) <= need || !pred(loc) {
+                    return false;
+                }
+                let (all, free) = (self.disk_stats_of)(&loc.directory);
+                !loc.min_free_space.is_low(free, all)
+                    && loc.min_free_space.available_space(free, all) > need
+            },
+            replace_vid,
+        )?;
+        let loc = &self.locations[loc_idx];
+        let (all, free) = (self.disk_stats_of)(&loc.directory);
+        loc.available_space.store(
+            loc.min_free_space.available_space(free, all) - need,
+            Ordering::Relaxed,
+        );
+        Some(loc_idx)
+    }
+
     /// Returns the index of the disk that should receive a new EC
     /// shard / index file for `(collection, vid)`. Selection order:
     ///
@@ -2225,6 +2258,50 @@ mod tests {
         // Exactly the room above the floor must be used. Checking only an
         // upper bound would also pass when every create fails.
         assert_eq!(created, 4);
+    }
+
+    // Mirrors Go's TestReserveFreeLocationChargesPickedReservation: a copy's
+    // pick and its .dat reservation are separate steps, so the picked
+    // location's cached free space must carry the charge at once or a second
+    // copy can spend the same headroom.
+    #[test]
+    fn test_reserve_free_location_charges_picked_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        // 40 MiB above the floor: room for one 30 MiB reservation, not two.
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        assert_eq!(
+            store.locations[0].available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+    }
+
+    // Mirrors Go's TestReserveFreeLocationRechecksLiveDisk: the cached free
+    // space is refreshed only once a minute, so a stale-high value must not
+    // admit a reservation the live disk cannot fit.
+    #[test]
+    fn test_reserve_free_location_rechecks_live_disk() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let store = headroom_store(dir, floor + 5 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(100 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(30 * MIB, pred, None), None);
     }
 
     // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
