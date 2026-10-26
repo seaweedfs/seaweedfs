@@ -31,31 +31,41 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 
-fn schema_for(dimension: usize) -> Arc<Schema> {
+fn schema_for(dimension: usize, metric: pb::DistanceMetric) -> Arc<Schema> {
+    let vector_field = Field::new(
+        VECTOR_COLUMN,
+        DataType::FixedSizeList(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            dimension as i32,
+        ),
+        false,
+    )
+    .with_metadata(
+        [(
+            "distance_metric".to_string(),
+            metric.as_str_name().to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
     Arc::new(Schema::new(vec![
         Field::new(KEY_COLUMN, DataType::Utf8, false),
-        Field::new(
-            VECTOR_COLUMN,
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, false)),
-                dimension as i32,
-            ),
-            false,
-        ),
+        vector_field,
         Field::new(METADATA_COLUMN, DataType::Utf8, true),
     ]))
 }
 
-fn batch_of(vectors: &[pb::Vector], dimension: usize) -> Result<RecordBatch> {
-    let schema = schema_for(dimension);
+fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Result<RecordBatch> {
     let keys = StringArray::from(vectors.iter().map(|v| v.key.as_str()).collect::<Vec<_>>());
+    // Check every vector's length before flattening: equal totals would
+    // still let a short vector borrow from the next one's values.
+    if vectors.iter().any(|v| v.data.len() != dimension) {
+        bail!("a vector's data length does not match the index dimension");
+    }
     let flat = vectors
         .iter()
         .flat_map(|v| v.data.iter().copied())
         .collect::<Vec<_>>();
-    if flat.len() != vectors.len() * dimension {
-        bail!("a vector's data length does not match the index dimension");
-    }
     let values: ArrayRef = Arc::new(Float32Array::from(flat));
     let vectors_array = FixedSizeListArray::try_new(
         Field::new("item", DataType::Float32, false).into(),
@@ -216,12 +226,15 @@ impl VectorService for VectorServer {
         request: Request<pb::CreateIndexRequest>,
     ) -> Result<Response<pb::CreateIndexResponse>, Status> {
         let req = request.into_inner();
+        let metric = req.distance_metric();
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dimension = req.dimension as usize;
-        if dimension == 0 {
-            return Err(Status::invalid_argument("dimension must be positive"));
+        // S3 Vectors caps at 4096; reject beyond it instead of letting an
+        // oversized request build a huge Arrow schema.
+        if dimension == 0 || dimension > 4096 {
+            return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
         let description = self
             .client
@@ -230,7 +243,7 @@ impl VectorService for VectorServer {
             .map_err(internal)?;
         let mut options = self.fallback.clone();
         options.extend(description.storage_options.clone());
-        let schema = schema_for(dimension);
+        let schema = schema_for(dimension, metric);
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);
         let dataset = Dataset::write(
