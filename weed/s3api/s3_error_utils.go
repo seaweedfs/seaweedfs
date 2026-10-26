@@ -14,8 +14,10 @@ import (
 // isFilerNotFound reports whether a filer error is a not-found.
 // Unlike lookups (normalized in filer_pb.LookupEntry), list and cache errors
 // cross gRPC as raw status errors, so the sentinel survives as codes.NotFound
-// or only as text. The text is matched last and only on what the filer itself
-// said, since callers wrap these errors with a path the client chose.
+// or as codes.Unknown carrying only its text. The text is matched only on
+// miss-shaped statuses and only on what the filer itself said: the same
+// message on another status is a failed read, and callers wrap these errors
+// with a path the client chose.
 func isFilerNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -24,7 +26,8 @@ func isFilerNotFound(err error) bool {
 		return true
 	}
 	if st, ok := util.ServerStatus(err); ok {
-		return st.Code() == codes.NotFound || strings.Contains(st.Message(), filer_pb.ErrNotFound.Error())
+		return st.Code() == codes.NotFound ||
+			(st.Code() == codes.Unknown && strings.Contains(st.Message(), filer_pb.ErrNotFound.Error()))
 	}
 	return strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
 }

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -871,14 +874,18 @@ func timePtr(t time.Time) *time.Time {
 type retentionTestFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 
-	mu      sync.Mutex
-	entries map[string]*filer_pb.Entry
-	updates []string
+	mu         sync.Mutex
+	entries    map[string]*filer_pb.Entry
+	updates    []string
+	lookupErrs map[string]error
 }
 
 func (f *retentionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err, ok := f.lookupErrs[req.Directory+"/"+req.Name]; ok {
+		return nil, err
+	}
 	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(entry).(*filer_pb.Entry)}, nil
 	}
@@ -903,7 +910,8 @@ func newRetentionTestServer(t *testing.T, f *retentionTestFiler) *S3ApiServer {
 			GrpcDialOption: dialOption,
 			BucketsPath:    "/buckets",
 		},
-		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{addr}, dialOption, ""),
+		filerClient:       wdclient.NewFilerClient([]pb.ServerAddress{addr}, dialOption, ""),
+		bucketConfigCache: NewBucketConfigCache(time.Minute),
 	}
 }
 
@@ -955,5 +963,142 @@ func TestNullVersionLockWritesToPlainEntry(t *testing.T) {
 	}
 	if got := string(f.entries["/buckets/b/key"].Extended[s3_constants.ExtLegalHoldKey]); got != "ON" {
 		t.Fatalf("plain entry legal hold = %q, want ON", got)
+	}
+}
+
+// getObjectEntry must only report ErrObjectNotFound for a genuine miss. A
+// transient filer error used to be collapsed into ErrObjectNotFound, which
+// LifecycleDelete resolves permanently as NOOP_RESOLVED - one flaky read at
+// dispatch time would silently skip the object's expiration.
+func TestGetObjectEntryPreservesTransientErrors(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key": status.Error(codes.Unavailable, "filer overloaded"),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "")
+	if err == nil {
+		t.Fatal("expected error for transient lookup failure")
+	}
+	if errors.Is(err, ErrObjectNotFound) || errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("transient lookup error must not collapse to not-found: %v", err)
+	}
+}
+
+// A transport failure whose status text happens to carry the filer not-found
+// sentinel (e.g. a proxy re-wrapping a miss as Unavailable) is a failed read,
+// not a miss - LookupEntry must not normalize it to ErrNotFound.
+func TestGetObjectEntryPreservesUnavailableWithNotFoundMessage(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key": status.Error(codes.Unavailable, filer_pb.ErrNotFound.Error()),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "")
+	if err == nil {
+		t.Fatal("expected error for unavailable lookup")
+	}
+	if errors.Is(err, ErrObjectNotFound) || errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("unavailable lookup must not collapse to not-found: %v", err)
+	}
+}
+
+// Only miss-shaped statuses may carry the not-found text into ErrObjectNotFound:
+// a raw sentinel crossing gRPC arrives as codes.Unknown, while the same text on
+// codes.Internal is a failed read.
+func TestGetObjectEntryNotFoundTextStatusGate(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantMiss bool
+	}{
+		{"unknown keeps sentinel text", status.Error(codes.Unknown, filer_pb.ErrNotFound.Error()), true},
+		{"internal with sentinel text", status.Error(codes.Internal, filer_pb.ErrNotFound.Error()), false},
+		{"not-found status", status.Error(codes.NotFound, "entry gone"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &retentionTestFiler{
+				entries: map[string]*filer_pb.Entry{
+					"/buckets/b": {Name: "b", IsDirectory: true},
+				},
+				lookupErrs: map[string]error{
+					"/buckets/b/key": tc.err,
+				},
+			}
+			s3a := newRetentionTestServer(t, f)
+
+			_, err := s3a.getObjectEntry("b", "key", "")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := errors.Is(err, ErrObjectNotFound); got != tc.wantMiss {
+				t.Fatalf("isObjectEntryMiss = %v, want %v: %v", got, tc.wantMiss, err)
+			}
+		})
+	}
+}
+
+// A pre-versioning object under a now-versioned bucket has no .versions
+// directory; when the plain-object fallback read fails transiently, that
+// failure must surface instead of the directory's not-found error.
+func TestGetObjectEntryPreservesTransientFallbackError(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+			},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key": status.Error(codes.Unavailable, "filer overloaded"),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "")
+	if err == nil {
+		t.Fatal("expected error for transient fallback lookup failure")
+	}
+	if errors.Is(err, ErrObjectNotFound) || errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("transient fallback error must not collapse to not-found: %v", err)
+	}
+}
+
+func TestGetObjectEntryInvalidVersionIdStillNotFound(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "not/../a-version")
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("invalid version id must report ErrObjectNotFound, got: %v", err)
+	}
+}
+
+func TestGetObjectEntryMissStillNotFound(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "missing", "")
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("missing object must report ErrObjectNotFound, got: %v", err)
 	}
 }

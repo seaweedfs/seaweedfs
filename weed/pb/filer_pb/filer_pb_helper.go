@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -210,7 +211,18 @@ func UpdateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
 	resp, err := client.LookupDirectoryEntry(ctx, request)
 	if err != nil {
-		if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
+		if err == ErrNotFound {
+			return nil, ErrNotFound
+		}
+		// The filer converts its own miss to codes.NotFound; a raw sentinel
+		// crossing gRPC arrives as codes.Unknown carrying only its text. The
+		// same text on any other status is a failed read, not a miss.
+		if st, ok := util.ServerStatus(err); ok {
+			if st.Code() == codes.NotFound ||
+				(st.Code() == codes.Unknown && strings.Contains(st.Message(), ErrNotFound.Error())) {
+				return nil, ErrNotFound
+			}
+		} else if strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, ErrNotFound
 		}
 		glog.V(3).InfofCtx(ctx, "read %s/%v: %v", request.Directory, request.Name, err)
