@@ -2438,6 +2438,36 @@ mod tests {
         );
     }
 
+    // Mirrors Go's TestCommitFreeLocationSettlesAsBytesLand: a running copy
+    // settles its charge as its bytes land on disk, so the live-space check
+    // sees the written part once — in the disk reading — not again inside
+    // the pending charge.
+    #[test]
+    fn test_commit_free_location_settles_as_bytes_land() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 70 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(70 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        // Half the copy's bytes are on disk now; settling that much charge
+        // keeps the second 30 MiB reservation inside the real headroom.
+        FAKE_FREE.fetch_sub(15 * MIB, Ordering::Relaxed);
+        store.commit_free_location(0, 15 * MIB);
+
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        let loc = &store.locations[0];
+        assert_eq!(loc.reserved_space.load(Ordering::Relaxed), 45 * MIB);
+        assert_eq!(loc.available_space.load(Ordering::Relaxed), 10 * MIB);
+    }
+
     // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
     // inside the floor adds no slots.
     #[test]
