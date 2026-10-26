@@ -1455,7 +1455,10 @@ func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
 	if p.more {
 		last := candidates[len(candidates)-1]
 		output.IsTruncated = aws.Bool(true)
-		output.NextKeyMarker, output.NextUploadIdMarker = aws.String(last.key), aws.String(last.uploadId())
+		output.NextKeyMarker = aws.String(last.key)
+		if last.entry != nil {
+			output.NextUploadIdMarker = aws.String(last.entry.Name)
+		}
 	}
 	if aws.StringValue(input.EncodingType) == s3.EncodingTypeUrl {
 		// AWS url-encodes these key-named elements when encoding-type=url is

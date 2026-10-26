@@ -325,4 +325,7 @@ func TestSelectMultipartUploadsDelimiterDropsLosingPrefixes(t *testing.T) {
 	if len(out.CommonPrefixes) != 1 || out.CommonPrefixes[0].Prefix != "a/" || !*out.IsTruncated {
 		t.Fatalf("prefixes %v truncated %v", out.CommonPrefixes, *out.IsTruncated)
 	}
+	if out.NextUploadIdMarker != nil {
+		t.Fatalf("page ending on a common prefix has upload id marker %v", *out.NextUploadIdMarker)
+	}
 }
