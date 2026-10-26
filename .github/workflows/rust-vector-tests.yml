@@ -10,6 +10,8 @@ on:
       - 'weed/pb/plugin.proto'
       - 'weed/pb/vector.proto'
       - 'weed/pb/vector_pb/**'
+      - 'weed/s3api/**'
+      - 'weed/command/**'
       - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
   push:
@@ -21,6 +23,8 @@ on:
       - 'weed/pb/plugin.proto'
       - 'weed/pb/vector.proto'
       - 'weed/pb/vector_pb/**'
+      - 'weed/s3api/**'
+      - 'weed/command/**'
       - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
 
