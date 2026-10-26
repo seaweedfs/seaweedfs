@@ -79,7 +79,11 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 }
 
 func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
-	results, err := LookupVolumeIds(masterFn, grpcDialOption, []string{vid})
+	return LookupVolumeIdWithContext(context.Background(), masterFn, grpcDialOption, vid)
+}
+
+func LookupVolumeIdWithContext(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
+	results, err := LookupVolumeIdsWithContext(ctx, masterFn, grpcDialOption, []string{vid})
 	return results[vid], err
 }
 
@@ -90,6 +94,12 @@ func InvalidateVolumeIdLocationCache(vid string) {
 
 // LookupVolumeIds find volume locations by cache and actual lookup
 func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string, useCache ...bool) (map[string]*LookupResult, error) {
+	return LookupVolumeIdsWithContext(context.Background(), masterFn, grpcDialOption, vids, useCache...)
+}
+
+// LookupVolumeIdsWithContext is LookupVolumeIds bound to ctx, so a caller's
+// cancellation (e.g. a dropped inbound request) also stops the master query.
+func LookupVolumeIdsWithContext(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string, useCache ...bool) (map[string]*LookupResult, error) {
 	ret := make(map[string]*LookupResult)
 	var unknown_vids []string
 	cacheLocations := len(useCache) == 0 || useCache[0]
@@ -112,12 +122,12 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 
 	//only query unknown_vids
 
-	err := WithMasterServerClient(context.Background(), false, masterFn(context.Background()), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err := WithMasterServerClient(ctx, false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		req := &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: unknown_vids,
 		}
-		resp, grpcErr := masterClient.LookupVolume(context.Background(), req)
+		resp, grpcErr := masterClient.LookupVolume(ctx, req)
 		if grpcErr != nil {
 			return grpcErr
 		}

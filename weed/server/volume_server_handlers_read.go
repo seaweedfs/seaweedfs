@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -56,6 +57,27 @@ func InternalError(w http.ResponseWriter, r *http.Request, err error) {
 	writeJsonError(w, r, http.StatusInternalServerError, err)
 }
 
+// hopByHopHeaders names the fields that describe a single hop and must not
+// be relayed: the fixed hop-by-hop set plus every field the header's own
+// Connection values nominate (RFC 9110 7.6.1).
+func hopByHopHeaders(h http.Header, extra ...string) map[string]bool {
+	drop := map[string]bool{
+		"Connection": true, "Keep-Alive": true, "Te": true, "Trailer": true,
+		"Upgrade": true, "Proxy-Connection": true, "Proxy-Authenticate": true, "Proxy-Authorization": true,
+	}
+	for _, v := range h.Values("Connection") {
+		for _, token := range strings.Split(v, ",") {
+			if name := http.CanonicalHeaderKey(strings.TrimSpace(token)); name != "" {
+				drop[name] = true
+			}
+		}
+	}
+	for _, name := range extra {
+		drop[http.CanonicalHeaderKey(name)] = true
+	}
+	return drop
+}
+
 func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Request) {
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, err := needle.NewVolumeId(vid)
@@ -64,17 +86,28 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
-	if err != nil || len(lookupResult.Locations) <= 0 {
+	lookupResult, err := operation.LookupVolumeIdWithContext(r.Context(), vs.GetMaster, vs.grpcDialOption, volumeId.String())
+	if err != nil && vs.ReadMode == "proxy" {
+		if r.Context().Err() != nil {
+			return
+		}
+		glog.V(0).InfofCtx(r.Context(), "lookup error: %v %s", err, r.URL.Path)
+		InternalError(w, r, nil)
+		return
+	}
+	if err != nil || lookupResult == nil || len(lookupResult.Locations) <= 0 {
 		glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		NotFound(w)
 		return
 	}
 	if len(lookupResult.Locations) >= 2 {
-		rand.Shuffle(len(lookupResult.Locations), func(i, j int) {
-			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
+		// cached locations are shared between lookups, so shuffle a copy
+		locations := slices.Clone(lookupResult.Locations)
+		rand.Shuffle(len(locations), func(i, j int) {
+			locations[i], locations[j] = locations[j], locations[i]
 		})
+		lookupResult.Locations = locations
 	}
 	var targetUrl *url.URL
 	location := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
@@ -100,13 +133,19 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		query := r.URL.Query()
 		query.Set(reqIsProxied, "true")
 		r.URL.RawQuery = query.Encode()
-		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
+		request, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), nil)
 		if err != nil {
 			glog.V(0).Infof("failed to instance http request of url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
 			return
 		}
+		// the proxied request carries no body, so it must not forward this
+		// hop's framing either
+		hopByHop := hopByHopHeaders(r.Header, "Host", "Content-Length", "Transfer-Encoding")
 		for k, vv := range r.Header {
+			if hopByHop[http.CanonicalHeaderKey(k)] {
+				continue
+			}
 			for _, v := range vv {
 				request.Header.Add(k, v)
 			}
@@ -114,6 +153,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 
 		response, err := util_http.GetGlobalHttpClient().Do(request)
 		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.FailedReadProxyReq).Inc()
 			glog.V(0).Infof("request remote url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
@@ -121,8 +163,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		}
 		defer util_http.CloseResponse(response)
 		// proxy target response to client
+		respHopByHop := hopByHopHeaders(response.Header)
 		for k, vv := range response.Header {
-			if k == "Server" {
+			if k == "Server" || respHopByHop[http.CanonicalHeaderKey(k)] {
 				continue
 			}
 			for _, v := range vv {
@@ -189,7 +232,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	hasVolume := vs.store.HasVolume(volumeId)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
-		if vs.ReadMode == "local" {
+		if vs.ReadMode == "local" || r.URL.Query().Get(reqIsProxied) == "true" {
 			stats.VolumeServerFileReadInvalidNeedles.Inc()
 			glog.V(0).Infoln("volume is not local:", err, r.URL.Path)
 			NotFound(w)
