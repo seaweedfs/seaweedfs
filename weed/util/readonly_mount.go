@@ -22,3 +22,13 @@ func DirOwnedBySelf(fi os.FileInfo) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	return ok && int(st.Uid) == os.Getuid()
 }
+
+// FileDeviceId returns the device the file lives on, for a stable disk
+// identity across processes.
+func FileDeviceId(fi os.FileInfo) uint64 {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0
+	}
+	return uint64(st.Dev)
+}

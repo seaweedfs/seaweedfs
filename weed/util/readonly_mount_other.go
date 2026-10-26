@@ -15,3 +15,9 @@ func IsReadOnlyMount(path string) bool {
 func DirOwnedBySelf(fi os.FileInfo) bool {
 	return false
 }
+
+// FileDeviceId returns zero on this platform; read-only mounts are not
+// detected, so no derived uuid consumes it.
+func FileDeviceId(fi os.FileInfo) uint64 {
+	return 0
+}

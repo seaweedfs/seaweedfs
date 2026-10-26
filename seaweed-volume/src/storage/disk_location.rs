@@ -112,11 +112,27 @@ impl DiskLocation {
         match fs::write(&path, &dir_uuid) {
             Ok(()) => Ok(dir_uuid),
             // The uuid file cannot be written on a read-only mount; derive a
-            // stable one from the directory so restarts report the same id.
+            // stable one from the directory plus its device and host so
+            // restarts report the same id and independent disks at the same
+            // path differ.
             Err(_) if is_read_only_mount(directory) => {
                 use std::hash::{Hash, Hasher};
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 directory.hash(&mut h);
+                if let Ok(meta) = fs::metadata(directory) {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        meta.dev().hash(&mut h);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = meta;
+                    }
+                }
+                if let Ok(host) = std::env::var("HOSTNAME") {
+                    host.hash(&mut h);
+                }
                 let derived = (h.finish() as u128) << 64 | h.finish() as u128;
                 Ok(uuid::Uuid::from_u128(derived).to_string())
             }
