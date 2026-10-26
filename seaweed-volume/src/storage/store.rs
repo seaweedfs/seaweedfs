@@ -52,6 +52,14 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
     }
 }
 
+// Create-time metadata a location must still fit after a preallocation: .vif
+// always lands beside the data file; the .idx a writable volume keeps
+// appending counts only when dir_idx shares the filesystem. Holding these
+// back keeps an exact-fit reservation from dipping under the floor once the
+// metadata is written.
+const VOLUME_CREATE_VIF_BYTES: u64 = 1 << 20;
+const VOLUME_CREATE_IDX_BYTES: u64 = 4 << 20;
+
 /// Mirrors Go's hasRoomForNewVolume: a preallocated volume reserves its full
 /// size up front, so it must fit in the free space above the min-free-space
 /// floor. Reads the disk now rather than the once-a-probe is_disk_space_low
@@ -68,7 +76,11 @@ fn has_room_for_new_volume(
     if location.min_free_space.is_low(free, all) {
         return false;
     }
-    location.min_free_space.available_space(free, all) >= preallocate
+    let mut need = preallocate + VOLUME_CREATE_VIF_BYTES;
+    if same_filesystem(&location.directory, &location.idx_directory) {
+        need += VOLUME_CREATE_IDX_BYTES;
+    }
+    location.min_free_space.available_space(free, all) >= need
 }
 
 /// Top-level storage manager containing all disk locations and their volumes.
@@ -2149,8 +2161,10 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let floor = 1000 * MIB;
         let preallocate = MIB;
-        // Room for 4 preallocated volumes above the floor.
-        let mut store = headroom_store(dir, floor + 4 * MIB, floor);
+        // Room for 4 preallocated volumes above the floor once each create's
+        // metadata allowance is held back.
+        let create_cost = preallocate + VOLUME_CREATE_VIF_BYTES + VOLUME_CREATE_IDX_BYTES;
+        let mut store = headroom_store(dir, floor + 4 * create_cost, floor);
 
         let spec = VolumeSpec {
             preallocate,
@@ -2163,7 +2177,7 @@ mod tests {
                 .is_ok()
             {
                 created += 1;
-                FAKE_FREE.fetch_sub(preallocate, Ordering::Relaxed);
+                FAKE_FREE.fetch_sub(create_cost, Ordering::Relaxed);
             }
         }
 
