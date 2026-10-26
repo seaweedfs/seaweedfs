@@ -908,6 +908,35 @@ async fn proxy_or_redirect_to_target(
     }
 }
 
+/// Hop-by-hop field names that must not be relayed: the fixed set plus every
+/// field the header's own Connection values nominate (RFC 9110 7.6.1).
+fn hop_by_hop_names(headers: &HeaderMap, extra: &[&str]) -> std::collections::HashSet<String> {
+    let mut names: std::collections::HashSet<String> = headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|token| token.trim().to_ascii_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect();
+    for fixed in [
+        "connection",
+        "keep-alive",
+        "te",
+        "trailer",
+        "upgrade",
+        "proxy-connection",
+        "proxy-authenticate",
+        "proxy-authorization",
+    ] {
+        names.insert(fixed.to_string());
+    }
+    for name in extra {
+        names.insert(name.to_string());
+    }
+    names
+}
+
 /// Proxy the request to the target volume server.
 async fn proxy_request(
     state: &VolumeServerState,
@@ -940,34 +969,12 @@ async fn proxy_request(
     let mut req_builder = state.http_client.request(info.method.clone(), &target_url);
 
     // Forward the original headers, as Go does — minus hop-by-hop fields.
-    // Host must be the replica's, and Content-Length/Transfer-Encoding describe
-    // a body this request does not carry; forwarding them stalls the peer's
-    // read. Connection also nominates per-request fields to drop (RFC 9110
-    // 7.6.1).
-    let mut hop_by_hop: std::collections::HashSet<String> = info
-        .original_headers
-        .get_all(header::CONNECTION)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .map(|token| token.trim().to_ascii_lowercase())
-        .filter(|token| !token.is_empty())
-        .collect();
-    for fixed in [
-        "host",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-        "keep-alive",
-        "te",
-        "trailer",
-        "upgrade",
-        "proxy-connection",
-        "proxy-authenticate",
-        "proxy-authorization",
-    ] {
-        hop_by_hop.insert(fixed.to_string());
-    }
+    // The proxied request carries no body, so this hop's Host and framing
+    // must not reach the replica either.
+    let hop_by_hop = hop_by_hop_names(
+        &info.original_headers,
+        &["host", "content-length", "transfer-encoding"],
+    );
     for (name, value) in &info.original_headers {
         if hop_by_hop.contains(name.as_str()) {
             continue;
@@ -983,12 +990,15 @@ async fn proxy_request(
         }
     };
 
-    // Build response, copying headers and body from remote
+    // Build response, copying headers and body from remote. Hop-by-hop
+    // response fields describe the replica hop, not ours — Content-Length
+    // stays because it still describes the relayed body.
     let status =
         StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let resp_hop_by_hop = hop_by_hop_names(resp.headers(), &[]);
     let mut response_headers = HeaderMap::new();
     for (name, value) in resp.headers() {
-        if name.as_str().eq_ignore_ascii_case("server") {
+        if name.as_str().eq_ignore_ascii_case("server") || resp_hop_by_hop.contains(name.as_str()) {
             continue;
         }
         response_headers.append(name.clone(), value.clone());
@@ -5634,12 +5644,20 @@ mod tests {
                             })
                             .collect();
                         seen.lock().unwrap().push(headers);
-                        request
-                            .headers()
-                            .get(header::RANGE)
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("")
-                            .to_string()
+                        (
+                            [
+                                (header::CONNECTION, "keep-alive, x-resp-marker"),
+                                (header::HeaderName::from_static("keep-alive"), "timeout=5"),
+                                (header::HeaderName::from_static("x-resp-marker"), "private"),
+                                (header::ETAG, "\"peer-etag\""),
+                            ],
+                            request
+                                .headers()
+                                .get(header::RANGE)
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("")
+                                .to_string(),
+                        )
                     }
                 }),
             )
@@ -5721,6 +5739,19 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .expect("replica request has a host header");
         assert_eq!(host, addr.to_string());
+
+        // End-to-end response fields reach the client; the replica's
+        // hop-by-hop fields and Connection-nominated markers do not.
+        assert_eq!(
+            response.headers().get(header::ETAG).unwrap(),
+            "\"peer-etag\""
+        );
+        for dropped in ["connection", "keep-alive", "x-resp-marker"] {
+            assert!(
+                response.headers().get(dropped).is_none(),
+                "hop-by-hop response header {dropped} reached the client"
+            );
+        }
 
         server.abort();
     }
