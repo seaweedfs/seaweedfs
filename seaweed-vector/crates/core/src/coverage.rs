@@ -163,10 +163,12 @@ mod tests {
         };
         let filtered = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();
-        assert_eq!(
-            filtered.iter().map(|h| &h.key).collect::<Vec<_>>(),
-            exact.iter().map(|h| &h.key).collect::<Vec<_>>()
-        );
+        // equal-distance hits have no specified order between the two scans
+        let mut filtered_keys = filtered.iter().map(|h| &h.key).collect::<Vec<_>>();
+        let mut exact_keys = exact.iter().map(|h| &h.key).collect::<Vec<_>>();
+        filtered_keys.sort();
+        exact_keys.sort();
+        assert_eq!(filtered_keys, exact_keys);
         assert!(filtered.len() <= 10);
         assert!(filtered.iter().all(|h| h.key != "k1"));
     }
