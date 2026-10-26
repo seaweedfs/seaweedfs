@@ -1,0 +1,41 @@
+[package]
+name = "weed-vector-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "VectorService gRPC server over SeaweedFS Lance table buckets"
+
+[lib]
+name = "weed_vector_server"
+
+[[bin]]
+name = "weed-vector-server"
+path = "src/main.rs"
+
+[dependencies]
+weed-vector-core = { path = "../core" }
+weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
+lance = { version = "10", default-features = false, features = ["aws"] }
+lance-linalg = "10"
+arrow-array = "58"
+arrow-cast = "58"
+arrow-schema = "58"
+prost = "0.14"
+prost-types = "0.14"
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
+
+[lints]
+workspace = true
