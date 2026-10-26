@@ -14,16 +14,27 @@ WEED_BINARY := $(BUILD_DIR)/weed
 .PHONY: all
 all: build
 
-# Install templ if not present
+# Install templ pinned to the go.mod version so generated code matches the runtime.
+# Invoke the binary in Go's install dir so a different templ earlier on PATH cannot shadow it.
+TEMPL_VERSION := $(shell go list -m -f '{{.Version}}' github.com/a-h/templ)
+GOBIN := $(shell go env GOBIN)
+ifeq ($(GOBIN),)
+ifeq ($(shell go env GOOS),windows)
+GOBIN := $(shell go env GOPATH | cut -d';' -f1)/bin
+else
+GOBIN := $(shell go env GOPATH | cut -d: -f1)/bin
+endif
+endif
+TEMPL := $(GOBIN)/templ
 .PHONY: install-templ
 install-templ:
-	@which templ > /dev/null || (echo "Installing templ..." && go install github.com/a-h/templ/cmd/templ@latest)
+	@("$(TEMPL)" version 2>/dev/null | grep -qF $(TEMPL_VERSION)) || (echo "Installing templ $(TEMPL_VERSION)..." && go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION))
 
 # Generate templ files
 .PHONY: generate
 generate: install-templ static-gz
 	@echo "Generating templ files..."
-	@templ generate ./view
+	@"$(TEMPL)" generate ./view
 	@echo "Generated: $(TEMPL_GO_FILES)"
 
 # Regenerate the gzipped static mirror embedded into the binary
@@ -43,7 +54,7 @@ clean-templ:
 .PHONY: watch
 watch: install-templ
 	@echo "Watching for templ file changes..."
-	@cd $(BUILD_DIR) && templ generate --watch
+	@cd $(BUILD_DIR) && "$(TEMPL)" generate --watch
 
 # Build the main weed binary with admin component
 .PHONY: build
@@ -80,11 +91,11 @@ lint:
 
 # Format the code
 .PHONY: fmt
-fmt:
+fmt: install-templ
 	@echo "Formatting Go code..."
 	@go fmt ./...
 	@echo "Formatting templ files..."
-	@templ fmt $(VIEW_DIR)
+	@"$(TEMPL)" fmt $(VIEW_DIR)
 
 # Validate static files exist
 .PHONY: validate-static
@@ -164,6 +175,6 @@ $(WEED_BINARY): $(TEMPL_GO_FILES) $(GO_FILES)
 	@$(MAKE) build
 
 # Auto-generate templ files when .templ files change
-%_templ.go: %.templ
+%_templ.go: %.templ | install-templ
 	@echo "Regenerating $@ from $<"
-	@cd $(BUILD_DIR) && templ generate
+	@cd $(BUILD_DIR) && "$(TEMPL)" generate
