@@ -66,6 +66,50 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 	return nil
 }
 
+// resolveIndexARNs fills bucket and index from any combination of plain names,
+// a bucket ARN, and a full index ARN — callers may supply only an indexArn.
+func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vectorBucketARNs, error) {
+	var v vectorBucketARNs
+	if strings.HasPrefix(indexArn, "arn:") {
+		if err := arnParts(&v, "", indexArn); err != nil {
+			return v, err
+		}
+	} else if indexArn != "" {
+		return v, fmt.Errorf("indexArn must be an ARN, got %q", indexArn)
+	}
+	if strings.HasPrefix(bucketArn, "arn:") {
+		if err := arnParts(&v, "", bucketArn); err != nil {
+			return v, err
+		}
+	}
+	if v.bucket == "" {
+		if bucketArn != "" {
+			v.bucket = bucketArn
+		} else {
+			v.bucket = bucketName
+		}
+	}
+	if v.index == "" {
+		v.index = indexName
+	}
+	if v.bucket == "" || v.index == "" {
+		return v, fmt.Errorf("vectorBucketName and indexName (or indexArn) are required")
+	}
+	return v, nil
+}
+
+// indexRecord fetches the index's catalog record; the call also authorizes
+// the request identity against the index resource.
+func (s *Server) indexRecord(ctx context.Context, r *http.Request, bucket, index string) (map[string]interface{}, error) {
+	var resp map[string]interface{}
+	err := s.catalog(ctx, "GetTable", &s3tables.GetTableRequest{
+		TableBucketARN: s.s3tablesArn(bucket),
+		Namespace:      []string{indexNamespace},
+		Name:           index,
+	}, &resp, r)
+	return resp, err
+}
+
 func (s *Server) catalog(ctx context.Context, operation string, req, resp interface{}, r *http.Request) error {
 	return s.tables.Execute(ctx, s.filerClient, operation, req, resp, identityOf(r))
 }
@@ -97,7 +141,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "CreateTableBucket",
-		&s3tables.CreateTableBucketRequest{Name: req.VectorBucketName}, &resp, r)
+		&s3tables.CreateTableBucketRequest{Name: req.VectorBucketName, Format: s3tables.FormatLance}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -198,16 +242,6 @@ func distanceMetric(metric string) (vector_pb.DistanceMetric, bool) {
 	return vector_pb.DistanceMetric_L2, false
 }
 
-func metricName(m vector_pb.DistanceMetric) string {
-	switch m {
-	case vector_pb.DistanceMetric_COSINE:
-		return "cosine"
-	case vector_pb.DistanceMetric_DOT_PRODUCT:
-		return "dotproduct"
-	}
-	return "euclidean"
-}
-
 func tableID(bucket, index string) *vector_pb.Table {
 	return &vector_pb.Table{Id: []string{bucket, indexNamespace, index}}
 }
@@ -227,8 +261,8 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown distanceMetric "+req.DistanceMetric)
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -241,10 +275,10 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
+	err = s.catalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
-		Name:           req.IndexName,
+		Name:           arns.index,
 		Format:         s3tables.FormatLance,
 		Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
 	}, &resp, r)
@@ -257,7 +291,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		nonFilterable = req.MetadataConfiguration.NonFilterableMetadataKeys
 	}
 	_, err = s.vectors.CreateIndex(r.Context(), &vector_pb.CreateIndexRequest{
-		Table:                       tableID(arns.bucket, req.IndexName),
+		Table:                       tableID(arns.bucket, arns.index),
 		Dimension:                   uint32(req.Dimension),
 		DistanceMetric:              metric,
 		NonFilterableMetadataKeys:   nonFilterable,
@@ -301,16 +335,16 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "GetTable", &s3tables.GetTableRequest{
+	err = s.catalog(r.Context(), "GetTable", &s3tables.GetTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
-		Name:           req.IndexName,
+		Name:           arns.index,
 	}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
@@ -334,7 +368,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		TableSummaries []struct {
 			Name      string `json:"name"`
 			CreatedAt string `json:"createdAt"`
-		} `json:"tableSummaries"`
+		} `json:"tables"`
 		ContinuationToken string `json:"continuationToken"`
 	}
 	err := s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
@@ -361,19 +395,19 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	_, _ = s.vectors.DropIndex(r.Context(), &vector_pb.DropIndexRequest{
-		Table: tableID(arns.bucket, req.IndexName),
+		Table: tableID(arns.bucket, arns.index),
 	})
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
+	err = s.catalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
-		Name:           req.IndexName,
+		Name:           arns.index,
 	}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
@@ -402,9 +436,13 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+		catalogErr(w, err)
 		return
 	}
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
@@ -420,8 +458,8 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		}
 		vectors = append(vectors, &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata})
 	}
-	_, err := s.vectors.PutVectors(r.Context(), &vector_pb.PutVectorsRequest{
-		Table:   tableID(arns.bucket, req.IndexName),
+	_, err = s.vectors.PutVectors(r.Context(), &vector_pb.PutVectorsRequest{
+		Table:   tableID(arns.bucket, arns.index),
 		Vectors: vectors,
 	})
 	if err != nil {
@@ -452,13 +490,17 @@ func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+		catalogErr(w, err)
+		return
+	}
 	resp, err := s.vectors.GetVectors(r.Context(), &vector_pb.GetVectorsRequest{
-		Table:          tableID(arns.bucket, req.IndexName),
+		Table:          tableID(arns.bucket, arns.index),
 		Keys:           req.Keys,
 		ReturnData:     req.ReturnData,
 		ReturnMetadata: req.ReturnMetadata,
@@ -478,13 +520,17 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+		catalogErr(w, err)
+		return
+	}
 	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
-		Table:          tableID(arns.bucket, req.IndexName),
+		Table:          tableID(arns.bucket, arns.index),
 		MaxResults:     uint32(req.MaxResults),
 		NextToken:      req.NextToken,
 		ReturnData:     req.ReturnData,
@@ -506,13 +552,17 @@ func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	_, err := s.vectors.DeleteVectors(r.Context(), &vector_pb.DeleteVectorsRequest{
-		Table: tableID(arns.bucket, req.IndexName),
+	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	_, err = s.vectors.DeleteVectors(r.Context(), &vector_pb.DeleteVectorsRequest{
+		Table: tableID(arns.bucket, arns.index),
 		Keys:  req.Keys,
 	})
 	if err != nil {
@@ -655,8 +705,8 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -668,13 +718,19 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "queryVector is required")
 		return
 	}
+	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	metric := indexFromRecord(s, arns.bucket, arns.index, record).DistanceMetric
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{
-		Table:          tableID(arns.bucket, req.IndexName),
+		Table:          tableID(arns.bucket, arns.index),
 		QueryVector:    queryVector,
 		TopK:           uint32(req.TopK),
 		Filter:         filter,
@@ -685,7 +741,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 		return
 	}
-	out := &QueryVectorsResponse{DistanceMetric: metricName(vector_pb.DistanceMetric_L2)}
+	out := &QueryVectorsResponse{DistanceMetric: metric}
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {

@@ -93,6 +93,7 @@ type CreateIndexRequest struct {
 	DataType                   string                 `json:"dataType"`
 	Dimension                  int32                  `json:"dimension"`
 	DistanceMetric             string                 `json:"distanceMetric"`
+	IndexArn                   string                 `json:"indexArn"`
 	IndexName                  string                 `json:"indexName"`
 	MetadataConfiguration      *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
 	VectorBucketName           string                 `json:"vectorBucketName"`
@@ -106,6 +107,7 @@ type MetadataConfiguration struct {
 type CreateIndexResponse struct{}
 
 type GetIndexRequest struct {
+	IndexArn         string `json:"indexArn"`
 	IndexName        string `json:"indexName"`
 	VectorBucketName string `json:"vectorBucketName"`
 	VectorBucketArn  string `json:"vectorBucketArn"`
@@ -140,6 +142,7 @@ type ListIndexesResponse struct {
 }
 
 type DeleteIndexRequest struct {
+	IndexArn         string `json:"indexArn"`
 	IndexName        string `json:"indexName"`
 	VectorBucketName string `json:"vectorBucketName"`
 	VectorBucketArn  string `json:"vectorBucketArn"`
