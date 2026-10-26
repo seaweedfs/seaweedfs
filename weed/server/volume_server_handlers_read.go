@@ -68,7 +68,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 	lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
 	if err != nil && vs.ReadMode == "proxy" {
 		glog.V(0).InfofCtx(r.Context(), "lookup error: %v %s", err, r.URL.Path)
-		InternalError(w, r, err)
+		InternalError(w, r, nil)
 		return
 	}
 	if err != nil || len(lookupResult.Locations) <= 0 {
