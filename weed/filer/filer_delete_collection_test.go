@@ -155,7 +155,7 @@ func TestDeleteEntryMetaAndDataDeletesCollectionWhenTheRequestIsCancelledMidDele
 	// The client hangs up just as the bucket entry comes out of the store.
 	store.onDeleteEntry = func(util.FullPath) { cancel() }
 
-	if err := f.DeleteEntryMetaAndData(ctx, bucketPath, true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(ctx, bucketPath, true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 	if ctx.Err() == nil {
@@ -205,7 +205,7 @@ func TestDeleteBucketKeepsSharedCollection(t *testing.T) {
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 	seedBucket(t, store, util.FullPath("/buckets/b"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -230,7 +230,7 @@ func TestDeleteBucketNamedAfterSharedCollection(t *testing.T) {
 	seedBucket(t, store, util.FullPath("/buckets/shared"))
 	seedBucket(t, store, util.FullPath("/buckets/other"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/shared", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/shared", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -255,7 +255,7 @@ func TestDeleteBucketKeepsCollectionUsedByNonBucketPath(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -276,7 +276,7 @@ func TestDeleteBucketKeepsCollectionFromBroadRule(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func TestDeleteBucketKeepsDefaultCollection(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -325,7 +325,7 @@ func TestDeleteBucketKeepsCollectionFromNestedSiblingRule(t *testing.T) {
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 	seedBucket(t, store, util.FullPath("/buckets/b"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -348,7 +348,7 @@ func TestDeleteBucketUnderFilerGroup(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/photos"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/photos", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/photos", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
@@ -372,7 +372,7 @@ func TestDeleteBucketDeletesResolvedCollection(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/only"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/only", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/only", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 

@@ -42,7 +42,7 @@ func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.Ful
 	return m.countFn(dirPath)
 }
 
-func (m *mockFilerOps) DeleteEntryMetaAndData(_ context.Context, p util.FullPath, _, _, _, _ bool, _ []int32, _ int64) error {
+func (m *mockFilerOps) DeleteEntryMetaAndData(_ context.Context, p util.FullPath, _, _, _, _ bool, _ []int32, _, _ int64) error {
 	if m.deleteFn == nil {
 		return nil
 	}

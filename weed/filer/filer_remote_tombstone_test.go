@@ -236,7 +236,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0, 0))
 
 	// the deleted path must not resurrect through the lazy fetch even while
 	// the remote object is still present

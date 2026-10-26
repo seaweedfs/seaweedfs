@@ -71,7 +71,7 @@ func TestNonRecursiveFolderDeleteKeepsRacingChild(t *testing.T) {
 		}
 	}
 
-	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0, 0); err != nil {
 		t.Fatalf("delete empty folder: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
 		}
 	}
 
-	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0, 0); err != nil {
 		t.Fatalf("delete empty folder: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestEnsureDirectoryEntryRestoresExactAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read folder attributes: %v", err)
 	}
-	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0, 0); err != nil {
 		t.Fatalf("delete folder: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestEnsureDirectoryEntryNarrowsAWiderRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read folder attributes: %v", err)
 	}
-	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0, 0); err != nil {
 		t.Fatalf("delete folder: %v", err)
 	}
 

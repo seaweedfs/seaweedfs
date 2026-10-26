@@ -412,8 +412,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 			false,
 			false,
 			signatures,
-			0,
-		); deleteErr != nil {
+			0, 0); deleteErr != nil {
 			return deleteErr
 		}
 	}
@@ -532,7 +531,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	if keepOldRemote {
 		deleteCtx = filer.WithKeepRemoteObject(deleteCtx)
 	}
-	deleteErr := fs.filer.DeleteEntryMetaAndData(deleteCtx, oldPath, false, false, false, false, signatures, 0)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(deleteCtx, oldPath, false, false, false, false, signatures, 0, 0)
 	if deleteErr != nil {
 		return deleteErr
 	}

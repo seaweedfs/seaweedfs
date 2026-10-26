@@ -125,7 +125,7 @@ func TestBucketCollectionKeepsMetaLogTargetCollection(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0, 0); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 
