@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -210,8 +211,15 @@ func UpdateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
 	resp, err := client.LookupDirectoryEntry(ctx, request)
 	if err != nil {
-		if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
+		if err == ErrNotFound {
 			return nil, ErrNotFound
+		}
+		// An Unavailable status is a failed read even when a wrapped
+		// not-found message survives in its text; it is not a miss.
+		if st, ok := util.ServerStatus(err); !ok || st.Code() != codes.Unavailable {
+			if strings.Contains(err.Error(), ErrNotFound.Error()) {
+				return nil, ErrNotFound
+			}
 		}
 		glog.V(3).InfofCtx(ctx, "read %s/%v: %v", request.Directory, request.Name, err)
 		return nil, fmt.Errorf("LookupEntry1: %w", err)
