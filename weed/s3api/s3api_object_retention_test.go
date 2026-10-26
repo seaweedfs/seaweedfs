@@ -1013,6 +1013,41 @@ func TestGetObjectEntryPreservesUnavailableWithNotFoundMessage(t *testing.T) {
 	}
 }
 
+// Only miss-shaped statuses may carry the not-found text into ErrObjectNotFound:
+// a raw sentinel crossing gRPC arrives as codes.Unknown, while the same text on
+// codes.Internal is a failed read.
+func TestGetObjectEntryNotFoundTextStatusGate(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantMiss bool
+	}{
+		{"unknown keeps sentinel text", status.Error(codes.Unknown, filer_pb.ErrNotFound.Error()), true},
+		{"internal with sentinel text", status.Error(codes.Internal, filer_pb.ErrNotFound.Error()), false},
+		{"not-found status", status.Error(codes.NotFound, "entry gone"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &retentionTestFiler{
+				entries: map[string]*filer_pb.Entry{
+					"/buckets/b": {Name: "b", IsDirectory: true},
+				},
+				lookupErrs: map[string]error{
+					"/buckets/b/key": tc.err,
+				},
+			}
+			s3a := newRetentionTestServer(t, f)
+
+			_, err := s3a.getObjectEntry("b", "key", "")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := errors.Is(err, ErrObjectNotFound); got != tc.wantMiss {
+				t.Fatalf("isObjectEntryMiss = %v, want %v: %v", got, tc.wantMiss, err)
+			}
+		})
+	}
+}
+
 // A pre-versioning object under a now-versioned bucket has no .versions
 // directory; when the plain-object fallback read fails transiently, that
 // failure must surface instead of the directory's not-found error.
