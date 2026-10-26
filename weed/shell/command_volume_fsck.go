@@ -59,7 +59,6 @@ type commandVolumeFsck struct {
 	collectionMatcher         *wildcard.CollectionMatcher
 	knownVolumeIds            map[uint32]bool
 	volumeIds                 map[uint32]bool
-	scopedFilerPath           string
 	tempFolder                string
 	verbose                   *bool
 	forcePurging              *bool
@@ -120,7 +119,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
 	c.collection = fsckCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
-	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
+	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id; the filer is still read from its root, since a file under any path may reference these volumes")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
@@ -216,11 +215,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 			return fmt.Errorf("volume(s) not found on master: %v", missing)
 		}
-	}
-
-	c.scopedFilerPath = c.resolveScopedFilerPath(dataNodeVolumeIdToVInfo)
-	if *c.verbose && c.scopedFilerPath != "/" {
-		fmt.Fprintf(c.writer, "scoping filer walk to %s\n", c.scopedFilerPath)
 	}
 
 	var collectCutoffFromAtNs int64 = 0
@@ -322,7 +316,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, queuePurge func(purgeItem), collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
 	if *c.verbose {
-		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
+		fmt.Fprintf(c.writer, "checking each file from filer path /...\n")
 	}
 
 	files := make(map[uint32]*os.File)
@@ -344,7 +338,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false, false,
+	return doTraverseAndSaving(c.env, c.writer, "/", false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
@@ -900,8 +894,7 @@ func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, attr *filer_
 }
 
 func (c *commandVolumeFsck) canPurgeDirectory(dir util.FullPath) bool {
-	root := c.getCollectFilerFilePath()
-	if string(dir) == root || !strings.HasPrefix(string(dir), strings.TrimSuffix(root, "/")+"/") {
+	if string(dir) == "/" {
 		return false
 	}
 	// deleting a bucket drops its whole collection
@@ -1080,72 +1073,6 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 	}
 
 	return
-}
-
-func (c *commandVolumeFsck) getCollectFilerFilePath() string {
-	return c.scopedFilerPath
-}
-
-func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
-	if *c.collection != "" {
-		// fs.configure can bind a collection to any path prefix, so files
-		// referencing the filtered volumes may live anywhere. A bucket-dir
-		// walk could miss them and report their live chunks as orphans;
-		// only a full walk is safe for a collection filter.
-		return "/"
-	}
-	if len(c.volumeIds) == 0 {
-		return "/"
-	}
-	collections := make(map[string]struct{})
-	for _, vidMap := range dataNodeVolumeIdToVInfo {
-		for vid, vinfo := range vidMap {
-			if _, ok := c.volumeIds[vid]; !ok {
-				continue
-			}
-			// empty collection: volume can be referenced from anywhere
-			if vinfo.collection == "" {
-				return "/"
-			}
-			collections[vinfo.collection] = struct{}{}
-			if len(collections) > 1 {
-				return "/"
-			}
-		}
-	}
-	if len(collections) != 1 {
-		return "/"
-	}
-	var collection string
-	for col := range collections {
-		collection = col
-	}
-	exists, err := c.bucketDirExists(collection)
-	if err != nil || !exists {
-		return "/"
-	}
-	return fmt.Sprintf("%s/%s", c.bucketsPath, collection)
-}
-
-func (c *commandVolumeFsck) bucketDirExists(name string) (bool, error) {
-	var found bool
-	err := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: c.bucketsPath,
-			Name:      name,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-				return nil
-			}
-			return err
-		}
-		if resp.Entry != nil && resp.Entry.IsDirectory {
-			found = true
-		}
-		return nil
-	})
-	return found, err
 }
 
 func getVolumeFileIdFile(tempFolder string, dataNodeid string, vid uint32) string {
