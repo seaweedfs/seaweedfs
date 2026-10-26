@@ -82,10 +82,29 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			diskType = req.DiskType
 		}
 		hasRemoteDatFile = volFileInfoResp.VolumeInfo != nil && len(volFileInfoResp.VolumeInfo.Files) > 0
+
+		var preallocateSize int64
+		if grpcErr := pb.WithMasterClient(context.Background(), false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
+			}
+			if resp.VolumePreallocate {
+				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
+			}
+			return nil
+		}); grpcErr != nil {
+			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
+		}
+
 		// a remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier
 		neededSpace := volFileInfoResp.DatFileSize
 		if hasRemoteDatFile {
 			neededSpace = volFileInfoResp.IdxFileSize
+		} else if backend.PreallocateSupported && uint64(preallocateSize) > neededSpace {
+			// the .dat reserves the master's volume size limit up front, so the
+			// location must fit the reservation, not just the copied bytes
+			neededSpace = uint64(preallocateSize)
 		}
 		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
@@ -125,20 +144,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				os.Remove(dataBaseFileName + ".note")
 			}
 		}()
-
-		var preallocateSize int64
-		if grpcErr := pb.WithMasterClient(context.Background(), false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-			if err != nil {
-				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
-			}
-			if resp.VolumePreallocate {
-				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
-			}
-			return nil
-		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
-		}
 
 		if preallocateSize > 0 && !hasRemoteDatFile {
 			volumeFile := dataBaseFileName + ".dat"
