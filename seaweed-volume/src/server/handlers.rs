@@ -571,6 +571,10 @@ async fn lookup_volume(
             return Err(err);
         }
         tracing::debug!("volume {} lookup: {}", volume_id, err);
+    } else if !status.is_success() && status != StatusCode::NOT_FOUND {
+        // A non-success answer without an error body (e.g. an intermediary's
+        // 503 as `{}`) is a failed lookup, not a missing volume.
+        return Err(format!("lookup failed: {}", status));
     }
     Ok(result.locations.unwrap_or_default())
 }
@@ -5429,19 +5433,20 @@ mod tests {
                 std::collections::HashMap<String, String>,
             >| async move {
                 let (status, error) = match params.get("volumeId").map(String::as_str) {
-                    Some("7") => (StatusCode::NOT_FOUND, "volume id 7 not found"),
+                    Some("7") => (StatusCode::NOT_FOUND, Some("volume id 7 not found")),
+                    Some("9") => (StatusCode::SERVICE_UNAVAILABLE, None),
                     _ => (
                         StatusCode::SERVICE_UNAVAILABLE,
-                        "service warming up, please retry",
+                        Some("service warming up, please retry"),
                     ),
                 };
-                (
-                    status,
-                    axum::Json(serde_json::json!({
-                        "volumeOrFileId": params.get("volumeId"),
-                        "error": error
-                    })),
-                )
+                let mut body = serde_json::json!({
+                    "volumeOrFileId": params.get("volumeId")
+                });
+                if let Some(error) = error {
+                    body["error"] = serde_json::json!(error);
+                }
+                (status, axum::Json(body))
             }),
         );
 
@@ -5463,6 +5468,11 @@ mod tests {
             .await
             .expect_err("master failure is a lookup failure");
         assert!(err.contains("warming up"));
+
+        let err = super::lookup_volume(&client, "http", &master_url, 9)
+            .await
+            .expect_err("a failed lookup without an error body is still a failure");
+        assert!(err.contains("503"));
 
         server.abort();
     }
