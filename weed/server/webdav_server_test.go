@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/webdav"
@@ -279,9 +280,112 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 	}
 }
 
+// A file copied or moved onto a collection URL is created at the name without
+// the slash: OpenFile refuses "name/" only after the collection is removed.
+func TestCopyMoveGuardHandler_FileOntoCollectionURL(t *testing.T) {
+	var got string
+	h := copyMoveGuardHandler{
+		fs: &stubDavFs{present: map[string]bool{"/f": true, "/d": true}, dirs: map[string]bool{"/d": true}},
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.Header.Get("Destination")
+		}),
+	}
+	for _, tc := range []struct{ method, src, dst, want string }{
+		{"COPY", "/f", "/coll/", "http://x/coll"},
+		{"MOVE", "/f", "/coll/", "http://x/coll"},
+		{"COPY", "/f", "/a%20b/", "http://x/a%20b"},
+		{"COPY", "/f", "/coll", "http://x/coll"},
+		{"COPY", "/d", "/coll/", "http://x/coll/"},
+	} {
+		got = ""
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		assert.Equal(t, tc.want, got, "%s %s -> %s", tc.method, tc.src, tc.dst)
+	}
+}
+
+// Through webdav.Handler, an overwriting COPY of a file onto a collection URL
+// replaces the collection with the file; without the destination rewrite the
+// collection is already gone when OpenFile("coll/", O_CREATE) is refused.
+func TestCopyMoveGuardHandler_FileOntoCollection_EndToEnd(t *testing.T) {
+	ctx := context.Background()
+	fs := slashedCreateFS{FileSystem: webdav.NewMemFS()}
+	put := func(name, data string) {
+		w, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fs.Mkdir(ctx, "/coll", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/coll/inner.txt", "inner")
+	put("/src.txt", "data")
+
+	h := copyMoveGuardHandler{
+		fs: fs,
+		next: &webdav.Handler{
+			FileSystem: fs,
+			LockSystem: webdav.NewMemLS(),
+		},
+	}
+	copySrc := func(overwrite string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("COPY", "http://x/src.txt", nil)
+		req.Header.Set("Destination", "http://x/coll/")
+		req.Header.Set("Overwrite", overwrite)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	w := copySrc("F")
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	if fi, err := fs.Stat(ctx, "/coll"); assert.NoError(t, err) {
+		assert.True(t, fi.IsDir())
+	}
+	_, err := fs.Stat(ctx, "/coll/inner.txt")
+	assert.NoError(t, err)
+
+	w = copySrc("T")
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	if fi, err := fs.Stat(ctx, "/coll"); assert.NoError(t, err) {
+		assert.False(t, fi.IsDir())
+	}
+	r, err := fs.OpenFile(ctx, "/coll", os.O_RDONLY, 0)
+	if assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "data", string(data))
+	}
+	_, err = fs.Stat(ctx, "/coll/inner.txt")
+	assert.Error(t, err)
+}
+
+// slashedCreateFS mimics the filer-backed fs: creating a file at a name ending
+// in "/" is refused, which x/net/webdav only reaches after the overwritten
+// destination has already been removed.
+type slashedCreateFS struct {
+	webdav.FileSystem
+}
+
+func (f slashedCreateFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
+	if flag&os.O_CREATE != 0 && strings.HasSuffix(name, "/") {
+		return nil, os.ErrInvalid
+	}
+	return f.FileSystem.OpenFile(ctx, name, flag, perm)
+}
+
 type stubDavFs struct {
 	webdav.FileSystem
 	present  map[string]bool
+	dirs     map[string]bool
 	errPaths map[string]bool
 }
 
@@ -290,7 +394,11 @@ func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("filer unavailable")
 	}
 	if f.present[path.Clean(name)] {
-		return &FileInfo{name: path.Base(name)}, nil
+		fi := &FileInfo{name: path.Base(name)}
+		if f.dirs[path.Clean(name)] {
+			fi.isDirectory = true
+		}
+		return fi, nil
 	}
 	return nil, os.ErrNotExist
 }
