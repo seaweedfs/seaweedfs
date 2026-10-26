@@ -329,6 +329,9 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 		LocalMetaLogBuffer: log_buffer.NewLogBuffer("test", time.Minute,
 			func(*log_buffer.LogBuffer, time.Time, time.Time, []byte, int64, int64) {}, nil, func() {}),
 	}
+	// A live LogBuffer keeps its flush loops and their multi-buffer pool
+	// reachable; without this the package's filers pin gigabytes on 32-bit.
+	t.Cleanup(f.LocalMetaLogBuffer.ShutdownLogBuffer)
 	return f
 }
 

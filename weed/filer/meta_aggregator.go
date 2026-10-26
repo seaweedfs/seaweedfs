@@ -389,6 +389,12 @@ func (ma *MetaAggregator) Shutdown() {
 	for {
 		select {
 		case <-done:
+			// The peers have stopped writing; retire the aggregated buffer so
+			// its flush loops and sealed windows are released with the
+			// aggregator instead of outliving it.
+			if ma.MetaLogBuffer != nil {
+				ma.MetaLogBuffer.ShutdownLogBuffer()
+			}
 			return
 		case <-ticker.C:
 			glog.Warningf("meta aggregator shutdown: peer subscriptions still stopping")

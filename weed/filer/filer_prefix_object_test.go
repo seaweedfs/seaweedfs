@@ -16,7 +16,7 @@ import (
 // TestPromoteToPrefixObject covers a key written before the keys nested under it:
 // the file becomes the directory they live in, and has to stay an object of its own.
 func TestPromoteToPrefixObject(t *testing.T) {
-	f, store := newTestFilerWithStubStore()
+	f, store := newTestFilerWithStubStore(t)
 	ctx := context.Background()
 
 	object := &Entry{
@@ -49,7 +49,7 @@ func TestPromoteToPrefixObject(t *testing.T) {
 // TestExpiredDirectoryIsNotDeletedOnRead pins the other half: a TTL an older build
 // left on a promoted directory must not take the keys under it with it.
 func TestExpiredDirectoryIsNotDeletedOnRead(t *testing.T) {
-	f, store := newTestFilerWithStubStore()
+	f, store := newTestFilerWithStubStore(t)
 	ctx := context.Background()
 
 	dirPath := util.FullPath("/buckets/bkt/a/foo")
@@ -80,7 +80,7 @@ func TestExpiredDirectoryIsNotDeletedOnRead(t *testing.T) {
 // entries become invisible and their metadata row is removed without a
 // cache-specific transaction or reverse Volume index.
 func TestExpiredFileIsDeletedOnRead(t *testing.T) {
-	f, store := newTestFilerWithStubStore()
+	f, store := newTestFilerWithStubStore(t)
 	ctx := context.Background()
 
 	filePath := util.FullPath("/buckets/lmcache/expired")
@@ -106,7 +106,7 @@ func TestExpiredFileIsDeletedOnRead(t *testing.T) {
 }
 
 func TestListDirectoryEntriesContextCanceled(t *testing.T) {
-	f, store := newTestFilerWithStubStore()
+	f, store := newTestFilerWithStubStore(t)
 	ctx := context.Background()
 
 	require.NoError(t, store.InsertEntry(ctx, &Entry{

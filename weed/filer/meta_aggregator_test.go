@@ -11,6 +11,7 @@ import (
 func TestOnPeerUpdateRepeatedAdd(t *testing.T) {
 	peer := pb.ServerAddress("127.0.0.1:1")
 	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
+	defer ma.Shutdown()
 
 	add := &master_pb.ClusterNodeUpdate{Address: string(peer), IsAdd: true}
 	ma.OnPeerUpdate(add, time.Now())
