@@ -21,6 +21,10 @@ func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
+	// Without auth there is no owner to compare against.
+	if s3a.iam != nil && !s3a.iam.isEnabled() {
+		return s3err.ErrNone
+	}
 	// Admin by capability, not account id: account-less identities share the "admin" id.
 	if s3a.isUserAdmin(r) {
 		return s3err.ErrNone
