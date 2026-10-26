@@ -216,7 +216,12 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			w := httptest.NewRecorder()
 			vs.proxyReqToTargetServer(w, r)
 
-			got := <-observed
+			var got observedRequest
+			select {
+			case got = <-observed:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("peer did not receive the proxied request; proxy status %d", w.Code)
+			}
 			if got.method != method {
 				t.Errorf("peer received method %q, want %q", got.method, method)
 			}
