@@ -502,7 +502,7 @@ impl VectorService for VectorServer {
         // row order does not matter.
         let mut metas: std::collections::HashMap<String, Option<Struct>> =
             std::collections::HashMap::new();
-        let mut datas: std::collections::HashMap<String, Vec<f32>> =
+        let mut data_map: std::collections::HashMap<String, Vec<f32>> =
             std::collections::HashMap::new();
         if (req.return_metadata || req.return_data) && !hits.is_empty() {
             let row_ids: Vec<u64> = hits.iter().map(|h| h.row_id).collect();
@@ -543,7 +543,7 @@ impl VectorService for VectorServer {
                         );
                     }
                     if let Some(data_col) = data_col {
-                        datas.insert(
+                        data_map.insert(
                             key,
                             data_col
                                 .value(i)
@@ -566,7 +566,7 @@ impl VectorService for VectorServer {
                     0.0
                 },
                 metadata: metas.remove(&hit.key).flatten(),
-                data: datas.remove(&hit.key).unwrap_or_default(),
+                data: data_map.remove(&hit.key).unwrap_or_default(),
             });
         }
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
