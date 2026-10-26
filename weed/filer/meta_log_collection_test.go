@@ -105,7 +105,9 @@ func TestViperReadsMetaLogOverrides(t *testing.T) {
 	f := NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
 	defer func() {
 		close(f.deletionQuit)
+		f.flushCancel()
 		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
 	}()
 	if got := f.metaLogTargetCollection; got != "filer-meta" {
 		t.Fatalf("NewFiler did not read the collection override: %q", got)

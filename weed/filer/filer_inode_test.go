@@ -110,9 +110,13 @@ func newTestFilerWithStubStore(t *testing.T) (*Filer, *stubFilerStore) {
 	f.Store = NewFilerStoreWrapper(store)
 	// A live LogBuffer keeps its flush loops and their multi-buffer pool
 	// reachable; without this the package's filers pin gigabytes on 32-bit.
+	// There is no master to flush to, so cancel the flush context first:
+	// otherwise the queued window retries forever and the buffer never exits.
 	t.Cleanup(func() {
 		close(f.deletionQuit)
+		f.flushCancel()
 		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
 	})
 	return f, store
 }
