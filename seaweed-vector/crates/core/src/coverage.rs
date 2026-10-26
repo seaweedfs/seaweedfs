@@ -42,33 +42,35 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
         .iter()
         .map(|f| f.id as u32)
         .collect();
-    let rows: std::collections::HashMap<u32, usize> = dataset
-        .fragments()
-        .iter()
-        .map(|f| (f.id as u32, f.physical_rows.unwrap_or(0)))
-        .collect();
-    Ok(by_name
-        .into_iter()
-        .map(|(name, bitmaps)| {
-            let coverage_known = bitmaps.iter().all(|b| b.is_some());
-            let mut indexed = RoaringBitmap::new();
-            for bitmap in bitmaps.iter().flatten() {
-                indexed |= bitmap;
+    let mut out = Vec::new();
+    for (name, bitmaps) in by_name {
+        let coverage_known = bitmaps.iter().all(|b| b.is_some());
+        let mut indexed = RoaringBitmap::new();
+        for bitmap in bitmaps.iter().flatten() {
+            indexed |= bitmap;
+        }
+        // The bitmap records what the index covered when built; fragments
+        // the manifest has since dropped are not part of this version.
+        let indexed = indexed & &all;
+        let unindexed = &all - &indexed;
+        let mut unindexed_rows = 0;
+        for fragment in dataset.get_fragments() {
+            // physical_rows counts deleted rows too, and may be absent in the
+            // manifest; count live rows instead.
+            if unindexed.contains(fragment.id() as u32) {
+                unindexed_rows += fragment.count_rows(None).await?;
             }
-            // The bitmap records what the index covered when built; fragments
-            // the manifest has since dropped are not part of this version.
-            let indexed = indexed & &all;
-            let unindexed = &all - &indexed;
-            IndexCoverage {
-                index_name: name,
-                segments: bitmaps.len(),
-                coverage_known,
-                indexed_fragments: indexed.iter().map(|id| id as u64).collect(),
-                unindexed_rows: unindexed.iter().map(|id| rows[&id]).sum(),
-                unindexed_fragments: unindexed.iter().map(|id| id as u64).collect(),
-            }
-        })
-        .collect())
+        }
+        out.push(IndexCoverage {
+            index_name: name,
+            segments: bitmaps.len(),
+            coverage_known,
+            indexed_fragments: indexed.iter().map(|id| id as u64).collect(),
+            unindexed_rows,
+            unindexed_fragments: unindexed.iter().map(|id| id as u64).collect(),
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
