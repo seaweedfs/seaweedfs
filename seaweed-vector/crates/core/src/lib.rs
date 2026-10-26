@@ -5,10 +5,12 @@
 //! the whole dataset: index-accelerated where an ANN index exists, exact where
 //! it does not, always covering the fragments no index has reached yet.
 
+pub mod coverage;
 pub mod query;
 pub mod table;
 #[cfg(test)]
 mod testing;
 
+pub use coverage::IndexCoverage;
 pub use query::{Hit, Query};
 pub use table::VectorTable;
