@@ -1746,6 +1746,13 @@ impl Volume {
                 ),
             }
 
+            // The permission bits still allow writing on a read-only mount;
+            // a writable .dat beside an index directory that cannot record
+            // the index loads as no_write_or_delete, same as Go.
+            if !self.no_write_flags().0 && is_read_only_mount(&self.dir_idx.read().unwrap()) {
+                self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
+            }
+
             // A crash between the .dat append and the .idx append leaves a
             // .dat tail no index entry covers. Re-index complete needles and
             // cut an incomplete remainder before the index loads, so the
@@ -1788,12 +1795,6 @@ impl Volume {
                 }
             }
 
-            // The permission bits still allow writing on a read-only mount;
-            // a writable .dat beside an index directory that cannot record
-            // the index loads as no_write_or_delete, same as Go.
-            if !self.no_write_flags().0 && is_read_only_mount(&self.dir_idx.read().unwrap()) {
-                self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
-            }
             self.load_index(io)?;
 
             // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
