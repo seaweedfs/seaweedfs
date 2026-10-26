@@ -559,10 +559,13 @@ async fn lookup_volume(
         .json()
         .await
         .map_err(|e| format!("lookup parse failed: {}", e))?;
+    // Mirror Go: a per-volume error in the master reply (e.g. a missing
+    // volume) means "no locations" and answers 404 downstream — it does not
+    // surface as a lookup failure, which proxy mode answers 500.
     if let Some(err) = result.error
         && !err.is_empty()
     {
-        return Err(err);
+        tracing::debug!("volume {} lookup: {}", volume_id, err);
     }
     Ok(result.locations.unwrap_or_default())
 }
@@ -5360,6 +5363,44 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].url, "10.0.0.2:5301");
         assert_eq!(locations[0].grpc_port, 5311);
+
+        server.abort();
+    }
+
+    /// The master answers a missing volume with 404 and a per-volume `error`
+    /// in the lookup body. Go's LookupResult.Error never becomes the Go error
+    /// return — the volume server treats it as empty locations and replies
+    /// 404. Surfacing it as Err would make proxy-mode reads answer 500.
+    #[tokio::test]
+    async fn test_lookup_volume_missing_volume_returns_empty() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/dir/lookup",
+            get(|| async move {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    axum::Json(serde_json::json!({
+                        "volumeOrFileId": "7",
+                        "error": "volume id 7 not found"
+                    })),
+                )
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let master_url = format!("127.0.0.1:{}", addr.port());
+        let client = reqwest::Client::new();
+
+        let locations = super::lookup_volume(&client, "http", &master_url, 7)
+            .await
+            .expect("missing volume is not a lookup failure");
+        assert!(locations.is_empty());
 
         server.abort();
     }
