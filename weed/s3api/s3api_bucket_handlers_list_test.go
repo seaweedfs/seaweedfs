@@ -1,14 +1,19 @@
 package s3api
 
 import (
+	"encoding/xml"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetListBucketsArgs(t *testing.T) {
@@ -218,5 +223,38 @@ func TestContinuationTokenRoundTrip(t *testing.T) {
 	}
 	if _, err := decodeContinuationToken("!!!"); err == nil {
 		t.Error("non-base64 token should not decode")
+	}
+}
+
+// With auth off every request may use every bucket, so ListBuckets lists them
+// all instead of treating the caller as an unauthenticated user.
+func TestListBucketsWithoutAuthListsEveryBucket(t *testing.T) {
+	f := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets": {
+			{Name: ".system", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "alpha", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "beta", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+		},
+	}}
+	s3a := newBucketDeleteTestServer(t, f, false)
+
+	for _, tt := range []struct {
+		query string
+		want  []string
+	}{
+		{query: "", want: []string{"alpha", "beta"}},
+		{query: "?prefix=b", want: []string{"beta"}},
+		{query: "?max-buckets=1", want: []string{"alpha"}},
+	} {
+		rec := httptest.NewRecorder()
+		s3a.ListBucketsHandler(rec, httptest.NewRequest(http.MethodGet, "/"+tt.query, nil))
+		require.Equal(t, http.StatusOK, rec.Code, tt.query)
+		var result ListAllMyBucketsResult
+		require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &result), tt.query)
+		var names []string
+		for _, b := range result.Buckets.Bucket {
+			names = append(names, b.Name)
+		}
+		assert.Equal(t, tt.want, names, tt.query)
 	}
 }
