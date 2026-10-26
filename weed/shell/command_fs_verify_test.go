@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -50,8 +51,14 @@ func (s *fsVerifyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.D
 	s.deleted = append(s.deleted, req)
 	// mirror the real filer: an entry newer than IfNotModifiedAfter is
 	// silently skipped, no error and no Error field
-	if s.entry != nil && req.IfNotModifiedAfter > 0 && s.entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
-		return &filer_pb.DeleteEntryResponse{}, nil
+	if s.entry != nil && req.IfNotModifiedAfter > 0 {
+		entryMtime := s.entry.Attributes.GetMtime()
+		if req.IfNotModifiedAfter > 1_000_000_000_000 {
+			entryMtime = entryMtime*1e9 + int64(s.entry.Attributes.GetMtimeNs())
+		}
+		if entryMtime > req.IfNotModifiedAfter {
+			return &filer_pb.DeleteEntryResponse{}, nil
+		}
 	}
 	s.entry = nil
 	return &filer_pb.DeleteEntryResponse{}, nil
@@ -234,11 +241,13 @@ func TestFsVerifyVerifyEntryPrunability(t *testing.T) {
 // Pruning must only delete the entry when it did not change since the
 // verification pass — a re-upload fixes the file and must survive.
 func TestFsVerifyPruneEntryGuards(t *testing.T) {
+	mtimeNs := time.Now().Add(-time.Hour).UnixNano()
 	filer := &fsVerifyTestFilerServer{entry: &filer_pb.Entry{
 		Name: "file",
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime: 100,
-			Md5:   []byte("md5"),
+			Mtime:   mtimeNs / 1e9,
+			MtimeNs: int32(mtimeNs % 1e9),
+			Md5:     []byte("md5"),
 		},
 		Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}}
@@ -249,26 +258,38 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 	chunks := []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}}
 
 	// unchanged entry: deleted
-	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
 	if err != nil || !pruned {
 		t.Fatalf("expected prune of unchanged entry, got pruned=%v err=%v", pruned, err)
 	}
 
 	// re-uploaded entry (new mtime/md5): must survive
-	filer.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Mtime: 200, Md5: []byte("new")}}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	filer.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs/1e9 + 1, Md5: []byte("new")}}
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
 	if err != nil || pruned {
 		t.Fatalf("changed entry must not be pruned, got pruned=%v err=%v", pruned, err)
+	}
+
+	// same-second rewrite that only advanced the nanosecond component:
+	// must survive
+	filer.entry = &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs%1e9) + 1, Md5: []byte("md5")},
+		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
+	}
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	if err != nil || pruned {
+		t.Fatalf("sub-second rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
 
 	// same-second rewrite: timestamps identical but the chunk set differs —
 	// the new upload must survive
 	filer.entry = &filer_pb.Entry{
 		Name:       "file",
-		Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs % 1e9), Md5: []byte("md5")},
 		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 999}}},
 	}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
 	if err != nil || pruned {
 		t.Fatalf("same-second rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
@@ -276,17 +297,17 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 	// identical chunk set (order-insensitive): prunes
 	filer.entry = &filer_pb.Entry{
 		Name:       "file",
-		Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs % 1e9), Md5: []byte("md5")},
 		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
 	if err != nil || !pruned {
 		t.Fatalf("expected prune when chunk set matches, got pruned=%v err=%v", pruned, err)
 	}
 
 	// entry already gone: no error, no delete
 	filer.entry = nil
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, nil, chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, nil, chunks)
 	if err != nil || pruned {
 		t.Fatalf("missing entry must be a no-op, got pruned=%v err=%v", pruned, err)
 	}

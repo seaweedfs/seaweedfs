@@ -163,7 +163,7 @@ type ItemEntry struct {
 	chunks    []*filer_pb.FileChunk
 	rawChunks []*filer_pb.FileChunk
 	path      util.FullPath
-	mtimeSec  int64
+	mtimeNs   int64
 	md5       []byte
 }
 
@@ -220,7 +220,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 					if *c.pruneEntries && hasMissingNeedles {
 						pruned, pruneErr := c.pruneEntry(
 							util.NewFullPath(message.NewParentPath, message.NewEntry.Name),
-							message.NewEntry.Attributes.Mtime,
+							message.NewEntry.Attributes.Mtime*1e9+int64(message.NewEntry.Attributes.MtimeNs),
 							message.NewEntry.Attributes.Md5,
 							message.NewEntry.Chunks)
 						if pruneErr != nil {
@@ -377,7 +377,7 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 // (an append or rewrite in the same second as the original mtime changes the
 // chunks but not the timestamps), and IfNotModifiedAfter on the delete. The
 // entry is only counted as pruned when a follow-up lookup confirms it is gone.
-func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []byte, expectedChunks []*filer_pb.FileChunk) (pruned bool, err error) {
+func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeNs int64, md5 []byte, expectedChunks []*filer_pb.FileChunk) (pruned bool, err error) {
 	dir, name := path.DirAndName()
 	expectedIds := chunkFingerprints(expectedChunks)
 	lookupErr := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -392,7 +392,7 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			return err
 		}
 		att := lookupResp.Entry.GetAttributes()
-		if att.GetMtime() != mtimeSec {
+		if att.GetMtime()*1e9+int64(att.GetMtimeNs()) != mtimeNs {
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
@@ -407,7 +407,7 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 		deleteResp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:          dir,
 			Name:               name,
-			IfNotModifiedAfter: mtimeSec,
+			IfNotModifiedAfter: mtimeNs,
 		})
 		if err != nil {
 			return err
@@ -487,7 +487,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					chunks:    dataChunks,
 					rawChunks: entry.Entry.GetChunks(),
 					path:      util.NewFullPath(entry.Dir, entry.Entry.Name),
-					mtimeSec:  entry.Entry.GetAttributes().GetMtime(),
+					mtimeNs:   entry.Entry.GetAttributes().GetMtime()*1e9 + int64(entry.Entry.GetAttributes().GetMtimeNs()),
 					md5:       entry.Entry.GetAttributes().GetMd5(),
 				}:
 				case <-ctx.Done():
@@ -508,7 +508,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					}
 					fileCount++
 				} else if *c.pruneEntries && hasMissingNeedles {
-					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeSec, i.md5, i.rawChunks)
+					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeNs, i.md5, i.rawChunks)
 					if pruneErr != nil {
 						fmt.Fprintf(c.writer, "prune %s failed: %v\n", itemPath, pruneErr)
 					} else if pruned {
