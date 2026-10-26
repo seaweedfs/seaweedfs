@@ -29,7 +29,9 @@ func (k *LogQueue) SendMessage(key string, message proto.Message) (err error) {
 
 	// entries carry per-chunk cipher keys; log names only
 	if resp, ok := message.(*filer_pb.SubscribeMetadataResponse); ok {
-		_ = k.SendMessage(key, resp.GetEventNotification())
+		if notification := resp.GetEventNotification(); notification != nil {
+			_ = k.SendMessage(key, notification)
+		}
 		for _, event := range resp.GetEvents() {
 			_ = k.SendMessage(key, event)
 		}
