@@ -2094,8 +2094,11 @@ impl VolumeServer for VolumeGrpcService {
             // races a departing caller is the one case where the existing
             // file-only cleanup leaves the volume loaded in memory.
             let mut mounted = false;
-            if let Err(e) = job.run(&mut client, &mut mounted).await {
-                job.cleanup_failed_copy(e, mounted).await;
+            match job.run(&mut client, &mut mounted).await {
+                Ok(()) => job
+                    .dest
+                    .commit_reservation(&job.state.store.read().unwrap()),
+                Err(e) => job.cleanup_failed_copy(e, mounted).await,
             }
         });
 
@@ -5653,6 +5656,12 @@ impl CopyDestination {
 
     fn release_reservation(&self, store: &crate::storage::store::Store) {
         store.release_free_location(self.loc_idx, self.reserved_space);
+    }
+
+    /// The copied bytes are on disk now, so the pending charge ends without
+    /// refunding the cache — the charge and the landed usage cancel out.
+    fn commit_reservation(&self, store: &crate::storage::store::Store) {
+        store.commit_free_location(self.loc_idx, self.reserved_space);
     }
 }
 

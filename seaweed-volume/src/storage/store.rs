@@ -84,7 +84,8 @@ fn has_room_for_new_volume(
     if same_filesystem(&location.directory, &location.idx_directory) {
         need += VOLUME_CREATE_IDX_BYTES;
     }
-    location.min_free_space.available_space(free, all) >= need
+    location.min_free_space.available_space(free, all)
+        >= need + location.reserved_space.load(Ordering::Relaxed)
 }
 
 /// Top-level storage manager containing all disk locations and their volumes.
@@ -358,8 +359,8 @@ impl Store {
 
     /// Mirrors Go's Store.ReserveFreeLocation: a copy's pick and its .dat
     /// reservation are separate steps, so verify live space under the store
-    /// lock and charge need against the cached free space, or a second copy
-    /// can spend the same headroom before the first reservation lands.
+    /// lock and charge need against the location's pending reservations, or
+    /// a second copy can spend the same headroom before the first lands.
     pub fn reserve_free_location<F>(
         &self,
         need: u64,
@@ -376,16 +377,18 @@ impl Store {
                 }
                 let (all, free) = (self.disk_stats_of)(&loc.directory);
                 !loc.min_free_space.is_low(free, all)
-                    && loc.min_free_space.available_space(free, all) > need
+                    && loc.min_free_space.available_space(free, all)
+                        > loc.reserved_space.load(Ordering::Relaxed) + need
             },
             replace_vid,
         )?;
         let loc = &self.locations[loc_idx];
         let (all, free) = (self.disk_stats_of)(&loc.directory);
+        loc.reserved_space.fetch_add(need, Ordering::Relaxed);
         loc.available_space.store(
             loc.min_free_space
                 .available_space(free, all)
-                .saturating_sub(need),
+                .saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
             Ordering::Relaxed,
         );
         Some(loc_idx)
@@ -393,12 +396,22 @@ impl Store {
 
     /// Mirrors Go's Store.ReleaseFreeLocation: returns space
     /// reserve_free_location charged when the copy it paid for does not
-    /// land, or a failed copy keeps its headroom booked until the next
-    /// disk-space probe and blocks retries. The pick rechecks live stats,
-    /// so a refund landing after a probe only over-reports briefly.
+    /// land. Removing the pending charge first keeps a probe that already
+    /// rebased the cache from seeing the refund twice.
     pub fn release_free_location(&self, loc_idx: usize, need: u64) {
         if let Some(loc) = self.locations.get(loc_idx) {
+            loc.reserved_space.fetch_sub(need, Ordering::Relaxed);
             loc.available_space.fetch_add(need, Ordering::Relaxed);
+        }
+    }
+
+    /// Mirrors Go's Store.CommitFreeLocation: settles a reservation whose
+    /// copy landed. The bytes are real on disk, so only the pending charge
+    /// ends — the cache keeps the charge, which now matches the live usage
+    /// the next probe will read.
+    pub fn commit_free_location(&self, loc_idx: usize, need: u64) {
+        if let Some(loc) = self.locations.get(loc_idx) {
+            loc.reserved_space.fetch_sub(need, Ordering::Relaxed);
         }
     }
 
@@ -2337,6 +2350,92 @@ mod tests {
         assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
         store.release_free_location(0, need);
         assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+    }
+
+    // Mirrors Go's TestReleaseFreeLocationAfterProbeRefundsOnlyOwnCharge: a
+    // probe between reserve and release must not resurrect the charge — the
+    // live reading already forgot the failed copy's pending bytes, so
+    // refunding them would let two copies spend the same headroom.
+    #[test]
+    fn test_release_free_location_after_probe_refunds_only_own_charge() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        // Mid-copy probe stores live-above-floor minus pending (as
+        // check_disk_space does): the charge survives it.
+        let loc = &store.locations[0];
+        let live_above_floor = loc
+            .min_free_space
+            .available_space(FAKE_FREE.load(Ordering::Relaxed), FAKE_ALL.load(Ordering::Relaxed));
+        loc.available_space.store(
+            live_above_floor.saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+
+        // The failed copy removes only its own charge.
+        store.release_free_location(0, need);
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            40 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+    }
+
+    // Mirrors Go's TestCommitFreeLocationSettlesLandedReservation: a copy
+    // that lands ends its pending charge without refunding the cache — the
+    // charge and the landed bytes cancel out.
+    #[test]
+    fn test_commit_free_location_settles_landed_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        FAKE_FREE.fetch_sub(need, Ordering::Relaxed); // the copied bytes are on disk
+        store.commit_free_location(0, need);
+        let loc = &store.locations[0];
+        assert_eq!(loc.reserved_space.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+
+        // The next probe reads the landed usage and the ended charge agrees.
+        let live_above_floor = loc
+            .min_free_space
+            .available_space(FAKE_FREE.load(Ordering::Relaxed), FAKE_ALL.load(Ordering::Relaxed));
+        loc.available_space.store(
+            live_above_floor.saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
     }
 
     // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space

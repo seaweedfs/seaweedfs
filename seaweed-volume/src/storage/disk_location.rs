@@ -41,6 +41,10 @@ pub struct DiskLocation {
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
+    /// Headroom promised to in-flight copies that statfs cannot see yet.
+    /// Probes keep it out of available_space so they cannot re-spend it; a
+    /// copy that lands ends its charge, one that fails removes only its own.
+    pub reserved_space: AtomicU64,
     // Physical filesystem capacity from the latest check_disk_space probe, reported
     // to the master so balancing can see real disk fullness, not just slot counts.
     pub disk_total_bytes: AtomicU64,
@@ -81,6 +85,7 @@ impl DiskLocation {
             ec_volumes: HashMap::new(),
             is_disk_space_low: Arc::new(AtomicBool::new(false)),
             available_space: AtomicU64::new(0),
+            reserved_space: AtomicU64::new(0),
             disk_total_bytes: AtomicU64::new(0),
             disk_free_bytes: AtomicU64::new(0),
             min_free_space,
@@ -765,8 +770,12 @@ impl DiskLocation {
         self.is_disk_space_low.store(is_low, Ordering::Relaxed);
         // Go's DiskLocation.AvailableSpace counts only free space above the
         // -volume.minFreeSpace floor, so space checks stay above it too.
-        self.available_space
-            .store(self.min_free_space.available_space(free, total), Ordering::Relaxed);
+        self.available_space.store(
+            self.min_free_space
+                .available_space(free, total)
+                .saturating_sub(self.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
         self.disk_total_bytes.store(total, Ordering::Relaxed);
         self.disk_free_bytes.store(free, Ordering::Relaxed);
 
@@ -1477,6 +1486,36 @@ mod tests {
         .unwrap();
         loc.check_disk_space();
         assert_eq!(loc.available_space.load(Ordering::Relaxed), 0);
+    }
+
+    // Mirrors Go's CheckDiskSpace pending subtraction: an in-flight copy's
+    // charge stays out of the cache across a probe, so another copy cannot
+    // re-spend the headroom the live reading still shows as free.
+    #[test]
+    fn test_check_disk_space_keeps_pending_reservation_out_of_cache() {
+        const FLOOR: u64 = 1 << 20;
+        const RESERVED: u64 = 512 * 1024;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            0,
+            DiskType::HardDrive,
+            MinFreeSpace::Bytes(FLOOR),
+            Vec::new(),
+        )
+        .unwrap();
+        loc.reserved_space.store(RESERVED, Ordering::Relaxed);
+        loc.check_disk_space();
+        let expected = loc
+            .min_free_space
+            .available_space(
+                loc.disk_free_bytes.load(Ordering::Relaxed),
+                loc.disk_total_bytes.load(Ordering::Relaxed),
+            )
+            .saturating_sub(RESERVED);
+        assert_eq!(loc.available_space.load(Ordering::Relaxed), expected);
     }
 
     /// When `-dir.idx` is configured the EC `.vif` may live in the idx
