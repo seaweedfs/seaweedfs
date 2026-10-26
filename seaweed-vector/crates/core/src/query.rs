@@ -148,8 +148,8 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
         .map(|i| {
             Ok(Hit {
                 key: match keys {
-                    Some(keys) => keys.value(i).to_string(),
-                    None => row_ids.value(i).to_string(),
+                    Some(keys) if !keys.is_null(i) => keys.value(i).to_string(),
+                    _ => row_ids.value(i).to_string(),
                 },
                 distance: distances.value(i),
                 row_id: row_ids.value(i),
