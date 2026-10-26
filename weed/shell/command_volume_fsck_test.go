@@ -107,8 +107,14 @@ func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	if !found {
 		return &filer_pb.DeleteEntryResponse{Error: filer_pb.ErrNotFound.Error()}, nil
 	}
-	if req.IfNotModifiedAfter > 0 && entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
-		return &filer_pb.DeleteEntryResponse{}, nil
+	if req.IfNotModifiedAfter > 0 {
+		entryMtime := entry.Attributes.GetMtime()
+		if req.IfNotModifiedAfter > 1_000_000_000_000 {
+			entryMtime = entryMtime*1e9 + int64(entry.Attributes.GetMtimeNs())
+		}
+		if entryMtime > req.IfNotModifiedAfter {
+			return &filer_pb.DeleteEntryResponse{}, nil
+		}
 	}
 	for path := range s.entries {
 		if strings.HasPrefix(path, fullPath+"/") {
@@ -209,8 +215,8 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsFreshDirectory(t *testing.T) {
 func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
 	stub := &stubFilerServer{
 		entries: map[string]*filer_pb.Entry{
-			"/race":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 100}},
-			"/race/dir": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 100}},
+			"/race":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Add(-time.Hour).Unix()}},
+			"/race/dir": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Add(-time.Hour).Unix()}},
 		},
 		writtenAfterLookup: map[string]bool{"/race/dir": true},
 	}

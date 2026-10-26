@@ -863,7 +863,7 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 		if mtime <= 0 || mtime >= time.Now().Add(-directoryQuietPeriod).Unix() {
 			continue
 		}
-		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
+		if err := c.deleteEmptyDirectory(dir, mtime*1e9+int64(entry.Attributes.GetMtimeNs())); err != nil {
 			if !errors.Is(err, filer.ErrNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
@@ -873,16 +873,16 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 	}
 }
 
-// deleteEmptyDirectory deletes dir unless it changed since it was looked up at mtime,
-// so a directory promoted to an S3 object meanwhile survives. The delete is not
-// recursive, leaving the filer to reject a directory that is not empty.
-func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64) error {
+// deleteEmptyDirectory deletes dir unless it changed since it was looked up at
+// mtimeNs, so a directory promoted to an S3 object meanwhile survives. The delete
+// is not recursive, leaving the filer to reject a directory that is not empty.
+func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtimeNs int64) error {
 	parent, name := dir.DirAndName()
 	return c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:          parent,
 			Name:               name,
-			IfNotModifiedAfter: mtime,
+			IfNotModifiedAfter: mtimeNs,
 		})
 		if err != nil {
 			return err
