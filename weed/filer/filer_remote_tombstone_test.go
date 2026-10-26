@@ -41,34 +41,34 @@ func putRemoteSyncOffset(t *testing.T, store *stubFilerStore, dir string, offset
 func TestRemoteDeletionTombstones_BlocksAndReleases(t *testing.T) {
 	tombs := newRemoteDeletionTombstones()
 
-	tombs.addFromEvent("/m/a.txt", false, 100)
-	ts, _ := tombs.blockedSince("/m/a.txt")
+	tombs.addFromEvent("/m/a.txt", false, 100, 100)
+	_, ts, _ := tombs.blockedSince("/m/a.txt")
 	assert.Equal(t, int64(100), ts)
-	ts, _ = tombs.blockedSince("/m/b.txt")
+	_, ts, _ = tombs.blockedSince("/m/b.txt")
 	assert.Zero(t, ts)
 
 	// a delete of a directory blocks its whole subtree
-	tombs.addFromEvent("/m/dir", true, 200)
-	ts, _ = tombs.blockedSince("/m/dir")
+	tombs.addFromEvent("/m/dir", true, 200, 200)
+	_, ts, _ = tombs.blockedSince("/m/dir")
 	assert.Equal(t, int64(200), ts)
-	ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
+	_, ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
 	assert.Equal(t, int64(200), ts)
-	ts, _ = tombs.blockedSince("/m/dirx/y.txt")
+	_, ts, _ = tombs.blockedSince("/m/dirx/y.txt")
 	assert.Zero(t, ts)
 
 	// a rewrite at or after the delete lifts only that file's tombstone
 	tombs.clear("/m/a.txt", 100)
-	ts, _ = tombs.blockedSince("/m/a.txt")
+	_, ts, _ = tombs.blockedSince("/m/a.txt")
 	assert.Zero(t, ts)
-	tombs.addFromEvent("/m/a.txt", false, 300)
+	tombs.addFromEvent("/m/a.txt", false, 300, 300)
 	tombs.clear("/m/a.txt", 250)
-	ts, _ = tombs.blockedSince("/m/a.txt")
+	_, ts, _ = tombs.blockedSince("/m/a.txt")
 	assert.Equal(t, int64(300), ts, "older create must not lift newer delete")
 
 	tombs.releaseThrough("/m/dir/deep/x.txt", 200)
-	ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
+	_, ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
 	assert.Zero(t, ts)
-	ts, _ = tombs.blockedSince("/m/dir")
+	_, ts, _ = tombs.blockedSince("/m/dir")
 	assert.Zero(t, ts)
 }
 
@@ -77,22 +77,22 @@ func TestRemoteDeletionTombstones_AncestorSubsumesAndCovers(t *testing.T) {
 
 	// a child tombstone recorded before its ancestor is dropped once the
 	// ancestor's newer delete covers the whole subtree
-	tombs.addFromEvent("/m/dir/a.txt", false, 100)
-	tombs.addFromEvent("/m/dir", true, 200)
-	ts, _ := tombs.blockedSince("/m/dir")
+	tombs.addFromEvent("/m/dir/a.txt", false, 100, 100)
+	tombs.addFromEvent("/m/dir", true, 200, 200)
+	_, ts, _ := tombs.blockedSince("/m/dir")
 	assert.Equal(t, int64(200), ts)
-	ts, _ = tombs.blockedSince("/m/dir/a.txt")
+	_, ts, _ = tombs.blockedSince("/m/dir/a.txt")
 	assert.Equal(t, int64(200), ts)
 	_, exists := tombs.files["/m/dir/a.txt"]
 	assert.False(t, exists, "descendant tombstone is subsumed by the ancestor")
 
 	// adds under the covered subtree are skipped while the ancestor stands
-	tombs.addFromEvent("/m/dir/b.txt", false, 150)
+	tombs.addFromEvent("/m/dir/b.txt", false, 150, 150)
 	_, exists = tombs.files["/m/dir/b.txt"]
 	assert.False(t, exists)
 	// ...but a child deleted after the ancestor still records its own tombstone
-	tombs.addFromEvent("/m/dir/c.txt", false, 300)
-	ts, _ = tombs.blockedSince("/m/dir/c.txt")
+	tombs.addFromEvent("/m/dir/c.txt", false, 300, 300)
+	_, ts, _ = tombs.blockedSince("/m/dir/c.txt")
 	assert.Equal(t, int64(300), ts)
 }
 
@@ -119,22 +119,49 @@ func TestRemoteDeletionTombstones_PendingIgnoresOffset(t *testing.T) {
 	assert.False(t, f.isRemoteDeletionPending(context.Background(), util.FullPath(filePath), "/buckets/mybucket"))
 }
 
+// A delayed delete is recorded at its commit stamp but delivered under a
+// bumped stream position. The write-back offset moves on stream positions,
+// so the tombstone must hold until the offset passes the delivery position,
+// not the commit stamp — otherwise a lazy read resurrects the remote object.
+func TestRemoteDeletionTombstones_OffsetMustPassDeliveryPosition(t *testing.T) {
+	f, store := newMountedTestFiler(t, "stub_tomb_stream_pos", nil, 0)
+
+	base := time.Now().UnixNano()
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory:    "/buckets/mybucket/dir",
+		TsNs:         base + 2, // delivered stream position
+		MutationTsNs: base,     // commit stamp before a delayed append
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "a.txt"},
+		},
+	})
+	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
+
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", base+1)
+	assert.True(t, f.isRemoteDeletionPending(context.Background(), filePath, "/buckets/mybucket"),
+		"offset past the commit stamp must not release a delete delivered later")
+
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", base+2)
+	assert.False(t, f.isRemoteDeletionPending(context.Background(), filePath, "/buckets/mybucket"),
+		"offset at the delivery position releases the tombstone")
+}
+
 func TestRemoteDeletionTombstones_RaisedLocalTombstoneIsPendingAgain(t *testing.T) {
 	tombs := newRemoteDeletionTombstones()
 
-	tombs.addFromEvent("/m/a.txt", false, 100)
-	_, pending := tombs.blockedSince("/m/a.txt")
+	tombs.addFromEvent("/m/a.txt", false, 100, 100)
+	_, _, pending := tombs.blockedSince("/m/a.txt")
 	assert.False(t, pending)
 
 	// a newer local delete restamps the tombstone before its own event
 	// lands, so the write-back offset cannot vouch for it yet
 	tombs.add("/m/a.txt", false, 200)
-	_, pending = tombs.blockedSince("/m/a.txt")
+	_, _, pending = tombs.blockedSince("/m/a.txt")
 	assert.True(t, pending)
 
 	// once that delete's event confirms the new timestamp it releases normally
-	tombs.addFromEvent("/m/a.txt", false, 200)
-	_, pending = tombs.blockedSince("/m/a.txt")
+	tombs.addFromEvent("/m/a.txt", false, 200, 200)
+	_, _, pending = tombs.blockedSince("/m/a.txt")
 	assert.False(t, pending)
 }
 
@@ -436,7 +463,7 @@ func TestRebuildRemoteDeletionTombstones_EmptyLogReleasesGate(t *testing.T) {
 		t.Fatal("rebuild never released the gate")
 	}
 	assert.Nil(t, f.remoteTombstonesDone.Load())
-	ts, _ := f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt")
+	_, ts, _ := f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt")
 	assert.Zero(t, ts)
 }
 

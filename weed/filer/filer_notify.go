@@ -294,9 +294,14 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 		return
 	}
 
-	if err := f.LocalMetaLogBuffer.AddDataToBuffer([]byte(event.Directory), data, event.TsNs); err != nil {
+	tsNs, err := f.LocalMetaLogBuffer.AddDataToBufferAndGetTs([]byte(event.Directory), data, event.TsNs)
+	if err != nil {
 		glog.Errorf("failed to add data to log buffer for %s: %v", event.Directory, err)
+		return
 	}
+	// The in-memory copy now carries the position the stream assigns it, the
+	// same value subscribers will see delivered.
+	event.TsNs = tsNs
 
 }
 
