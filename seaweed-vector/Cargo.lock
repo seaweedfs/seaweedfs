@@ -6476,6 +6476,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "weed-vector-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-cast",
+ "arrow-schema",
+ "clap",
+ "futures",
+ "lance",
+ "lance-linalg",
+ "prost",
+ "prost-types",
+ "protoc-bin-vendored",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tracing",
+ "tracing-subscriber",
+ "weed-lance-worker",
+ "weed-vector-core",
+]
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

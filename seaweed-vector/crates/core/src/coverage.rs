@@ -37,11 +37,7 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
             .or_default()
             .push(index.fragment_bitmap.clone());
     }
-    let all: RoaringBitmap = dataset
-        .fragments()
-        .iter()
-        .map(|f| f.id as u32)
-        .collect();
+    let all: RoaringBitmap = dataset.fragments().iter().map(|f| f.id as u32).collect();
     let mut out = Vec::new();
     for (name, bitmaps) in by_name {
         let coverage_known = bitmaps.iter().all(|b| b.is_some());

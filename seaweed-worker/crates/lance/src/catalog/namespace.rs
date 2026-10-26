@@ -127,6 +127,30 @@ impl NamespaceClient {
         Ok(response.namespaces)
     }
 
+    /// Declare a table that does not exist yet; the catalog allocates the
+    /// location when none is given and returns the table description.
+    pub async fn declare_table(
+        &self,
+        id: &[String],
+        location: Option<&str>,
+    ) -> Result<TableDescription> {
+        let url = format!("{}/v1/table/{}/declare", self.base_url, encode_id(id));
+        let mut body = serde_json::json!({ "id": id, "vend_credentials": true });
+        if let Some(location) = location {
+            body["location"] = location.into();
+        }
+        let description: TableDescription = self
+            .authed(self.http.post(&url))
+            .json(&body)
+            .send()
+            .await
+            .context("declare table")?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(description)
+    }
+
     /// Resolve a table to a location and the credentials to reach it. The
     /// credentials expire, so a long compaction re-describes rather than
     /// carrying one set for the whole job.
