@@ -20,6 +20,9 @@ pub struct Query {
     pub k: usize,
     /// A Lance SQL filter over the metadata columns.
     pub filter: Option<String>,
+    /// Evaluate the filter before the ANN search. `false` filters the top-K
+    /// rows after ranking and can return fewer than k results.
+    pub prefilter: bool,
     pub distance: DistanceType,
     pub nprobes: Option<usize>,
 }
@@ -97,6 +100,7 @@ fn scanner(
         .with_row_id();
     if let Some(filter) = &query.filter {
         scanner.filter(filter)?;
+        scanner.prefilter(query.prefilter);
     }
     if let Some(nprobes) = query.nprobes {
         scanner.nprobes(nprobes);
@@ -176,6 +180,7 @@ mod tests {
             vector: vec![1.0, 0.0, 0.0, 0.0],
             k: 2,
             filter: None,
+            prefilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
@@ -214,6 +219,7 @@ mod tests {
                 vector: vec![1.0, 0.0, 0.0, 0.0],
                 k: 3,
                 filter: Some("tag = 'a'".to_string()),
+                prefilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
             },
@@ -249,6 +255,7 @@ mod tests {
             vector: vec![1.0; DIM + 1],
             k: 1,
             filter: None,
+            prefilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
@@ -269,6 +276,7 @@ mod tests {
             vector: vec![1.0, 0.0, 0.0, 0.0],
             k: 2,
             filter: None,
+            prefilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
