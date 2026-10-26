@@ -148,7 +148,10 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 					os.Remove(dataBaseFileName + ".vif")
 					os.Remove(dataBaseFileName + ".note")
 				}
+				// Zero before the outer defer sees the same error, or the
+				// charge would be released twice.
 				vs.store.ReleaseFreeLocation(location, copyReservedSpace)
+				copyReservedSpace = 0
 			}
 		}()
 
