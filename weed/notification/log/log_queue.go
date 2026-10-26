@@ -1,6 +1,8 @@
 package kafka
 
 import (
+	"path"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -36,7 +38,7 @@ func (k *LogQueue) SendMessage(key string, message proto.Message) (err error) {
 	if event, ok := message.(*filer_pb.EventNotification); ok {
 		name := event.GetNewEntry().GetName()
 		if parent := event.GetNewParentPath(); parent != "" {
-			name = parent + "/" + name
+			name = path.Join(parent, name)
 		}
 		glog.V(0).Infof("%v: %q -> %q", key, event.GetOldEntry().GetName(), name)
 		return nil
