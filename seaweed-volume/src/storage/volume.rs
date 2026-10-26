@@ -6086,7 +6086,7 @@ pub(crate) const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
 /// Reserve disk blocks for a file without changing its visible size.
 /// On Linux, uses `fallocate(FALLOC_FL_KEEP_SIZE)` to actually reserve blocks.
 /// On other platforms, this is a no-op.
-fn preallocate_file(file: &File, size: u64) {
+pub(crate) fn preallocate_file(file: &File, size: u64) {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;

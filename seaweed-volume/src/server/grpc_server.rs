@@ -20,7 +20,7 @@ use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
-use crate::storage::volume::VolumeSpec;
+use crate::storage::volume::{VolumeSpec, preallocate_file};
 
 use super::grpc_client::{
     GrpcDialOptions, VolumeServerGrpcClient, connect_channel, connect_channel_guarded,
@@ -5844,9 +5844,10 @@ impl VolumeCopyJob {
                         dat_path, e
                     ))
                 })?;
-                file.set_len(preallocate_size as u64).map_err(|e| {
-                    Status::internal(format!("preallocate volume file {}: {}", dat_path, e))
-                })?;
+                // Go's CreateVolumeFile fallocates KEEP_SIZE — a sparse
+                // set_len reserves nothing, so a nearly-full disk only
+                // finds out mid-copy. Reserve the blocks up front.
+                preallocate_file(&file, preallocate_size as u64);
             }
         }
         Ok(())
