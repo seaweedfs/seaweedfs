@@ -115,7 +115,23 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 			InternalError(w, r, nil)
 			return
 		}
+		// hop-by-hop headers describe this hop, not the replica's; Connection
+		// also nominates per-request fields to drop (RFC 9110 7.6.1)
+		hopByHop := map[string]bool{
+			"Connection": true, "Keep-Alive": true, "Te": true, "Trailer": true,
+			"Upgrade": true, "Host": true, "Content-Length": true, "Transfer-Encoding": true,
+		}
+		for _, v := range r.Header.Values("Connection") {
+			for _, token := range strings.Split(v, ",") {
+				if name := http.CanonicalHeaderKey(strings.TrimSpace(token)); name != "" {
+					hopByHop[name] = true
+				}
+			}
+		}
 		for k, vv := range r.Header {
+			if hopByHop[http.CanonicalHeaderKey(k)] {
+				continue
+			}
 			for _, v := range vv {
 				request.Header.Add(k, v)
 			}

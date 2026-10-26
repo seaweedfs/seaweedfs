@@ -188,6 +188,7 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 		rangeHeader  string
 		ifNoneMatch  string
 		ifModifiedAt string
+		header       http.Header
 	}
 	observed := make(chan observedRequest, 2)
 	peer := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +197,7 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			rangeHeader:  r.Header.Get("Range"),
 			ifNoneMatch:  r.Header.Get("If-None-Match"),
 			ifModifiedAt: r.Header.Get("If-Modified-Since"),
+			header:       r.Header.Clone(),
 		}
 		w.Header().Set("ETag", `"peer-etag"`)
 		w.Header().Set("Content-Range", "bytes 0-3/10")
@@ -213,6 +215,11 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			r.Header.Set("Range", "bytes=0-3")
 			r.Header.Set("If-None-Match", `"client-etag"`)
 			r.Header.Set("If-Modified-Since", "Wed, 21 Oct 2015 07:28:00 GMT")
+			r.Header.Set("Connection", "keep-alive, X-Hop-Marker")
+			r.Header.Set("Keep-Alive", "timeout=5")
+			r.Header.Set("Upgrade", "h2c")
+			r.Header.Set("Te", "trailers")
+			r.Header.Set("X-Hop-Marker", "private")
 			w := httptest.NewRecorder()
 			vs.proxyReqToTargetServer(w, r)
 
@@ -227,6 +234,11 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			}
 			if got.rangeHeader != "bytes=0-3" || got.ifNoneMatch != `"client-etag"` || got.ifModifiedAt != "Wed, 21 Oct 2015 07:28:00 GMT" {
 				t.Errorf("peer received conditional/range headers %+v", got)
+			}
+			for _, dropped := range []string{"Connection", "Keep-Alive", "Upgrade", "Te", "X-Hop-Marker"} {
+				if got.header.Get(dropped) != "" {
+					t.Errorf("hop-by-hop header %s reached the replica: %v", dropped, got.header)
+				}
 			}
 			if w.Code != http.StatusPartialContent {
 				t.Errorf("status %d, want %d", w.Code, http.StatusPartialContent)
