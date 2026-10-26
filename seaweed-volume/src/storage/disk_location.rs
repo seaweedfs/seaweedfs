@@ -109,8 +109,19 @@ impl DiskLocation {
         }
 
         let dir_uuid = uuid::Uuid::new_v4().to_string();
-        fs::write(path, &dir_uuid)?;
-        Ok(dir_uuid)
+        match fs::write(&path, &dir_uuid) {
+            Ok(()) => Ok(dir_uuid),
+            // The uuid file cannot be written on a read-only mount; derive a
+            // stable one from the directory so restarts report the same id.
+            Err(_) if is_read_only_mount(directory) => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                directory.hash(&mut h);
+                let derived = (h.finish() as u128) << 64 | h.finish() as u128;
+                Ok(uuid::Uuid::from_u128(derived).to_string())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     // ---- Volume management ----
@@ -727,6 +738,9 @@ impl DiskLocation {
     /// Matches Go's FindFreeLocation formula:
     ///   free = ((MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()) / DataShardsCount
     pub fn free_volume_count(&self) -> i32 {
+        if self.read_only_mount {
+            return 0;
+        }
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let max = self.max_volume_count.load(Ordering::Relaxed);
         let free_count = (max as i64 - self.volumes.len() as i64) * DATA_SHARDS_COUNT as i64
