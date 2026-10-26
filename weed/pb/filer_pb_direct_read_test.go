@@ -474,12 +474,71 @@ func TestReadLogFileRefsProgressCheckpoints(t *testing.T) {
 	}
 }
 
-// A failed event must not be checkpointed: the callback fires for settled
-// entries only, so the failed event is replayed on resubscribe.
+// A timestamp shared by entries from different filers must not be
+// checkpointed until the merge has passed it: resuming is exclusive (<=
+// startTsNs skipped), so checkpointing a tie mid-settle would lose the other
+// half on reconnect.
+func TestReadLogFileRefsProgressWaitsOutTimestampTies(t *testing.T) {
+	tieTs := time.Now().Add(-time.Hour).UnixNano()
+	fileData := map[string][]byte{
+		"fa:1": buildLogFileData([]*filer_pb.SubscribeMetadataResponse{
+			makeSubEvent("/data/fa", "a1", tieTs),
+			makeSubEvent("/data/fa", "a2", tieTs+10),
+		}),
+		"fb:1": buildLogFileData([]*filer_pb.SubscribeMetadataResponse{
+			makeSubEvent("/data/fb", "b1", tieTs),
+			makeSubEvent("/data/fb", "b2", tieTs+20),
+		}),
+	}
+	refs := []*filer_pb.LogFileChunkRef{
+		{Chunks: []*filer_pb.FileChunk{{FileId: "fa:1"}}, FileTsNs: 1, FilerId: "fa"},
+		{Chunks: []*filer_pb.FileChunk{{FileId: "fb:1"}}, FileTsNs: 1, FilerId: "fb"},
+	}
+	readerFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(fileData[chunks[0].FileId])), nil
+	}
+
+	var checkpoints []int64
+	count := 0
+	wantErr := fmt.Errorf("boom")
+	_, err := ReadLogFileRefs(refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			count++
+			if count == 2 {
+				return wantErr
+			}
+			return nil
+		},
+		func(tsNs int64) { checkpoints = append(checkpoints, tsNs) })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected processing error, got: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("tie was checkpointed before both entries settled: %v", checkpoints)
+	}
+
+	checkpoints = nil
+	_, err = ReadLogFileRefs(refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error { return nil },
+		func(tsNs int64) { checkpoints = append(checkpoints, tsNs) })
+	if err != nil {
+		t.Fatalf("ReadLogFileRefs: %v", err)
+	}
+	if want := []int64{tieTs, tieTs + 10, tieTs + 20}; fmt.Sprint(checkpoints) != fmt.Sprint(want) {
+		t.Fatalf("checkpoints = %v, want %v", checkpoints, want)
+	}
+}
+
+// A failed event must not be checkpointed: the callback fires only once the
+// merge has moved past a timestamp, so an abort replays at most the last
+// timestamp's worth of settled entries.
 func TestReadLogFileRefsProgressStopsAtFailedEvent(t *testing.T) {
 	files := newTestLogFiles(1, 2, 10, 0)
 
-	var lastDelivered, lastCheckpoint int64
+	var delivered []int64
+	var lastCheckpoint int64
 	count := 0
 	wantErr := fmt.Errorf("boom")
 	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
@@ -489,7 +548,7 @@ func TestReadLogFileRefsProgressStopsAtFailedEvent(t *testing.T) {
 			if count == 5 {
 				return wantErr
 			}
-			lastDelivered = resp.TsNs
+			delivered = append(delivered, resp.TsNs)
 			return nil
 		},
 		func(tsNs int64) { lastCheckpoint = tsNs })
@@ -499,8 +558,9 @@ func TestReadLogFileRefsProgressStopsAtFailedEvent(t *testing.T) {
 	if lastCheckpoint == 0 {
 		t.Fatal("expected checkpoints for the settled prefix")
 	}
-	if lastCheckpoint != lastDelivered {
-		t.Fatalf("last checkpoint %d, want the last settled event %d", lastCheckpoint, lastDelivered)
+	if lastCheckpoint != delivered[len(delivered)-2] {
+		t.Fatalf("last checkpoint %d, want the next-to-last settled event %d",
+			lastCheckpoint, delivered[len(delivered)-2])
 	}
 }
 
