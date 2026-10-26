@@ -110,7 +110,13 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	}
 	dirUuid, err := GenerateDirUuid(dir)
 	if err != nil {
-		glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
+		if !readOnlyMount {
+			glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
+		}
+		// The uuid file cannot be written on a read-only mount; derive a
+		// stable one from the directory so restarts report the same id.
+		dirUuid = uuid.NewSHA1(uuid.NameSpaceOID, []byte(dir)).String()
+		glog.V(0).Infof("%s has no stored uuid and is read-only; using derived uuid %s", dir, dirUuid)
 	}
 	// Defensive copy of tags to prevent external mutation
 	var copiedTags []string
