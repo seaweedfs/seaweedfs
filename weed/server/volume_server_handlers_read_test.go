@@ -202,6 +202,9 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 		w.Header().Set("ETag", `"peer-etag"`)
 		w.Header().Set("Content-Range", "bytes 0-3/10")
 		w.Header().Set("X-Peer-Header", "preserved")
+		w.Header().Set("Keep-Alive", "timeout=5")
+		w.Header().Set("X-Resp-Marker", "private")
+		w.Header()["Connection"] = []string{"keep-alive, X-Resp-Marker"}
 		w.WriteHeader(http.StatusPartialContent)
 		_, _ = io.WriteString(w, "data")
 	}))
@@ -247,6 +250,11 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			}
 			if w.Header().Get("ETag") != `"peer-etag"` || w.Header().Get("Content-Range") != "bytes 0-3/10" || w.Header().Get("X-Peer-Header") != "preserved" {
 				t.Errorf("peer response headers were not preserved: %v", w.Header())
+			}
+			for _, dropped := range []string{"Connection", "Keep-Alive", "X-Resp-Marker"} {
+				if w.Header().Get(dropped) != "" {
+					t.Errorf("hop-by-hop response header %s reached the client: %v", dropped, w.Header())
+				}
 			}
 			wantBody := "data"
 			if method == http.MethodHead {

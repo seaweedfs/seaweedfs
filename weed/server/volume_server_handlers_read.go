@@ -57,6 +57,27 @@ func InternalError(w http.ResponseWriter, r *http.Request, err error) {
 	writeJsonError(w, r, http.StatusInternalServerError, err)
 }
 
+// hopByHopHeaders names the fields that describe a single hop and must not
+// be relayed: the fixed hop-by-hop set plus every field the header's own
+// Connection values nominate (RFC 9110 7.6.1).
+func hopByHopHeaders(h http.Header, extra ...string) map[string]bool {
+	drop := map[string]bool{
+		"Connection": true, "Keep-Alive": true, "Te": true, "Trailer": true,
+		"Upgrade": true, "Proxy-Connection": true, "Proxy-Authenticate": true, "Proxy-Authorization": true,
+	}
+	for _, v := range h.Values("Connection") {
+		for _, token := range strings.Split(v, ",") {
+			if name := http.CanonicalHeaderKey(strings.TrimSpace(token)); name != "" {
+				drop[name] = true
+			}
+		}
+	}
+	for _, name := range extra {
+		drop[http.CanonicalHeaderKey(name)] = true
+	}
+	return drop
+}
+
 func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Request) {
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, err := needle.NewVolumeId(vid)
@@ -118,20 +139,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 			InternalError(w, r, nil)
 			return
 		}
-		// hop-by-hop headers describe this hop, not the replica's; Connection
-		// also nominates per-request fields to drop (RFC 9110 7.6.1)
-		hopByHop := map[string]bool{
-			"Connection": true, "Keep-Alive": true, "Te": true, "Trailer": true,
-			"Upgrade": true, "Host": true, "Content-Length": true, "Transfer-Encoding": true,
-			"Proxy-Connection": true, "Proxy-Authenticate": true, "Proxy-Authorization": true,
-		}
-		for _, v := range r.Header.Values("Connection") {
-			for _, token := range strings.Split(v, ",") {
-				if name := http.CanonicalHeaderKey(strings.TrimSpace(token)); name != "" {
-					hopByHop[name] = true
-				}
-			}
-		}
+		// the proxied request carries no body, so it must not forward this
+		// hop's framing either
+		hopByHop := hopByHopHeaders(r.Header, "Host", "Content-Length", "Transfer-Encoding")
 		for k, vv := range r.Header {
 			if hopByHop[http.CanonicalHeaderKey(k)] {
 				continue
@@ -153,8 +163,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		}
 		defer util_http.CloseResponse(response)
 		// proxy target response to client
+		respHopByHop := hopByHopHeaders(response.Header)
 		for k, vv := range response.Header {
-			if k == "Server" {
+			if k == "Server" || respHopByHop[http.CanonicalHeaderKey(k)] {
 				continue
 			}
 			for _, v := range vv {
