@@ -5929,7 +5929,9 @@ impl VolumeCopyJob {
             &self.dest.idx_base_name,
             self.dest.has_remote_dat,
         );
-        // Copy .dat file
+        // Copy .dat file. Writing in place into the just-preallocated file
+        // keeps its fallocated blocks — truncating would free them at open
+        // and re-spend the headroom as the bytes stream back in.
         if !has_remote_dat {
             let dat_path = format!("{}.dat", data_base_name);
             let dat_modified_ts_ns = copy_file_from_source(
@@ -5942,7 +5944,7 @@ impl VolumeCopyJob {
                     stop_offset: vol_info.dat_file_size,
                     dest_path: &dat_path,
                     ext: ".dat",
-                    is_append: false,
+                    is_append: self.preallocate_size > 0,
                     ignore_source_not_found: true,
                     report_progress: true,
                     settle_skip: dat_on_disk as i64,
