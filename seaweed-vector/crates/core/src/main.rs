@@ -245,3 +245,61 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_flag_takes_hyphenated_floats() {
+        let args = Args::try_parse_from([
+            "weed-vector",
+            "query",
+            "t",
+            "--vector",
+            "-1,-1,-1,-1",
+            "--k",
+            "3",
+        ])
+        .unwrap();
+        match args.command {
+            Command::Query { vector, k, .. } => {
+                assert_eq!(vector, "-1,-1,-1,-1");
+                assert_eq!(k, 3);
+            }
+            _ => panic!("expected query"),
+        }
+    }
+
+    #[test]
+    fn column_flags_on_get_describe_coverage() {
+        for argv in [
+            vec!["weed-vector", "get", "t", "k1"],
+            vec!["weed-vector", "describe", "t"],
+            vec!["weed-vector", "coverage", "t"],
+        ] {
+            let mut argv = argv;
+            argv.extend(["--vector-column", "v", "--key-column", "kk"]);
+            let args = Args::try_parse_from(argv).unwrap();
+            let (v, k) = match args.command {
+                Command::Get {
+                    vector_column,
+                    key_column,
+                    ..
+                }
+                | Command::Describe {
+                    vector_column,
+                    key_column,
+                    ..
+                }
+                | Command::Coverage {
+                    vector_column,
+                    key_column,
+                    ..
+                } => (vector_column, key_column),
+                _ => panic!("unexpected subcommand"),
+            };
+            assert_eq!(v.as_deref(), Some("v"));
+            assert_eq!(k.as_deref(), Some("kk"));
+        }
+    }
+}
