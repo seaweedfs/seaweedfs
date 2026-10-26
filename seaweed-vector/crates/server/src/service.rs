@@ -428,19 +428,25 @@ impl VectorService for VectorServer {
         let hits = query::ann(&dataset, &resolved, &query)
             .await
             .map_err(internal)?;
-        // One batched read for every hit's metadata; keyed by the hit key so
+        // One batched read for every hit's columns; keyed by the hit key so
         // row order does not matter.
         let mut metas: std::collections::HashMap<String, Option<Struct>> =
             std::collections::HashMap::new();
-        if req.return_metadata && !hits.is_empty() {
+        let mut datas: std::collections::HashMap<String, Vec<f32>> =
+            std::collections::HashMap::new();
+        if (req.return_metadata || req.return_data) && !hits.is_empty() {
             let row_ids: Vec<u64> = hits.iter().map(|h| h.row_id).collect();
+            let mut columns = vec![KEY_COLUMN];
+            if req.return_metadata {
+                columns.push(METADATA_COLUMN);
+            }
+            if req.return_data {
+                columns.push(VECTOR_COLUMN);
+            }
             let batch = dataset
                 .take_rows(
                     &row_ids,
-                    ProjectionRequest::from_columns(
-                        [KEY_COLUMN, METADATA_COLUMN],
-                        dataset.schema(),
-                    ),
+                    ProjectionRequest::from_columns(columns, dataset.schema()),
                 )
                 .await
                 .map_err(internal)?;
@@ -450,16 +456,33 @@ impl VectorService for VectorServer {
             let meta_col = batch
                 .column_by_name(METADATA_COLUMN)
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            if let (Some(keys), Some(meta_col)) = (keys, meta_col) {
+            let data_col = batch
+                .column_by_name(VECTOR_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
+            if let Some(keys) = keys {
                 for i in 0..batch.num_rows() {
-                    metas.insert(
-                        keys.value(i).to_string(),
-                        if meta_col.is_null(i) {
-                            None
-                        } else {
-                            parse_struct(meta_col.value(i)).ok()
-                        },
-                    );
+                    let key = keys.value(i).to_string();
+                    if let Some(meta_col) = meta_col {
+                        metas.insert(
+                            key.clone(),
+                            if meta_col.is_null(i) {
+                                None
+                            } else {
+                                parse_struct(meta_col.value(i)).ok()
+                            },
+                        );
+                    }
+                    if let Some(data_col) = data_col {
+                        datas.insert(
+                            key,
+                            data_col
+                                .value(i)
+                                .as_any()
+                                .downcast_ref::<Float32Array>()
+                                .map(|a| a.values().to_vec())
+                                .unwrap_or_default(),
+                        );
+                    }
                 }
             }
         }
@@ -473,6 +496,7 @@ impl VectorService for VectorServer {
                     0.0
                 },
                 metadata: metas.remove(&hit.key).flatten(),
+                data: datas.remove(&hit.key).unwrap_or_default(),
             });
         }
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
