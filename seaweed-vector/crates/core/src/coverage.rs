@@ -123,7 +123,7 @@ mod tests {
                 vector: vec![9.0; DIM],
                 k: 1,
                 filter: None,
-                prefilter: false,
+                postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: Some(4),
             },
@@ -145,16 +145,16 @@ mod tests {
         append_dataset(&mut dataset, &vectors(4, DIM), &["a"; 4]).await;
         let table = VectorTable::resolve(&dataset, None, None).unwrap();
 
-        let query = |prefilter| Query {
+        let query = Query {
             vector: vectors(1, DIM).remove(0),
             k: 10,
             filter: Some("tag = 'a'".to_string()),
-            prefilter,
+            postfilter: false,
             distance: DistanceType::L2,
             nprobes: Some(4),
         };
-        let filtered = ann(&dataset, &table, &query(true)).await.unwrap();
-        let exact = flat(&dataset, &table, &query(true)).await.unwrap();
+        let filtered = ann(&dataset, &table, &query).await.unwrap();
+        let exact = flat(&dataset, &table, &query).await.unwrap();
         assert_eq!(
             filtered.iter().map(|h| &h.key).collect::<Vec<_>>(),
             exact.iter().map(|h| &h.key).collect::<Vec<_>>()
@@ -182,7 +182,7 @@ mod tests {
                 vector: vectors(1, DIM).remove(0),
                 k: 10,
                 filter: None,
-                prefilter: false,
+                postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
             },
