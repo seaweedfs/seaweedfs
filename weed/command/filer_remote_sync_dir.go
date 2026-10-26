@@ -260,9 +260,9 @@ func processCreateEvent(
 	if !filer.HasData(message.NewEntry) && !(mustSend && !isDroppedLocalCopy(message.NewEntry)) {
 		return nil
 	}
-	glog.V(2).Infof("create: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+	glog.V(2).Infof("create: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 	if !mustSend && !shouldSendToRemote(message.NewEntry) {
-		glog.V(2).Infof("skipping creating: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+		glog.V(2).Infof("skipping creating: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 		return nil
 	}
 	// Rewrite internal versioning paths to the original S3 key
@@ -456,7 +456,7 @@ func processUpdateEvent(
 		return fallback
 	}
 	if proto.Equal(oldDest, dest) && !shouldSendToRemote(message.NewEntry) {
-		glog.V(2).Infof("skipping updating: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+		glog.V(2).Infof("skipping updating: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 		return nil
 	}
 	if message.NewEntry.IsDirectory {
@@ -465,14 +465,14 @@ func processUpdateEvent(
 	if isMetadataOnlyUpdate(resp.Directory, message) {
 		remoteEntry, err := liveRemoteEntry(filerClient, message.NewParentPath, message.NewEntry)
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			glog.V(2).Infof("skipping updating deleted entry: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+			glog.V(2).Infof("skipping updating deleted entry: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		if remoteEntry != nil {
-			glog.V(2).Infof("update meta: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+			glog.V(2).Infof("update meta: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 			updated, err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
 			if err != nil {
 				return err
@@ -494,10 +494,10 @@ func processUpdateEvent(
 		// the entry as dirty when the remote mtime shares its second. The
 		// content is the object at this very key, and uploading the chunkless
 		// entry would replace it with zero bytes.
-		glog.V(2).Infof("skipping update of remote-only entry: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+		glog.V(2).Infof("skipping update of remote-only entry: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 		return nil
 	}
-	glog.V(2).Infof("update: %s/%s ts_ns=%d", resp.Directory, message.GetNewEntry().GetName(), resp.TsNs)
+	glog.V(2).Infof("update: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 	if !proto.Equal(oldDest, dest) {
 		// A renamed entry that holds no local data now (the snapshot was
 		// remote-only, or remote.uncache ran since) has its content only as a
