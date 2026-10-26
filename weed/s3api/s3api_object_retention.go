@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
 )
 
 // ====================================================================
@@ -225,6 +226,11 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 // miss (no object, version, or latest version) rather than a transient or
 // internal failure the caller may want to retry.
 func isObjectEntryMiss(err error) bool {
+	// Unavailable is a failed read, not a miss - a wrapped not-found
+	// message in its status text must not classify it as one.
+	if st, ok := util.ServerStatus(err); ok && st.Code() == codes.Unavailable {
+		return false
+	}
 	return isFilerNotFound(err) ||
 		errors.Is(err, ErrObjectNotFound) ||
 		errors.Is(err, ErrVersionNotFound) ||
