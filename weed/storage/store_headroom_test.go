@@ -39,6 +39,11 @@ func newHeadroomStore(t *testing.T, free, floor uint64) (*Store, *DiskLocation, 
 	}
 	t.Cleanup(func() { diskStatusOf = orig })
 
+	// The fake disk behaves like fallocate on Linux: pretend creates reserve.
+	origPreallocates := createVolumeFilePreallocates
+	createVolumeFilePreallocates = true
+	t.Cleanup(func() { createVolumeFilePreallocates = origPreallocates })
+
 	loc := &DiskLocation{
 		Directory:    dir,
 		IdxDirectory: dir,
@@ -119,6 +124,19 @@ func TestAddVolumeAllowsMergeVolumeBelowFloor(t *testing.T) {
 
 	if err := s.addVolume(1, "", NeedleMapInMemory, rp, needle.EMPTY_TTL, 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0); err != nil {
 		t.Errorf("merge volume refused below the floor: %v", err)
+	}
+}
+
+// Where CreateVolumeFile cannot preallocate, a create reserves nothing and
+// must not be held back by a reservation that will never exist.
+func TestAddVolumeAllowsPreallocationWhereUnsupported(t *testing.T) {
+	const floor = 1000 * testMiB
+	s, _, _ := newHeadroomStore(t, floor+1*testMiB, floor)
+	createVolumeFilePreallocates = false
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	if err := s.addVolume(1, "", NeedleMapInMemory, rp, needle.EMPTY_TTL, 8*int64(testMiB), needle.GetCurrentVersion(), 0, types.HardDriveType, 0); err != nil {
+		t.Errorf("addVolume refused where preallocation is unsupported: %v", err)
 	}
 }
 

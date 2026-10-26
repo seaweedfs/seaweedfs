@@ -407,10 +407,10 @@ const (
 // fit in the free space above -volume.minFreeSpace; this reads the disk now
 // rather than the once-a-minute low-disk flag, so a burst of creates cannot run
 // the disk through the floor between two probes. A volume without preallocation
-// reserves nothing, and copying existing data into one (a merge) is always
-// allowed.
+// reserves nothing — nor does one on a platform where CreateVolumeFile cannot
+// preallocate — and copying existing data into one (a merge) is always allowed.
 func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
-	if preallocate <= 0 {
+	if preallocate <= 0 || !createVolumeFilePreallocates {
 		return true
 	}
 	status := diskStatusOf(location.Directory)
@@ -1415,6 +1415,11 @@ func (s *Store) GetPreallocate() bool {
 // diskStatusOf reads the usage of the disk holding a directory. It is a
 // variable so a test can stand in for a disk that is full or near its floor.
 var diskStatusOf = stats.NewDiskStatus
+
+// createVolumeFilePreallocates reports whether CreateVolumeFile reserves the
+// requested size on this platform. It is a variable so a test can exercise
+// the guard off Linux.
+var createVolumeFilePreallocates = backend.PreallocateSupported
 
 func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	volumeSizeLimit := s.GetVolumeSizeLimit()

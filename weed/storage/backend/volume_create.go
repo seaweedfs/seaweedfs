@@ -8,6 +8,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+// PreallocateSupported reports whether CreateVolumeFile reserves the
+// requested size on this platform.
+const PreallocateSupported = false
+
 func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
 	file, e := OpenVolumeFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC)
 	if e != nil {
