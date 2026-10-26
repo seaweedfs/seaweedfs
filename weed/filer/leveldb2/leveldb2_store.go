@@ -97,8 +97,10 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		glog.V(0).Infof("filer store %s is on a read-only filesystem, opening it read-only", dir)
 		store.ReadOnly = true
 	}
-	if err := weed_util.TestFolderWritable(dir); err != nil {
-		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+	if !store.ReadOnly {
+		if err := weed_util.TestFolderWritable(dir); err != nil {
+			return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
+		}
 	}
 
 	opts := store.buildOptions()
