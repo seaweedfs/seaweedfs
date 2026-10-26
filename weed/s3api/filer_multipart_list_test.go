@@ -306,3 +306,23 @@ func TestSelectMultipartUploadsDelimiter(t *testing.T) {
 		t.Errorf("page 2: uploads %v prefixes %v truncated %v", uploads, prefixes, truncated)
 	}
 }
+
+// A common prefix that does not fit the page is not retained: prefixes tracks
+// only groups still in the page, so a small page stays bounded by max-uploads
+// rather than by every prefix in the bucket.
+func TestSelectMultipartUploadsDelimiterDropsLosingPrefixes(t *testing.T) {
+	input := listUploadsInput("", "", "", 1)
+	input.Delimiter = aws.String("/")
+	page := newMultipartUploadPage(input)
+	page.add(uploadEntry("1", "z/1", 10)) // holds the single slot, then evicted
+	page.add(uploadEntry("2", "a/1", 10))
+	page.add(uploadEntry("3", "z/2", 10)) // "z/" was evicted: loses again
+	page.add(uploadEntry("4", "z/3", 10))
+	if len(page.prefixes) > page.limit {
+		t.Fatalf("retained %d prefixes with limit %d", len(page.prefixes), page.limit)
+	}
+	out := page.result()
+	if len(out.CommonPrefixes) != 1 || out.CommonPrefixes[0].Prefix != "a/" || !*out.IsTruncated {
+		t.Fatalf("prefixes %v truncated %v", out.CommonPrefixes, *out.IsTruncated)
+	}
+}

@@ -1332,12 +1332,14 @@ func selectMultipartUploads(input *s3.ListMultipartUploadsInput, entries []*file
 // Upload order is the object key kept in extended attributes, not the upload
 // id the filer sorts by, so every entry has to be seen; keeping only the
 // maxUploads smallest candidates bounds the heap by the page, not the folder.
+// prefixes dedups common prefixes still in the page — an evicted one is
+// unmarked; it could only lose again, so the map stays bounded by the heap.
 type multipartUploadPage struct {
 	input    *s3.ListMultipartUploadsInput
 	limit    int
 	top      candidateHeap
 	more     bool
-	prefixes map[string]bool // common prefixes already offered to the page
+	prefixes map[string]bool
 }
 
 // multipartCandidate is an upload, or with a nil entry a common prefix that
@@ -1404,7 +1406,6 @@ func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
 			if p.prefixes[commonPrefix] || *input.KeyMarker != "" && commonPrefix <= *input.KeyMarker {
 				return
 			}
-			p.prefixes[commonPrefix] = true
 			c = multipartCandidate{key: commonPrefix}
 		}
 	}
@@ -1413,9 +1414,14 @@ func (p *multipartUploadPage) add(entry *filer_pb.Entry) {
 		if compareMultipartCandidate(c, p.top[0]) >= 0 {
 			return
 		}
-		heap.Pop(&p.top)
+		if evicted := heap.Pop(&p.top).(multipartCandidate); evicted.entry == nil {
+			delete(p.prefixes, evicted.key)
+		}
 	}
 	heap.Push(&p.top, c)
+	if c.entry == nil {
+		p.prefixes[c.key] = true
+	}
 }
 
 func (p *multipartUploadPage) result() *ListMultipartUploadsResult {
