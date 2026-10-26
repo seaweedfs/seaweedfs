@@ -420,11 +420,18 @@ impl VectorService for VectorServer {
         if req.return_metadata {
             columns.push(METADATA_COLUMN.to_string());
         }
+        // An unset max_results arrives as 0; page it like S3 Vectors does.
+        const DEFAULT_PAGE: u32 = 500;
+        const MAX_PAGE: u32 = 1000;
+        let page = match req.max_results {
+            0 => DEFAULT_PAGE,
+            n => n.min(MAX_PAGE),
+        };
         let mut scanner = dataset.scan();
         scanner
             .project(&columns)
             .map_err(internal)?
-            .limit(Some(req.max_results as i64), Some(offset as i64))
+            .limit(Some(page as i64), Some(offset as i64))
             .map_err(internal)?;
         let batches: Vec<RecordBatch> = scanner
             .try_into_stream()
@@ -435,7 +442,7 @@ impl VectorService for VectorServer {
             .map_err(internal)?;
         let rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
         let next = offset + rows as u64;
-        let next_token = if rows == req.max_results as usize && rows > 0 {
+        let next_token = if rows == page as usize && rows > 0 {
             next.to_string()
         } else {
             String::new()
