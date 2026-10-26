@@ -520,7 +520,7 @@ jobs:
     
     - name: Comment PR with results
       if: github.event_name == 'pull_request' && always()
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       with:
         script: |
           const fs = require('fs');
@@ -755,7 +755,7 @@ jobs:
     
     - name: Create compliance issue if tests fail
       if: failure()
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       with:
         script: |
           const issue = await github.rest.issues.create({
