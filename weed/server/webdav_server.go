@@ -251,8 +251,12 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		return err
 	}
 
+	dir, name := util.NormalizePath(fullDirPath).DirAndName()
+	if err := fs.checkParentDir(ctx, dir); err != nil {
+		return err
+	}
+
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := util.NormalizePath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
@@ -276,6 +280,23 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 
 		return nil
 	})
+}
+
+// checkParentDir returns os.ErrNotExist, which x/net/webdav answers with 409
+// Conflict, when dir is missing or is not a folder: RFC 4918 9.3 and 9.7.1
+// forbid creating the intermediate collections of a MKCOL or PUT.
+func (fs *WebDavFileSystem) checkParentDir(ctx context.Context, dir string) error {
+	if dir == "/" {
+		return nil
+	}
+	fi, err := fs.stat(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
@@ -302,6 +323,9 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		}
 
 		dir, name := util.FullPath(fullFilePath).DirAndName()
+		if err := fs.checkParentDir(ctx, dir); err != nil {
+			return nil, err
+		}
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: dir,

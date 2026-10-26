@@ -72,10 +72,18 @@ func (f *noVolumeFiler) LookupVolume(_ context.Context, _ *filer_pb.LookupVolume
 
 type createRecordingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	req *filer_pb.CreateEntryRequest
+	req  *filer_pb.CreateEntryRequest
+	dirs map[string]bool // folders that exist, by full path
 }
 
-func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if f.dirs[string(util.NewFullPath(req.Directory, req.Name))] {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:        req.Name,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)},
+		}}, nil
+	}
 	return nil, filer_pb.ErrNotFound
 }
 
@@ -164,7 +172,7 @@ func TestWebDavFile_Read_InlineContent(t *testing.T) {
 
 // MKCOL paths end in "/"; the entry must be created under its own name, not as "" inside itself.
 func TestWebDavFileSystem_Mkdir_EntryName(t *testing.T) {
-	filer := &createRecordingFiler{}
+	filer := &createRecordingFiler{dirs: map[string]bool{"/dir": true}}
 	filerAddr := startFakeWebDavFiler(t, filer)
 	fs := &WebDavFileSystem{option: &WebDavOption{
 		Filer:          filerAddr,
@@ -177,6 +185,24 @@ func TestWebDavFileSystem_Mkdir_EntryName(t *testing.T) {
 		assert.Equal(t, "sub", filer.req.Entry.Name)
 		assert.True(t, filer.req.Entry.IsDirectory)
 	}
+}
+
+// MKCOL and PUT under a missing folder must fail with 409 (RFC 4918 9.3, 9.7.1),
+// which x/net/webdav answers for os.ErrNotExist, and must not create anything.
+func TestWebDavFileSystem_MissingParent(t *testing.T) {
+	filer := &createRecordingFiler{}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	assert.ErrorIs(t, fs.Mkdir(context.Background(), "/missing/sub/", 0755), os.ErrNotExist)
+	_, err := fs.OpenFile(context.Background(), "/missing/f.txt", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.Nil(t, filer.req)
+
+	assert.NoError(t, fs.Mkdir(context.Background(), "/top/", 0755), "a folder at the root needs no parent")
 }
 
 // DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.
