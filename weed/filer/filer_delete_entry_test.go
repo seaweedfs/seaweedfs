@@ -165,4 +165,12 @@ func TestDeleteEntryMetaAndData_IfNotModifiedAfterSubsecond(t *testing.T) {
 	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime.Unix()))
 	_, err = f.FindEntry(ctx, filePath)
 	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+
+	// An entry mtime beyond the UnixNano range compares as a time, not an int
+	farFuture := &Entry{FullPath: filePath, Attr: Attr{Mode: 0644, Mtime: time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC)}}
+	require.NoError(t, f.CreateEntry(ctx, farFuture, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime.UnixNano()))
+	stored, err = f.FindEntry(ctx, filePath)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "entry past the UnixNano range must be preserved")
 }

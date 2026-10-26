@@ -129,13 +129,11 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return findErr
 	}
 	if ifNotModifiedAfter > 0 {
-		var entryMtime int64
 		if ifNotModifiedAfter > 1_000_000_000_000 {
-			entryMtime = entry.Attr.Mtime.UnixNano()
-		} else {
-			entryMtime = entry.Attr.Mtime.Unix()
-		}
-		if entryMtime > ifNotModifiedAfter {
+			if entry.Attr.Mtime.After(time.Unix(0, ifNotModifiedAfter)) {
+				return nil
+			}
+		} else if entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
 			return nil
 		}
 	}
