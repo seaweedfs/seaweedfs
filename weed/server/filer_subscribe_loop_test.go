@@ -705,7 +705,7 @@ func TestSubscribeLoop_ChunkModeMarkerMatchesClientReplay(t *testing.T) {
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			applied = append(applied, resp.TsNs)
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("client replay: %v", err)
 	}
@@ -778,7 +778,7 @@ func TestSubscribeLoop_ChunkModeDeadVolumeAgreesWithClient(t *testing.T) {
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			applied = append(applied, resp.TsNs)
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("client replay: %v", err)
 	}

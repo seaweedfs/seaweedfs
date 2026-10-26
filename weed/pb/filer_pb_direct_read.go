@@ -49,12 +49,19 @@ type PathFilter struct {
 //
 // Filers are read in parallel (one goroutine per filer), each streaming
 // entries through a bounded channel.
+//
+// progressFn, when non-nil, is invoked after every entry the merge has
+// settled - delivered to processEventFn or skipped by the filter - so the
+// caller can checkpoint replay progress mid-read. A stream dropped partway
+// through then resumes at the last checkpoint instead of re-reading the
+// whole ref set.
 func ReadLogFileRefs(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
 	startTsNs, stopTsNs int64,
 	filter PathFilter,
 	processEventFn ProcessMetadataFunc,
+	progressFn func(tsNs int64),
 ) (lastTsNs int64, err error) {
 
 	if len(refs) == 0 {
@@ -78,7 +85,7 @@ func ReadLogFileRefs(
 		return
 	}
 
-	return readFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, filter, processEventFn)
+	return readFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, filter, processEventFn, progressFn)
 }
 
 // readFilersMerged reads files from each filer in parallel (one producer
@@ -92,6 +99,7 @@ func readFilersMerged(
 	startTsNs, stopTsNs int64,
 	filter PathFilter,
 	processEventFn ProcessMetadataFunc,
+	progressFn func(tsNs int64),
 ) (lastTsNs int64, err error) {
 
 	type filerStream struct {
@@ -168,6 +176,9 @@ func readFilersMerged(
 		lastTsNs, err = processOneLogEntry(item.entry, filter, processEventFn)
 		if err != nil {
 			return
+		}
+		if progressFn != nil && item.entry.TsNs > 0 {
+			progressFn(item.entry.TsNs)
 		}
 
 		select {
