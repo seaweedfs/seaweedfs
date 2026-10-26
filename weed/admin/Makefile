@@ -20,21 +20,21 @@ TEMPL_VERSION := $(shell go list -m -f '{{.Version}}' github.com/a-h/templ)
 GOBIN := $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 ifeq ($(shell go env GOOS),windows)
-GOBIN := $(firstword $(subst ;, ,$(shell go env GOPATH)))/bin
+GOBIN := $(shell go env GOPATH | cut -d';' -f1)/bin
 else
-GOBIN := $(firstword $(subst :, ,$(shell go env GOPATH)))/bin
+GOBIN := $(shell go env GOPATH | cut -d: -f1)/bin
 endif
 endif
 TEMPL := $(GOBIN)/templ
 .PHONY: install-templ
 install-templ:
-	@($(TEMPL) version 2>/dev/null | grep -qF $(TEMPL_VERSION)) || (echo "Installing templ $(TEMPL_VERSION)..." && go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION))
+	@("$(TEMPL)" version 2>/dev/null | grep -qF $(TEMPL_VERSION)) || (echo "Installing templ $(TEMPL_VERSION)..." && go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION))
 
 # Generate templ files
 .PHONY: generate
 generate: install-templ static-gz
 	@echo "Generating templ files..."
-	@$(TEMPL) generate ./view
+	@"$(TEMPL)" generate ./view
 	@echo "Generated: $(TEMPL_GO_FILES)"
 
 # Regenerate the gzipped static mirror embedded into the binary
@@ -54,7 +54,7 @@ clean-templ:
 .PHONY: watch
 watch: install-templ
 	@echo "Watching for templ file changes..."
-	@cd $(BUILD_DIR) && $(TEMPL) generate --watch
+	@cd $(BUILD_DIR) && "$(TEMPL)" generate --watch
 
 # Build the main weed binary with admin component
 .PHONY: build
@@ -95,7 +95,7 @@ fmt: install-templ
 	@echo "Formatting Go code..."
 	@go fmt ./...
 	@echo "Formatting templ files..."
-	@$(TEMPL) fmt $(VIEW_DIR)
+	@"$(TEMPL)" fmt $(VIEW_DIR)
 
 # Validate static files exist
 .PHONY: validate-static
@@ -177,4 +177,4 @@ $(WEED_BINARY): $(TEMPL_GO_FILES) $(GO_FILES)
 # Auto-generate templ files when .templ files change
 %_templ.go: %.templ | install-templ
 	@echo "Regenerating $@ from $<"
-	@cd $(BUILD_DIR) && $(TEMPL) generate
+	@cd $(BUILD_DIR) && "$(TEMPL)" generate
