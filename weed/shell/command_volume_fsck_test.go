@@ -27,25 +27,20 @@ import (
 
 func TestVolumeFsckCanPurgeDirectory(t *testing.T) {
 	testCases := []struct {
-		scopedFilerPath string
-		dir             util.FullPath
-		expected        bool
+		dir      util.FullPath
+		expected bool
 	}{
-		{"/", "/orphan/dir/deep", true},
-		{"/", "/orphan", true},
-		{"/", "/", false},
-		{"/", "/buckets", false},
-		{"/", "/buckets/bucket1", false},
-		{"/", "/buckets/bucket1/dir", true},
-		{"/buckets/bucket1", "/buckets/bucket1", false},
-		{"/buckets/bucket1", "/buckets/bucket1/dir", true},
-		{"/buckets/bucket1", "/buckets/bucket11/dir", false},
-		{"/buckets/bucket1", "/orphan/dir", false},
+		{"/orphan/dir/deep", true},
+		{"/orphan", true},
+		{"/", false},
+		{"/buckets", false},
+		{"/buckets/bucket1", false},
+		{"/buckets/bucket1/dir", true},
 	}
 	for _, tc := range testCases {
-		c := &commandVolumeFsck{bucketsPath: "/buckets", scopedFilerPath: tc.scopedFilerPath}
+		c := &commandVolumeFsck{bucketsPath: "/buckets"}
 		if actual := c.canPurgeDirectory(tc.dir); actual != tc.expected {
-			t.Errorf("scope %s: canPurgeDirectory(%s) = %v, expected %v", tc.scopedFilerPath, tc.dir, actual, tc.expected)
+			t.Errorf("canPurgeDirectory(%s) = %v, expected %v", tc.dir, actual, tc.expected)
 		}
 	}
 }
@@ -158,10 +153,9 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 
 	verbose := false
 	c := &commandVolumeFsck{
-		verbose:         &verbose,
-		writer:          io.Discard,
-		bucketsPath:     "/buckets",
-		scopedFilerPath: "/",
+		verbose:     &verbose,
+		writer:      io.Discard,
+		bucketsPath: "/buckets",
 		purgedDirs: map[util.FullPath]struct{}{
 			"/orphan/dir/deep":        {},
 			"/orphan/dir/wide":        {},
@@ -191,12 +185,11 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsFreshDirectory(t *testing.T) {
 
 	verbose := false
 	c := &commandVolumeFsck{
-		verbose:         &verbose,
-		writer:          io.Discard,
-		bucketsPath:     "/buckets",
-		scopedFilerPath: "/",
-		purgedDirs:      map[util.FullPath]struct{}{"/fresh/dir": {}},
-		env:             startStubFiler(t, stub),
+		verbose:     &verbose,
+		writer:      io.Discard,
+		bucketsPath: "/buckets",
+		purgedDirs:  map[util.FullPath]struct{}{"/fresh/dir": {}},
+		env:         startStubFiler(t, stub),
 	}
 
 	c.purgeEmptyDirectories()
@@ -217,12 +210,11 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
 
 	verbose := false
 	c := &commandVolumeFsck{
-		verbose:         &verbose,
-		writer:          io.Discard,
-		bucketsPath:     "/buckets",
-		scopedFilerPath: "/",
-		purgedDirs:      map[util.FullPath]struct{}{"/race/dir": {}},
-		env:             startStubFiler(t, stub),
+		verbose:     &verbose,
+		writer:      io.Discard,
+		bucketsPath: "/buckets",
+		purgedDirs:  map[util.FullPath]struct{}{"/race/dir": {}},
+		env:         startStubFiler(t, stub),
 	}
 
 	c.purgeEmptyDirectories()
