@@ -394,6 +394,7 @@ func (ma *MetaAggregator) Shutdown() {
 			// aggregator instead of outliving it.
 			if ma.MetaLogBuffer != nil {
 				ma.MetaLogBuffer.ShutdownLogBuffer()
+				ma.MetaLogBuffer.WaitForShutdown()
 			}
 			return
 		case <-ticker.C:
