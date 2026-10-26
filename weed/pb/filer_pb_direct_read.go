@@ -209,7 +209,9 @@ func readFilersMerged(
 	if fe := fatal(); fe != nil {
 		return lastTsNs, fe
 	}
-	progress(pendingProgress)
+	if pendingProgress > 0 {
+		progress(pendingProgress)
+	}
 	return
 }
 
