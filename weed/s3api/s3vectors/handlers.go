@@ -260,6 +260,12 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var resp map[string]interface{}
+	// Indexes live in an implicit namespace; dropping it best-effort lets an
+	// emptied bucket delete, while surviving indexes keep it non-empty.
+	_ = s.catalog(r.Context(), "DeleteNamespace", &s3tables.DeleteNamespaceRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		Namespace:      []string{indexNamespace},
+	}, &resp, r)
 	err := s.catalog(r.Context(), "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil {
