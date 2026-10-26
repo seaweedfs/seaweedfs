@@ -38,9 +38,19 @@ enum Command {
     Describe {
         /// Delimiter-joined table id, e.g. bucket$table.
         id: String,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
     },
     /// Which fragments each vector index covers.
-    Coverage { id: String },
+    Coverage {
+        id: String,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
+    },
     /// A top-K query over the whole dataset.
     Query {
         id: String,
@@ -121,10 +131,16 @@ async fn main() -> Result<()> {
     let client = NamespaceClient::new(args.namespace).with_fallback(&fallback);
 
     match args.command {
-        Command::Describe { id } => {
+        Command::Describe {
+            id,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
-            let vector = VectorTable::resolve(&dataset, None, None).ok();
+            let vector =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())
+                    .ok();
             let coverages = match &vector {
                 Some(v) => coverage::coverage(&dataset, &v.vector_column).await?,
                 None => Vec::new(),
@@ -152,9 +168,14 @@ async fn main() -> Result<()> {
                 })
             );
         }
-        Command::Coverage { id } => {
+        Command::Coverage {
+            id,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
-            let vector = VectorTable::resolve(&dataset, None, None)?;
+            let vector =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             let coverages = coverage::coverage(&dataset, &vector.vector_column).await?;
             println!("{}", serde_json::to_string_pretty(&coverages)?);
         }
