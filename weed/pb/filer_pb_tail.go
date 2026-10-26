@@ -226,7 +226,9 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if readErr != nil {
 				return fmt.Errorf("%w: %w", ErrLogFileRead, readErr)
 			}
-			if lastTs > 0 && option.GetResumeTsNs == nil {
+			// lastTs is the last settled entry's own timestamp; never rewind
+			// below the progress checkpoint it may lag.
+			if option.GetResumeTsNs == nil && lastTs > option.StartTsNs {
 				option.StartTsNs = lastTs
 			}
 			pendingRefs = nil

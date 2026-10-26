@@ -1,6 +1,7 @@
 package pb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeSubscribeStream plays back a scripted sequence of responses, one per Recv.
@@ -436,6 +439,54 @@ func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
 	defer mu.Unlock()
 	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 300 {
 		t.Fatalf("expected subscribes at 100 then 300, got %v", sinceNs)
+	}
+}
+
+// A drained ref batch must leave StartTsNs at the settled checkpoint even when
+// the last entry's own timestamp lags its log position, so the next drain does
+// not re-read the settled prefix.
+func TestChunkDrainCursorKeepsProgressCheckpoint(t *testing.T) {
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/watched",
+		TsNs:      100,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "file"},
+		},
+	}
+	eventData, err := proto.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	entryData, err := (&filer_pb.LogEntry{TsNs: 300, Data: eventData}).MarshalVT()
+	if err != nil {
+		t.Fatalf("marshal log entry: %v", err)
+	}
+	var buf bytes.Buffer
+	var sizeBuf [4]byte
+	util.Uint32toBytes(sizeBuf[:], uint32(len(entryData)))
+	buf.Write(sizeBuf[:])
+	buf.Write(entryData)
+
+	option := &MetadataFollowOption{
+		ClientName: "mount",
+		StartTsNs:  0,
+		PathPrefix: "/",
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
+		},
+	}
+	stream := &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{
+		{LogFileRefs: []*filer_pb.LogFileChunkRef{
+			{FilerId: "f0", Chunks: []*filer_pb.FileChunk{{FileId: "1,01"}}},
+		}},
+	}}
+	if err := makeSubscribeMetadataFunc(option, func(*filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if option.StartTsNs != 300 {
+		t.Fatalf("expected StartTsNs at the settled checkpoint 300, got %d", option.StartTsNs)
 	}
 }
 
