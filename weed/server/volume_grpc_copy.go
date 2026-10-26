@@ -209,7 +209,10 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		if !hasRemoteDatFile {
 			datProgress := newCopyProgress(copyDatAllocated)
-			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", false, true, func(processed int64) bool {
+			// Write into the .dat CreateVolumeFile just made: the staged
+			// .copying file would peak at preallocate+dat on disk and then
+			// discard the fallocated blocks at rename.
+			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", preallocateSize > 0, true, func(processed int64) bool {
 				datProgress(processed)
 				if processed > nextReportTarget {
 					copyResponse.ProcessedBytes = processed
