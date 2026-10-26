@@ -258,3 +258,21 @@ func TestListBucketsWithoutAuthListsEveryBucket(t *testing.T) {
 		assert.Equal(t, tt.want, names, tt.query)
 	}
 }
+
+// With auth on, a request carrying no identity still lists no buckets.
+func TestListBucketsWithAuthListsNothingForAnonymous(t *testing.T) {
+	f := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets": {
+			{Name: "alpha", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+		},
+	}}
+	s3a := newBucketDeleteTestServer(t, f, false)
+	s3a.iam.isAuthEnabled = true
+
+	rec := httptest.NewRecorder()
+	s3a.ListBucketsHandler(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var result ListAllMyBucketsResult
+	require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Empty(t, result.Buckets.Bucket)
+}
