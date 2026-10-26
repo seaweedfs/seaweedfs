@@ -55,14 +55,6 @@ pub async fn get(
     let Some(key_column) = &table.key_column else {
         bail!("the table has no key column to look up");
     };
-    // key_column goes into the SQL filter verbatim; a resolved VectorTable
-    // always holds a real column name, but do not rely on that here.
-    if !key_column
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        bail!("key column {key_column} is not a plain identifier");
-    }
     if keys.is_empty() {
         return Ok(Vec::new());
     }
@@ -73,7 +65,7 @@ pub async fn get(
         .join(", ");
     let mut scanner = dataset.scan();
     scanner
-        .filter(&format!("{key_column} in ({list})"))?
+        .filter(&format!("`{}` in ({list})", key_column.replace('`', "``")))?
         .with_row_id();
     scanner
         .try_into_stream()
