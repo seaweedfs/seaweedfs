@@ -261,3 +261,71 @@ func TestListMultipartUploadsRetryCollectsEachUploadOnce(t *testing.T) {
 		t.Fatalf("truncation markers got (%v, %v, %v)", *out.IsTruncated, *out.NextKeyMarker, *out.NextUploadIdMarker)
 	}
 }
+
+// With a delimiter, uploads whose keys go on past it after the prefix are
+// listed once under CommonPrefixes, which count toward max-uploads.
+func TestSelectMultipartUploadsDelimiter(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		uploadEntry("1", "a/1", 10),
+		uploadEntry("2", "a/2", 10),
+		uploadEntry("3", "b/x/1", 10),
+		uploadEntry("4", "c", 10),
+		uploadEntry("5", "a/sub/3", 10),
+	}
+	list := func(prefix, keyMarker string, maxUploads int64) ([]string, []string, bool, string) {
+		input := listUploadsInput(prefix, keyMarker, "", maxUploads)
+		input.Delimiter = aws.String("/")
+		out := selectMultipartUploads(input, entries)
+		var uploads, prefixes []string
+		for _, u := range out.Upload {
+			uploads = append(uploads, *u.Key)
+		}
+		for _, p := range out.CommonPrefixes {
+			prefixes = append(prefixes, p.Prefix)
+		}
+		return uploads, prefixes, *out.IsTruncated, aws.StringValue(out.NextKeyMarker)
+	}
+
+	uploads, prefixes, truncated, _ := list("", "", 1000)
+	if !slices.Equal(uploads, []string{"c"}) || !slices.Equal(prefixes, []string{"a/", "b/"}) || truncated {
+		t.Errorf("no prefix: uploads %v prefixes %v truncated %v", uploads, prefixes, truncated)
+	}
+
+	uploads, prefixes, _, _ = list("a/", "", 1000)
+	if !slices.Equal(uploads, []string{"a/1", "a/2"}) || !slices.Equal(prefixes, []string{"a/sub/"}) {
+		t.Errorf("prefix a/: uploads %v prefixes %v", uploads, prefixes)
+	}
+
+	// a page that ends on a common prefix resumes after it
+	uploads, prefixes, truncated, next := list("", "", 1)
+	if len(uploads) != 0 || !slices.Equal(prefixes, []string{"a/"}) || !truncated || next != "a/" {
+		t.Fatalf("page 1: uploads %v prefixes %v truncated %v next %q", uploads, prefixes, truncated, next)
+	}
+	uploads, prefixes, truncated, _ = list("", next, 1000)
+	if !slices.Equal(uploads, []string{"c"}) || !slices.Equal(prefixes, []string{"b/"}) || truncated {
+		t.Errorf("page 2: uploads %v prefixes %v truncated %v", uploads, prefixes, truncated)
+	}
+}
+
+// A common prefix that does not fit the page is not retained: prefixes tracks
+// only groups still in the page, so a small page stays bounded by max-uploads
+// rather than by every prefix in the bucket.
+func TestSelectMultipartUploadsDelimiterDropsLosingPrefixes(t *testing.T) {
+	input := listUploadsInput("", "", "", 1)
+	input.Delimiter = aws.String("/")
+	page := newMultipartUploadPage(input)
+	page.add(uploadEntry("1", "z/1", 10)) // holds the single slot, then evicted
+	page.add(uploadEntry("2", "a/1", 10))
+	page.add(uploadEntry("3", "z/2", 10)) // "z/" was evicted: loses again
+	page.add(uploadEntry("4", "z/3", 10))
+	if len(page.prefixes) > page.limit {
+		t.Fatalf("retained %d prefixes with limit %d", len(page.prefixes), page.limit)
+	}
+	out := page.result()
+	if len(out.CommonPrefixes) != 1 || out.CommonPrefixes[0].Prefix != "a/" || !*out.IsTruncated {
+		t.Fatalf("prefixes %v truncated %v", out.CommonPrefixes, *out.IsTruncated)
+	}
+	if out.NextUploadIdMarker != nil {
+		t.Fatalf("page ending on a common prefix has upload id marker %v", *out.NextUploadIdMarker)
+	}
+}
