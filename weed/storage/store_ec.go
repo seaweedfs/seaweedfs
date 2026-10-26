@@ -88,6 +88,9 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 		bestFree  int32
 	)
 	for _, loc := range s.Locations {
+		if loc.readOnlyMount {
+			continue
+		}
 		owned := ownedEcShardCount(loc, vid, shardIds)
 		freeCount := ecFreeShardCount(loc, dataShardCount)
 		if owned == 0 {
