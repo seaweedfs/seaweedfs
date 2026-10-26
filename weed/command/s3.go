@@ -734,6 +734,39 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		return nil
 	}
 
+	// Mirror the main API: when TLS is configured the vectors port serves
+	// HTTPS, not a second plaintext endpoint.
+	if *s3opt.tlsPrivateKey != "" {
+		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
+		if err != nil {
+			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
+			return nil
+		}
+		clientAuth := tls.NoClientCert
+		if *s3opt.tlsVerifyClientCert {
+			clientAuth = tls.RequireAndVerifyClientCert
+		}
+		tlsConfig := &tls.Config{GetCertificate: getCert, ClientAuth: clientAuth}
+		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
+			glog.Errorf("S3 Vectors: tls config: %v", err)
+			return nil
+		}
+		httpS := newHttpServer(vectorsRouter, tlsConfig)
+		if vectorsLocalListener != nil {
+			go func() {
+				if err := httpS.ServeTLS(vectorsLocalListener, "", ""); err != nil && err != http.ErrServerClosed {
+					glog.V(0).Infof("S3 Vectors localhost listener error: %v", err)
+				}
+			}()
+		}
+		go func() {
+			if err := httpS.ServeTLS(vectorsListener, "", ""); err != nil && err != http.ErrServerClosed {
+				glog.Errorf("S3 Vectors API Server Fail to serve: %v", err)
+			}
+		}()
+		return httpS
+	}
+
 	glog.V(0).Infof("Start S3 Vectors API Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(vectorsRouter, nil)
