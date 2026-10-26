@@ -115,6 +115,9 @@ func TestListSegmentVectorsStopsInsideEnginePage(t *testing.T) {
 	if len(out) != 5 || out[0].Key != "k10" {
 		t.Fatalf("resumed at %v rows, first %v", len(out), out[0])
 	}
+	if next != "19" {
+		t.Fatalf("resumed token %q, want 19", next)
+	}
 }
 
 // The last row of the index filling the page exactly must not emit a token.
