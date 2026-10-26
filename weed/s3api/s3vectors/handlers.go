@@ -197,6 +197,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 			Arn       string `json:"arn"`
 			Name      string `json:"name"`
 			CreatedAt string `json:"createdAt"`
+			Format    string `json:"format"`
 		} `json:"tableBuckets"`
 		ContinuationToken string `json:"continuationToken"`
 	}
@@ -210,6 +211,11 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 	}
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken}
 	for _, b := range resp.TableBuckets {
+		// Buckets pre-dating declared formats accept any format; only a bucket
+		// that declared another format is excluded here.
+		if b.Format != "" && b.Format != s3tables.FormatLance {
+			continue
+		}
 		created, _ := time.Parse(time.RFC3339, b.CreatedAt)
 		out.VectorBuckets = append(out.VectorBuckets, &VectorBucket{
 			VectorBucketArn:  s.vectorBucketArn(b.Name),
