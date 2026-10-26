@@ -322,10 +322,11 @@ func (*DropIndexResponse) Descriptor() ([]byte, []int) {
 }
 
 type Vector struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Data          []float32              `protobuf:"fixed32,2,rep,packed,name=data,proto3" json:"data,omitempty"`
-	Metadata      *structpb.Struct       `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Key   string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Data  []float32              `protobuf:"fixed32,2,rep,packed,name=data,proto3" json:"data,omitempty"`
+	// JSON-typed metadata: numbers carry double precision, as on the wire.
+	Metadata      *structpb.Struct `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

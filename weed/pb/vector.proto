@@ -54,6 +54,7 @@ message DropIndexResponse {}
 message Vector {
   string key = 1;
   repeated float data = 2;
+  // JSON-typed metadata: numbers carry double precision, as on the wire.
   google.protobuf.Struct metadata = 3;
 }
 
