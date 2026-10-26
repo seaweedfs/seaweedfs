@@ -244,7 +244,6 @@ func TestListBucketsWithoutAuthListsEveryBucket(t *testing.T) {
 	}{
 		{query: "", want: []string{"alpha", "beta"}},
 		{query: "?prefix=b", want: []string{"beta"}},
-		{query: "?max-buckets=1", want: []string{"alpha"}},
 	} {
 		rec := httptest.NewRecorder()
 		s3a.ListBucketsHandler(rec, httptest.NewRequest(http.MethodGet, "/"+tt.query, nil))
@@ -257,6 +256,25 @@ func TestListBucketsWithoutAuthListsEveryBucket(t *testing.T) {
 		}
 		assert.Equal(t, tt.want, names, tt.query)
 	}
+
+	// A truncated page must hand back a token that reaches the next page.
+	rec := httptest.NewRecorder()
+	s3a.ListBucketsHandler(rec, httptest.NewRequest(http.MethodGet, "/?max-buckets=1", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var first ListAllMyBucketsResult
+	require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &first))
+	require.Len(t, first.Buckets.Bucket, 1)
+	assert.Equal(t, "alpha", first.Buckets.Bucket[0].Name)
+	require.NotEmpty(t, first.ContinuationToken)
+
+	rec = httptest.NewRecorder()
+	s3a.ListBucketsHandler(rec, httptest.NewRequest(http.MethodGet, "/?max-buckets=1&continuation-token="+url.QueryEscape(first.ContinuationToken), nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var second ListAllMyBucketsResult
+	require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &second))
+	require.Len(t, second.Buckets.Bucket, 1)
+	assert.Equal(t, "beta", second.Buckets.Bucket[0].Name)
+	assert.Empty(t, second.ContinuationToken)
 }
 
 // With auth on, a request carrying no identity still lists no buckets.
