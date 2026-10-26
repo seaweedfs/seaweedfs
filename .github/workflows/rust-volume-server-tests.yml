@@ -228,7 +228,7 @@ jobs:
           cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Download test binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rust-test-binaries
 
@@ -293,7 +293,7 @@ jobs:
           cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Download test binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rust-test-binaries
 
