@@ -214,12 +214,16 @@ func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *Lookup
 		if err == ErrNotFound {
 			return nil, ErrNotFound
 		}
-		// An Unavailable status is a failed read even when a wrapped
-		// not-found message survives in its text; it is not a miss.
-		if st, ok := util.ServerStatus(err); !ok || st.Code() != codes.Unavailable {
-			if strings.Contains(err.Error(), ErrNotFound.Error()) {
+		// The filer converts its own miss to codes.NotFound; a raw sentinel
+		// crossing gRPC arrives as codes.Unknown carrying only its text. The
+		// same text on any other status is a failed read, not a miss.
+		if st, ok := util.ServerStatus(err); ok {
+			if st.Code() == codes.NotFound ||
+				(st.Code() == codes.Unknown && strings.Contains(st.Message(), ErrNotFound.Error())) {
 				return nil, ErrNotFound
 			}
+		} else if strings.Contains(err.Error(), ErrNotFound.Error()) {
+			return nil, ErrNotFound
 		}
 		glog.V(3).InfofCtx(ctx, "read %s/%v: %v", request.Directory, request.Name, err)
 		return nil, fmt.Errorf("LookupEntry1: %w", err)
