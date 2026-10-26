@@ -111,6 +111,8 @@ fn scanner(
     if let Some(key) = &table.key_column {
         columns.push(key.clone());
     }
+    columns.push(DISTANCE_COLUMN.to_string());
+    columns.push(ROW_ID_COLUMN.to_string());
     scanner.project(&columns)?;
     Ok(scanner)
 }
