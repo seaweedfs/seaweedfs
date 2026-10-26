@@ -197,11 +197,12 @@ func TestEachEventNotificationFnMatchesRenameTargetsForAllWatchTypes(t *testing.
 			if len(tt.req.Directories) > 0 {
 				newDir = tt.req.Directories[0]
 			}
+			now := time.Now().UnixNano()
 			err := eachEventFn("/tmp", &filer_pb.EventNotification{
 				OldEntry:      &filer_pb.Entry{Name: "old"},
 				NewEntry:      &filer_pb.Entry{Name: "new"},
 				NewParentPath: newDir,
-			}, time.Now().UnixNano())
+			}, now, now)
 			if err != nil {
 				t.Fatalf("eachEventFn: %v", err)
 			}
@@ -523,7 +524,7 @@ func TestFilteredEventsEmitMaxUnsyncedMarker(t *testing.T) {
 		lastTsNs = base + int64(i)
 		err := eachEventFn("/other/dir", &filer_pb.EventNotification{
 			NewEntry: &filer_pb.Entry{Name: fmt.Sprintf("file%d", i)},
-		}, lastTsNs)
+		}, lastTsNs, lastTsNs)
 		if err != nil {
 			t.Fatalf("eachEventFn: %v", err)
 		}

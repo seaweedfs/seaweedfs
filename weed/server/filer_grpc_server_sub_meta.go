@@ -1305,7 +1305,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
 	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
 	// this subscriber would filter out anyway; scan surprises fall back to the
 	// full decode. Only a delivery resets the shared unsynced-events counter.
@@ -1348,8 +1348,14 @@ func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest,
 		// monotone. Subscribers assume delivered timestamps are ordered; an
 		// early-stamped event delivered under its stale stamp can sit behind a
 		// cursor that already advanced past it and never be seen again.
+		// The mutation stamp survives in MutationTsNs; payloads written before
+		// that field existed still carry it in event.TsNs.
+		mutationTsNs := event.MutationTsNs
+		if mutationTsNs == 0 {
+			mutationTsNs = event.TsNs
+		}
 		event.TsNs = logEntry.TsNs
-		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
+		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs, mutationTsNs); err != nil {
 			return false, err
 		}
 
@@ -1622,8 +1628,8 @@ func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefS
 	return out
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
-	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		defer func() {
 			if *filtered > MaxUnsyncedEvents {
 				if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
@@ -1668,6 +1674,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			Directory:         dirPath,
 			EventNotification: eventNotification,
 			TsNs:              tsNs,
+			MutationTsNs:      mutationTsNs,
 		}
 
 		if !filer_pb.MetadataEventMatchesSubscription(message, req.PathPrefix, req.PathPrefixes, req.Directories) {

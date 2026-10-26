@@ -38,7 +38,7 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 	sender := &recordingSender{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		decoded++
 		unsyncedEvents = 0 // emulate a delivery, like the notification fn after a send
 		return nil
@@ -84,7 +84,7 @@ func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		decoded++
 		return nil
 	}, &unsyncedEvents)
@@ -104,9 +104,10 @@ func TestEachLogEntryFnDeliversStreamPositionTs(t *testing.T) {
 	// payload stamp would filter the event out forever.
 	req := &filer_pb.SubscribeMetadataRequest{}
 	var unsyncedEvents int64
-	var gotTsNs int64
-	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	var gotTsNs, gotMutationTsNs int64
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		gotTsNs = tsNs
+		gotMutationTsNs = mutationTsNs
 		return nil
 	}, &unsyncedEvents)
 
@@ -127,13 +128,16 @@ func TestEachLogEntryFnDeliversStreamPositionTs(t *testing.T) {
 	if gotTsNs != 101 {
 		t.Fatalf("delivered ts = %d, want stream position 101", gotTsNs)
 	}
+	if gotMutationTsNs != 99 {
+		t.Fatalf("mutation ts = %d, want payload stamp 99", gotMutationTsNs)
+	}
 }
 
 func TestEachLogEntryFnFilteredHeartbeatUsesStreamPosition(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{PathPrefix: "/buckets/keep/"}
 	sender := &recordingSender{}
 	unsyncedEvents := int64(MaxUnsyncedEvents)
-	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		return nil
 	}, &unsyncedEvents)
 
