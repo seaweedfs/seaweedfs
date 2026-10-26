@@ -259,6 +259,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.dirIdx = v.dir
 			}
 		}
+		var rebuiltIdx *os.File
 		// check volume idx files
 		if err := v.checkIdxFile(); err != nil {
 			// A remote-tiered volume with a stray .vif but no .idx must not
@@ -270,10 +271,23 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			// A changed -dir.idx leaves the new directory without an index.
 			// The .dat still holds every row, so rebuild rather than exit.
 			if rebuildErr := v.rebuildIdxFile(); rebuildErr != nil {
-				glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
-				return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
+				if !util.IsReadOnlyMount(v.dirIdx) {
+					glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
+					return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
+				}
+				// The index dir cannot take the rebuilt .idx: rebuild its
+				// rows to a temp file and index .dat in memory instead of
+				// skipping the volume. Writes stay blocked by noWriteOrDelete.
+				if rebuiltIdx, err = v.rebuildIdxToTempFile(); err != nil {
+					glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), err)
+					return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), err)
+				}
+				defer os.Remove(rebuiltIdx.Name())
+				v.noWriteOrDelete = true
+				glog.V(0).Infof("volume %d: %s is missing on a read-only mount; indexing %s in memory", v.Id, v.FileName(".idx"), v.FileName(".dat"))
+			} else {
+				glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 			}
-			glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 		}
 		// Recover rows that deletes on a tiered read-only volume overwrote at
 		// the front of .idx. Best effort: a volume that cannot be repaired is
@@ -287,7 +301,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			v.noWriteOrDelete = true
 		}
 		var indexFile *os.File
-		if v.noWriteOrDelete {
+		if rebuiltIdx != nil {
+			indexFile = rebuiltIdx
+		} else if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
 			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDONLY); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
