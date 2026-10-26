@@ -1,0 +1,94 @@
+// Package s3vectors serves the AWS S3 Vectors API on top of the shared
+// VectorService gRPC boundary and the S3 Tables catalog.
+package s3vectors
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+)
+
+// FilerClient provides access to the filer for storage operations.
+type FilerClient interface {
+	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
+}
+
+// S3Authenticator authenticates a request, returning the caller identity.
+type S3Authenticator interface {
+	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
+	DefaultAllow() bool
+}
+
+// Server implements the AWS S3 Vectors JSON API.
+type Server struct {
+	filerClient   FilerClient
+	tables        *s3tables.Manager
+	vectors       vector_pb.VectorServiceClient
+	authenticator S3Authenticator
+	region        string
+	accountID     string
+}
+
+// NewServer creates an S3 Vectors server over the given filer and catalog.
+func NewServer(filerClient FilerClient, authenticator S3Authenticator, vectors vector_pb.VectorServiceClient) *Server {
+	manager := s3tables.NewManager()
+	if authenticator != nil {
+		manager.SetDefaultAllow(authenticator.DefaultAllow())
+	}
+	return &Server{
+		filerClient:   filerClient,
+		tables:        manager,
+		vectors:       vectors,
+		authenticator: authenticator,
+	}
+}
+
+// SetRegion configures the region embedded in the ARNs this server mints.
+func (s *Server) SetRegion(region string) { s.region = region }
+
+// SetAccountID configures the account id embedded in the ARNs this server mints.
+func (s *Server) SetAccountID(id string) { s.accountID = id }
+
+// RegisterRoutes mounts POST / dispatching on the X-Amz-Target header and
+// POST /{Operation} for clients that route per-path.
+func (s *Server) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/", s.Auth(s.dispatch)).Methods(http.MethodPost)
+	router.HandleFunc("/{op}", s.Auth(s.dispatch)).Methods(http.MethodPost)
+}
+
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
+	// Clients carry the operation in the X-Amz-Target header or in the path —
+	// POST /QueryVectors and POST / with a target mean the same call here.
+	op := strings.Trim(r.URL.Path, "/")
+	if i := strings.LastIndex(op, "/"); i >= 0 {
+		op = op[i+1:]
+	}
+	if op == "" {
+		target := r.Header.Get("X-Amz-Target")
+		op = target[strings.LastIndex(target, ".")+1:]
+	}
+	handler, ok := handlers[op]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
+		return
+	}
+	handler(s, w, r)
+}
+
+// Auth authenticates the caller and puts the identity in the request context.
+func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, _, errCode := s.authenticator.AuthenticateRequest(r)
+		if errCode != s3err.ErrNone {
+			writeError(w, http.StatusForbidden, "AccessDenied", "authentication failed")
+			return
+		}
+		r = r.WithContext(contextWithIdentity(r.Context(), identity))
+		handler(w, r)
+	}
+}

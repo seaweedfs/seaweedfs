@@ -22,17 +22,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -52,6 +55,8 @@ type S3Options struct {
 	portGrpc                  *int
 	portIceberg               *int
 	portLance                 *int
+	portVectors               *int
+	vectorsGrpc               *string
 	icebergCredentialRole     *string
 	icebergCredentialDuration *int
 	config                    *string
@@ -110,6 +115,8 @@ func init() {
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.portLance = cmdS3.Flag.Int("port.lance", 9101, "Lance Namespace server listen port (0 to disable); credential vending uses -iceberg.credentialRole")
+	s3StandaloneOptions.portVectors = cmdS3.Flag.Int("port.vectors", 0, "S3 Vectors API server listen port (0 to disable); requires -vectors.grpc")
+	s3StandaloneOptions.vectorsGrpc = cmdS3.Flag.String("vectors.grpc", "", "weed-vector-server gRPC address for the S3 Vectors API")
 	s3StandaloneOptions.icebergCredentialRole = cmdS3.Flag.String("iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	s3StandaloneOptions.icebergCredentialDuration = cmdS3.Flag.Int("iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -433,6 +440,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
+	// Start S3 Vectors API server if enabled
+	if s3opt.portVectors != nil && *s3opt.portVectors > 0 {
+		if httpS := s3opt.startVectorsServer(s3ApiServer, grpcDialOption, listenOnLocalhost); httpS != nil {
+			httpServers = append(httpServers, httpS)
+		}
+	}
+
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
 		explicit := localSocket != ""
@@ -687,6 +701,86 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 	go func() {
 		if err := httpS.Serve(lanceListener); err != nil && err != http.ErrServerClosed {
 			glog.Errorf("Lance Namespace Server Fail to serve: %v", err)
+		}
+	}()
+	return httpS
+}
+
+// startVectorsServer starts the S3 Vectors API server on a separate port. It
+// fans index and data calls out to the shared VectorService over gRPC; with no
+// -vectors.grpc the API is not served.
+func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, listenOnLocalhost bool) *http.Server {
+	if *s3opt.vectorsGrpc == "" {
+		glog.Warningf("port.vectors set without -vectors.grpc; S3 Vectors API disabled")
+		return nil
+	}
+	conn, err := pb.GrpcDial(context.Background(), *s3opt.vectorsGrpc, false, grpcDialOption)
+	if err != nil {
+		glog.Errorf("S3 Vectors: dial %s: %v", *s3opt.vectorsGrpc, err)
+		return nil
+	}
+	vectorsRouter := mux.NewRouter().SkipClean(true)
+
+	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, vector_pb.NewVectorServiceClient(conn))
+	vectorsServer.SetRegion(s3tables.DefaultRegion)
+	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
+	vectorsServer.RegisterRoutes(vectorsRouter)
+
+	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portVectors)
+	vectorsListener, vectorsLocalListener, err := util.NewIpAndLocalListeners(
+		*s3opt.bindIp, *s3opt.portVectors, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+	if err != nil {
+		glog.Errorf("S3 Vectors listener on %s error: %v", listenAddress, err)
+		conn.Close()
+		return nil
+	}
+
+	// Mirror the main API: when TLS is configured the vectors port serves
+	// HTTPS, not a second plaintext endpoint.
+	if *s3opt.tlsPrivateKey != "" {
+		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
+		if err != nil {
+			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
+			return nil
+		}
+		clientAuth := tls.NoClientCert
+		if *s3opt.tlsVerifyClientCert {
+			clientAuth = tls.RequireAndVerifyClientCert
+		}
+		tlsConfig := &tls.Config{GetCertificate: getCert, ClientAuth: clientAuth}
+		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
+			glog.Errorf("S3 Vectors: tls config: %v", err)
+			return nil
+		}
+		httpS := newHttpServer(vectorsRouter, tlsConfig)
+		if vectorsLocalListener != nil {
+			go func() {
+				if err := httpS.ServeTLS(vectorsLocalListener, "", ""); err != nil && err != http.ErrServerClosed {
+					glog.V(0).Infof("S3 Vectors localhost listener error: %v", err)
+				}
+			}()
+		}
+		go func() {
+			if err := httpS.ServeTLS(vectorsListener, "", ""); err != nil && err != http.ErrServerClosed {
+				glog.Errorf("S3 Vectors API Server Fail to serve: %v", err)
+			}
+		}()
+		return httpS
+	}
+
+	glog.V(0).Infof("Start S3 Vectors API Server at http://%s", listenAddress)
+
+	httpS := newHttpServer(vectorsRouter, nil)
+	if vectorsLocalListener != nil {
+		go func() {
+			if err := httpS.Serve(vectorsLocalListener); err != nil && err != http.ErrServerClosed {
+				glog.V(0).Infof("S3 Vectors localhost listener error: %v", err)
+			}
+		}()
+	}
+	go func() {
+		if err := httpS.Serve(vectorsListener); err != nil && err != http.ErrServerClosed {
+			glog.Errorf("S3 Vectors API Server Fail to serve: %v", err)
 		}
 	}()
 	return httpS
