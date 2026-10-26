@@ -72,6 +72,12 @@ fn schema_for(
 }
 
 fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Result<RecordBatch> {
+    let mut seen = std::collections::HashSet::new();
+    for vector in vectors {
+        if !seen.insert(vector.key.as_str()) {
+            bail!("duplicate key in request: {}", vector.key);
+        }
+    }
     let keys = StringArray::from(vectors.iter().map(|v| v.key.as_str()).collect::<Vec<_>>());
     // Check every vector's length before flattening: equal totals would
     // still let a short vector borrow from the next one's values.
@@ -561,4 +567,21 @@ mod tests {
         assert!(batch_of(&vectors, 4, schema).is_err());
     }
 
+    #[test]
+    fn batch_of_rejects_a_repeated_key() {
+        let schema = schema_for(4, pb::DistanceMetric::L2, &[]);
+        let vectors = vec![
+            pb::Vector {
+                key: "a".to_string(),
+                data: vec![1.0; 4],
+                metadata: None,
+            },
+            pb::Vector {
+                key: "a".to_string(),
+                data: vec![2.0; 4],
+                metadata: None,
+            },
+        ];
+        assert!(batch_of(&vectors, 4, schema).is_err());
+    }
 }
