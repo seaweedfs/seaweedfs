@@ -22,7 +22,10 @@ func TestNotifyUpdateEventRecordsRequestMetadataEvent(t *testing.T) {
 			nil,
 		),
 	}
-	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+	defer func() {
+		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
+	}()
 
 	ctx, sink := WithMetadataEventSink(context.Background())
 	f.NotifyUpdateEvent(ctx, &Entry{FullPath: util.FullPath("/dir/file.txt")}, nil, true, false, []int32{7})
@@ -57,7 +60,10 @@ func TestNotifyUpdateEventReloadsLocalFilerConfiguration(t *testing.T) {
 			nil,
 		),
 	}
-	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+	defer func() {
+		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
+	}()
 
 	updatedConf := NewFilerConf()
 	if err := updatedConf.SetLocationConf(&filer_pb.FilerConf_PathConf{

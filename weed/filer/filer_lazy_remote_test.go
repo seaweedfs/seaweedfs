@@ -331,7 +331,10 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 	}
 	// A live LogBuffer keeps its flush loops and their multi-buffer pool
 	// reachable; without this the package's filers pin gigabytes on 32-bit.
-	t.Cleanup(f.LocalMetaLogBuffer.ShutdownLogBuffer)
+	t.Cleanup(func() {
+		f.LocalMetaLogBuffer.ShutdownLogBuffer()
+		f.LocalMetaLogBuffer.WaitForShutdown()
+	})
 	return f
 }
 
