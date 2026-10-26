@@ -812,6 +812,7 @@ async fn do_replicated_request(
 
 /// Extracted request info needed for proxy/redirect (avoids borrowing Request across await).
 struct ProxyRequestInfo {
+    method: Method,
     original_headers: HeaderMap,
     original_query: String,
     path: String,
@@ -823,12 +824,14 @@ fn build_proxy_request_info(
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
+    method: &Method,
 ) -> Option<ProxyRequestInfo> {
     // Go redirects to "vid,fid" built from parseURLPath, so the extension must
     // already be off the fid here (volume_server_handlers_read.go:128-137).
     let parsed = parse_needle_path(path)?;
 
     Some(ProxyRequestInfo {
+        method: method.clone(),
         original_headers: headers.clone(),
         original_query: query_string.to_string(),
         path: path.to_string(),
@@ -856,7 +859,11 @@ async fn proxy_or_redirect_to_target(
         Ok(locs) => locs,
         Err(e) => {
             tracing::warn!("volume lookup failed for {}: {}", vid.0, e);
-            return StatusCode::NOT_FOUND.into_response();
+            // Go: master lookup failure is 500 in proxy mode, 404 for redirect
+            return match state.read_mode {
+                ReadMode::Proxy => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                _ => StatusCode::NOT_FOUND.into_response(),
+            };
         }
     };
 
@@ -920,8 +927,9 @@ async fn proxy_request(
         }
     };
 
-    // Build the proxy request
-    let mut req_builder = state.http_client.get(&target_url);
+    // Build the proxy request, preserving the inbound method (Go parity:
+    // a client HEAD must not turn into a GET download at the replica).
+    let mut req_builder = state.http_client.request(info.method.clone(), &target_url);
 
     // Forward all original headers as raw bytes, as Go does.
     for (name, value) in &info.original_headers {
@@ -1088,14 +1096,30 @@ async fn get_or_head_handler_inner(
     let has_ec_volume = state.store.read().unwrap().has_ec_volume(vid);
 
     if !has_volume && !has_ec_volume {
-        return proxy_missing_volume(&state, request.uri(), request.headers(), &path, vid).await;
+        return proxy_missing_volume(
+            &state,
+            request.uri(),
+            request.headers(),
+            &path,
+            vid,
+            &method,
+        )
+        .await;
     }
 
-    let track_download =
-        match check_download_limit(&state, request.uri(), request.headers(), &path, vid).await {
-            ControlFlow::Continue(track_download) => track_download,
-            ControlFlow::Break(resp) => return resp,
-        };
+    let track_download = match check_download_limit(
+        &state,
+        request.uri(),
+        request.headers(),
+        &path,
+        vid,
+        &method,
+    )
+    .await
+    {
+        ControlFlow::Continue(track_download) => track_download,
+        ControlFlow::Break(resp) => return resp,
+    };
 
     let read_deleted = query.read_deleted.as_deref() == Some("true");
     // Go reads Range once and ignores an empty value; a non-UTF-8 byte fails its parse.
@@ -1277,6 +1301,7 @@ async fn proxy_missing_volume(
     request_headers: &HeaderMap,
     path: &str,
     vid: VolumeId,
+    method: &Method,
 ) -> Response {
     let query_string = uri.query().unwrap_or("").to_string();
     if is_proxied_query(&query_string)
@@ -1287,7 +1312,7 @@ async fn proxy_missing_volume(
     }
 
     // For redirect, fid must be stripped of extension (Go parity: parseURLPath returns raw fid).
-    let info = match build_proxy_request_info(path, request_headers, &query_string) {
+    let info = match build_proxy_request_info(path, request_headers, &query_string, method) {
         Some(info) => info,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -1308,6 +1333,7 @@ async fn check_download_limit(
     request_headers: &HeaderMap,
     path: &str,
     vid: VolumeId,
+    method: &Method,
 ) -> ControlFlow<Response, bool> {
     if state.concurrent_download_limit <= 0 {
         return ControlFlow::Continue(false);
@@ -1332,7 +1358,8 @@ async fn check_download_limit(
                     .is_some_and(|(_, vol)| vol.super_block().replica_placement.has_replication())
             };
         if should_try_replica
-            && let Some(info) = build_proxy_request_info(path, request_headers, &query_string)
+            && let Some(info) =
+                build_proxy_request_info(path, request_headers, &query_string, method)
         {
             return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid, true).await);
         }
@@ -5181,6 +5208,7 @@ mod tests {
     #[test]
     fn test_redirect_request_uses_outgoing_http_scheme() {
         let info = ProxyRequestInfo {
+            method: Method::GET,
             original_headers: HeaderMap::new(),
             original_query: "collection=photos&readDeleted=true".to_string(),
             path: "/3,01637037d6".to_string(),
@@ -5209,6 +5237,7 @@ mod tests {
     #[test]
     fn test_redirect_request_strips_grpc_port_from_target_url() {
         let info = ProxyRequestInfo {
+            method: Method::GET,
             original_headers: HeaderMap::new(),
             original_query: String::new(),
             path: "/3,01637037d6".to_string(),
@@ -5240,7 +5269,8 @@ mod tests {
     #[test]
     fn test_redirect_location_drops_extension_for_slash_form() {
         let info =
-            build_proxy_request_info("/3/01637037d6.jpg", &HeaderMap::new(), "").expect("parses");
+            build_proxy_request_info("/3/01637037d6.jpg", &HeaderMap::new(), "", &Method::GET)
+                .expect("parses");
         assert_eq!(info.vid_str, "3");
         assert_eq!(info.fid_str, "01637037d6");
 
@@ -5392,6 +5422,7 @@ mod tests {
         });
 
         let info = ProxyRequestInfo {
+            method: Method::GET,
             original_headers: HeaderMap::new(),
             original_query: String::new(),
             path: "/3,01637037d6".to_string(),
@@ -5420,6 +5451,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"payload");
+
+        server.abort();
+    }
+
+    /// Go now forwards the inbound method (volume_server_handlers_read.go), so
+    /// a client HEAD reaches the replica as HEAD, not GET.
+    #[tokio::test]
+    async fn test_proxy_request_preserves_method() {
+        use axum::{Router, routing::get};
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let head_count = StdArc::new(AtomicUsize::new(0));
+        let get_count = StdArc::new(AtomicUsize::new(0));
+        let app = {
+            let head_count = head_count.clone();
+            let get_count = get_count.clone();
+            Router::new().route(
+                "/{*path}",
+                get(move |request: axum::extract::Request| {
+                    let head_count = head_count.clone();
+                    let get_count = get_count.clone();
+                    async move {
+                        if *request.method() == Method::HEAD {
+                            head_count.fetch_add(1, AtomicOrdering::SeqCst);
+                        } else {
+                            get_count.fetch_add(1, AtomicOrdering::SeqCst);
+                        }
+                        StatusCode::OK
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: String::new(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let state = streaming_test_state();
+        for method in [Method::HEAD, Method::GET] {
+            let info = ProxyRequestInfo {
+                method,
+                original_headers: HeaderMap::new(),
+                original_query: String::new(),
+                path: "/3,01637037d6".to_string(),
+                vid_str: "3".to_string(),
+                fid_str: "01637037d6".to_string(),
+            };
+            let response = proxy_request(&state, &info, &target).await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        assert_eq!(head_count.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(get_count.load(AtomicOrdering::SeqCst), 1);
 
         server.abort();
     }
@@ -7182,7 +7274,7 @@ mod tests {
             header::RANGE,
             header::HeaderValue::from_bytes(b"bytes=0-1\xff").unwrap(),
         );
-        let info = build_proxy_request_info(&path, &headers, "").unwrap();
+        let info = build_proxy_request_info(&path, &headers, "", &Method::GET).unwrap();
 
         let resp = proxy_request(&proxy_state, &info, &target).await;
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
