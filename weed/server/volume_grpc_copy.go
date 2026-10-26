@@ -106,7 +106,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			// location must fit the reservation, not just the copied bytes
 			neededSpace = uint64(preallocateSize)
 		}
-		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+		location := vs.store.ReserveFreeLocation(neededSpace, func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
 				location.AvailableSpace.Load() > neededSpace
 		}, needle.VolumeId(req.VolumeId))

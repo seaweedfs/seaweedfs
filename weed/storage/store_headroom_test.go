@@ -175,3 +175,48 @@ func TestGrowthLoopStopsAtFloorWhenVolumesPreallocate(t *testing.T) {
 		t.Errorf("created %d preallocated volumes; want exactly 4 (the room above the floor)", created)
 	}
 }
+
+// A copy's pick and its .dat reservation are separate steps. The picked
+// location's cached free space must carry the charge at once, so a second
+// copy cannot spend the same headroom before the first reservation lands.
+func TestReserveFreeLocationChargesPickedReservation(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	// 40 MiB above the floor: room for one 30 MiB reservation, not two.
+	s, loc, _ := newHeadroomStore(t, floor+40*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(40 * testMiB)
+
+	pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	})
+	if pick != loc {
+		t.Fatalf("first pick = %v; want the only location", pick)
+	}
+	if got := loc.AvailableSpace.Load(); got != 10*testMiB {
+		t.Fatalf("AvailableSpace after charge = %d MiB; want 10", got/testMiB)
+	}
+
+	if pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	}); pick != nil {
+		t.Fatalf("second pick = %v; want nil (the first reservation still holds the headroom)", pick)
+	}
+}
+
+// The cached free space is refreshed only once a minute, so a stale-high
+// value must not admit a reservation the live disk cannot fit.
+func TestReserveFreeLocationRechecksLiveDisk(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	// Only 5 MiB above the floor, but the probe last saw 100 MiB of headroom.
+	s, loc, _ := newHeadroomStore(t, floor+5*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(100 * testMiB)
+
+	if pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	}); pick != nil {
+		t.Fatalf("pick = %v; want nil (live disk has no room for the reservation)", pick)
+	}
+}

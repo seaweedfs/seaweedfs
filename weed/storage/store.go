@@ -342,6 +342,35 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 	}
 	return ret
 }
+
+// ReserveFreeLocation picks like FindFreeLocation, but under volumeCreateLock
+// and against live disk stats rather than the once-a-minute probe, then
+// charges need against the location's cached free space. A VolumeCopy's pick
+// and its .dat reservation are separate steps; without this a second copy can
+// spend the same headroom and drive the disk under -volume.minFreeSpace.
+func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) *DiskLocation {
+	s.volumeCreateLock.Lock()
+	defer s.volumeCreateLock.Unlock()
+	location := s.FindFreeLocation(func(location *DiskLocation) bool {
+		if location.AvailableSpace.Load() <= need {
+			return false
+		}
+		if filterFn != nil && !filterFn(location) {
+			return false
+		}
+		status := diskStatusOf(location.Directory)
+		if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
+			return false
+		}
+		return location.MinFreeSpace.AvailableSpace(status.Free, status.All) > need
+	}, replaceVid...)
+	if location == nil {
+		return nil
+	}
+	status := diskStatusOf(location.Directory)
+	location.AvailableSpace.Store(location.MinFreeSpace.AvailableSpace(status.Free, status.All) - need)
+	return location
+}
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	s.volumeCreateLock.Lock()
 	defer s.volumeCreateLock.Unlock()
