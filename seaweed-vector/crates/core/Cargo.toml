@@ -8,6 +8,10 @@ description = "Vector query engine over SeaweedFS Lance table buckets"
 [lib]
 name = "weed_vector_core"
 
+[[bin]]
+name = "weed-vector"
+path = "src/main.rs"
+
 [dependencies]
 # The catalog client and dataset-opening helper the maintenance worker uses.
 # A path dependency because the two trees are separate cargo workspaces with
@@ -18,14 +22,17 @@ lance-index = "10"
 lance-linalg = "10"
 lance-table = "10"
 arrow-array = "58"
+arrow-cast = "58"
 arrow-schema = "58"
 roaring = "0.11"
 anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,76 @@
+name: "Rust Vector Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'seaweed-vector/**'
+      - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-vector-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'seaweed-vector/**'
+      - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-vector-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+permissions:
+  contents: read
+
+jobs:
+  rust-vector-build:
+    name: Rust Vector Build and Unit Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-vector/target/release
+          key: rust-vector-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-vector/Cargo.lock') }}
+          restore-keys: |
+            rust-vector-${{ steps.toolchain.outputs.fingerprint }}-
+
+      # lance's build scripts compile their own protos and look for a protoc.
+      # Point them at the one protoc-bin-vendored ships, so no job depends on a
+      # system package and every build sees the same version.
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-vector
+          cargo fetch
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
+
+      - name: Build the vector crates
+        run: cd seaweed-vector && cargo build --release
+
+      - name: Run unit tests
+        run: cd seaweed-vector && cargo test --release --workspace

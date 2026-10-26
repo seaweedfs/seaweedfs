@@ -6457,7 +6457,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow-array",
+ "arrow-cast",
  "arrow-schema",
+ "clap",
  "futures",
  "lance",
  "lance-index",
@@ -6469,6 +6471,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "weed-lance-worker",
 ]
 

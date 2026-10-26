@@ -30,7 +30,7 @@ pub struct Query {
 }
 
 /// One row of a top-K answer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Hit {
     /// The key column value, or the row id when the table has no key column.
     pub key: String,

@@ -10,6 +10,8 @@ pub mod query;
 pub mod table;
 #[cfg(test)]
 mod testing;
+#[cfg(test)]
+mod verify;
 
 pub use coverage::IndexCoverage;
 pub use query::{Hit, Query};

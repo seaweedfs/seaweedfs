@@ -8,7 +8,7 @@ use lance::index::DatasetIndexExt;
 use roaring::RoaringBitmap;
 
 /// How much of the dataset one named index covers at this version.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct IndexCoverage {
     pub index_name: String,
     /// Physical index segments: the IndexMetadata deltas sharing the name.
