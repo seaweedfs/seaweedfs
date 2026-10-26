@@ -117,6 +117,29 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		copyLocation = location
 		copyReservedSpace = neededSpace
 
+		// The headroom charge covers bytes promised but not yet visible to
+		// statfs; as the copy's bytes land they stop needing the charge, so a
+		// slow copy does not count its own .dat against the free space a
+		// second reservation needs.
+		commitCopy := func(n uint64) {
+			if n > copyReservedSpace {
+				n = copyReservedSpace
+			}
+			if n > 0 {
+				vs.store.CommitFreeLocation(location, n)
+				copyReservedSpace -= n
+			}
+		}
+		newCopyProgress := func(skip uint64) func(int64) {
+			counted := int64(skip)
+			return func(processed int64) {
+				if processed > counted {
+					commitCopy(uint64(processed - counted))
+					counted = processed
+				}
+			}
+		}
+
 		defer func() {
 			if err != nil {
 				if dataBaseFileName != "" {
@@ -125,7 +148,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 					os.Remove(dataBaseFileName + ".vif")
 					os.Remove(dataBaseFileName + ".note")
 				}
-				vs.store.ReleaseFreeLocation(location, neededSpace)
+				vs.store.ReleaseFreeLocation(location, copyReservedSpace)
 			}
 		}()
 
@@ -151,11 +174,19 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
 		}
 
+		var copyDatAllocated uint64
 		if preallocateSize > 0 && !hasRemoteDatFile {
 			volumeFile := dataBaseFileName + ".dat"
 			_, err := backend.CreateVolumeFile(volumeFile, preallocateSize, 0)
 			if err != nil {
 				return fmt.Errorf("create volume file %s: %v", volumeFile, err)
+			}
+			// fallocate already holds those bytes on disk; when the
+			// filesystem did not reserve them the write progress below
+			// settles the charge as the bytes land instead.
+			if fi, statErr := os.Stat(volumeFile); statErr == nil {
+				copyDatAllocated = storage.AllocatedSize(fi)
+				commitCopy(copyDatAllocated)
 			}
 		}
 
@@ -174,7 +205,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		throttler := util.NewWriteThrottler(ioBytePerSecond)
 
 		if !hasRemoteDatFile {
+			datProgress := newCopyProgress(copyDatAllocated)
 			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", false, true, func(processed int64) bool {
+				datProgress(processed)
 				if processed > nextReportTarget {
 					copyResponse.ProcessedBytes = processed
 					if sendErr = stream.Send(copyResponse); sendErr != nil {
@@ -194,14 +227,22 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}
 
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false, nil, throttler); err != nil {
+		idxProgress := newCopyProgress(0)
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false, func(processed int64) bool {
+			idxProgress(processed)
+			return true
+		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
 			os.Chtimes(indexBaseFileName+".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, dataBaseFileName, ".vif", false, true, nil, throttler); err != nil {
+		vifProgress := newCopyProgress(0)
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, dataBaseFileName, ".vif", false, true, func(processed int64) bool {
+			vifProgress(processed)
+			return true
+		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {

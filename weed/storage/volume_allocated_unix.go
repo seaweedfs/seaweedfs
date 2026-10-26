@@ -7,9 +7,9 @@ import (
 	"syscall"
 )
 
-// allocatedSize reports the bytes the filesystem holds for a file, which
+// AllocatedSize reports the bytes the filesystem holds for a file, which
 // exceeds its size when the file was preallocated with FALLOC_FL_KEEP_SIZE.
-func allocatedSize(fi os.FileInfo) uint64 {
+func AllocatedSize(fi os.FileInfo) uint64 {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		return 0

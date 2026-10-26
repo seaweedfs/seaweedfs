@@ -22,7 +22,7 @@ func TestUnUsedSpaceCountsPreallocatedVolumesAsFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allocatedSize(fi) < volumeSizeLimit {
+	if AllocatedSize(fi) < volumeSizeLimit {
 		t.Skipf("filesystem at %s does not support fallocate", dir)
 	}
 
@@ -40,7 +40,7 @@ func TestUnUsedSpaceCountsPreallocatedVolumesAsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The filesystem may round a small file up to a larger allocation unit.
-	plainSize := max(uint64(fi.Size()), allocatedSize(fi))
+	plainSize := max(uint64(fi.Size()), AllocatedSize(fi))
 
 	diskLocation := DiskLocation{Directory: dir, IdxDirectory: dir}
 	diskLocation.volumes = make(map[needle.VolumeId]*Volume)

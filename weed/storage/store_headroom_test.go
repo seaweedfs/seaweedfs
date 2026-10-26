@@ -329,3 +329,35 @@ func TestCommitFreeLocationSettlesLandedReservation(t *testing.T) {
 		t.Fatalf("AvailableSpace after post-landing probe = %d MiB; want 10", got/testMiB)
 	}
 }
+
+// A running copy settles its charge as its bytes land on disk. The
+// live-space check must then see the written part once — in the disk
+// reading — not again inside the pending charge, or a slow copy would block
+// reservations the disk has room for.
+func TestCommitFreeLocationSettlesAsBytesLand(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	s, loc, disk := newHeadroomStore(t, floor+70*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(70 * testMiB)
+	hdd := func(location *DiskLocation) bool { return location.DiskType == types.HardDriveType }
+
+	if pick := s.ReserveFreeLocation(need, hdd); pick != loc {
+		t.Fatalf("first pick = %v; want the only location", pick)
+	}
+
+	// Half the copy's bytes are on disk now; settling that much charge
+	// keeps the second 30 MiB reservation inside the real headroom.
+	disk.free -= 15 * testMiB
+	s.CommitFreeLocation(loc, 15*testMiB)
+
+	if pick := s.ReserveFreeLocation(need, hdd); pick == nil {
+		t.Fatal("second pick = nil; want the settled headroom to admit the copy")
+	}
+	if got := loc.ReservedSpace.Load(); got != 45*testMiB {
+		t.Fatalf("ReservedSpace after second pick = %d MiB; want 45", got/testMiB)
+	}
+	if got := loc.AvailableSpace.Load(); got != 10*testMiB {
+		t.Fatalf("AvailableSpace after second pick = %d MiB; want 10", got/testMiB)
+	}
+}

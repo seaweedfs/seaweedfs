@@ -246,7 +246,7 @@ func (v *Volume) datAllocatedSize() uint64 {
 	if err != nil {
 		return 0
 	}
-	return allocatedSize(fi)
+	return AllocatedSize(fi)
 }
 
 func (v *Volume) ContentSize() uint64 {
