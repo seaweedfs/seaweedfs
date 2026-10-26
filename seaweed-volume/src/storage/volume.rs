@@ -1721,12 +1721,24 @@ impl Volume {
                 && !Path::new(&self.file_name(".idx")).exists()
                 && self.current_dat_file_size_io(io)? > SUPER_BLOCK_SIZE as u64
             {
-                self.rebuild_idx_file()?;
-                info!(
-                    volume_id = self.id.0,
-                    idx = %self.file_name(".idx"),
-                    "rebuilt the index from the data file"
-                );
+                match self.rebuild_idx_file() {
+                    Ok(()) => info!(
+                        volume_id = self.id.0,
+                        idx = %self.file_name(".idx"),
+                        "rebuilt the index from the data file"
+                    ),
+                    // The index dir refuses writes: the in-memory loader
+                    // rebuilds the rows to a temp file instead of skipping
+                    // the volume (mirrors Go's rebuiltIdx path).
+                    Err(e) if is_read_only_mount(&self.dir_idx.read().unwrap()) => {
+                        warn!(
+                            volume_id = self.id.0,
+                            error = %e,
+                            "index dir is read-only; indexing .dat in memory"
+                        );
+                    }
+                    Err(e) => return Err(e),
+                }
             }
 
             // Recover rows that deletes on a tiered read-only volume overwrote
@@ -1970,18 +1982,28 @@ impl Volume {
                 let nm = CompactNeedleMap::load_from_idx(&mut idx_file, self.version())?;
                 io.nm = Some(NeedleMap::InMemory(nm));
             } else {
-                // Missing .idx with existing .dat could orphan needles
+                // Missing .idx with existing .dat could orphan needles. On a
+                // read-only index dir the rows still come back, from a temp
+                // rebuild rather than the lost index (mirrors Go's
+                // rebuiltIdx path); writes stay blocked by no_write_or_delete.
                 let dat_path = self.file_name(".dat");
-                if Path::new(&dat_path).exists() {
-                    let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                if dat_size > SUPER_BLOCK_SIZE as u64
+                    && is_read_only_mount(&self.dir_idx.read().unwrap())
+                {
+                    let (mut tmp_file, tmp_path) = self.rebuild_idx_to_temp()?;
+                    let result = CompactNeedleMap::load_from_idx(&mut tmp_file, self.version());
+                    let _ = fs::remove_file(&tmp_path);
+                    io.nm = Some(NeedleMap::InMemory(result?));
+                } else {
                     if dat_size > SUPER_BLOCK_SIZE as u64 {
                         warn!(
                             volume_id = self.id.0,
                             ".idx file missing but .dat exists with data; needles may be orphaned"
                         );
                     }
+                    io.nm = Some(NeedleMap::InMemory(CompactNeedleMap::new()));
                 }
-                io.nm = Some(NeedleMap::InMemory(CompactNeedleMap::new()));
             }
         } else {
             // Open read-write (create if missing)
