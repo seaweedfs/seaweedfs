@@ -321,7 +321,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Signatures:         signatures,
 		}
 
-		glog.V(3).Infof("create: %v", request)
+		glog.V(3).Infof("create: %s", key)
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %w", key, err)
@@ -360,7 +360,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		return false, fmt.Errorf("lookup %s: %w", key, err)
 	}
 
-	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
+	glog.V(4).Infof("entry %s: old %q new %q existing %q", key, oldEntry.GetName(), newEntry.GetName(), existingEntry.GetName())
 
 	// the supersession checks below must look up where the incoming entry lives
 	// now, which for a rename is newParentPath/newEntry.Name, not the old key.

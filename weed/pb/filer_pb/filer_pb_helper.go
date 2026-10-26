@@ -116,6 +116,16 @@ func (c *FileChunk) GetFileIdString() string {
 	return ""
 }
 
+// FileIdsString lists chunks by file id only, for logging that must not print
+// per-chunk fields like CipherKey.
+func FileIdsString(chunks []*FileChunk) []string {
+	fileIds := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		fileIds = append(fileIds, chunk.GetFileIdString())
+	}
+	return fileIds
+}
+
 func BeforeEntrySerialization(chunks []*FileChunk) {
 
 	for _, chunk := range chunks {

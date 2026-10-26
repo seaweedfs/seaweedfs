@@ -821,7 +821,7 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 
 func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 
-	glog.V(4).InfofCtx(ctx, "UpdateEntry %v", req)
+	glog.V(4).InfofCtx(ctx, "UpdateEntry %s/%s", req.GetDirectory(), req.GetEntry().GetName())
 	if len(req.Entry.HardLinkId) > 0 {
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s/%s with HardLinkId %x counter=%d", req.Directory, req.Entry.Name, req.Entry.HardLinkId, req.Entry.HardLinkCounter)
 	}
@@ -990,7 +990,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
 
-	glog.V(4).InfofCtx(ctx, "AppendToEntry %v", req)
+	glog.V(4).InfofCtx(ctx, "AppendToEntry %s/%s", req.GetDirectory(), req.GetEntryName())
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
 	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)

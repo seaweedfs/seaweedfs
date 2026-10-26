@@ -27,7 +27,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		Signatures: []int32{wfs.signature},
 	}
 
-	glog.V(1).Infof("save entry: %v", request)
+	glog.V(1).Infof("save entry %s", path)
 
 	var resp *filer_pb.UpdateEntryResponse
 	err := retryMetadataFlushIf(context.Background(), func() error {

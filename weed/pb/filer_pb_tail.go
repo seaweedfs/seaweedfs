@@ -122,16 +122,16 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		handleErr := func(resp *filer_pb.SubscribeMetadataResponse, err error) {
 			switch option.EventErrorType {
 			case TrivialOnError:
-				glog.Errorf("process %v: %v", resp, err)
+				glog.Errorf("process %s ts_ns=%d: %v", resp.Directory, resp.TsNs, err)
 			case FatalOnError:
-				glog.Fatalf("process %v: %v", resp, err)
+				glog.Fatalf("process %s ts_ns=%d: %v", resp.Directory, resp.TsNs, err)
 			case RetryForeverOnError:
 				waitTime := time.Second
 				for ctx.Err() == nil {
 					if err := processEventFn(resp); err == nil {
 						break
 					} else {
-						glog.Errorf("process %v: %v", resp, err)
+						glog.Errorf("process %s ts_ns=%d: %v", resp.Directory, resp.TsNs, err)
 					}
 					select {
 					case <-ctx.Done():
@@ -144,7 +144,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			case DontLogError:
 				// pass
 			default:
-				glog.Errorf("process %v: %v", resp, err)
+				glog.Errorf("process %s ts_ns=%d: %v", resp.Directory, resp.TsNs, err)
 			}
 		}
 

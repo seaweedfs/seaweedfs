@@ -683,7 +683,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		}
 
 		if debug {
-			glog.V(0).Infof("received %v", resp)
+			glog.V(0).Infof("received %s ts_ns=%d", resp.Directory, resp.TsNs)
 		}
 
 		if isMultipartUploadDir(resp.Directory + "/") {

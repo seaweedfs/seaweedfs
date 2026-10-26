@@ -549,7 +549,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	processEventFn := func(event *filer_pb.SubscribeMetadataResponse) error {
 		data, err := proto.Marshal(event)
 		if err != nil {
-			glog.Errorf("failed to marshal subscribed filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
+			glog.Errorf("failed to marshal subscribed filer_pb.SubscribeMetadataResponse %s ts_ns=%d: %v", event.Directory, event.TsNs, err)
 			return err
 		}
 		dir := event.Directory
@@ -607,8 +607,8 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			default:
 			}
 			if err := processEventFn(event); err != nil {
-				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", event, err)
-				return fmt.Errorf("process %v: %w", event, err)
+				glog.V(0).Infof("SubscribeLocalMetadata process %s ts_ns=%d: %v", event.Directory, event.TsNs, err)
+				return fmt.Errorf("process %s ts_ns=%d: %w", event.Directory, event.TsNs, err)
 			}
 			f.onMetadataChangeEvent(event)
 			lastTsNs = event.TsNs
