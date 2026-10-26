@@ -430,7 +430,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 // on-disk state is newer, i.e. the mount was writable in between. A missing
 // src yields an empty copy.
 func copyDirForReadOnly(src string) (string, error) {
-	sum := sha1.Sum([]byte(src))
+	// Key by the absolute path: a relative -mdir from different working
+	// directories must not collide on one copy.
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		abs = src
+	}
+	sum := sha1.Sum([]byte(abs))
 	dst := filepath.Join(os.TempDir(), fmt.Sprintf("weed-master-ro-%x", sum[:8]))
 	if fi, err := os.Stat(dst); err == nil && fi.IsDir() &&
 		fi.Mode().Perm() == 0700 && util.DirOwnedBySelf(fi) {
