@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -408,5 +409,24 @@ func TestProxyReqToTargetServerDistinguishesLookupFailureFromNoLocation(t *testi
 				t.Errorf("status %d, want %d", w.Code, http.StatusNotFound)
 			}
 		})
+	}
+}
+
+// A request that already carries proxied=true must not be proxied again: a
+// stale lookup pointing at servers that already answered would otherwise
+// bounce the read between them until the client gives up.
+func TestGetOrHeadHandlerDoesNotReproxyAProxiedRequest(t *testing.T) {
+	const volumeID = "849300106"
+	peer := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a proxied request must not be forwarded again")
+	}))
+	remoteAddress := strings.TrimPrefix(peer.URL, "http://")
+	vs := newProxyTestVolumeServer(t, volumeID, []*master_pb.Location{{Url: remoteAddress}}, nil)
+	vs.guard = security.NewGuard(nil, "", 0, "", 0)
+
+	w := httptest.NewRecorder()
+	vs.GetOrHeadHandler(w, httptest.NewRequest(http.MethodGet, "/"+volumeID+",01637037d6?proxied=true", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status %d, want %d", w.Code, http.StatusNotFound)
 	}
 }

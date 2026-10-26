@@ -232,7 +232,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	hasVolume := vs.store.HasVolume(volumeId)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
-		if vs.ReadMode == "local" {
+		if vs.ReadMode == "local" || r.URL.Query().Get(reqIsProxied) == "true" {
 			stats.VolumeServerFileReadInvalidNeedles.Inc()
 			glog.V(0).Infoln("volume is not local:", err, r.URL.Path)
 			NotFound(w)
