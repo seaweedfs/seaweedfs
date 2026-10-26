@@ -250,7 +250,7 @@ impl Store {
             if effective_free <= 0 {
                 continue;
             }
-            if loc.is_disk_space_low.load(Ordering::Relaxed) {
+            if loc.is_disk_space_low.load(Ordering::Relaxed) || loc.read_only_mount {
                 continue;
             }
             if best.is_none() || effective_free > best.unwrap().1 {
@@ -277,7 +277,7 @@ impl Store {
 
         let mut best: Option<(usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
-            if !pred(loc) || loc.is_disk_space_low.load(Ordering::Relaxed) {
+            if !pred(loc) || loc.is_disk_space_low.load(Ordering::Relaxed) || loc.read_only_mount {
                 continue;
             }
 
@@ -359,6 +359,9 @@ impl Store {
         // (index, tier, owned shard count, free shard slots)
         let mut best: Option<(usize, u8, usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
+            if loc.read_only_mount {
+                continue;
+            }
             let owned = owned_ec_shard_count(loc, vid, shard_ids);
             let free = ec_free_shard_count(loc, data_shard_count);
             if owned == 0 {

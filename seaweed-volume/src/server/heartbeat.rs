@@ -1190,7 +1190,7 @@ fn build_heartbeat_with_ec_status(
     for (disk_id, loc) in store.locations.iter().enumerate() {
         let disk_type_str = loc.disk_type.to_string();
         let mut effective_max_count = loc.max_volume_count.load(Ordering::Relaxed);
-        if loc.is_disk_space_low.load(Ordering::Relaxed) {
+        if loc.is_disk_space_low.load(Ordering::Relaxed) || loc.read_only_mount {
             let used_slots = loc.volumes_len() as i32
                 + loc
                     .ec_shard_count()

@@ -95,6 +95,9 @@ impl Store {
         };
         let mut failed = false;
         for loc in &self.locations {
+            if loc.read_only_mount {
+                continue;
+            }
             if let Err(e) = write_vid_stamp(Path::new(&loc.directory), &stamp) {
                 tracing::warn!("write vid stamp in {}: {}", loc.directory, e);
                 failed = true;
