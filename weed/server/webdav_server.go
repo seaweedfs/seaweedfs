@@ -123,9 +123,11 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// slash; OpenFile refuses a file name ending in "/" only after the
 		// overwritten collection has been removed
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && !fi.IsDir() && strings.HasSuffix(u.Path, "/") {
-			u.Path = strings.TrimRight(u.Path, "/")
-			u.RawPath = ""
-			r.Header.Set("Destination", u.String())
+			if p := strings.TrimRight(u.Path, "/"); p != "" {
+				u.Path = p
+				u.RawPath = ""
+				r.Header.Set("Destination", u.String())
+			}
 		}
 	}
 	h.next.ServeHTTP(w, r)
