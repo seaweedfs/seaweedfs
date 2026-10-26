@@ -235,7 +235,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		inner := processEventFn
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
 			if err := inner(resp); err != nil {
-				glog.Errorf("process %s ts_ns=%d: %v", resp.Directory, resp.TsNs, err)
+				glog.Errorf("process %s -> %s ts_ns=%d: %v", filer_pb.MetadataEventSourceFullPath(resp), filer_pb.MetadataEventTargetFullPath(resp), resp.TsNs, err)
 			}
 			return nil
 		}
