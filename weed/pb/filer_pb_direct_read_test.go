@@ -511,3 +511,31 @@ func TestProcessOneLogEntryDeliversStreamPosition(t *testing.T) {
 		t.Fatalf("mutation ts = %d, want payload stamp 99", got.MutationTsNs)
 	}
 }
+
+// A callback may restamp the delivered event (the meta aggregator moves TsNs
+// to the local buffer position). The returned cursor must stay the log
+// entry's own position, or a resume offset silently skips peer events.
+func TestProcessOneLogEntryCursorIgnoresCallbackRestamp(t *testing.T) {
+	data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b",
+		TsNs:      99,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "foo"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastTsNs, err := processOneLogEntry(&filer_pb.LogEntry{TsNs: 101, Data: data},
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			resp.TsNs = 1 << 40
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastTsNs != 101 {
+		t.Fatalf("cursor = %d, want stream position 101", lastTsNs)
+	}
+}

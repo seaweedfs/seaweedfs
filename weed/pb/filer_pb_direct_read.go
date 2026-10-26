@@ -256,12 +256,15 @@ func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processE
 	}
 	event.TsNs = logEntry.TsNs
 	if !matchesFilter(event, filter) {
-		return event.TsNs, nil
+		return logEntry.TsNs, nil
 	}
+	// Return the entry's stream position, not event.TsNs: the callback may
+	// restamp the event with its own delivery position, and callers resume
+	// from the returned offset.
 	if err := processEventFn(event); err != nil {
-		return event.TsNs, fmt.Errorf("process event: %w", err)
+		return logEntry.TsNs, fmt.Errorf("process event: %w", err)
 	}
-	return event.TsNs, nil
+	return logEntry.TsNs, nil
 }
 
 // --- path filtering (mirrors server-side eachEventNotificationFn logic) ---
