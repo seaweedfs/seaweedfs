@@ -38,14 +38,24 @@ enum Command {
     Describe {
         /// Delimiter-joined table id, e.g. bucket$table.
         id: String,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
     },
     /// Which fragments each vector index covers.
-    Coverage { id: String },
+    Coverage {
+        id: String,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
+    },
     /// A top-K query over the whole dataset.
     Query {
         id: String,
         /// Comma-separated floats, e.g. --vector 0.1,0.2,0.3,0.4
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         vector: String,
         #[arg(long, default_value = "10")]
         k: usize,
@@ -73,7 +83,14 @@ enum Command {
         nprobes: Option<usize>,
     },
     /// Fetch rows by key.
-    Get { id: String, keys: Vec<String> },
+    Get {
+        id: String,
+        keys: Vec<String>,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
+    },
 }
 
 /// `id` is a delimiter-joined table id; when it looks like a URI (`s3://...`,
@@ -114,10 +131,19 @@ async fn main() -> Result<()> {
     let client = NamespaceClient::new(args.namespace).with_fallback(&fallback);
 
     match args.command {
-        Command::Describe { id } => {
+        Command::Describe {
+            id,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
-            let vector = VectorTable::resolve(&dataset, None, None).ok();
+            let resolved =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref());
+            let vector = match resolved {
+                Err(e) if vector_column.is_some() || key_column.is_some() => return Err(e),
+                r => r.ok(),
+            };
             let coverages = match &vector {
                 Some(v) => coverage::coverage(&dataset, &v.vector_column).await?,
                 None => Vec::new(),
@@ -145,15 +171,26 @@ async fn main() -> Result<()> {
                 })
             );
         }
-        Command::Coverage { id } => {
+        Command::Coverage {
+            id,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
-            let vector = VectorTable::resolve(&dataset, None, None)?;
+            let vector =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             let coverages = coverage::coverage(&dataset, &vector.vector_column).await?;
             println!("{}", serde_json::to_string_pretty(&coverages)?);
         }
-        Command::Get { id, keys } => {
+        Command::Get {
+            id,
+            keys,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
-            let vector = VectorTable::resolve(&dataset, None, None)?;
+            let vector =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             for batch in query::get(&dataset, &vector, &keys).await? {
                 println!("{}", arrow_cast::pretty::pretty_format_batches(&[batch])?);
             }
@@ -206,4 +243,63 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_flag_takes_hyphenated_floats() {
+        let args = Args::try_parse_from([
+            "weed-vector",
+            "query",
+            "t",
+            "--vector",
+            "-1,-1,-1,-1",
+            "--k",
+            "3",
+        ])
+        .unwrap();
+        match args.command {
+            Command::Query { vector, k, .. } => {
+                assert_eq!(vector, "-1,-1,-1,-1");
+                assert_eq!(k, 3);
+            }
+            _ => panic!("expected query"),
+        }
+    }
+
+    #[test]
+    fn column_flags_on_get_describe_coverage() {
+        for argv in [
+            vec!["weed-vector", "get", "t", "k1"],
+            vec!["weed-vector", "describe", "t"],
+            vec!["weed-vector", "coverage", "t"],
+        ] {
+            let mut argv = argv;
+            argv.extend(["--vector-column", "v", "--key-column", "kk"]);
+            let args = Args::try_parse_from(argv).unwrap();
+            let (v, k) = match args.command {
+                Command::Get {
+                    vector_column,
+                    key_column,
+                    ..
+                }
+                | Command::Describe {
+                    vector_column,
+                    key_column,
+                    ..
+                }
+                | Command::Coverage {
+                    vector_column,
+                    key_column,
+                    ..
+                } => (vector_column, key_column),
+                _ => panic!("unexpected subcommand"),
+            };
+            assert_eq!(v.as_deref(), Some("v"));
+            assert_eq!(k.as_deref(), Some("kk"));
+        }
+    }
 }
