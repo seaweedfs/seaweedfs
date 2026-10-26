@@ -6079,10 +6079,14 @@ pub fn scan_volume_file(
     Ok(())
 }
 
+/// Whether `preallocate_file` reserves blocks on this platform; off Linux it
+/// is a no-op, so a create must not be charged for space it will not reserve.
+pub(crate) const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+
 /// Reserve disk blocks for a file without changing its visible size.
 /// On Linux, uses `fallocate(FALLOC_FL_KEEP_SIZE)` to actually reserve blocks.
 /// On other platforms, this is a no-op.
-fn preallocate_file(file: &File, size: u64) {
+pub(crate) fn preallocate_file(file: &File, size: u64) {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
@@ -6108,6 +6112,21 @@ fn preallocate_file(file: &File, size: u64) {
     {
         let _ = (file, size);
         tracing::debug!(bytes = size, "preallocation not supported on this platform");
+    }
+}
+
+/// Bytes the filesystem holds for the file, which exceeds its size after a
+/// FALLOC_FL_KEEP_SIZE preallocate — Go's AllocatedSize.
+pub(crate) fn allocated_file_size(file: &File) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return file.metadata().map(|m| m.blocks() * 512).unwrap_or(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        0
     }
 }
 

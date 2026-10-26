@@ -38,6 +38,10 @@ type DiskLocation struct {
 	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
 	AvailableSpace         atomic.Uint64
+	// Headroom promised to in-flight copies that statfs cannot see yet.
+	// Probes keep it out of AvailableSpace so they cannot re-spend it; a
+	// copy that lands ends its charge, one that fails removes only its own.
+	ReservedSpace atomic.Uint64
 	// Physical filesystem capacity from the latest CheckDiskSpace probe, reported
 	// to the master so balancing can see real disk fullness, not just slot counts.
 	diskTotalBytes atomic.Uint64
@@ -738,7 +742,11 @@ func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
-		l.AvailableSpace.Store(available)
+		if pending := l.ReservedSpace.Load(); pending < available {
+			l.AvailableSpace.Store(available - pending)
+		} else {
+			l.AvailableSpace.Store(0)
+		}
 		l.diskTotalBytes.Store(s.All)
 		l.diskFreeBytes.Store(s.Free)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)

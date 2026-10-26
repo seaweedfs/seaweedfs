@@ -10,6 +10,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend/memory_map/os_overloads"
 )
 
+// PreallocateSupported reports whether CreateVolumeFile reserves the
+// requested size on this platform.
+const PreallocateSupported = false
+
 func CreateVolumeFile(fileName string, preallocate int64, memoryMapSizeMB uint32) (BackendStorageFile, error) {
 	if preallocate > 0 {
 		glog.V(0).Infof("Preallocated disk space for %s is not supported", fileName)

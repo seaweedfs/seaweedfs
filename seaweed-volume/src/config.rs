@@ -352,6 +352,25 @@ pub enum MinFreeSpace {
     Bytes(u64),
 }
 
+impl MinFreeSpace {
+    /// Mirrors Go's MinFreeSpace.IsLow.
+    pub fn is_low(&self, free_bytes: u64, total_bytes: u64) -> bool {
+        match self {
+            MinFreeSpace::Percent(pct) => free_bytes as f64 / total_bytes as f64 * 100.0 < *pct,
+            MinFreeSpace::Bytes(min) => free_bytes < *min,
+        }
+    }
+
+    /// Free bytes above the floor; mirrors Go's MinFreeSpace.AvailableSpace.
+    pub fn available_space(&self, free_bytes: u64, total_bytes: u64) -> u64 {
+        let floor = match self {
+            MinFreeSpace::Percent(pct) => (total_bytes as f64 * pct / 100.0) as u64,
+            MinFreeSpace::Bytes(min) => *min,
+        };
+        free_bytes.saturating_sub(floor)
+    }
+}
+
 /// Convert single-dash long options to double-dash for clap compatibility.
 /// Go's `flag` package uses `-port`, clap expects `--port`.
 /// This allows both `-port 8080` and `--port 8080` to work.

@@ -59,8 +59,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
-	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
-		var err error
+	var copyLocation *storage.DiskLocation
+	var copyReservedSpace uint64
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) (err error) {
 		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: req.VolumeId,
 		})
@@ -82,18 +83,77 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			diskType = req.DiskType
 		}
 		hasRemoteDatFile = volFileInfoResp.VolumeInfo != nil && len(volFileInfoResp.VolumeInfo.Files) > 0
+
+		var preallocateSize int64
+		if grpcErr := pb.WithMasterClient(context.Background(), false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
+			}
+			if resp.VolumePreallocate {
+				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
+			}
+			return nil
+		}); grpcErr != nil {
+			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
+		}
+
 		// a remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier
 		neededSpace := volFileInfoResp.DatFileSize
 		if hasRemoteDatFile {
 			neededSpace = volFileInfoResp.IdxFileSize
+		} else if backend.PreallocateSupported && uint64(preallocateSize) > neededSpace {
+			// the .dat reserves the master's volume size limit up front, so the
+			// location must fit the reservation, not just the copied bytes
+			neededSpace = uint64(preallocateSize)
 		}
-		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+		location := vs.store.ReserveFreeLocation(neededSpace, func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
 				location.AvailableSpace.Load() > neededSpace
 		}, needle.VolumeId(req.VolumeId))
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
 		}
+		copyLocation = location
+		copyReservedSpace = neededSpace
+
+		// The headroom charge covers bytes promised but not yet visible to
+		// statfs; as the copy's bytes land they stop needing the charge, so a
+		// slow copy does not count its own .dat against the free space a
+		// second reservation needs.
+		commitCopy := func(n uint64) {
+			if n > copyReservedSpace {
+				n = copyReservedSpace
+			}
+			if n > 0 {
+				vs.store.CommitFreeLocation(location, n)
+				copyReservedSpace -= n
+			}
+		}
+		newCopyProgress := func(skip uint64) func(int64) {
+			counted := int64(skip)
+			return func(processed int64) {
+				if processed > counted {
+					commitCopy(uint64(processed - counted))
+					counted = processed
+				}
+			}
+		}
+
+		defer func() {
+			if err != nil {
+				if dataBaseFileName != "" {
+					os.Remove(dataBaseFileName + ".dat")
+					os.Remove(indexBaseFileName + ".idx")
+					os.Remove(dataBaseFileName + ".vif")
+					os.Remove(dataBaseFileName + ".note")
+				}
+				// Zero before the outer defer sees the same error, or the
+				// charge would be released twice.
+				vs.store.ReleaseFreeLocation(location, copyReservedSpace)
+				copyReservedSpace = 0
+			}
+		}()
 
 		// Source is reachable and a destination is reserved: only now is it
 		// safe to drop an existing local replica before overwriting its files.
@@ -117,34 +177,19 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
 		}
 
-		defer func() {
-			if err != nil {
-				os.Remove(dataBaseFileName + ".dat")
-				os.Remove(indexBaseFileName + ".idx")
-				os.Remove(dataBaseFileName + ".vif")
-				os.Remove(dataBaseFileName + ".note")
-			}
-		}()
-
-		var preallocateSize int64
-		if grpcErr := pb.WithMasterClient(context.Background(), false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-			if err != nil {
-				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
-			}
-			if resp.VolumePreallocate {
-				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
-			}
-			return nil
-		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
-		}
-
+		var copyDatAllocated uint64
 		if preallocateSize > 0 && !hasRemoteDatFile {
 			volumeFile := dataBaseFileName + ".dat"
 			_, err := backend.CreateVolumeFile(volumeFile, preallocateSize, 0)
 			if err != nil {
 				return fmt.Errorf("create volume file %s: %v", volumeFile, err)
+			}
+			// fallocate already holds those bytes on disk; when the
+			// filesystem did not reserve them the write progress below
+			// settles the charge as the bytes land instead.
+			if fi, statErr := os.Stat(volumeFile); statErr == nil {
+				copyDatAllocated = storage.AllocatedSize(fi)
+				commitCopy(copyDatAllocated)
 			}
 		}
 
@@ -163,7 +208,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		throttler := util.NewWriteThrottler(ioBytePerSecond)
 
 		if !hasRemoteDatFile {
-			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", false, true, func(processed int64) bool {
+			datProgress := newCopyProgress(copyDatAllocated)
+			// Write into the .dat CreateVolumeFile just made: the staged
+			// .copying file would peak at preallocate+dat on disk and then
+			// discard the fallocated blocks at rename.
+			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", preallocateSize > 0, true, func(processed int64) bool {
+				datProgress(processed)
 				if processed > nextReportTarget {
 					copyResponse.ProcessedBytes = processed
 					if sendErr = stream.Send(copyResponse); sendErr != nil {
@@ -183,14 +233,22 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}
 
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false, nil, throttler); err != nil {
+		idxProgress := newCopyProgress(0)
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false, func(processed int64) bool {
+			idxProgress(processed)
+			return true
+		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
 			os.Chtimes(indexBaseFileName+".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, dataBaseFileName, ".vif", false, true, nil, throttler); err != nil {
+		vifProgress := newCopyProgress(0)
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, dataBaseFileName, ".vif", false, true, func(processed int64) bool {
+			vifProgress(processed)
+			return true
+		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
@@ -227,10 +285,16 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	datFileName = dataBaseFileName + ".dat"
 
 	defer func() {
-		if err != nil && dataBaseFileName != "" {
+		if copyLocation == nil {
+			return
+		}
+		if err != nil {
 			os.Remove(idxFileName)
 			os.Remove(datFileName)
 			os.Remove(dataBaseFileName + ".vif")
+			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
+		} else {
+			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
 		}
 	}()
 

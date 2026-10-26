@@ -20,7 +20,9 @@ use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
-use crate::storage::volume::VolumeSpec;
+use crate::storage::volume::{
+    PREALLOCATE_SUPPORTED, VolumeSpec, allocated_file_size, preallocate_file,
+};
 
 use super::grpc_client::{
     GrpcDialOptions, VolumeServerGrpcClient, connect_channel, connect_channel_guarded,
@@ -2067,8 +2069,13 @@ impl VolumeServer for VolumeGrpcService {
         let source_status_before =
             fetch_source_status_before(&mut client, req.volume_id, vid).await;
         let source = SourceVolumeStatus::fetch(&mut client, req.volume_id).await?;
-        let dest = self.plan_copy_destination(&req, vid, &source, had_existing_volume)?;
-        dest.write_note(vid, &req.source_data_node)?;
+        let preallocate_size = self.copy_preallocate_size(&source).await;
+        let dest =
+            self.plan_copy_destination(&req, vid, &source, had_existing_volume, preallocate_size)?;
+        if let Err(e) = dest.write_note(vid, &req.source_data_node) {
+            dest.release_reservation(&self.state.store.read().unwrap());
+            return Err(e);
+        }
 
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeCopyResponse, Status>>(16);
@@ -2079,6 +2086,7 @@ impl VolumeServer for VolumeGrpcService {
             source,
             source_status_before,
             dest,
+            preallocate_size,
             tx,
         };
 
@@ -2088,8 +2096,11 @@ impl VolumeServer for VolumeGrpcService {
             // races a departing caller is the one case where the existing
             // file-only cleanup leaves the volume loaded in memory.
             let mut mounted = false;
-            if let Err(e) = job.run(&mut client, &mut mounted).await {
-                job.cleanup_failed_copy(e, mounted).await;
+            match job.run(&mut client, &mut mounted).await {
+                Ok(()) => job
+                    .dest
+                    .commit_reservation(&job.state.store.read().unwrap()),
+                Err(e) => job.cleanup_failed_copy(e, mounted).await,
             }
         });
 
@@ -5625,6 +5636,11 @@ struct CopyDestination {
     disk_type: DiskType,
     /// A remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier.
     has_remote_dat: bool,
+    /// The disk and headroom charge held by reserve_free_location; the copy
+    /// settles it as its bytes land on disk, and a failed copy releases only
+    /// what is still promised.
+    loc_idx: usize,
+    reserved_space: std::sync::atomic::AtomicU64,
 }
 
 impl CopyDestination {
@@ -5639,6 +5655,27 @@ impl CopyDestination {
         std::fs::write(&note_path, format!("copying from {}", source))
             .map_err(|e| Status::internal(format!("write .note for volume {}: {}", vid, e)))?;
         Ok(())
+    }
+
+    /// Bytes the copy put on disk stop needing the headroom charge, so a
+    /// slow copy does not count its own .dat against the free space a
+    /// second reservation needs.
+    fn settle_reservation(&self, store: &crate::storage::store::Store, n: u64) {
+        let n = n.min(self.reserved_space.load(Ordering::Relaxed));
+        if n > 0 {
+            store.commit_free_location(self.loc_idx, n);
+            self.reserved_space.fetch_sub(n, Ordering::Relaxed);
+        }
+    }
+
+    fn release_reservation(&self, store: &crate::storage::store::Store) {
+        store.release_free_location(self.loc_idx, self.reserved_space.swap(0, Ordering::Relaxed));
+    }
+
+    /// The copied bytes are on disk now, so the pending charge ends without
+    /// refunding the cache — the charge and the landed usage cancel out.
+    fn commit_reservation(&self, store: &crate::storage::store::Store) {
+        store.commit_free_location(self.loc_idx, self.reserved_space.swap(0, Ordering::Relaxed));
     }
 }
 
@@ -5674,6 +5711,36 @@ impl VolumeGrpcService {
         Ok(volume_server_client(channel))
     }
 
+    /// Query master for the .dat reservation a copy will make, as Go's
+    /// VolumeCopy does before picking a destination. A remote-backed volume
+    /// lands no .dat, so only a local copy needs the reservation.
+    async fn copy_preallocate_size(&self, source: &SourceVolumeStatus) -> i64 {
+        let has_remote_dat = source
+            .volume_info
+            .as_ref()
+            .map(|vi| !vi.files.is_empty())
+            .unwrap_or(false);
+        if !has_remote_dat {
+            let master = self.state.current_master().await;
+            let grpc_addr = super::heartbeat::to_grpc_address(&master);
+            match super::heartbeat::try_get_master_configuration(
+                &grpc_addr,
+                self.state.outgoing_grpc_tls.as_ref(),
+            )
+            .await
+            {
+                Ok(resp) if resp.volume_preallocate => {
+                    return resp.volume_size_limit_m_b as i64 * 1024 * 1024;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("get master {} configuration: {}", master, e);
+                }
+            }
+        }
+        0
+    }
+
     /// Picks the destination disk and, under the same write lock, drops a
     /// pre-existing local replica so its slot counts as free for the pick.
     fn plan_copy_destination(
@@ -5682,6 +5749,7 @@ impl VolumeGrpcService {
         vid: VolumeId,
         vol_info: &SourceVolumeStatus,
         had_existing_volume: bool,
+        preallocate_size: i64,
     ) -> Result<CopyDestination, Status> {
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
@@ -5694,17 +5762,24 @@ impl VolumeGrpcService {
             .as_ref()
             .map(|vi| !vi.files.is_empty())
             .unwrap_or(false);
-        let needed_space = if has_remote_dat {
+        let mut needed_space = if has_remote_dat {
             vol_info.idx_file_size
         } else {
             vol_info.dat_file_size
         };
+        if !has_remote_dat && PREALLOCATE_SUPPORTED && preallocate_size as u64 > needed_space {
+            // the .dat reserves the master's volume size limit up front, so
+            // the location must fit the reservation, not just the copied
+            // bytes (Go's neededSpace)
+            needed_space = preallocate_size as u64;
+        }
 
-        // Find a free disk location using Go's Store.FindFreeLocation
+        // Find a free disk location using Go's Store.ReserveFreeLocation
         // semantics; the slot of the replica being replaced counts as free.
-        let (data_base, idx_base, selected_disk_type) = {
+        let ((data_base, idx_base, selected_disk_type), loc_idx) = {
             let mut store = self.state.store.write().unwrap();
-            let Some(loc_idx) = store.find_free_location_predicate(
+            let Some(loc_idx) = store.reserve_free_location(
+                needed_space,
                 |loc| {
                     loc.disk_type == requested_disk_type
                         && loc.available_space.load(Ordering::Relaxed) > needed_space
@@ -5723,9 +5798,12 @@ impl VolumeGrpcService {
                 loc.disk_type.clone(),
             );
             if had_existing_volume {
-                delete_existing_replica(&mut store, vid, vol_info)?;
+                if let Err(e) = delete_existing_replica(&mut store, vid, vol_info) {
+                    store.release_free_location(loc_idx, needed_space);
+                    return Err(e);
+                }
             }
-            selected
+            (selected, loc_idx)
         };
         if had_existing_volume {
             self.state.volume_state_notify.notify_one();
@@ -5741,6 +5819,8 @@ impl VolumeGrpcService {
             idx_base_name,
             disk_type: selected_disk_type,
             has_remote_dat,
+            loc_idx,
+            reserved_space: std::sync::atomic::AtomicU64::new(needed_space),
         })
     }
 }
@@ -5753,6 +5833,7 @@ struct VolumeCopyJob {
     source: SourceVolumeStatus,
     source_status_before: Option<volume_server_pb::VolumeStatusResponse>,
     dest: CopyDestination,
+    preallocate_size: i64,
     tx: tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
 }
 
@@ -5782,15 +5863,24 @@ impl VolumeCopyJob {
         };
         let mut throttler = WriteThrottler::new(io_byte_per_second);
 
-        self.preallocate_dat().await?;
+        let dat_on_disk = self.preallocate_dat().await?;
 
+        let dest = &self.dest;
+        let store = &self.state.store;
+        let mut settle = |landed: i64| {
+            if landed > 0 {
+                dest.settle_reservation(&store.read().unwrap(), landed as u64);
+            }
+        };
         let mut progress = CopyProgress {
             tx,
             next_report_target: &mut next_report_target,
             report_interval,
             throttler: &mut throttler,
+            settle: &mut settle,
         };
-        self.transfer_files(client, &mut progress).await?;
+        self.transfer_files(client, &mut progress, dat_on_disk)
+            .await?;
 
         let source_status_after =
             fetch_source_status_after(client, self.req.volume_id, vid, tx).await?;
@@ -5799,64 +5889,39 @@ impl VolumeCopyJob {
             .await
     }
 
-    /// Query master for preallocation settings (matching Go VolumeCopy behavior).
-    async fn preallocate_dat(&self) -> Result<(), Status> {
-        let (state, vid, tx) = (&self.state, self.vid, &self.tx);
+    /// Reserve the .dat's full size up front, matching Go's VolumeCopy
+    /// CreateVolumeFile. Returns the bytes the filesystem actually holds —
+    /// settled at once, since statfs already counts them — which a failed
+    /// fallocate reports as 0 so the write progress settles them instead.
+    async fn preallocate_dat(&self) -> Result<u64, Status> {
         let (data_base_name, has_remote_dat) =
             (&self.dest.data_base_name, self.dest.has_remote_dat);
-        let mut preallocate_size: i64 = 0;
-        if !has_remote_dat {
-            let master = state.current_master().await;
-            let grpc_addr = super::heartbeat::to_grpc_address(&master);
-            // Race the master-configuration RPC against the caller's
-            // response channel: a stalled master (or a slow leader
-            // election) would otherwise hold the task and its .note
-            // past a departing caller, since the per-chunk checks in
-            // copy_file_from_source are never reached.
-            let config = tokio::select! {
-                res = super::heartbeat::try_get_master_configuration(
-                    &grpc_addr,
-                    state.outgoing_grpc_tls.as_ref(),
-                ) => res,
-                _ = tx.closed() => {
-                    return Err(Status::cancelled(format!(
-                        "volume {} copy cancelled by caller",
-                        vid
-                    )));
-                }
-            };
-            match config {
-                Ok(resp) => {
-                    if resp.volume_preallocate {
-                        preallocate_size = resp.volume_size_limit_m_b as i64 * 1024 * 1024;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("get master {} configuration: {}", master, e);
-                }
-            }
-
-            if preallocate_size > 0 {
-                let dat_path = format!("{}.dat", data_base_name);
-                let file = std::fs::File::create(&dat_path).map_err(|e| {
-                    Status::internal(format!(
-                        "create preallocated volume file {}: {}",
-                        dat_path, e
-                    ))
-                })?;
-                file.set_len(preallocate_size as u64).map_err(|e| {
-                    Status::internal(format!("preallocate volume file {}: {}", dat_path, e))
-                })?;
-            }
+        let preallocate_size = self.preallocate_size;
+        if preallocate_size <= 0 || has_remote_dat {
+            return Ok(0);
         }
-        Ok(())
+        let dat_path = format!("{}.dat", data_base_name);
+        let file = std::fs::File::create(&dat_path).map_err(|e| {
+            Status::internal(format!(
+                "create preallocated volume file {}: {}",
+                dat_path, e
+            ))
+        })?;
+        preallocate_file(&file, preallocate_size as u64);
+        let allocated = allocated_file_size(&file);
+        self.dest
+            .settle_reservation(&self.state.store.read().unwrap(), allocated);
+        Ok(allocated)
     }
 
     /// Pull the .dat (unless it stays in the remote tier), .idx and .vif.
+    /// dat_on_disk is how much of the .dat statfs already counts, so only
+    /// writes past it settle the charge.
     async fn transfer_files(
         &self,
         client: &mut VolumeServerGrpcClient,
         progress: &mut CopyProgress<'_>,
+        dat_on_disk: u64,
     ) -> Result<(), Status> {
         let (req, vol_info) = (&self.req, &self.source);
         let (data_base_name, idx_base_name, has_remote_dat) = (
@@ -5864,7 +5929,9 @@ impl VolumeCopyJob {
             &self.dest.idx_base_name,
             self.dest.has_remote_dat,
         );
-        // Copy .dat file
+        // Copy .dat file. Writing in place into the just-preallocated file
+        // keeps its fallocated blocks — truncating would free them at open
+        // and re-spend the headroom as the bytes stream back in.
         if !has_remote_dat {
             let dat_path = format!("{}.dat", data_base_name);
             let dat_modified_ts_ns = copy_file_from_source(
@@ -5877,9 +5944,10 @@ impl VolumeCopyJob {
                     stop_offset: vol_info.dat_file_size,
                     dest_path: &dat_path,
                     ext: ".dat",
-                    is_append: false,
+                    is_append: self.preallocate_size > 0,
                     ignore_source_not_found: true,
                     report_progress: true,
+                    settle_skip: dat_on_disk as i64,
                 },
                 progress,
             )
@@ -5904,6 +5972,7 @@ impl VolumeCopyJob {
                 is_append: false,
                 ignore_source_not_found: false,
                 report_progress: false,
+                settle_skip: 0,
             },
             progress,
         )
@@ -5927,6 +5996,7 @@ impl VolumeCopyJob {
                 is_append: false,
                 ignore_source_not_found: true,
                 report_progress: false,
+                settle_skip: 0,
             },
             progress,
         )
@@ -6096,6 +6166,8 @@ impl VolumeCopyJob {
         let _ = std::fs::remove_file(format!("{}.idx", idx_base_name));
         let _ = std::fs::remove_file(format!("{}.vif", data_base_name));
         let _ = std::fs::remove_file(&note_path);
+        self.dest
+            .release_reservation(&state.store.read().unwrap());
         let _ = tx.send(Err(e)).await;
     }
 }
@@ -6294,6 +6366,9 @@ struct CopyFileSpec<'a> {
     ignore_source_not_found: bool,
     /// Whether this file's bytes are reported back to the caller as progress.
     report_progress: bool,
+    /// Bytes of this file statfs already counts (a fallocated .dat); only
+    /// writes past it settle the copy's headroom charge.
+    settle_skip: i64,
 }
 
 /// Progress reporting and throttling shared by every file of one volume copy.
@@ -6302,6 +6377,8 @@ struct CopyProgress<'a> {
     next_report_target: &'a mut i64,
     report_interval: i64,
     throttler: &'a mut WriteThrottler,
+    /// Settles the headroom charge for bytes newly visible to statfs.
+    settle: &'a mut (dyn FnMut(i64) + Send),
 }
 
 /// Mirrors Go's checkVolumeFileExtension: the client-supplied Ext that
@@ -6353,6 +6430,7 @@ where
         is_append,
         ignore_source_not_found,
         report_progress,
+        settle_skip,
     } = *spec;
     let progress_tx = progress.tx;
     let copy_req = volume_server_pb::CopyFileRequest {
@@ -6411,6 +6489,7 @@ where
 
     let mut progressed_bytes: i64 = 0;
     let mut modified_ts_ns: i64 = 0;
+    let mut settled_bytes: i64 = 0;
 
     // The source stream's message() future is the one await in this loop that
     // can hang indefinitely: a stalled source (slow disk, network partition,
@@ -6445,6 +6524,11 @@ where
             file.write_all(&resp.file_content)
                 .map_err(|e| Status::internal(format!("write file {}: {}", dest_path, e)))?;
             progressed_bytes += resp.file_content.len() as i64;
+            // Writes past settle_skip are new usage statfs can see; the
+            // copy's headroom charge settles as they land.
+            let landed = (progressed_bytes - settle_skip).max(0);
+            (progress.settle)(landed - settled_bytes);
+            settled_bytes = landed;
             // A throttled copy sleeps seconds at a time; wake for a departing
             // caller instead of finishing the nap first.
             tokio::select! {
@@ -8931,12 +9015,14 @@ mod tests {
                 is_append: false,
                 ignore_source_not_found: true,
                 report_progress: true,
+                settle_skip: 0,
             },
             &mut CopyProgress {
                 tx: &tx,
                 next_report_target: &mut next_report_target,
                 report_interval: 128 * 1024 * 1024,
                 throttler: &mut throttler,
+                settle: &mut |_| {},
             },
         )
         .await

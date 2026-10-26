@@ -114,6 +114,9 @@ type Store struct {
 	vidStampReady         atomic.Bool
 	vidStampDirty         atomic.Bool
 	vidStampLock          sync.Mutex
+	// volumeCreateLock serializes addVolume, so each room check sees the
+	// preallocation of every volume created before it.
+	volumeCreateLock sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -339,7 +342,58 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 	}
 	return ret
 }
+
+// ReserveFreeLocation picks like FindFreeLocation, but under volumeCreateLock
+// and against live disk stats rather than the once-a-minute probe, then
+// charges need against the location's pending reservations. A VolumeCopy's
+// pick and its .dat reservation are separate steps; without this a second
+// copy can spend the same headroom and drive the disk under -volume.minFreeSpace.
+func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) *DiskLocation {
+	s.volumeCreateLock.Lock()
+	defer s.volumeCreateLock.Unlock()
+	location := s.FindFreeLocation(func(location *DiskLocation) bool {
+		if location.AvailableSpace.Load() <= need {
+			return false
+		}
+		if filterFn != nil && !filterFn(location) {
+			return false
+		}
+		status := diskStatusOf(location.Directory)
+		if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
+			return false
+		}
+		return location.MinFreeSpace.AvailableSpace(status.Free, status.All) > location.ReservedSpace.Load()+need
+	}, replaceVid...)
+	if location == nil {
+		return nil
+	}
+	status := diskStatusOf(location.Directory)
+	location.ReservedSpace.Add(need)
+	if available := location.MinFreeSpace.AvailableSpace(status.Free, status.All); available > location.ReservedSpace.Load() {
+		location.AvailableSpace.Store(available - location.ReservedSpace.Load())
+	} else {
+		location.AvailableSpace.Store(0)
+	}
+	return location
+}
+
+// ReleaseFreeLocation returns space ReserveFreeLocation charged when the copy
+// it paid for does not land. Removing the pending charge first keeps a probe
+// that already rebased the cache from seeing the refund twice.
+func (s *Store) ReleaseFreeLocation(location *DiskLocation, need uint64) {
+	location.ReservedSpace.Add(-need)
+	location.AvailableSpace.Add(need)
+}
+
+// CommitFreeLocation settles a reservation whose copy landed: the bytes are
+// real on disk, so only the pending charge ends — the cache keeps the charge,
+// which now matches the live usage the next probe will read.
+func (s *Store) CommitFreeLocation(location *DiskLocation, need uint64) {
+	location.ReservedSpace.Add(-need)
+}
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+	s.volumeCreateLock.Lock()
+	defer s.volumeCreateLock.Unlock()
 	s.UpdateMaxVolumeIdSeen(vid)
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
@@ -350,7 +404,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	var diskId uint32
 	var minVolCount int
 	for i, loc := range s.Locations {
-		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) {
+		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) && hasRoomForNewVolume(loc, preallocate) {
 			volCount := loc.LocalVolumesLen()
 			if location == nil || volCount < minVolCount {
 				location = loc
@@ -385,6 +439,38 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 		}
 	}
 	return fmt.Errorf("No more free space left")
+}
+
+// Create-time metadata a location must still fit after a preallocation: .vif
+// always lands beside the data file; the .idx a writable volume keeps
+// appending counts only when dir_idx shares the filesystem. Holding these
+// back keeps an exact-fit reservation from dipping under the floor once the
+// metadata is written.
+const (
+	volumeCreateVifBytes = 1 << 20
+	volumeCreateIdxBytes = 4 << 20
+)
+
+// hasRoomForNewVolume reports whether a preallocated volume may be created on
+// location. A preallocated volume reserves its full size up front, so it must
+// fit in the free space above -volume.minFreeSpace; this reads the disk now
+// rather than the once-a-minute low-disk flag, so a burst of creates cannot run
+// the disk through the floor between two probes. A volume without preallocation
+// reserves nothing — nor does one on a platform where CreateVolumeFile cannot
+// preallocate — and copying existing data into one (a merge) is always allowed.
+func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
+	if preallocate <= 0 || !createVolumeFilePreallocates {
+		return true
+	}
+	status := diskStatusOf(location.Directory)
+	if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
+		return false
+	}
+	need := uint64(preallocate) + volumeCreateVifBytes
+	if sameFilesystem(location.Directory, location.IdxDirectory) {
+		need += volumeCreateIdxBytes
+	}
+	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= need+location.ReservedSpace.Load()
 }
 
 // hasFreeDiskLocation checks if a disk location has free space
@@ -1375,6 +1461,15 @@ func (s *Store) GetPreallocate() bool {
 	return s.preallocate.Load()
 }
 
+// diskStatusOf reads the usage of the disk holding a directory. It is a
+// variable so a test can stand in for a disk that is full or near its floor.
+var diskStatusOf = stats.NewDiskStatus
+
+// createVolumeFilePreallocates reports whether CreateVolumeFile reserves the
+// requested size on this platform. It is a variable so a test can exercise
+// the guard off Linux.
+var createVolumeFilePreallocates = backend.PreallocateSupported
+
 func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	volumeSizeLimit := s.GetVolumeSizeLimit()
 	if volumeSizeLimit == 0 {
@@ -1384,9 +1479,10 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
-			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
+			diskStatus := diskStatusOf(diskLocation.Directory)
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
-			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
+			// Free space under -volume.minFreeSpace is not available for new volumes.
+			unclaimedSpaces := int64(diskLocation.MinFreeSpace.AvailableSpace(diskStatus.Free, diskStatus.All)) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)

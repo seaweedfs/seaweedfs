@@ -20,7 +20,9 @@ use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE, SuperBlock};
 use crate::storage::types::*;
-use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
+use crate::storage::volume::{
+    CompactionJob, PREALLOCATE_SUPPORTED, VifVolumeInfo, Volume, VolumeError, VolumeSpec,
+};
 
 /// Mirrors Go's ensureCompactVolumeSpace, per filesystem: the new .dat lands
 /// next to the old one and the new .idx next to the old index, so when the
@@ -52,6 +54,40 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
     }
 }
 
+// Create-time metadata a location must still fit after a preallocation: .vif
+// always lands beside the data file; the .idx a writable volume keeps
+// appending counts only when dir_idx shares the filesystem. Holding these
+// back keeps an exact-fit reservation from dipping under the floor once the
+// metadata is written.
+const VOLUME_CREATE_VIF_BYTES: u64 = 1 << 20;
+const VOLUME_CREATE_IDX_BYTES: u64 = 4 << 20;
+
+/// Mirrors Go's hasRoomForNewVolume: a preallocated volume reserves its full
+/// size up front, so it must fit in the free space above the min-free-space
+/// floor. Reads the disk now rather than the once-a-probe is_disk_space_low
+/// flag. A volume without preallocation reserves nothing, as does one on a
+/// platform where preallocate_file is a no-op.
+fn has_room_for_new_volume(
+    location: &DiskLocation,
+    preallocate: u64,
+    preallocate_supported: bool,
+    disk_stats_of: fn(&str) -> (u64, u64),
+) -> bool {
+    if preallocate == 0 || !preallocate_supported {
+        return true;
+    }
+    let (all, free) = disk_stats_of(&location.directory);
+    if location.min_free_space.is_low(free, all) {
+        return false;
+    }
+    let mut need = preallocate + VOLUME_CREATE_VIF_BYTES;
+    if same_filesystem(&location.directory, &location.idx_directory) {
+        need += VOLUME_CREATE_IDX_BYTES;
+    }
+    location.min_free_space.available_space(free, all)
+        >= need + location.reserved_space.load(Ordering::Relaxed)
+}
+
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
     pub locations: Vec<DiskLocation>,
@@ -76,6 +112,13 @@ pub struct Store {
     pub last_seen_topology_id: Mutex<String>,
     pub vid_stamp_lock: Mutex<()>,
     pub vid_stamp_dirty: std::sync::atomic::AtomicBool,
+    /// Reads (total, free) for a directory; a field so a test can stand in
+    /// for a disk that is full or near its floor. Go: diskStatusOf.
+    disk_stats_of: fn(&str) -> (u64, u64),
+    /// Whether a create actually reserves `preallocate` on this platform; a
+    /// field so a test can exercise the guard off Linux. Go:
+    /// createVolumeFilePreallocates.
+    preallocate_supported: bool,
 }
 
 impl Store {
@@ -99,6 +142,8 @@ impl Store {
             last_seen_topology_id: Mutex::new(String::new()),
             vid_stamp_lock: Mutex::new(()),
             vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
+            disk_stats_of: super::disk_location::get_disk_stats,
+            preallocate_supported: PREALLOCATE_SUPPORTED,
         }
     }
 
@@ -228,7 +273,7 @@ impl Store {
 
     /// Find the location with fewest volumes (load-balance) of the given disk type.
     /// Matches Go's FindFreeLocation: accounts for EC shards when computing free slots.
-    fn find_free_location(&self, disk_type: &DiskType) -> Option<usize> {
+    fn find_free_location(&self, disk_type: &DiskType, preallocate: u64) -> Option<usize> {
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 
         let mut best: Option<(usize, i64)> = None; // (index, effective_free)
@@ -251,6 +296,14 @@ impl Store {
                 continue;
             }
             if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                continue;
+            }
+            if !has_room_for_new_volume(
+                loc,
+                preallocate,
+                self.preallocate_supported,
+                self.disk_stats_of,
+            ) {
                 continue;
             }
             if best.is_none() || effective_free > best.unwrap().1 {
@@ -302,6 +355,64 @@ impl Store {
             }
         }
         best.map(|(i, _)| i)
+    }
+
+    /// Mirrors Go's Store.ReserveFreeLocation: a copy's pick and its .dat
+    /// reservation are separate steps, so verify live space under the store
+    /// lock and charge need against the location's pending reservations, or
+    /// a second copy can spend the same headroom before the first lands.
+    pub fn reserve_free_location<F>(
+        &self,
+        need: u64,
+        pred: F,
+        replace_vid: Option<VolumeId>,
+    ) -> Option<usize>
+    where
+        F: Fn(&DiskLocation) -> bool,
+    {
+        let loc_idx = self.find_free_location_predicate(
+            |loc| {
+                if loc.available_space.load(Ordering::Relaxed) <= need || !pred(loc) {
+                    return false;
+                }
+                let (all, free) = (self.disk_stats_of)(&loc.directory);
+                !loc.min_free_space.is_low(free, all)
+                    && loc.min_free_space.available_space(free, all)
+                        > loc.reserved_space.load(Ordering::Relaxed) + need
+            },
+            replace_vid,
+        )?;
+        let loc = &self.locations[loc_idx];
+        let (all, free) = (self.disk_stats_of)(&loc.directory);
+        loc.reserved_space.fetch_add(need, Ordering::Relaxed);
+        loc.available_space.store(
+            loc.min_free_space
+                .available_space(free, all)
+                .saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
+        Some(loc_idx)
+    }
+
+    /// Mirrors Go's Store.ReleaseFreeLocation: returns space
+    /// reserve_free_location charged when the copy it paid for does not
+    /// land. Removing the pending charge first keeps a probe that already
+    /// rebased the cache from seeing the refund twice.
+    pub fn release_free_location(&self, loc_idx: usize, need: u64) {
+        if let Some(loc) = self.locations.get(loc_idx) {
+            loc.reserved_space.fetch_sub(need, Ordering::Relaxed);
+            loc.available_space.fetch_add(need, Ordering::Relaxed);
+        }
+    }
+
+    /// Mirrors Go's Store.CommitFreeLocation: settles a reservation whose
+    /// copy landed. The bytes are real on disk, so only the pending charge
+    /// ends — the cache keeps the charge, which now matches the live usage
+    /// the next probe will read.
+    pub fn commit_free_location(&self, loc_idx: usize, need: u64) {
+        if let Some(loc) = self.locations.get(loc_idx) {
+            loc.reserved_space.fetch_sub(need, Ordering::Relaxed);
+        }
     }
 
     /// Returns the index of the disk that should receive a new EC
@@ -460,12 +571,14 @@ impl Store {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
         }
-        let loc_idx = self.find_free_location(&disk_type).ok_or_else(|| {
-            VolumeError::Io(io::Error::other(format!(
-                "no free location for disk type {:?}",
-                disk_type
-            )))
-        })?;
+        let loc_idx = self
+            .find_free_location(&disk_type, spec.preallocate)
+            .ok_or_else(|| {
+                VolumeError::Io(io::Error::other(format!(
+                    "no free location for disk type {:?}",
+                    disk_type
+                )))
+            })?;
 
         self.locations[loc_idx].create_volume(vid, self.needle_map_kind, spec)
     }
@@ -875,11 +988,7 @@ impl Store {
     }
 
     /// Delete a needle from a volume.
-    pub fn delete_volume_needle(
-        &self,
-        vid: VolumeId,
-        n: &mut Needle,
-    ) -> Result<Size, VolumeError> {
+    pub fn delete_volume_needle(&self, vid: VolumeId, n: &mut Needle) -> Result<Size, VolumeError> {
         // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         if vol.is_no_write_or_delete() {
@@ -941,10 +1050,12 @@ impl Store {
         for loc in &self.locations {
             if loc.original_max_volume_count == 0 {
                 let current = loc.max_volume_count.load(Ordering::Relaxed);
-                let (_, free) = super::disk_location::get_disk_stats(&loc.directory);
+                let (all, free) = (self.disk_stats_of)(&loc.directory);
 
                 let unused_space = loc.unused_space(volume_size_limit);
-                let unclaimed = (free as i64) - (unused_space as i64);
+                // Free space under -volume.minFreeSpace is not available for new volumes.
+                let unclaimed =
+                    loc.min_free_space.available_space(free, all) as i64 - unused_space as i64;
 
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
@@ -1761,7 +1872,7 @@ fn update_dat_replica_placement(
             return Err(VolumeError::Io(io::Error::new(
                 e.kind(),
                 format!("volume {} failed to open {}: {}", vid, dat_path, e),
-            )))
+            )));
         }
     };
     let mut header = [0u8; SUPER_BLOCK_SIZE];
@@ -1775,12 +1886,13 @@ fn update_dat_replica_placement(
     let mut block = header.to_vec();
     block.resize(SUPER_BLOCK_SIZE + extra_size, 0);
     if extra_size > 0 {
-        file.read_exact(&mut block[SUPER_BLOCK_SIZE..]).map_err(|e| {
-            VolumeError::Io(io::Error::new(
-                e.kind(),
-                format!("volume {} failed to parse superblock: {}", vid, e),
-            ))
-        })?;
+        file.read_exact(&mut block[SUPER_BLOCK_SIZE..])
+            .map_err(|e| {
+                VolumeError::Io(io::Error::new(
+                    e.kind(),
+                    format!("volume {} failed to parse superblock: {}", vid, e),
+                ))
+            })?;
     }
     let mut super_block = SuperBlock::from_bytes(&block).map_err(|e| {
         VolumeError::Io(io::Error::new(
@@ -2030,6 +2142,351 @@ mod tests {
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
         assert_eq!(store.total_volume_count(), 1);
+    }
+
+    // fakeDisk stands in for the disk under a location; a preallocating
+    // create takes its size out of FAKE_FREE, as fallocate does on Linux.
+    const MIB: u64 = 1 << 20;
+    static FAKE_ALL: AtomicU64 = AtomicU64::new(0);
+    static FAKE_FREE: AtomicU64 = AtomicU64::new(0);
+    static FAKE_DISK_LOCK: Mutex<()> = Mutex::new(());
+
+    fn fake_disk_stats(_: &str) -> (u64, u64) {
+        (
+            FAKE_ALL.load(Ordering::Relaxed),
+            FAKE_FREE.load(Ordering::Relaxed),
+        )
+    }
+
+    // Store with one location whose fake disk has the given free space and a
+    // Bytes floor; the low-disk flag stays false, as between two probes.
+    fn headroom_store(dir: &str, free: u64, floor: u64) -> Store {
+        FAKE_ALL.store(10 * 1024 * MIB, Ordering::Relaxed);
+        FAKE_FREE.store(free, Ordering::Relaxed);
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Bytes(floor),
+                Vec::new(),
+            )
+            .unwrap();
+        store.disk_stats_of = fake_disk_stats;
+        // The fake disk behaves like fallocate on Linux: pretend creates reserve.
+        store.preallocate_supported = true;
+        store
+    }
+
+    // Mirrors Go's TestAddVolumeRefusesPreallocationThatCrossesFloor: the
+    // reservation must fit above the floor even though the once-a-probe
+    // is_disk_space_low flag is still false.
+    #[test]
+    fn test_add_volume_refuses_preallocation_crossing_floor() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        // 4 MiB above the floor, so an 8 MiB reservation would cross it.
+        let mut store = headroom_store(dir, floor + 4 * MIB, floor);
+
+        let spec = VolumeSpec {
+            preallocate: 8 * MIB,
+            ..VolumeSpec::default()
+        };
+        assert!(
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
+                .is_err()
+        );
+        assert!(!store.has_volume(VolumeId(1)));
+    }
+
+    // Mirrors Go's TestAddVolumeAllowsPreallocationWhereUnsupported: where
+    // preallocate_file is a no-op the reservation never happens, so it must
+    // not hold the create back.
+    #[test]
+    fn test_add_volume_allows_preallocation_where_unsupported() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let mut store = headroom_store(dir, floor + MIB, floor);
+        store.preallocate_supported = false;
+
+        let spec = VolumeSpec {
+            preallocate: 8 * MIB,
+            ..VolumeSpec::default()
+        };
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
+            .unwrap();
+    }
+
+    // Mirrors Go's TestAddVolumeAllowsPlainVolumeAboveFloor and
+    // TestAddVolumeAllowsMergeVolumeBelowFloor: a volume reserving nothing is
+    // created either way, so growth is only held back when it would cross
+    // the floor.
+    #[test]
+    fn test_add_volume_allows_plain_volume_anywhere() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let mut store = headroom_store(dir, floor + MIB, floor);
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+
+        FAKE_FREE.store(floor - MIB, Ordering::Relaxed);
+        store
+            .add_volume(VolumeId(2), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+    }
+
+    // Mirrors Go's TestGrowthLoopStopsAtFloorWhenVolumesPreallocate: the
+    // master keeps asking for volumes while the disk sits just above its
+    // floor; each created volume reserves its full size, so the disk must
+    // not be driven below the floor.
+    #[test]
+    fn test_growth_loop_stops_at_floor_when_volumes_preallocate() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let preallocate = MIB;
+        // Room for 4 preallocated volumes above the floor once each create's
+        // metadata allowance is held back.
+        let create_cost = preallocate + VOLUME_CREATE_VIF_BYTES + VOLUME_CREATE_IDX_BYTES;
+        let mut store = headroom_store(dir, floor + 4 * create_cost, floor);
+
+        let spec = VolumeSpec {
+            preallocate,
+            ..VolumeSpec::default()
+        };
+        let mut created = 0;
+        for i in 1..=20u32 {
+            if store
+                .add_volume(VolumeId(i), DiskType::HardDrive, &spec)
+                .is_ok()
+            {
+                created += 1;
+                FAKE_FREE.fetch_sub(create_cost, Ordering::Relaxed);
+            }
+        }
+
+        assert!(
+            FAKE_FREE.load(Ordering::Relaxed) >= floor,
+            "free space fell below the floor after {created} volumes"
+        );
+        // Exactly the room above the floor must be used. Checking only an
+        // upper bound would also pass when every create fails.
+        assert_eq!(created, 4);
+    }
+
+    // Mirrors Go's TestReserveFreeLocationChargesPickedReservation: a copy's
+    // pick and its .dat reservation are separate steps, so the picked
+    // location's cached free space must carry the charge at once or a second
+    // copy can spend the same headroom.
+    #[test]
+    fn test_reserve_free_location_charges_picked_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        // 40 MiB above the floor: room for one 30 MiB reservation, not two.
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        assert_eq!(
+            store.locations[0].available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+    }
+
+    // Mirrors Go's TestReserveFreeLocationRechecksLiveDisk: the cached free
+    // space is refreshed only once a minute, so a stale-high value must not
+    // admit a reservation the live disk cannot fit.
+    #[test]
+    fn test_reserve_free_location_rechecks_live_disk() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let store = headroom_store(dir, floor + 5 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(100 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(30 * MIB, pred, None), None);
+    }
+
+    // Mirrors Go's TestReleaseFreeLocationRestoresReservation: a failed copy
+    // must return its reservation, or the headroom stays booked until the
+    // next disk probe and blocks retries.
+    #[test]
+    fn test_release_free_location_restores_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        // 40 MiB above the floor: room for one 30 MiB reservation, not two.
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        store.release_free_location(0, need);
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+    }
+
+    // Mirrors Go's TestReleaseFreeLocationAfterProbeRefundsOnlyOwnCharge: a
+    // probe between reserve and release must not resurrect the charge — the
+    // live reading already forgot the failed copy's pending bytes, so
+    // refunding them would let two copies spend the same headroom.
+    #[test]
+    fn test_release_free_location_after_probe_refunds_only_own_charge() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        // Mid-copy probe stores live-above-floor minus pending (as
+        // check_disk_space does): the charge survives it.
+        let loc = &store.locations[0];
+        let live_above_floor = loc
+            .min_free_space
+            .available_space(FAKE_FREE.load(Ordering::Relaxed), FAKE_ALL.load(Ordering::Relaxed));
+        loc.available_space.store(
+            live_above_floor.saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+
+        // The failed copy removes only its own charge.
+        store.release_free_location(0, need);
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            40 * MIB
+        );
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        assert_eq!(store.reserve_free_location(need, pred, None), None);
+    }
+
+    // Mirrors Go's TestCommitFreeLocationSettlesLandedReservation: a copy
+    // that lands ends its pending charge without refunding the cache — the
+    // charge and the landed bytes cancel out.
+    #[test]
+    fn test_commit_free_location_settles_landed_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        FAKE_FREE.fetch_sub(need, Ordering::Relaxed); // the copied bytes are on disk
+        store.commit_free_location(0, need);
+        let loc = &store.locations[0];
+        assert_eq!(loc.reserved_space.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+
+        // The next probe reads the landed usage and the ended charge agrees.
+        let live_above_floor = loc
+            .min_free_space
+            .available_space(FAKE_FREE.load(Ordering::Relaxed), FAKE_ALL.load(Ordering::Relaxed));
+        loc.available_space.store(
+            live_above_floor.saturating_sub(loc.reserved_space.load(Ordering::Relaxed)),
+            Ordering::Relaxed,
+        );
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            10 * MIB
+        );
+    }
+
+    // Mirrors Go's TestCommitFreeLocationSettlesAsBytesLand: a running copy
+    // settles its charge as its bytes land on disk, so the live-space check
+    // sees the written part once — in the disk reading — not again inside
+    // the pending charge.
+    #[test]
+    fn test_commit_free_location_settles_as_bytes_land() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        let store = headroom_store(dir, floor + 70 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(70 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+
+        // Half the copy's bytes are on disk now; settling that much charge
+        // keeps the second 30 MiB reservation inside the real headroom.
+        FAKE_FREE.fetch_sub(15 * MIB, Ordering::Relaxed);
+        store.commit_free_location(0, 15 * MIB);
+
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        let loc = &store.locations[0];
+        assert_eq!(loc.reserved_space.load(Ordering::Relaxed), 45 * MIB);
+        assert_eq!(loc.available_space.load(Ordering::Relaxed), 10 * MIB);
+    }
+
+    // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
+    // inside the floor adds no slots.
+    #[test]
+    fn test_maybe_adjust_volume_max_ignores_free_space_inside_floor() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        // 90 MiB above the floor is 3 x 30 MiB volumes; the rest is headroom.
+        let mut store = headroom_store(dir, floor + 90 * MIB, floor);
+        store.volume_size_limit.store(30 * MIB, Ordering::Relaxed);
+        store.locations[0].original_max_volume_count = 0;
+
+        store.maybe_adjust_volume_max();
+
+        assert_eq!(
+            store.locations[0].max_volume_count.load(Ordering::Relaxed),
+            3
+        );
     }
 
     // Mirrors Go's TestConfigureVolumeUpdatesSuperblock: configure must leave
