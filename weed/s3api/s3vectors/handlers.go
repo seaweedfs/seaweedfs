@@ -787,19 +787,19 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				if !ok {
 					return "", fmt.Errorf("%s expects a list", op)
 				}
-				terms := make([]string, 0, len(list))
+				vals := make([]string, 0, len(list))
 				for _, item := range list {
 					lit, err := sqlLiteral(item)
 					if err != nil {
 						return "", err
 					}
-					terms = append(terms, lit)
+					vals = append(vals, lit)
 				}
-				neg := ""
+				sym := "IN"
 				if op == "$nin" {
-					neg = "NOT "
+					sym = "NOT IN"
 				}
-				parts = append(parts, fmt.Sprintf("%s%s in (%s)", neg, col, strings.Join(terms, ", ")))
+				parts = append(parts, fmt.Sprintf("%s %s (%s)", col, sym, strings.Join(vals, ", ")))
 			case "$lt", "$lte", "$gt", "$gte":
 				lit, err := sqlLiteral(operand)
 				if err != nil {
