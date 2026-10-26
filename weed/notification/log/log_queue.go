@@ -34,7 +34,11 @@ func (k *LogQueue) SendMessage(key string, message proto.Message) (err error) {
 		return nil
 	}
 	if event, ok := message.(*filer_pb.EventNotification); ok {
-		glog.V(0).Infof("%v: %q -> %q", key, event.GetOldEntry().GetName(), event.GetNewEntry().GetName())
+		name := event.GetNewEntry().GetName()
+		if parent := event.GetNewParentPath(); parent != "" {
+			name = parent + "/" + name
+		}
+		glog.V(0).Infof("%v: %q -> %q", key, event.GetOldEntry().GetName(), name)
 		return nil
 	}
 	glog.V(0).Infof("%v: %T", key, message)
