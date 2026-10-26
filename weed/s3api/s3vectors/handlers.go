@@ -3,6 +3,7 @@ package s3vectors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -119,11 +120,31 @@ func (s *Server) catalog(ctx context.Context, operation string, req, resp interf
 	return s.tables.Execute(ctx, s.filerClient, operation, req, resp, identityOf(r))
 }
 
+// catalogErrCode returns the error code the in-process catalog reports;
+// errors from other sources carry no code.
+func catalogErrCode(err error) string {
+	var e *s3tables.S3TablesError
+	if errors.As(err, &e) {
+		return e.Type
+	}
+	return ""
+}
+
 func isNotFound(err error) bool {
+	switch catalogErrCode(err) {
+	case s3tables.ErrCodeNoSuchBucket, s3tables.ErrCodeNoSuchTable, s3tables.ErrCodeNoSuchNamespace:
+		return true
+	}
 	return err != nil && (strings.Contains(err.Error(), "NoSuchTableBucket") ||
 		strings.Contains(err.Error(), "NoSuchTable") ||
 		strings.Contains(err.Error(), "NotFoundException") ||
 		strings.Contains(err.Error(), "NoSuchBucket"))
+}
+
+func isAlreadyExists(err error) bool {
+	code := catalogErrCode(err)
+	return strings.HasSuffix(code, "AlreadyExists") || code == s3tables.ErrCodeConflict ||
+		(err != nil && (strings.Contains(err.Error(), "AlreadyExists") || strings.Contains(err.Error(), "Conflict")))
 }
 
 func catalogErr(w http.ResponseWriter, err error) {
@@ -131,9 +152,10 @@ func catalogErr(w http.ResponseWriter, err error) {
 	switch {
 	case isNotFound(err):
 		writeError(w, http.StatusNotFound, "NotFoundException", msg)
-	case strings.Contains(msg, "AccessDenied") || strings.Contains(msg, "PermissionDenied"):
+	case catalogErrCode(err) == s3tables.ErrCodeAccessDenied ||
+		strings.Contains(msg, "AccessDenied") || strings.Contains(msg, "PermissionDenied"):
 		writeError(w, http.StatusForbidden, "AccessDeniedException", "access denied")
-	case strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "Conflict"):
+	case isAlreadyExists(err):
 		writeError(w, http.StatusConflict, "ConflictException", msg)
 	default:
 		writeError(w, http.StatusBadRequest, "ValidationException", msg)
@@ -238,6 +260,12 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var resp map[string]interface{}
+	// Indexes live in an implicit namespace; dropping it best-effort lets an
+	// emptied bucket delete, while surviving indexes keep it non-empty.
+	_ = s.catalog(r.Context(), "DeleteNamespace", &s3tables.DeleteNamespaceRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		Namespace:      []string{indexNamespace},
+	}, &resp, r)
 	err := s.catalog(r.Context(), "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil {
@@ -303,7 +331,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	if err := s.catalog(r.Context(), "CreateNamespace", &s3tables.CreateNamespaceRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
-	}, &nsResp, r); err != nil && !strings.Contains(err.Error(), "AlreadyExists") && !strings.Contains(err.Error(), "Conflict") {
+	}, &nsResp, r); err != nil && !isAlreadyExists(err) {
 		catalogErr(w, err)
 		return
 	}
@@ -787,19 +815,19 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				if !ok {
 					return "", fmt.Errorf("%s expects a list", op)
 				}
-				terms := make([]string, 0, len(list))
+				vals := make([]string, 0, len(list))
 				for _, item := range list {
 					lit, err := sqlLiteral(item)
 					if err != nil {
 						return "", err
 					}
-					terms = append(terms, lit)
+					vals = append(vals, lit)
 				}
-				neg := ""
+				sym := "IN"
 				if op == "$nin" {
-					neg = "NOT "
+					sym = "NOT IN"
 				}
-				parts = append(parts, fmt.Sprintf("%s%s in (%s)", neg, col, strings.Join(terms, ", ")))
+				parts = append(parts, fmt.Sprintf("%s %s (%s)", col, sym, strings.Join(vals, ", ")))
 			case "$lt", "$lte", "$gt", "$gte":
 				lit, err := sqlLiteral(operand)
 				if err != nil {

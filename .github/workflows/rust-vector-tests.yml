@@ -8,6 +8,11 @@ on:
       - 'seaweed-worker/**'
       - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
+      - 'weed/pb/vector.proto'
+      - 'weed/pb/vector_pb/**'
+      - 'weed/s3api/**'
+      - 'weed/command/**'
+      - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
   push:
     branches: [ master, main ]
@@ -16,6 +21,11 @@ on:
       - 'seaweed-worker/**'
       - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
+      - 'weed/pb/vector.proto'
+      - 'weed/pb/vector_pb/**'
+      - 'weed/s3api/**'
+      - 'weed/command/**'
+      - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
 
 concurrency:
@@ -74,3 +84,41 @@ jobs:
 
       - name: Run unit tests
         run: cd seaweed-vector && cargo test --release --workspace
+
+
+  vectors-e2e:
+    name: S3 Vectors End-to-End
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build weed
+        run: go build -o test/vectors/weed ./weed
+      - uses: dtolnay/rust-toolchain@stable
+      # Same as the unit-test job: lance's build scripts need a protoc; use
+      # the vendored one so no system package is required.
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-vector
+          cargo fetch
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
+      - name: Build weed-vector-server
+        run: cargo build --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install boto3 pytest
+      - name: Run the s3vectors conformance subset
+        working-directory: test/vectors
+        run: |
+          cp ../../seaweed-vector/target/release/weed-vector-server weed-vector-server
+          ./run_test.sh
