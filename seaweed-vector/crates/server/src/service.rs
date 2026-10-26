@@ -403,6 +403,16 @@ impl VectorService for VectorServer {
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(invalid)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
+        if req.query_vector.len() != resolved.dimension {
+            return Err(Status::invalid_argument(format!(
+                "query vector carries {} floats, the index dimension is {}",
+                req.query_vector.len(),
+                resolved.dimension
+            )));
+        }
+        if req.top_k == 0 {
+            return Err(Status::invalid_argument("top_k must be positive"));
+        }
         // The index's configured metric lives in the vector field's metadata.
         let distance = match dataset
             .schema()
@@ -415,7 +425,7 @@ impl VectorService for VectorServer {
         };
         let query = Query {
             vector: req.query_vector,
-            k: req.top_k.max(1) as usize,
+            k: req.top_k as usize,
             filter: if req.filter.is_empty() {
                 None
             } else {
