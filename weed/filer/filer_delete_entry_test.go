@@ -148,4 +148,21 @@ func TestDeleteEntryMetaAndData_IfNotModifiedAfterSubsecond(t *testing.T) {
 	// Entry must be deleted now
 	_, err = f.FindEntry(ctx, filePath)
 	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+
+	// A guard equal to the entry's Mtime still deletes
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime.UnixNano()))
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+
+	// Second-resolution guards keep working: a cutoff second before the
+	// entry's preserves it, the entry's own second deletes it
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime.Add(-time.Second).Unix()))
+	stored, err = f.FindEntry(ctx, filePath)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "entry newer than a seconds guard must be preserved")
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime.Unix()))
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
 }
