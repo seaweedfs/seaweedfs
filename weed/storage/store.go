@@ -375,6 +375,15 @@ func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLoc
 	}
 	return location
 }
+
+// ReleaseFreeLocation returns space ReserveFreeLocation charged when the copy
+// it paid for does not land. Without the refund a failed copy keeps its
+// headroom booked until the next disk-space probe, blocking retries. The pick
+// rechecks live stats, so a refund that lands after a probe only over-reports
+// briefly and cannot admit a copy the disk cannot fit.
+func (s *Store) ReleaseFreeLocation(location *DiskLocation, need uint64) {
+	location.AvailableSpace.Add(need)
+}
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	s.volumeCreateLock.Lock()
 	defer s.volumeCreateLock.Unlock()

@@ -220,3 +220,27 @@ func TestReserveFreeLocationRechecksLiveDisk(t *testing.T) {
 		t.Fatalf("pick = %v; want nil (live disk has no room for the reservation)", pick)
 	}
 }
+
+// A failed copy must return its reservation, or the headroom stays booked
+// until the next disk probe and blocks retries.
+func TestReleaseFreeLocationRestoresReservation(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	s, loc, _ := newHeadroomStore(t, floor+40*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(40 * testMiB)
+
+	pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	})
+	if pick != loc {
+		t.Fatalf("first pick = %v; want the only location", pick)
+	}
+
+	s.ReleaseFreeLocation(pick, need)
+	if pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	}); pick == nil {
+		t.Fatal("retry pick = nil; want the refunded reservation to admit a copy")
+	}
+}

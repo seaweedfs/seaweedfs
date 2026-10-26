@@ -59,8 +59,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
-	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
-		var err error
+	var copyLocation *storage.DiskLocation
+	var copyReservedSpace uint64
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) (err error) {
 		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: req.VolumeId,
 		})
@@ -113,6 +114,20 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
 		}
+		copyLocation = location
+		copyReservedSpace = neededSpace
+
+		defer func() {
+			if err != nil {
+				if dataBaseFileName != "" {
+					os.Remove(dataBaseFileName + ".dat")
+					os.Remove(indexBaseFileName + ".idx")
+					os.Remove(dataBaseFileName + ".vif")
+					os.Remove(dataBaseFileName + ".note")
+				}
+				vs.store.ReleaseFreeLocation(location, neededSpace)
+			}
+		}()
 
 		// Source is reachable and a destination is reserved: only now is it
 		// safe to drop an existing local replica before overwriting its files.
@@ -135,15 +150,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			err = noteErr
 			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
 		}
-
-		defer func() {
-			if err != nil {
-				os.Remove(dataBaseFileName + ".dat")
-				os.Remove(indexBaseFileName + ".idx")
-				os.Remove(dataBaseFileName + ".vif")
-				os.Remove(dataBaseFileName + ".note")
-			}
-		}()
 
 		if preallocateSize > 0 && !hasRemoteDatFile {
 			volumeFile := dataBaseFileName + ".dat"
@@ -236,6 +242,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			os.Remove(idxFileName)
 			os.Remove(datFileName)
 			os.Remove(dataBaseFileName + ".vif")
+			if copyLocation != nil {
+				vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
+			}
 		}
 	}()
 
