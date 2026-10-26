@@ -383,7 +383,9 @@ impl Store {
         let loc = &self.locations[loc_idx];
         let (all, free) = (self.disk_stats_of)(&loc.directory);
         loc.available_space.store(
-            loc.min_free_space.available_space(free, all) - need,
+            loc.min_free_space
+                .available_space(free, all)
+                .saturating_sub(need),
             Ordering::Relaxed,
         );
         Some(loc_idx)

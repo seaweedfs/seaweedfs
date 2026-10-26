@@ -368,7 +368,11 @@ func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLoc
 		return nil
 	}
 	status := diskStatusOf(location.Directory)
-	location.AvailableSpace.Store(location.MinFreeSpace.AvailableSpace(status.Free, status.All) - need)
+	if available := location.MinFreeSpace.AvailableSpace(status.Free, status.All); available > need {
+		location.AvailableSpace.Store(available - need)
+	} else {
+		location.AvailableSpace.Store(0)
+	}
 	return location
 }
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
