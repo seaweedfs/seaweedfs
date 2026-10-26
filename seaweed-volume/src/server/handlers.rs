@@ -947,18 +947,23 @@ async fn proxy_request(
     info: &ProxyRequestInfo,
     target: &VolumeLocation,
 ) -> Response {
-    // Build target URL, adding proxied=true query param
+    // Build target URL, adding proxied=true query param. Go's query.Set
+    // replaces any proxied params the client sent, so a stale proxied=false
+    // cannot outrank the marker this hop adds.
     let path = info.path.trim_start_matches('/');
     // Defensively strip a `.grpcPort` suffix in case target.url carries it.
     let target_http = to_http_address(&target.url);
 
-    let raw_target = if info.original_query.is_empty() {
+    let forwarded_query = info
+        .original_query
+        .split('&')
+        .filter(|kv| kv.split('=').next() != Some("proxied"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let raw_target = if forwarded_query.is_empty() {
         format!("{}/{}?proxied=true", target_http, path)
     } else {
-        format!(
-            "{}/{}?{}&proxied=true",
-            target_http, path, info.original_query
-        )
+        format!("{}/{}?{}&proxied=true", target_http, path, forwarded_query)
     };
     let target_url = match normalize_outgoing_http_url(&state.outgoing_http_scheme, &raw_target) {
         Ok(url) => url,
@@ -5625,6 +5630,62 @@ mod tests {
         }
         assert_eq!(head_count.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(get_count.load(AtomicOrdering::SeqCst), 1);
+
+        server.abort();
+    }
+
+    /// Go's query.Set replaces any proxied params the client sent, so the
+    /// forwarded query carries a single proxied=true marker — a stale
+    /// proxied=false cannot outrank it on the replica's first-value lookup.
+    #[tokio::test]
+    async fn test_proxy_request_replaces_stale_proxied_param() {
+        use axum::{Router, routing::get};
+        use std::sync::Arc as StdArc;
+        use std::sync::Mutex;
+
+        let seen = StdArc::new(Mutex::new(String::new()));
+        let app = {
+            let seen = seen.clone();
+            Router::new().route(
+                "/{*path}",
+                get(move |request: axum::extract::Request| {
+                    let seen = seen.clone();
+                    async move {
+                        *seen.lock().unwrap() =
+                            request.uri().query().unwrap_or("").to_string();
+                        StatusCode::OK
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: String::new(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let state = streaming_test_state();
+        let info = ProxyRequestInfo {
+            method: Method::GET,
+            original_headers: HeaderMap::new(),
+            original_query: "proxied=false&collection=photos&proxied".to_string(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let response = proxy_request(&state, &info, &target).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            seen.lock().unwrap().as_str(),
+            "collection=photos&proxied=true"
+        );
 
         server.abort();
     }
