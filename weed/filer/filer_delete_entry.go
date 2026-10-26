@@ -128,8 +128,16 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if findErr != nil {
 		return findErr
 	}
-	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
-		return nil
+	if ifNotModifiedAfter > 0 {
+		var entryMtime int64
+		if ifNotModifiedAfter > 1_000_000_000_000 {
+			entryMtime = entry.Attr.Mtime.UnixNano()
+		} else {
+			entryMtime = entry.Attr.Mtime.Unix()
+		}
+		if entryMtime > ifNotModifiedAfter {
+			return nil
+		}
 	}
 	if !isRecursive && entry.IsDirectory() {
 		ctx = f.emptyFolderDeleteContext(ctx, p)

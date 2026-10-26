@@ -117,3 +117,35 @@ func TestDeleteFolderKeepsSharedHardLinkChunks(t *testing.T) {
 	require.NoError(t, err, "surviving link must keep the inode record")
 	require.Equal(t, 0, f.pendingDeletionCount())
 }
+
+func TestDeleteEntryMetaAndData_IfNotModifiedAfterSubsecond(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	baseTime := time.Date(2026, 10, 26, 12, 0, 0, 500_000_000, time.UTC) // 12:00:00.500
+	filePath := util.FullPath("/subsecond.txt")
+
+	entry := &Entry{
+		FullPath: filePath,
+		Attr:     Attr{Mode: 0644, Mtime: baseTime},
+	}
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+
+	// Guard is 100ms before entry Mtime (within the same second)
+	guardNs := baseTime.Add(-100 * time.Millisecond).UnixNano()
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, guardNs))
+
+	// Entry must NOT be deleted because entry's Mtime is newer than guardNs
+	stored, err := f.FindEntry(ctx, filePath)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "entry modified after guardNs must be preserved")
+
+	// Guard is at or after entry Mtime
+	olderGuardNs := baseTime.Add(100 * time.Millisecond).UnixNano()
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, olderGuardNs))
+
+	// Entry must be deleted now
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+}
