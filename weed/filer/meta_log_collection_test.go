@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -125,7 +126,7 @@ func TestBucketCollectionKeepsMetaLogTargetCollection(t *testing.T) {
 	})
 	seedBucket(t, store, util.FullPath("/buckets/a"))
 
-	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, time.Time{}); err != nil {
 		t.Fatalf("DeleteEntryMetaAndData: %v", err)
 	}
 

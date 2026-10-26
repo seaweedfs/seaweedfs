@@ -182,7 +182,7 @@ func TestPruneLeavesTheRemoteAlone(t *testing.T) {
 	assert.False(t, events[0].notification.IsFromOtherCluster, "filer.sync must replicate the prune")
 	assert.Contains(t, events[0].notification.OldEntry.Extended, filer.ExtKeepRemoteObjectKey, "filer.remote.sync must not delete the remote object")
 
-	require.NoError(t, fs.filer.DeleteEntryMetaAndData(context.Background(), deleted.FullPath, false, false, false, false, nil, 0))
+	require.NoError(t, fs.filer.DeleteEntryMetaAndData(context.Background(), deleted.FullPath, false, false, false, false, nil, time.Time{}))
 	assert.Equal(t, []string{"/deleted.bin"}, client.deletedPaths())
 }
 

@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -384,29 +383,37 @@ func TestUpdateEntryConditionEnforced(t *testing.T) {
 	}
 }
 
-func TestDeleteCutoffNs(t *testing.T) {
+func TestDeleteCutoff(t *testing.T) {
 	base := time.Unix(1700000000, 500_000_000)
 
 	// nanoseconds take precedence when set
-	if got := deleteCutoffNs(1, base.UnixNano()); got != base.UnixNano() {
-		t.Fatalf("ns guard should win, got %d", got)
+	if got := deleteCutoff(1, base.UnixNano()); !got.Equal(base) {
+		t.Fatalf("ns guard should win, got %v", got)
 	}
 	// no guard stays disabled
-	if got := deleteCutoffNs(0, 0); got != 0 {
-		t.Fatalf("no guard must stay 0, got %d", got)
+	if got := deleteCutoff(0, 0); !got.IsZero() {
+		t.Fatalf("no guard must stay zero, got %v", got)
 	}
 	// a whole-second guard covers its full second: entry.Mtime.Unix() > sec
 	// is entry.Mtime after the last nanosecond of that second
-	cutoff := deleteCutoffNs(base.Unix(), 0)
-	if want := (base.Unix()+1)*1_000_000_000 - 1; cutoff != want {
-		t.Fatalf("seconds guard = %d, want %d", cutoff, want)
+	cutoff := deleteCutoff(base.Unix(), 0)
+	if want := time.Unix(0, (base.Unix()+1)*1_000_000_000-1); !cutoff.Equal(want) {
+		t.Fatalf("seconds guard = %v, want %v", cutoff, want)
 	}
-	if base.After(time.Unix(0, cutoff)) {
+	if base.After(cutoff) {
 		t.Fatal("entry inside the guard second must not be treated as newer")
 	}
-	// a seconds guard beyond the nanosecond range saturates instead of
-	// wrapping to a negative cutoff that would drop the condition
-	if got := deleteCutoffNs(math.MaxInt64/1_000_000_000, 0); got != math.MaxInt64 {
-		t.Fatalf("huge seconds guard = %d, want MaxInt64", got)
+	// a seconds guard beyond the nanosecond range keeps its date: an entry
+	// in the guarded second is deleted and only a newer one is skipped
+	farSec := time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farCutoff := deleteCutoff(farSec, 0)
+	if want := time.Unix(farSec, 999_999_999); !farCutoff.Equal(want) {
+		t.Fatalf("huge seconds guard = %v, want %v", farCutoff, want)
+	}
+	if time.Unix(farSec, 0).After(farCutoff) {
+		t.Fatal("entry in the guarded far-future second must not be treated as newer")
+	}
+	if !time.Unix(farSec+1, 0).After(farCutoff) {
+		t.Fatal("entry past the guarded far-future second must be treated as newer")
 	}
 }

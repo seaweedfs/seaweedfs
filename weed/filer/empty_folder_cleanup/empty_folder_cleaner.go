@@ -52,7 +52,7 @@ type deletedFolder struct {
 // FilerOperations defines the filer operations needed by EmptyFolderCleaner
 type FilerOperations interface {
 	CountDirectoryEntries(ctx context.Context, dirPath util.FullPath, limit int) (count int, err error)
-	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfterNs int64) error
+	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, notModifiedAfter time.Time) error
 	GetEntryAttributes(ctx context.Context, p util.FullPath) (attributes map[string][]byte, err error)
 	IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error)
 	DirectoryAttributes(ctx context.Context, p util.FullPath) (DirectoryAttributes, error)
@@ -656,7 +656,7 @@ func (efc *EmptyFolderCleaner) countItems(ctx context.Context, folder string) (i
 
 // deleteFolder deletes an empty folder
 func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) error {
-	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, 0)
+	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, time.Time{})
 }
 
 func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {

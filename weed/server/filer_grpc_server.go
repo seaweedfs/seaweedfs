@@ -618,7 +618,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		if m.KeepRemoteObject {
 			ctx = filer.WithKeepRemoteObject(ctx)
 		}
-		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
+		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, time.Time{})
 		if err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}
@@ -628,7 +628,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			// transaction. Best-effort: a non-empty or already-removed parent is
 			// the expected no-op, and a failed teardown must not fail the
 			// already-applied delete.
-			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, 0)
+			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, time.Time{})
 			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !errors.Is(parentErr, filer.ErrNonEmptyFolder) {
 				glog.V(1).InfofCtx(ctx, "remove empty parent %s: %v", m.Directory, parentErr)
 			}
@@ -1045,21 +1045,19 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	return &filer_pb.AppendToEntryResponse{}, err
 }
 
-// deleteCutoffNs merges the conditional-delete guards into one nanosecond
-// cutoff: if_not_modified_after_ns wins when set, and the whole-second
+// deleteCutoff merges the conditional-delete guards into one cutoff:
+// if_not_modified_after_ns wins when set, and the whole-second
 // if_not_modified_after maps to the last nanosecond of its second so that
-// entry.Mtime.Unix() > sec keeps its exact meaning as a time comparison.
-func deleteCutoffNs(ifNotModifiedAfter, ifNotModifiedAfterNs int64) int64 {
+// entry.Mtime.Unix() > sec keeps its exact meaning as a time comparison,
+// even for dates int64 nanoseconds cannot hold.
+func deleteCutoff(ifNotModifiedAfter, ifNotModifiedAfterNs int64) time.Time {
 	if ifNotModifiedAfterNs > 0 {
-		return ifNotModifiedAfterNs
+		return time.Unix(0, ifNotModifiedAfterNs)
 	}
 	if ifNotModifiedAfter <= 0 {
-		return 0
+		return time.Time{}
 	}
-	if ifNotModifiedAfter >= math.MaxInt64/1_000_000_000 {
-		return math.MaxInt64
-	}
-	return (ifNotModifiedAfter+1)*1_000_000_000 - 1
+	return time.Unix(ifNotModifiedAfter, 999_999_999)
 }
 
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
@@ -1078,7 +1076,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		ctx = filer.WithKeepRemoteObject(ctx)
 	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, deleteCutoffNs(req.IfNotModifiedAfter, req.IfNotModifiedAfterNs))
+	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, deleteCutoff(req.IfNotModifiedAfter, req.IfNotModifiedAfterNs))
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()

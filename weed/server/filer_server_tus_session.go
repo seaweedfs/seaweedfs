@@ -129,7 +129,7 @@ func (fs *FilerServer) claimTusPartial(ctx context.Context, partial *TusSession)
 // completion. A failed rollback wedges the session as consumed: DELETE and
 // expiry then preserve its chunks, which leak until removed by fsck.
 func (fs *FilerServer) rollbackTusSessionConsumed(ctx context.Context, uploadID string) {
-	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)), false, false, false, false, nil, time.Time{}); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.Errorf("TUS session %s wedged as consumed, marker rollback failed: %v", uploadID, err)
 	}
 }
@@ -224,7 +224,7 @@ func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPat
 	// Save session info
 	if err := fs.saveTusSession(ctx, session); err != nil {
 		// Cleanup the directory on failure
-		fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, true, false, false, nil, 0)
+		fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, true, false, false, nil, time.Time{})
 		return nil, fmt.Errorf("save session info: %w", err)
 	}
 
@@ -422,7 +422,7 @@ func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk 
 // that is about to be deleted. Data outliving a lost record only leaks.
 func (fs *FilerServer) deleteTusChunk(ctx context.Context, session *TusSession, chunk *TusChunkInfo) {
 	chunkPath := util.FullPath(fs.tusChunkPath(session.ID, chunk.Offset, chunk.Size, chunk.FileId))
-	if err := fs.filer.DeleteEntryMetaAndData(ctx, chunkPath, false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, chunkPath, false, false, false, false, nil, time.Time{}); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.Errorf("TUS chunk %s record kept, its data leaks: %v", chunkPath, err)
 		return
 	}
@@ -446,7 +446,7 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 	// its consumed marker before re-verifying the .info, so once the .info is
 	// gone no new claim can pass verification, and a claim that did pass was
 	// created earlier and is visible at the check below.
-	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionInfoPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionInfoPath(uploadID)), false, false, false, false, nil, time.Time{}); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return fmt.Errorf("delete session info: %w", err)
 	}
 
@@ -470,7 +470,7 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 
 	// Delete the session directory
 	sessionDirPath := util.FullPath(fs.tusSessionPath(uploadID))
-	if err := fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, true, false, false, nil, 0); err != nil {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, true, false, false, nil, time.Time{}); err != nil {
 		return fmt.Errorf("delete session directory: %w", err)
 	}
 
@@ -614,7 +614,7 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 
 	// Delete the session (but keep the chunks since they're now part of the final file)
 	sessionDirPath := util.FullPath(fs.tusSessionPath(session.ID))
-	if err := fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, false, false, false, nil, 0); err != nil {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, sessionDirPath, true, false, false, false, nil, time.Time{}); err != nil {
 		glog.V(1).Infof("Failed to cleanup TUS session directory %s: %v", session.ID, err)
 	}
 
