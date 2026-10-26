@@ -20,6 +20,11 @@ pub struct Query {
     pub k: usize,
     /// A Lance SQL filter over the metadata columns.
     pub filter: Option<String>,
+    /// Filter the top-K rows after ranking instead of the eligible rows
+    /// before it. Lance's default post-filters and can return fewer than k
+    /// results while eligible neighbours go unreported; keep it off for
+    /// S3 Vectors filter semantics.
+    pub postfilter: bool,
     pub distance: DistanceType,
     pub nprobes: Option<usize>,
 }
@@ -97,6 +102,7 @@ fn scanner(
         .with_row_id();
     if let Some(filter) = &query.filter {
         scanner.filter(filter)?;
+        scanner.prefilter(!query.postfilter);
     }
     if let Some(nprobes) = query.nprobes {
         scanner.nprobes(nprobes);
@@ -105,6 +111,8 @@ fn scanner(
     if let Some(key) = &table.key_column {
         columns.push(key.clone());
     }
+    columns.push(DISTANCE_COLUMN.to_string());
+    columns.push(ROW_ID_COLUMN.to_string());
     scanner.project(&columns)?;
     Ok(scanner)
 }
@@ -137,11 +145,16 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
     }
     (0..batch.num_rows())
         .map(|i| {
+            let key = match keys {
+                Some(keys) if !keys.is_null(i) => keys.value(i).to_string(),
+                Some(_) => bail!(
+                    "key column {} has a null at row {i}",
+                    table.key_column.as_deref().unwrap_or_default()
+                ),
+                None => row_ids.value(i).to_string(),
+            };
             Ok(Hit {
-                key: match keys {
-                    Some(keys) if !keys.is_null(i) => keys.value(i).to_string(),
-                    _ => row_ids.value(i).to_string(),
-                },
+                key,
                 distance: distances.value(i),
                 row_id: row_ids.value(i),
             })
@@ -153,52 +166,8 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
 mod tests {
     use super::*;
     use crate::table::VectorTable;
-    use arrow_array::{FixedSizeListArray, RecordBatchIterator, StringArray, types::Float32Type};
-    use arrow_schema::{DataType, Field, Schema};
-    use std::sync::Arc;
+    use crate::testing::{DIM, write_dataset};
     use tempfile::TempDir;
-
-    const DIM: usize = 4;
-
-    fn vector_column(vectors: &[Vec<f32>]) -> FixedSizeListArray {
-        FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-            vectors
-                .iter()
-                .map(|v| Some(v.iter().copied().map(Some).collect::<Vec<_>>())),
-            DIM as i32,
-        )
-    }
-
-    async fn write_dataset(dir: &TempDir, vectors: &[Vec<f32>], tags: &[&str]) -> Dataset {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("key", DataType::Utf8, false),
-            Field::new(
-                "vector",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    DIM as i32,
-                ),
-                false,
-            ),
-            Field::new("tag", DataType::Utf8, true),
-        ]));
-        let keys: Vec<String> = (0..vectors.len()).map(|i| format!("k{i}")).collect();
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from(keys)),
-                Arc::new(vector_column(vectors)),
-                Arc::new(StringArray::from(
-                    tags.iter().map(|t| Some(t.to_string())).collect::<Vec<_>>(),
-                )),
-            ],
-        )
-        .unwrap();
-        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        Dataset::write(reader, dir.path().to_str().unwrap(), None)
-            .await
-            .unwrap()
-    }
 
     fn l2(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
@@ -220,6 +189,7 @@ mod tests {
             vector: vec![1.0, 0.0, 0.0, 0.0],
             k: 2,
             filter: None,
+            postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
@@ -258,6 +228,7 @@ mod tests {
                 vector: vec![1.0, 0.0, 0.0, 0.0],
                 k: 3,
                 filter: Some("tag = 'a'".to_string()),
+                postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
             },
@@ -293,6 +264,7 @@ mod tests {
             vector: vec![1.0; DIM + 1],
             k: 1,
             filter: None,
+            postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
@@ -313,6 +285,7 @@ mod tests {
             vector: vec![1.0, 0.0, 0.0, 0.0],
             k: 2,
             filter: None,
+            postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
         };
