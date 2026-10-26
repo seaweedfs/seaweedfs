@@ -105,7 +105,6 @@ fn scanner(
     if let Some(key) = &table.key_column {
         columns.push(key.clone());
     }
-    columns.extend(table.metadata_columns.iter().cloned());
     scanner.project(&columns)?;
     Ok(scanner)
 }
