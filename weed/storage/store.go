@@ -114,6 +114,9 @@ type Store struct {
 	vidStampReady         atomic.Bool
 	vidStampDirty         atomic.Bool
 	vidStampLock          sync.Mutex
+	// volumeCreateLock serializes addVolume, so each room check sees the
+	// preallocation of every volume created before it.
+	volumeCreateLock sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -340,6 +343,8 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 	return ret
 }
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+	s.volumeCreateLock.Lock()
+	defer s.volumeCreateLock.Unlock()
 	s.UpdateMaxVolumeIdSeen(vid)
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
@@ -350,7 +355,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	var diskId uint32
 	var minVolCount int
 	for i, loc := range s.Locations {
-		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) {
+		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) && hasRoomForNewVolume(loc, preallocate) {
 			volCount := loc.LocalVolumesLen()
 			if location == nil || volCount < minVolCount {
 				location = loc
@@ -385,6 +390,24 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 		}
 	}
 	return fmt.Errorf("No more free space left")
+}
+
+// hasRoomForNewVolume reports whether a preallocated volume may be created on
+// location. A preallocated volume reserves its full size up front, so it must
+// fit in the free space above -volume.minFreeSpace; this reads the disk now
+// rather than the once-a-minute low-disk flag, so a burst of creates cannot run
+// the disk through the floor between two probes. A volume without preallocation
+// reserves nothing, and copying existing data into one (a merge) is always
+// allowed.
+func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
+	if preallocate <= 0 {
+		return true
+	}
+	status := diskStatusOf(location.Directory)
+	if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
+		return false
+	}
+	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= uint64(preallocate)
 }
 
 // hasFreeDiskLocation checks if a disk location has free space
@@ -1375,6 +1398,10 @@ func (s *Store) GetPreallocate() bool {
 	return s.preallocate.Load()
 }
 
+// diskStatusOf reads the usage of the disk holding a directory. It is a
+// variable so a test can stand in for a disk that is full or near its floor.
+var diskStatusOf = stats.NewDiskStatus
+
 func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	volumeSizeLimit := s.GetVolumeSizeLimit()
 	if volumeSizeLimit == 0 {
@@ -1384,9 +1411,10 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
-			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
+			diskStatus := diskStatusOf(diskLocation.Directory)
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
-			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
+			// Free space under -volume.minFreeSpace is not available for new volumes.
+			unclaimedSpaces := int64(diskLocation.MinFreeSpace.AvailableSpace(diskStatus.Free, diskStatus.All)) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount)
