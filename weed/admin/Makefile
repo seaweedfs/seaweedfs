@@ -19,7 +19,11 @@ all: build
 TEMPL_VERSION := $(shell go list -m -f '{{.Version}}' github.com/a-h/templ)
 GOBIN := $(shell go env GOBIN)
 ifeq ($(GOBIN),)
-GOBIN := $(shell go env GOPATH)/bin
+ifeq ($(shell go env GOOS),windows)
+GOBIN := $(firstword $(subst ;, ,$(shell go env GOPATH)))/bin
+else
+GOBIN := $(firstword $(subst :, ,$(shell go env GOPATH)))/bin
+endif
 endif
 TEMPL := $(GOBIN)/templ
 .PHONY: install-templ
