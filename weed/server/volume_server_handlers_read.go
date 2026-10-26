@@ -65,6 +65,11 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
+	if err != nil && vs.ReadMode == "proxy" {
+		glog.V(0).InfofCtx(r.Context(), "lookup error: %v %s", err, r.URL.Path)
+		InternalError(w, r, err)
+		return
+	}
 	if err != nil || len(lookupResult.Locations) <= 0 {
 		glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 		stats.VolumeServerFileReadInvalidNeedles.Inc()
@@ -100,7 +105,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		query := r.URL.Query()
 		query.Set(reqIsProxied, "true")
 		r.URL.RawQuery = query.Encode()
-		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
+		request, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), nil)
 		if err != nil {
 			glog.V(0).Infof("failed to instance http request of url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
@@ -114,6 +119,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 
 		response, err := util_http.GetGlobalHttpClient().Do(request)
 		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.FailedReadProxyReq).Inc()
 			glog.V(0).Infof("request remote url %s: %v", redactedURL(r), err)
 			InternalError(w, r, nil)
