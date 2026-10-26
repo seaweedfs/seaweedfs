@@ -91,7 +91,7 @@ lint:
 
 # Format the code
 .PHONY: fmt
-fmt:
+fmt: install-templ
 	@echo "Formatting Go code..."
 	@go fmt ./...
 	@echo "Formatting templ files..."
@@ -175,6 +175,6 @@ $(WEED_BINARY): $(TEMPL_GO_FILES) $(GO_FILES)
 	@$(MAKE) build
 
 # Auto-generate templ files when .templ files change
-%_templ.go: %.templ
+%_templ.go: %.templ | install-templ
 	@echo "Regenerating $@ from $<"
 	@cd $(BUILD_DIR) && $(TEMPL) generate
