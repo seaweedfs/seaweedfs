@@ -86,12 +86,14 @@ jobs:
     name: S3 Vectors End-to-End
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: Build weed
-        run: go build -o weed ./weed
+        run: go build -o test/vectors/weed ./weed
       - uses: dtolnay/rust-toolchain@stable
       # Same as the unit-test job: lance's build scripts need a protoc; use
       # the vendored one so no system package is required.
@@ -114,6 +116,5 @@ jobs:
       - name: Run the s3vectors conformance subset
         working-directory: test/vectors
         run: |
-          cp ../../weed weed
           cp ../../seaweed-vector/target/release/weed-vector-server weed-vector-server
           ./run_test.sh
