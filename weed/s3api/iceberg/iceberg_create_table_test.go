@@ -201,7 +201,7 @@ func TestCreateTableAllowedByIdentityActions(t *testing.T) {
 }
 
 // Apache Spark numbers the columns of a new table from 0
-// and leaves assigning fresh IDs to the catalog. This is the schema Spark 
+// and leaves assigning fresh IDs to the catalog. This is the schema Spark
 // sent for CREATE TABLE t (id BIGINT, v STRING, ts TIMESTAMP).
 const zeroBasedSchema = `{"type":"struct","schema-id":0,"fields":[
 	{"id":0,"name":"id","required":false,"type":"long"},
