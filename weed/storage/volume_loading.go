@@ -345,8 +345,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				if v.nm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
 					glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 					v.nm = nil
-					indexFile.Close()
 				}
+				// The map keeps indexFile only for appends this volume
+				// refuses; release the descriptor like SortedFileNeedleMap.
+				indexFile.Close()
 			} else if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 				v.nm = nil
