@@ -129,8 +129,10 @@ func TestGrowthLoopStopsAtFloorWhenVolumesPreallocate(t *testing.T) {
 	const floor = 1000 * testMiB
 	const preallocate = 1 * testMiB
 	const attempts = 20
-	// Room for 4 preallocated volumes above the floor.
-	s, _, disk := newHeadroomStore(t, floor+4*testMiB, floor)
+	// Room for 4 preallocated volumes above the floor once each create's
+	// metadata allowance is held back.
+	const createCost = preallocate + volumeCreateVifBytes + volumeCreateIdxBytes
+	s, _, disk := newHeadroomStore(t, floor+4*createCost, floor)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
 
 	created := 0
@@ -140,8 +142,9 @@ func TestGrowthLoopStopsAtFloorWhenVolumesPreallocate(t *testing.T) {
 			continue
 		}
 		created++
-		// fallocate reserves the volume's full size on disk.
-		disk.free -= preallocate
+		// fallocate reserves the volume's full size on disk; the metadata
+		// allowance it was charged goes with it.
+		disk.free -= createCost
 	}
 
 	if disk.free < floor {

@@ -392,6 +392,16 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	return fmt.Errorf("No more free space left")
 }
 
+// Create-time metadata a location must still fit after a preallocation: .vif
+// always lands beside the data file; the .idx a writable volume keeps
+// appending counts only when dir_idx shares the filesystem. Holding these
+// back keeps an exact-fit reservation from dipping under the floor once the
+// metadata is written.
+const (
+	volumeCreateVifBytes = 1 << 20
+	volumeCreateIdxBytes = 4 << 20
+)
+
 // hasRoomForNewVolume reports whether a preallocated volume may be created on
 // location. A preallocated volume reserves its full size up front, so it must
 // fit in the free space above -volume.minFreeSpace; this reads the disk now
@@ -407,7 +417,11 @@ func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
 	if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
 		return false
 	}
-	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= uint64(preallocate)
+	need := uint64(preallocate) + volumeCreateVifBytes
+	if sameFilesystem(location.Directory, location.IdxDirectory) {
+		need += volumeCreateIdxBytes
+	}
+	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= need
 }
 
 // hasFreeDiskLocation checks if a disk location has free space
