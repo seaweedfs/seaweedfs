@@ -47,18 +47,19 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		newPath = util.NewFullPath(dir, message.NewEntry.Name)
 	}
 	ctx := context.Background()
+	mutationTsNs := eventMutationTsNs(resp)
 
 	unlock := f.lockReplayPaths(oldPath, newPath)
 	defer unlock()
 
 	samePath := oldPath != "" && oldPath == newPath
 	if samePath {
-		newer, err := f.replayBlockedByLocal(ctx, oldPath, resp.TsNs)
+		newer, err := f.replayBlockedByLocal(ctx, oldPath, mutationTsNs)
 		if err != nil || newer {
 			return err
 		}
 		newEntry := FromPbEntry(dir, message.NewEntry)
-		newEntry.CommitTsNs = resp.TsNs
+		newEntry.CommitTsNs = mutationTsNs
 		if message.OldEntry.IsDirectory {
 			glog.V(4).Infof("updating %v", newPath)
 			return f.updateExistingEntry(ctx, oldPath, newEntry)
@@ -75,7 +76,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 	}
 
 	if message.OldEntry != nil {
-		newer, err := f.replayBlockedByLocal(ctx, oldPath, resp.TsNs)
+		newer, err := f.replayBlockedByLocal(ctx, oldPath, mutationTsNs)
 		if err != nil {
 			return err
 		}
@@ -86,7 +87,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			keepDir := false
 			if message.OldEntry.IsDirectory {
 				var err error
-				keepDir, err = f.deleteReplayedFolderChildren(ctx, oldPath, message, resp.TsNs)
+				keepDir, err = f.deleteReplayedFolderChildren(ctx, oldPath, message, mutationTsNs)
 				if err != nil {
 					return err
 				}
@@ -101,14 +102,14 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 	}
 
 	if message.NewEntry != nil {
-		newer, err := f.replayBlockedByLocal(ctx, newPath, resp.TsNs)
+		newer, err := f.replayBlockedByLocal(ctx, newPath, mutationTsNs)
 		if err != nil {
 			return err
 		}
 		if !newer {
 			glog.V(4).Infof("creating %v", newPath)
 			newEntry := FromPbEntry(dir, message.NewEntry)
-			newEntry.CommitTsNs = resp.TsNs
+			newEntry.CommitTsNs = mutationTsNs
 			if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
@@ -116,6 +117,16 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 	}
 
 	return nil
+}
+
+// eventMutationTsNs returns the mutation's commit stamp: TsNs carries the
+// delivery stream position while MutationTsNs was stamped before the store
+// write. Events from older peers lack the field and fall back to TsNs.
+func eventMutationTsNs(event *filer_pb.SubscribeMetadataResponse) int64 {
+	if event.MutationTsNs != 0 {
+		return event.MutationTsNs
+	}
+	return event.TsNs
 }
 
 // updateExistingEntry applies a same-path update without deleting the row in

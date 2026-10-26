@@ -407,17 +407,18 @@ func (f *Filer) onRemoteDeletionEvents(event *filer_pb.SubscribeMetadataResponse
 	if message == nil {
 		return
 	}
+	mutationTsNs := eventMutationTsNs(event)
 	if message.OldEntry != nil && !IsMetadataOnlyDelete(message.OldEntry) {
 		sourcePath := filer_pb.MetadataEventSourceFullPath(event)
 		if message.NewEntry == nil || sourcePath != filer_pb.MetadataEventTargetFullPath(event) {
 			if f.RemoteStorage != nil && f.remoteTombstones != nil {
 				if _, remoteLoc := f.RemoteStorage.FindMountDirectory(util.FullPath(sourcePath)); remoteLoc != nil {
-					f.remoteTombstones.addFromEvent(sourcePath, message.OldEntry.IsDirectory, event.TsNs)
+					f.remoteTombstones.addFromEvent(sourcePath, message.OldEntry.IsDirectory, mutationTsNs)
 				}
 			}
 		}
 	}
 	if message.NewEntry != nil {
-		f.remoteTombstones.clear(filer_pb.MetadataEventTargetFullPath(event), event.TsNs)
+		f.remoteTombstones.clear(filer_pb.MetadataEventTargetFullPath(event), mutationTsNs)
 	}
 }
