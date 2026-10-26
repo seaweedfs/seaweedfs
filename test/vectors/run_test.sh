@@ -14,8 +14,7 @@ cleanup() {
 trap cleanup EXIT
 
 ./weed mini -dir "$DATA" \
-  -s3=false -webdav=false -admin.ui=false \
-  -s3.port.lance 9101 &
+  -s3=false -webdav=false -admin.ui=false &
 PIDS+=($!)
 
 ./weed s3 \
@@ -28,14 +27,22 @@ PIDS+=($!)
 PIDS+=($!)
 
 ./weed-vector-server \
-  --namespace http://127.0.0.1:9101/lance \
+  --namespace http://127.0.0.1:9102 \
   --listen 127.0.0.1:9301 &
 PIDS+=($!)
 
+# Any HTTP response (even an auth rejection) means the lance catalog is up.
 for _ in $(seq 1 60); do
-  curl -sf -X POST http://127.0.0.1:9101/v1/namespace/list >/dev/null 2>&1 && break
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9102/v1/namespace/root/list || true)
+  [ "$code" != "000" ] && break
   sleep 1
 done
-sleep 3
+[ "${code:-000}" != "000" ] || { echo "lance catalog on :9102 never came up" >&2; exit 1; }
+
+for _ in $(seq 1 60); do
+  (exec 3<>/dev/tcp/127.0.0.1/9301) 2>/dev/null && break
+  sleep 1
+done
+(exec 3<>/dev/tcp/127.0.0.1/9301) 2>/dev/null || { echo "vector server on :9301 never came up" >&2; exit 1; }
 
 python3 -m pytest -xvs s3vectors_test.py
