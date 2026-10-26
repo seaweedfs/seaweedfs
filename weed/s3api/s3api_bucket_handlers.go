@@ -78,19 +78,22 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	var buckets []ListAllMyBucketsEntry
 	var nextToken string
-	// Unauthenticated users should not see any buckets
+	var err error
+	// Unauthenticated users should not see any buckets, unless auth is off:
+	// then every request may use every bucket, so all of them are listed.
 	if identity != nil {
-		var err error
 		if fromIndex, granted := s3a.iam.canListBucketsFromOwnerIndex(r, identity); fromIndex && s3a.bucketOwnerIndexReady() {
 			buckets, nextToken, err = s3a.listBucketsFromOwnerIndex(r, identity, granted, prefix, startAfter, maxBuckets)
 		} else {
 			buckets, nextToken, err = s3a.scanVisibleBuckets(r, identity, prefix, startAfter, maxBuckets)
 		}
-		if err != nil {
-			glog.Errorf("ListBucketsHandler: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
+	} else if !s3a.iam.isEnabled() {
+		buckets, nextToken, err = s3a.scanVisibleBuckets(r, nil, prefix, startAfter, maxBuckets)
+	}
+	if err != nil {
+		glog.Errorf("ListBucketsHandler: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	response := ListAllMyBucketsResult{
@@ -151,6 +154,9 @@ func decodeContinuationToken(token string) (string, error) {
 // bucketVisibleToIdentity reports whether ListBuckets should include the bucket:
 // the identity owns it or has explicit permission to list it.
 func (s3a *S3ApiServer) bucketVisibleToIdentity(r *http.Request, bucket, owner string, identity *Identity) bool {
+	if !s3a.iam.isEnabled() {
+		return true
+	}
 	if isBucketOwnedByIdentity(owner, identity) {
 		return true
 	}
