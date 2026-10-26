@@ -1323,7 +1323,7 @@ func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest,
 				if *filtered > MaxUnsyncedEvents {
 					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 						EventNotification: &filer_pb.EventNotification{},
-						TsNs:              skeleton.TsNs,
+						TsNs:              logEntry.TsNs,
 					}); err != nil {
 						return false, err
 					}
@@ -1341,6 +1341,14 @@ func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest,
 			return false, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %w", err)
 		}
 
+		// Deliver the stream position (logEntry.TsNs), not the payload stamp:
+		// event.TsNs was stamped before the store write while the append lands
+		// after it, so an event delayed behind later-stamped writes keeps an
+		// early stamp in Data while the buffer bumps logEntry.TsNs to stay
+		// monotone. Subscribers assume delivered timestamps are ordered; an
+		// early-stamped event delivered under its stale stamp can sit behind a
+		// cursor that already advanced past it and never be seen again.
+		event.TsNs = logEntry.TsNs
 		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
 			return false, err
 		}
