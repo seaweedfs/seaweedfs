@@ -56,11 +56,15 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
 /// size up front, so it must fit in the free space above the min-free-space
 /// floor. Reads the disk now rather than the once-a-probe is_disk_space_low
 /// flag. A volume without preallocation reserves nothing.
-fn has_room_for_new_volume(location: &DiskLocation, preallocate: u64) -> bool {
+fn has_room_for_new_volume(
+    location: &DiskLocation,
+    preallocate: u64,
+    disk_stats_of: fn(&str) -> (u64, u64),
+) -> bool {
     if preallocate == 0 {
         return true;
     }
-    let (all, free) = super::disk_location::get_disk_stats(&location.directory);
+    let (all, free) = disk_stats_of(&location.directory);
     if location.min_free_space.is_low(free, all) {
         return false;
     }
@@ -91,6 +95,9 @@ pub struct Store {
     pub last_seen_topology_id: Mutex<String>,
     pub vid_stamp_lock: Mutex<()>,
     pub vid_stamp_dirty: std::sync::atomic::AtomicBool,
+    /// Reads (total, free) for a directory; a field so a test can stand in
+    /// for a disk that is full or near its floor. Go: diskStatusOf.
+    disk_stats_of: fn(&str) -> (u64, u64),
 }
 
 impl Store {
@@ -114,6 +121,7 @@ impl Store {
             last_seen_topology_id: Mutex::new(String::new()),
             vid_stamp_lock: Mutex::new(()),
             vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
+            disk_stats_of: super::disk_location::get_disk_stats,
         }
     }
 
@@ -268,7 +276,7 @@ impl Store {
             if loc.is_disk_space_low.load(Ordering::Relaxed) {
                 continue;
             }
-            if !has_room_for_new_volume(loc, preallocate) {
+            if !has_room_for_new_volume(loc, preallocate, self.disk_stats_of) {
                 continue;
             }
             if best.is_none() || effective_free > best.unwrap().1 {
@@ -957,7 +965,7 @@ impl Store {
         for loc in &self.locations {
             if loc.original_max_volume_count == 0 {
                 let current = loc.max_volume_count.load(Ordering::Relaxed);
-                let (all, free) = super::disk_location::get_disk_stats(&loc.directory);
+                let (all, free) = (self.disk_stats_of)(&loc.directory);
 
                 let unused_space = loc.unused_space(volume_size_limit);
                 // Free space under -volume.minFreeSpace is not available for new volumes.
@@ -2051,14 +2059,25 @@ mod tests {
         assert_eq!(store.total_volume_count(), 1);
     }
 
-    // Mirrors Go's TestAddVolumeRefusesPreallocationThatCrossesFloor: the
-    // reservation must fit above the floor even though the once-a-probe
-    // is_disk_space_low flag is still false.
-    #[test]
-    fn test_add_volume_refuses_preallocation_crossing_floor() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+    // fakeDisk stands in for the disk under a location; a preallocating
+    // create takes its size out of FAKE_FREE, as fallocate does on Linux.
+    const MIB: u64 = 1 << 20;
+    static FAKE_ALL: AtomicU64 = AtomicU64::new(0);
+    static FAKE_FREE: AtomicU64 = AtomicU64::new(0);
+    static FAKE_DISK_LOCK: Mutex<()> = Mutex::new(());
+
+    fn fake_disk_stats(_: &str) -> (u64, u64) {
+        (
+            FAKE_ALL.load(Ordering::Relaxed),
+            FAKE_FREE.load(Ordering::Relaxed),
+        )
+    }
+
+    // Store with one location whose fake disk has the given free space and a
+    // Bytes floor; the low-disk flag stays false, as between two probes.
+    fn headroom_store(dir: &str, free: u64, floor: u64) -> Store {
+        FAKE_ALL.store(10 * 1024 * MIB, Ordering::Relaxed);
+        FAKE_FREE.store(free, Ordering::Relaxed);
         let mut store = Store::new(NeedleMapKind::InMemory);
         store
             .add_location(
@@ -2066,13 +2085,28 @@ mod tests {
                 dir,
                 10,
                 DiskType::HardDrive,
-                MinFreeSpace::Bytes(free.saturating_sub(1)),
+                MinFreeSpace::Bytes(floor),
                 Vec::new(),
             )
             .unwrap();
+        store.disk_stats_of = fake_disk_stats;
+        store
+    }
+
+    // Mirrors Go's TestAddVolumeRefusesPreallocationThatCrossesFloor: the
+    // reservation must fit above the floor even though the once-a-probe
+    // is_disk_space_low flag is still false.
+    #[test]
+    fn test_add_volume_refuses_preallocation_crossing_floor() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        // 4 MiB above the floor, so an 8 MiB reservation would cross it.
+        let mut store = headroom_store(dir, floor + 4 * MIB, floor);
 
         let spec = VolumeSpec {
-            preallocate: 2,
+            preallocate: 8 * MIB,
             ..VolumeSpec::default()
         };
         assert!(
@@ -2083,64 +2117,83 @@ mod tests {
         assert!(!store.has_volume(VolumeId(1)));
     }
 
-    // A preallocated create is refused while the disk already sits below the
-    // floor; a volume reserving nothing still goes through, as a merge does.
+    // Mirrors Go's TestAddVolumeAllowsPlainVolumeAboveFloor and
+    // TestAddVolumeAllowsMergeVolumeBelowFloor: a volume reserving nothing is
+    // created either way, so growth is only held back when it would cross
+    // the floor.
     #[test]
-    fn test_add_volume_headroom_below_floor() {
+    fn test_add_volume_allows_plain_volume_anywhere() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut store = Store::new(NeedleMapKind::InMemory);
+        let floor = 1000 * MIB;
+        let mut store = headroom_store(dir, floor + MIB, floor);
         store
-            .add_location(
-                dir,
-                dir,
-                10,
-                DiskType::HardDrive,
-                MinFreeSpace::Bytes(u64::MAX),
-                Vec::new(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
 
-        let spec = VolumeSpec {
-            preallocate: 1,
-            ..VolumeSpec::default()
-        };
-        assert!(
-            store
-                .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
-                .is_err()
-        );
+        FAKE_FREE.store(floor - MIB, Ordering::Relaxed);
         store
             .add_volume(VolumeId(2), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
+    }
+
+    // Mirrors Go's TestGrowthLoopStopsAtFloorWhenVolumesPreallocate: the
+    // master keeps asking for volumes while the disk sits just above its
+    // floor; each created volume reserves its full size, so the disk must
+    // not be driven below the floor.
+    #[test]
+    fn test_growth_loop_stops_at_floor_when_volumes_preallocate() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let preallocate = MIB;
+        // Room for 4 preallocated volumes above the floor.
+        let mut store = headroom_store(dir, floor + 4 * MIB, floor);
+
+        let spec = VolumeSpec {
+            preallocate,
+            ..VolumeSpec::default()
+        };
+        let mut created = 0;
+        for i in 1..=20u32 {
+            if store
+                .add_volume(VolumeId(i), DiskType::HardDrive, &spec)
+                .is_ok()
+            {
+                created += 1;
+                FAKE_FREE.fetch_sub(preallocate, Ordering::Relaxed);
+            }
+        }
+
+        assert!(
+            FAKE_FREE.load(Ordering::Relaxed) >= floor,
+            "free space fell below the floor after {created} volumes"
+        );
+        // Exactly the room above the floor must be used. Checking only an
+        // upper bound would also pass when every create fails.
+        assert_eq!(created, 4);
     }
 
     // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
     // inside the floor adds no slots.
     #[test]
     fn test_maybe_adjust_volume_max_ignores_free_space_inside_floor() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut store = Store::new(NeedleMapKind::InMemory);
-        store
-            .add_location(
-                dir,
-                dir,
-                0,
-                DiskType::HardDrive,
-                MinFreeSpace::Bytes(u64::MAX),
-                Vec::new(),
-            )
-            .unwrap();
-        store
-            .volume_size_limit
-            .store(1024 * 1024, Ordering::Relaxed);
+        let floor = 1000 * MIB;
+        // 90 MiB above the floor is 3 x 30 MiB volumes; the rest is headroom.
+        let mut store = headroom_store(dir, floor + 90 * MIB, floor);
+        store.volume_size_limit.store(30 * MIB, Ordering::Relaxed);
+        store.locations[0].original_max_volume_count = 0;
 
         store.maybe_adjust_volume_max();
 
         assert_eq!(
             store.locations[0].max_volume_count.load(Ordering::Relaxed),
-            1
+            3
         );
     }
 
