@@ -14,10 +14,11 @@ WEED_BINARY := $(BUILD_DIR)/weed
 .PHONY: all
 all: build
 
-# Install templ if not present
+# Install templ pinned to the go.mod version so generated code matches the runtime
+TEMPL_VERSION := $(shell go list -m -f '{{.Version}}' github.com/a-h/templ)
 .PHONY: install-templ
 install-templ:
-	@which templ > /dev/null || (echo "Installing templ..." && go install github.com/a-h/templ/cmd/templ@latest)
+	@(templ version 2>/dev/null | grep -qF $(TEMPL_VERSION)) || (echo "Installing templ $(TEMPL_VERSION)..." && go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION))
 
 # Generate templ files
 .PHONY: generate
