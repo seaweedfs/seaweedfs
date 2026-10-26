@@ -962,6 +962,9 @@ async fn proxy_request(
         "te",
         "trailer",
         "upgrade",
+        "proxy-connection",
+        "proxy-authenticate",
+        "proxy-authorization",
     ] {
         hop_by_hop.insert(fixed.to_string());
     }
@@ -5676,6 +5679,10 @@ mod tests {
             "x-hop-marker",
             header::HeaderValue::from_static("private"),
         );
+        original_headers.insert(
+            "proxy-authorization",
+            header::HeaderValue::from_static("Basic cHJveHk6c2VjcmV0"),
+        );
         let info = ProxyRequestInfo {
             method: Method::GET,
             original_headers,
@@ -5700,6 +5707,7 @@ mod tests {
             "transfer-encoding",
             "connection",
             "x-hop-marker",
+            "proxy-authorization",
         ] {
             assert!(
                 !headers.iter().any(|(n, _)| n == dropped),
