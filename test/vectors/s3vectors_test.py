@@ -43,7 +43,7 @@ def test_vector_lifecycle(vectors):
         indexName=INDEX,
         vectors=[
             {"key": "a", "data": {"float32": [1, 0, 0, 0]}, "metadata": {"color": "red"}},
-            {"key": "b", "data": {"float32": [0, 1, 0, 0]}, "metadata": {"color": "blue"}},
+            {"key": "b", "data": {"float32": [0.95, 0.05, 0, 0]}, "metadata": {"color": "blue"}},
             {"key": "c", "data": {"float32": [0.9, 0.1, 0, 0]}, "metadata": {"color": "red"}},
         ],
     )
@@ -65,8 +65,13 @@ def test_vector_lifecycle(vectors):
         returnMetadata=True,
         filter={"color": {"$eq": "red"}},
     )["vectors"]
+    # b is the second-nearest vector but blue, so an ignored filter would
+    # return ["a", "b"] here.
     assert [h["key"] for h in hits] == ["a", "c"]
-    assert all(h["distance"] >= 0 and h["metadata"]["color"] == "red" for h in hits)
+    distances = {h["key"]: h["distance"] for h in hits}
+    assert distances["a"] == pytest.approx(0.0, abs=1e-6)
+    assert distances["c"] == pytest.approx(0.02, abs=1e-4)
+    assert all(h["metadata"]["color"] == "red" for h in hits)
 
     vectors.delete_vectors(vectorBucketName=BUCKET, indexName=INDEX, keys=["b"])
     listed = vectors.list_vectors(vectorBucketName=BUCKET, indexName=INDEX)["vectors"]
