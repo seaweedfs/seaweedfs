@@ -228,7 +228,8 @@ func isObjectEntryMiss(err error) bool {
 	return isFilerNotFound(err) ||
 		errors.Is(err, ErrObjectNotFound) ||
 		errors.Is(err, ErrVersionNotFound) ||
-		errors.Is(err, ErrLatestVersionNotFound)
+		errors.Is(err, ErrLatestVersionNotFound) ||
+		errors.Is(err, errInvalidVersionID)
 }
 
 // getObjectEntryForUpdate resolves the entry a metadata update targets and the

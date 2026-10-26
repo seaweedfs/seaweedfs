@@ -990,6 +990,20 @@ func TestGetObjectEntryPreservesTransientErrors(t *testing.T) {
 	}
 }
 
+func TestGetObjectEntryInvalidVersionIdStillNotFound(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true},
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	_, err := s3a.getObjectEntry("b", "key", "not/../a-version")
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("invalid version id must report ErrObjectNotFound, got: %v", err)
+	}
+}
+
 func TestGetObjectEntryMissStillNotFound(t *testing.T) {
 	f := &retentionTestFiler{
 		entries: map[string]*filer_pb.Entry{
