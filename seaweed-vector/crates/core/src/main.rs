@@ -73,7 +73,14 @@ enum Command {
         nprobes: Option<usize>,
     },
     /// Fetch rows by key.
-    Get { id: String, keys: Vec<String> },
+    Get {
+        id: String,
+        keys: Vec<String>,
+        #[arg(long)]
+        vector_column: Option<String>,
+        #[arg(long)]
+        key_column: Option<String>,
+    },
 }
 
 /// `id` is a delimiter-joined table id; when it looks like a URI (`s3://...`,
@@ -151,9 +158,15 @@ async fn main() -> Result<()> {
             let coverages = coverage::coverage(&dataset, &vector.vector_column).await?;
             println!("{}", serde_json::to_string_pretty(&coverages)?);
         }
-        Command::Get { id, keys } => {
+        Command::Get {
+            id,
+            keys,
+            vector_column,
+            key_column,
+        } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
-            let vector = VectorTable::resolve(&dataset, None, None)?;
+            let vector =
+                VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             for batch in query::get(&dataset, &vector, &keys).await? {
                 println!("{}", arrow_cast::pretty::pretty_format_batches(&[batch])?);
             }
