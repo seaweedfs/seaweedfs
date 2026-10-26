@@ -28,6 +28,27 @@ fn invalid(err: impl Into<anyhow::Error>) -> Status {
     Status::invalid_argument(format!("{:#}", err.into()))
 }
 
+fn open_status(err: anyhow::Error) -> Status {
+    let missing = err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
+            || cause.downcast_ref::<lance::Error>().is_some_and(|e| {
+                matches!(
+                    e,
+                    lance::Error::DatasetNotFound { .. }
+                        | lance::Error::NotFound { .. }
+                        | lance::Error::VersionNotFound { .. }
+                )
+            })
+    });
+    if missing {
+        Status::not_found(format!("{:#}", err))
+    } else {
+        Status::unavailable(format!("{:#}", err))
+    }
+}
+
 const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
@@ -304,7 +325,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(invalid)?;
+        let dataset = self.open(&table).await.map_err(open_status)?;
         if req.vectors.is_empty() {
             return Ok(Response::new(pb::PutVectorsResponse {
                 version: dataset.version().version,
@@ -346,7 +367,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(invalid)?;
+        let dataset = self.open(&table).await.map_err(open_status)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         let batches = query::get(&dataset, &resolved, &req.keys)
             .await
@@ -364,7 +385,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await.map_err(invalid)?;
+        let mut dataset = self.open(&table).await.map_err(open_status)?;
         if !req.keys.is_empty() {
             dataset
                 .delete(&key_list(&req.keys))
@@ -384,7 +405,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(invalid)?;
+        let dataset = self.open(&table).await.map_err(open_status)?;
         let offset: u64 = if req.next_token.is_empty() {
             0
         } else {
@@ -433,7 +454,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(invalid)?;
+        let dataset = self.open(&table).await.map_err(open_status)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(

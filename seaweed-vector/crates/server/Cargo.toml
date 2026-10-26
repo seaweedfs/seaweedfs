@@ -22,6 +22,7 @@ arrow-cast = "58"
 arrow-schema = "58"
 prost = "0.14"
 prost-types = "0.14"
+reqwest = { version = "0.12", default-features = false }
 tonic = { version = "0.14", features = ["tls-aws-lc"] }
 tonic-prost = "0.14"
 anyhow.workspace = true
