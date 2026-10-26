@@ -53,6 +53,9 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
             let indexed: RoaringBitmap = bitmaps
                 .iter()
                 .fold(RoaringBitmap::new(), |acc, b| acc | b);
+            // The bitmap records what the index covered when built; fragments
+            // the manifest has since dropped are not part of this version.
+            let indexed = indexed & &all;
             let unindexed = &all - &indexed;
             IndexCoverage {
                 index_name: name,
