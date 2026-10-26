@@ -345,9 +345,9 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, rep
 
 // ReserveFreeLocation picks like FindFreeLocation, but under volumeCreateLock
 // and against live disk stats rather than the once-a-minute probe, then
-// charges need against the location's cached free space. A VolumeCopy's pick
-// and its .dat reservation are separate steps; without this a second copy can
-// spend the same headroom and drive the disk under -volume.minFreeSpace.
+// charges need against the location's pending reservations. A VolumeCopy's
+// pick and its .dat reservation are separate steps; without this a second
+// copy can spend the same headroom and drive the disk under -volume.minFreeSpace.
 func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) *DiskLocation {
 	s.volumeCreateLock.Lock()
 	defer s.volumeCreateLock.Unlock()
@@ -362,14 +362,15 @@ func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLoc
 		if low, _ := location.MinFreeSpace.IsLow(status.Free, status.PercentFree); low {
 			return false
 		}
-		return location.MinFreeSpace.AvailableSpace(status.Free, status.All) > need
+		return location.MinFreeSpace.AvailableSpace(status.Free, status.All) > location.ReservedSpace.Load()+need
 	}, replaceVid...)
 	if location == nil {
 		return nil
 	}
 	status := diskStatusOf(location.Directory)
-	if available := location.MinFreeSpace.AvailableSpace(status.Free, status.All); available > need {
-		location.AvailableSpace.Store(available - need)
+	location.ReservedSpace.Add(need)
+	if available := location.MinFreeSpace.AvailableSpace(status.Free, status.All); available > location.ReservedSpace.Load() {
+		location.AvailableSpace.Store(available - location.ReservedSpace.Load())
 	} else {
 		location.AvailableSpace.Store(0)
 	}
@@ -377,12 +378,18 @@ func (s *Store) ReserveFreeLocation(need uint64, filterFn func(location *DiskLoc
 }
 
 // ReleaseFreeLocation returns space ReserveFreeLocation charged when the copy
-// it paid for does not land. Without the refund a failed copy keeps its
-// headroom booked until the next disk-space probe, blocking retries. The pick
-// rechecks live stats, so a refund that lands after a probe only over-reports
-// briefly and cannot admit a copy the disk cannot fit.
+// it paid for does not land. Removing the pending charge first keeps a probe
+// that already rebased the cache from seeing the refund twice.
 func (s *Store) ReleaseFreeLocation(location *DiskLocation, need uint64) {
+	location.ReservedSpace.Add(-need)
 	location.AvailableSpace.Add(need)
+}
+
+// CommitFreeLocation settles a reservation whose copy landed: the bytes are
+// real on disk, so only the pending charge ends — the cache keeps the charge,
+// which now matches the live usage the next probe will read.
+func (s *Store) CommitFreeLocation(location *DiskLocation, need uint64) {
+	location.ReservedSpace.Add(-need)
 }
 func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	s.volumeCreateLock.Lock()
@@ -463,7 +470,7 @@ func hasRoomForNewVolume(location *DiskLocation, preallocate int64) bool {
 	if sameFilesystem(location.Directory, location.IdxDirectory) {
 		need += volumeCreateIdxBytes
 	}
-	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= need
+	return location.MinFreeSpace.AvailableSpace(status.Free, status.All) >= need+location.ReservedSpace.Load()
 }
 
 // hasFreeDiskLocation checks if a disk location has free space

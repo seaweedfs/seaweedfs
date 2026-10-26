@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -242,5 +243,89 @@ func TestReleaseFreeLocationRestoresReservation(t *testing.T) {
 		return location.DiskType == types.HardDriveType
 	}); pick == nil {
 		t.Fatal("retry pick = nil; want the refunded reservation to admit a copy")
+	}
+}
+
+// A probe between reserve and release must not resurrect the charge: the
+// probe's live reading already forgot the failed copy's pending bytes, so
+// refunding the cached figure would let two copies spend the same headroom.
+func TestReleaseFreeLocationAfterProbeRefundsOnlyOwnCharge(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	s, loc, disk := newHeadroomStore(t, floor+40*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(40 * testMiB)
+
+	orig := newDiskStatus
+	newDiskStatus = func(string, stats.DiskIOProbeConfig) *volume_server_pb.DiskStatus {
+		return &volume_server_pb.DiskStatus{All: disk.all, Free: disk.free}
+	}
+	t.Cleanup(func() { newDiskStatus = orig })
+
+	hdd := func(location *DiskLocation) bool { return location.DiskType == types.HardDriveType }
+	if pick := s.ReserveFreeLocation(need, hdd); pick == nil {
+		t.Fatal("first pick = nil; want the only location")
+	}
+
+	// Mid-copy probe: the live disk still shows the not-yet-written bytes
+	// free, but the pending charge must keep them out of the cache.
+	loc.CheckDiskSpace(stats.DiskIOProbeConfig{})
+	if got := loc.AvailableSpace.Load(); got != 10*testMiB {
+		t.Fatalf("AvailableSpace after probe = %d MiB; want 10 (charge survives the probe)", got/testMiB)
+	}
+	if pick := s.ReserveFreeLocation(need, hdd); pick != nil {
+		t.Fatalf("second pick = %v; want nil (the in-flight reservation still holds the headroom)", pick)
+	}
+
+	// The failed copy removes only its own charge; the probe-rebased cache
+	// must end up holding exactly the live headroom, not the headroom plus
+	// a resurrected second charge.
+	s.ReleaseFreeLocation(loc, need)
+	if got := loc.AvailableSpace.Load(); got != 40*testMiB {
+		t.Fatalf("AvailableSpace after refund = %d MiB; want 40", got/testMiB)
+	}
+	if pick := s.ReserveFreeLocation(need, hdd); pick == nil {
+		t.Fatal("retry pick = nil; want the live headroom to admit a copy")
+	}
+	if pick := s.ReserveFreeLocation(need, hdd); pick != nil {
+		t.Fatalf("third pick = %v; want nil (only 40 MiB of headroom exists)", pick)
+	}
+}
+
+// A copy that lands must end its pending charge without refunding the cache:
+// the cache's charge and the landed bytes cancel out, and the next probe
+// reads the disk exactly as it is.
+func TestCommitFreeLocationSettlesLandedReservation(t *testing.T) {
+	const floor = 1000 * testMiB
+	const need = 30 * testMiB
+	s, loc, disk := newHeadroomStore(t, floor+40*testMiB, floor)
+	loc.MaxVolumeCount = 10
+	loc.AvailableSpace.Store(40 * testMiB)
+
+	orig := newDiskStatus
+	newDiskStatus = func(string, stats.DiskIOProbeConfig) *volume_server_pb.DiskStatus {
+		return &volume_server_pb.DiskStatus{All: disk.all, Free: disk.free}
+	}
+	t.Cleanup(func() { newDiskStatus = orig })
+
+	pick := s.ReserveFreeLocation(need, func(location *DiskLocation) bool {
+		return location.DiskType == types.HardDriveType
+	})
+	if pick != loc {
+		t.Fatalf("pick = %v; want the only location", pick)
+	}
+
+	disk.free -= need // the copied bytes are on disk now
+	s.CommitFreeLocation(pick, need)
+	if got := loc.ReservedSpace.Load(); got != 0 {
+		t.Fatalf("ReservedSpace after commit = %d MiB; want 0", got/testMiB)
+	}
+	if got := loc.AvailableSpace.Load(); got != 10*testMiB {
+		t.Fatalf("AvailableSpace after commit = %d MiB; want 10 (no refund)", got/testMiB)
+	}
+
+	loc.CheckDiskSpace(stats.DiskIOProbeConfig{})
+	if got := loc.AvailableSpace.Load(); got != 10*testMiB {
+		t.Fatalf("AvailableSpace after post-landing probe = %d MiB; want 10", got/testMiB)
 	}
 }

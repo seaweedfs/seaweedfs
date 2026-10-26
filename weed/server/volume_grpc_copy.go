@@ -238,13 +238,16 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	datFileName = dataBaseFileName + ".dat"
 
 	defer func() {
-		if err != nil && dataBaseFileName != "" {
+		if copyLocation == nil {
+			return
+		}
+		if err != nil {
 			os.Remove(idxFileName)
 			os.Remove(datFileName)
 			os.Remove(dataBaseFileName + ".vif")
-			if copyLocation != nil {
-				vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
-			}
+			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
+		} else {
+			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
 		}
 	}()
 
