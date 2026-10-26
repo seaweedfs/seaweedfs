@@ -117,6 +117,11 @@ async fn main() -> Result<()> {
         Command::Describe { id } => {
             let dataset = open_dataset(&client, &id, &fallback).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
+            let vector = VectorTable::resolve(&dataset, None, None).ok();
+            let coverages = match &vector {
+                Some(v) => coverage::coverage(&dataset, &v.vector_column).await?,
+                None => Vec::new(),
+            };
             println!(
                 "{}",
                 serde_json::json!({
@@ -124,12 +129,19 @@ async fn main() -> Result<()> {
                     "uri": dataset.uri(),
                     "version": dataset.version().version,
                     "fragments": dataset.get_fragments().len(),
-                    "rows": dataset.count_rows(None).await.unwrap_or(0),
+                    "rows": dataset.count_rows(None).await?,
                     "schema": schema.fields().iter().map(|f| serde_json::json!({
                         "name": f.name(),
                         "type": f.data_type().to_string(),
                         "nullable": f.is_nullable(),
                     })).collect::<Vec<_>>(),
+                    "vector": vector.map(|v| serde_json::json!({
+                        "vector_column": v.vector_column,
+                        "dimension": v.dimension,
+                        "key_column": v.key_column,
+                        "metadata_columns": v.metadata_columns,
+                    })),
+                    "coverage": coverages,
                 })
             );
         }
