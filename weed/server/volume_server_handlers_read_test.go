@@ -355,6 +355,18 @@ func TestProxyReqToTargetServerCancelsUpstreamBodyReadWithInboundRequest(t *test
 }
 
 func TestProxyReqToTargetServerDistinguishesLookupFailureFromNoLocation(t *testing.T) {
+	t.Run("cancelled request skips the lookup error response", func(t *testing.T) {
+		const volumeID = "849300107"
+		vs := newProxyTestVolumeServer(t, volumeID, nil, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		w := httptest.NewRecorder()
+		vs.proxyReqToTargetServer(w, httptest.NewRequest(http.MethodGet, "/"+volumeID+",abcdef", nil).WithContext(ctx))
+		if w.Code != http.StatusOK {
+			t.Errorf("status %d, want no response written for a cancelled request", w.Code)
+		}
+	})
+
 	t.Run("master lookup failure is internal error", func(t *testing.T) {
 		const volumeID = "849300103"
 		vs := newProxyTestVolumeServer(t, volumeID, nil, status.Error(codes.Unavailable, "master unavailable"))
