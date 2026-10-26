@@ -117,7 +117,7 @@ func deleteEventEntry(ctx context.Context, entry *Entry) *Entry {
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
 
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, notModifiedAfter time.Time) (err error) {
 	if p == "/" {
 		return nil
 	}
@@ -128,7 +128,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if findErr != nil {
 		return findErr
 	}
-	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
+	if !notModifiedAfter.IsZero() && entry.Attr.Mtime.After(notModifiedAfter) {
 		return nil
 	}
 	if !isRecursive && entry.IsDirectory() {

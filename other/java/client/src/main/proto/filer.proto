@@ -524,8 +524,9 @@ message DeleteEntryRequest {
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
-    int64 if_not_modified_after = 9;
+    int64 if_not_modified_after = 9;    // unix time in seconds
     bool keep_remote_object = 10;
+    int64 if_not_modified_after_ns = 11; // unix time in nanoseconds; overrides if_not_modified_after when set
 }
 
 message DeleteEntryResponse {

@@ -55,12 +55,12 @@ func TestKeepRemoteObjectMarkerOnlyLivesOnDeleteEvents(t *testing.T) {
 	require.Contains(t, stored.Extended, "Seaweed-Other")
 
 	ordinaryCtx, ordinary := WithMetadataEventSink(ctx)
-	require.NoError(t, f.DeleteEntryMetaAndData(ordinaryCtx, file.FullPath, false, false, false, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(ordinaryCtx, file.FullPath, false, false, false, false, nil, time.Time{}))
 	require.False(t, IsMetadataOnlyDelete(ordinary.Last().EventNotification.OldEntry))
 
 	require.NoError(t, f.CreateEntry(ctx, &Entry{FullPath: file.FullPath, Attr: Attr{Mode: 0644}}, nil, false, false, nil, true, 255))
 	keepCtx, keep := WithMetadataEventSink(WithKeepRemoteObject(ctx))
-	require.NoError(t, f.DeleteEntryMetaAndData(keepCtx, dir.FullPath, true, false, false, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(keepCtx, dir.FullPath, true, false, false, false, nil, time.Time{}))
 	require.Equal(t, "dir", keep.Last().EventNotification.OldEntry.Name)
 	require.True(t, IsMetadataOnlyDelete(keep.Last().EventNotification.OldEntry))
 }
@@ -83,7 +83,7 @@ func TestDeleteFolderFreesLastHardLinkChunks(t *testing.T) {
 	}
 	require.NoError(t, f.CreateEntry(ctx, linkEntry, nil, false, false, nil, true, 255))
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d", true, false, true, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d", true, false, true, false, nil, time.Time{}))
 
 	_, err := store.KvGet(ctx, hardLinkId)
 	require.ErrorIs(t, err, ErrKvNotFound)
@@ -111,9 +111,61 @@ func TestDeleteFolderKeepsSharedHardLinkChunks(t *testing.T) {
 		}, nil, false, false, nil, true, 255))
 	}
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d", true, false, true, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d", true, false, true, false, nil, time.Time{}))
 
 	_, err := store.KvGet(ctx, hardLinkId)
 	require.NoError(t, err, "surviving link must keep the inode record")
 	require.Equal(t, 0, f.pendingDeletionCount())
+}
+
+func TestDeleteEntryMetaAndData_IfNotModifiedAfterSubsecond(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+
+	baseTime := time.Date(2026, 10, 26, 12, 0, 0, 500_000_000, time.UTC) // 12:00:00.500
+	filePath := util.FullPath("/subsecond.txt")
+
+	entry := &Entry{
+		FullPath: filePath,
+		Attr:     Attr{Mode: 0644, Mtime: baseTime},
+	}
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+
+	// Guard is 100ms before entry Mtime (within the same second)
+	guardNs := baseTime.Add(-100 * time.Millisecond).UnixNano()
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, time.Unix(0, guardNs)))
+
+	// Entry must NOT be deleted because entry's Mtime is newer than guardNs
+	stored, err := f.FindEntry(ctx, filePath)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "entry modified after guardNs must be preserved")
+
+	// Guard is at or after entry Mtime
+	olderGuardNs := baseTime.Add(100 * time.Millisecond).UnixNano()
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, time.Unix(0, olderGuardNs)))
+
+	// Entry must be deleted now
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+
+	// A guard equal to the entry's Mtime still deletes
+	require.NoError(t, f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime))
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+
+	// An entry mtime beyond the UnixNano range compares as a time, not an int
+	farFuture := &Entry{FullPath: filePath, Attr: Attr{Mode: 0644, Mtime: time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC)}}
+	require.NoError(t, f.CreateEntry(ctx, farFuture, nil, false, false, nil, true, 255))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, baseTime))
+	stored, err = f.FindEntry(ctx, filePath)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "entry past the UnixNano range must be preserved")
+
+	// A whole-second cutoff beyond the UnixNano range still matches: the
+	// unchanged year-3000 entry is at its guard's second, so it is deleted
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, filePath, false, false, false, false, nil, time.Unix(farFuture.Attr.Mtime.Unix(), 999_999_999)))
+	_, err = f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
 }

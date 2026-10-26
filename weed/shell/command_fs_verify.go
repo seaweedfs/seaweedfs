@@ -163,8 +163,7 @@ type ItemEntry struct {
 	chunks    []*filer_pb.FileChunk
 	rawChunks []*filer_pb.FileChunk
 	path      util.FullPath
-	mtimeSec  int64
-	md5       []byte
+	attr      *filer_pb.FuseAttributes
 }
 
 // resolveAndVerify expands chunk manifests and verifies the entry's needles.
@@ -220,8 +219,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 					if *c.pruneEntries && hasMissingNeedles {
 						pruned, pruneErr := c.pruneEntry(
 							util.NewFullPath(message.NewParentPath, message.NewEntry.Name),
-							message.NewEntry.Attributes.Mtime,
-							message.NewEntry.Attributes.Md5,
+							message.NewEntry.Attributes,
 							message.NewEntry.Chunks)
 						if pruneErr != nil {
 							fmt.Fprintf(c.writer, "prune %s failed: %v\n", entryPath, pruneErr)
@@ -371,13 +369,28 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 	return itemIsVerifed.Load(), hasMissingNeedlesFlag.Load()
 }
 
+// deleteEntryCutoff splits an entry mtime into the conditional-delete fields:
+// seconds keep older filers enforcing the guard, nanoseconds keep same-second
+// precision where int64 can hold them. ok is false when neither field can
+// express the cutoff and the delete must be skipped rather than sent unguarded.
+func deleteEntryCutoff(mtimeSec int64, mtimeNsec int32) (sec, ns int64, ok bool) {
+	sec = mtimeSec
+	if sec <= 0 {
+		return 0, 0, false
+	}
+	if nsec := int64(mtimeNsec); nsec >= 0 && nsec < 1e9 && sec <= (math.MaxInt64-nsec)/1e9 {
+		ns = sec*1e9 + nsec
+	}
+	return sec, ns, true
+}
+
 // pruneEntry deletes an entry whose needles are gone, unless the entry
 // changed since verification. Three guards protect a concurrent repair:
 // re-lookup with mtime/md5 comparison, an identity check of the chunk set
 // (an append or rewrite in the same second as the original mtime changes the
 // chunks but not the timestamps), and IfNotModifiedAfter on the delete. The
 // entry is only counted as pruned when a follow-up lookup confirms it is gone.
-func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []byte, expectedChunks []*filer_pb.FileChunk) (pruned bool, err error) {
+func (c *commandFsVerify) pruneEntry(path util.FullPath, attr *filer_pb.FuseAttributes, expectedChunks []*filer_pb.FileChunk) (pruned bool, err error) {
 	dir, name := path.DirAndName()
 	expectedIds := chunkFingerprints(expectedChunks)
 	lookupErr := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -392,11 +405,11 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			return err
 		}
 		att := lookupResp.Entry.GetAttributes()
-		if att.GetMtime() != mtimeSec {
+		if att.GetMtime() != attr.GetMtime() || att.GetMtimeNs() != attr.GetMtimeNs() {
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
-		if len(md5) > 0 && !bytes.Equal(att.GetMd5(), md5) {
+		if md5 := attr.GetMd5(); len(md5) > 0 && !bytes.Equal(att.GetMd5(), md5) {
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
@@ -404,10 +417,16 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
+		sec, ns, ok := deleteEntryCutoff(attr.GetMtime(), attr.GetMtimeNs())
+		if !ok {
+			fmt.Fprintf(c.writer, "skip pruning %s: mtime cannot set a delete condition\n", path)
+			return nil
+		}
 		deleteResp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:          dir,
-			Name:               name,
-			IfNotModifiedAfter: mtimeSec,
+			Directory:            dir,
+			Name:                 name,
+			IfNotModifiedAfter:   sec,
+			IfNotModifiedAfterNs: ns,
 		})
 		if err != nil {
 			return err
@@ -487,8 +506,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					chunks:    dataChunks,
 					rawChunks: entry.Entry.GetChunks(),
 					path:      util.NewFullPath(entry.Dir, entry.Entry.Name),
-					mtimeSec:  entry.Entry.GetAttributes().GetMtime(),
-					md5:       entry.Entry.GetAttributes().GetMd5(),
+					attr:      entry.Entry.GetAttributes(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -508,7 +526,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					}
 					fileCount++
 				} else if *c.pruneEntries && hasMissingNeedles {
-					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeSec, i.md5, i.rawChunks)
+					pruned, pruneErr := c.pruneEntry(i.path, i.attr, i.rawChunks)
 					if pruneErr != nil {
 						fmt.Fprintf(c.writer, "prune %s failed: %v\n", itemPath, pruneErr)
 					} else if pruned {
