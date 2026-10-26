@@ -359,7 +359,13 @@ impl VectorService for VectorServer {
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(invalid)?;
-        let offset: u64 = req.next_token.parse().unwrap_or(0);
+        let offset: u64 = if req.next_token.is_empty() {
+            0
+        } else {
+            req.next_token
+                .parse()
+                .map_err(|_| Status::invalid_argument("invalid next_token"))?
+        };
         let mut columns = vec![KEY_COLUMN.to_string()];
         if req.return_data {
             columns.push(VECTOR_COLUMN.to_string());
