@@ -104,6 +104,9 @@ func (s *Store) saveVidStamps() {
 	}
 	failed := false
 	for _, location := range s.Locations {
+		if location.readOnlyMount {
+			continue
+		}
 		if err := writeVidStamp(location.Directory, stamp); err != nil {
 			glog.Warningf("write vid stamp in %s: %v", location.Directory, err)
 			failed = true

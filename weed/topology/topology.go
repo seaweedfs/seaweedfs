@@ -94,6 +94,7 @@ type Topology struct {
 
 	growthFrozen            atomic.Bool
 	growthFrozenAt          atomic.Int64
+	metaReadOnly            atomic.Bool
 	freezeOnMismatch        atomic.Bool
 	stateLossRecoveryWait   atomic.Int64
 	allocationNotBefore     atomic.Int64
@@ -618,7 +619,16 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*
 	return nil
 }
 
+// SetMetaReadOnly disables volume id allocation: -mdir is on a read-only
+// filesystem and raft runs from a copy that does not survive a restart.
+func (t *Topology) SetMetaReadOnly(readOnly bool) {
+	t.metaReadOnly.Store(readOnly)
+}
+
 func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
+	if t.metaReadOnly.Load() {
+		return 0, fmt.Errorf("volume growth disabled: -mdir is on a read-only filesystem")
+	}
 	if !t.IsLeaderAndCanRead() {
 		return 0, fmt.Errorf("as leader can not read yet")
 

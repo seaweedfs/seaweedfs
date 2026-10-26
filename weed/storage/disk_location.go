@@ -58,8 +58,11 @@ type DiskLocation struct {
 
 	isDiskSpaceLow    atomic.Bool
 	isDiskUnavailable atomic.Bool
-	syncBatch         SyncBatchOption
-	closeCh           chan struct{}
+	// readOnlyMount: dir or idxDir is on a read-only filesystem. Volumes load
+	// read-only and the location offers no free slots. Fixed at startup.
+	readOnlyMount bool
+	syncBatch     SyncBatchOption
+	closeCh       chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -101,6 +104,10 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 			glog.Fatalf("cannot create idx dir %s: %v", idxDir, err)
 		}
 	}
+	readOnlyMount := util.IsReadOnlyMount(dir) || util.IsReadOnlyMount(idxDir)
+	if readOnlyMount {
+		glog.V(0).Infof("%s is on a read-only filesystem: its volumes load read-only, no new volumes", dir)
+	}
 	dirUuid, err := GenerateDirUuid(dir)
 	if err != nil {
 		glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
@@ -120,6 +127,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
+		readOnlyMount:          readOnlyMount,
 		syncBatch:              DefaultSyncBatchOption,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)

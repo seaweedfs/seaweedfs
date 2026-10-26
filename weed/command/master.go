@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io/fs"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -230,7 +232,18 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	// start raftServer
-	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
+	metaDir := util.ResolvePath(path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port)))
+	if util.IsReadOnlyMount(*masterOption.metaFolder) {
+		// raft rewrites conf/state even to start. Run it from a private copy and
+		// allocate no volume ids, so nothing is lost when the copy is dropped.
+		roCopy, err := copyDirForReadOnly(metaDir)
+		if err != nil {
+			glog.Fatalf("-mdir %s is read-only and could not be copied: %v", *masterOption.metaFolder, err)
+		}
+		glog.V(0).Infof("-mdir %s is on a read-only filesystem: raft runs from %s, volume growth disabled", *masterOption.metaFolder, roCopy)
+		metaDir = roCopy
+		ms.Topo.SetMetaReadOnly(true)
+	}
 
 	isSingleMaster := isSingleMasterMode(*masterOption.peers)
 
@@ -242,7 +255,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
 		ServerAddr:        myMasterAddress,
-		DataDir:           util.ResolvePath(metaDir),
+		DataDir:           metaDir,
 		Topo:              ms.Topo,
 		RaftResumeState:   *masterOption.raftResumeState,
 		SingleMaster:      isSingleMaster,
@@ -406,6 +419,37 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	} else {
 		select {}
 	}
+}
+
+// copyDirForReadOnly copies the master's raft directory (a few KB) into a new
+// temporary directory. A missing src yields an empty copy.
+func copyDirForReadOnly(src string) (string, error) {
+	dst, err := os.MkdirTemp("", "weed-master-ro-")
+	if err != nil {
+		return "", err
+	}
+	err = filepath.WalkDir(src, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if p == src && os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0600)
+	})
+	return dst, err
 }
 
 func isSingleMasterMode(peers string) bool {

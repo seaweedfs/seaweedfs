@@ -197,6 +197,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s", v.FileName(".dat"))
 		}
+		// The permission bits still allow writing on a read-only mount; open the
+		// .dat read-only there so the volume loads as noWriteOrDelete.
+		if canWrite && util.IsReadOnlyMount(v.dir) {
+			canWrite = false
+		}
 		var dataFile *os.File
 		if canWrite {
 			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE)
@@ -278,6 +283,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else if restored > 0 {
 			glog.V(0).Infof("volume %d: recovered %d overwritten %s rows from %s", v.Id, restored, v.FileName(".idx"), v.FileName(".dat"))
 		}
+		if !v.noWriteOrDelete && util.IsReadOnlyMount(v.dirIdx) {
+			v.noWriteOrDelete = true
+		}
 		var indexFile *os.File
 		if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
@@ -315,7 +323,15 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// to v.nm yields a non-nil interface over a nil receiver. Clear v.nm
 		// and close indexFile so the defer cleanup keys off v.nm cleanly.
 		if v.noWriteOrDelete || v.noWriteCanDelete {
-			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
+			if util.IsReadOnlyMount(v.dirIdx) && !isSortedFileFresh(v.IndexFileName()+".sdx", indexFile) {
+				// No usable .sdx and none can be written: index .idx in memory.
+				// Writes and deletes stay blocked by noWriteOrDelete.
+				if v.nm, err = LoadCompactNeedleMap(indexFile, v.Version()); err != nil {
+					glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
+					v.nm = nil
+					indexFile.Close()
+				}
+			} else if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile, v.Version()); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 				v.nm = nil
 				indexFile.Close()
