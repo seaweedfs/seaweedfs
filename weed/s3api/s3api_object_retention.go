@@ -208,10 +208,27 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve object %s/%s: %w", bucket, object, ErrObjectNotFound)
+		// Only a genuine miss becomes ErrObjectNotFound. Transport and
+		// internal failures must stay distinguishable: callers like
+		// LifecycleDelete resolve a miss permanently, so collapsing a
+		// flaky read into "not found" silently drops the object.
+		if isObjectEntryMiss(err) {
+			return nil, fmt.Errorf("failed to retrieve object %s/%s: %w", bucket, object, ErrObjectNotFound)
+		}
+		return nil, fmt.Errorf("failed to retrieve object %s/%s: %w", bucket, object, err)
 	}
 
 	return entry, nil
+}
+
+// isObjectEntryMiss reports whether an object-entry fetch error is a genuine
+// miss (no object, version, or latest version) rather than a transient or
+// internal failure the caller may want to retry.
+func isObjectEntryMiss(err error) bool {
+	return isFilerNotFound(err) ||
+		errors.Is(err, ErrObjectNotFound) ||
+		errors.Is(err, ErrVersionNotFound) ||
+		errors.Is(err, ErrLatestVersionNotFound)
 }
 
 // getObjectEntryForUpdate resolves the entry a metadata update targets and the
