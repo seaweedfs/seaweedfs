@@ -181,14 +181,21 @@ async fn query_at_pinned_version_survives_maintenance() {
         .unwrap();
 
     assert_eq!(pinned.count_rows(None).await.unwrap(), 64);
+    let vector = testing::vectors(1, DIM)[0].clone();
     let hits = query::ann(
         &pinned,
         &VectorTable::resolve(&pinned, None, None).unwrap(),
-        &query_for(testing::vectors(1, DIM)[0].clone(), 10),
+        &query_for(vector.clone(), 10),
     )
     .await
     .unwrap();
+    let expected = reference(&pinned, &vector, 10).await;
+    assert_eq!(hits.len(), expected.len());
     assert!(hits.iter().all(|h| h.row_id < 64));
+    for (hit, (row_id, distance)) in hits.iter().zip(expected.iter()) {
+        assert_eq!(hit.row_id, *row_id);
+        assert!((hit.distance - distance).abs() < 1e-6);
+    }
 
-    assert_matches_reference(&dataset, &testing::vectors(1, DIM)[0], 10).await;
+    assert_matches_reference(&dataset, &vector, 10).await;
 }
