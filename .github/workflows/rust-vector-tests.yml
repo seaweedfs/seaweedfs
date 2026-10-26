@@ -8,6 +8,9 @@ on:
       - 'seaweed-worker/**'
       - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
+      - 'weed/pb/vector.proto'
+      - 'weed/pb/vector_pb/**'
+      - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
   push:
     branches: [ master, main ]
@@ -16,6 +19,9 @@ on:
       - 'seaweed-worker/**'
       - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
+      - 'weed/pb/vector.proto'
+      - 'weed/pb/vector_pb/**'
+      - 'test/vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
 
 concurrency:
@@ -74,3 +80,29 @@ jobs:
 
       - name: Run unit tests
         run: cd seaweed-vector && cargo test --release --workspace
+
+
+  vectors-e2e:
+    name: S3 Vectors End-to-End
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build weed
+        run: go build -o weed ./weed
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build weed-vector-server
+        run: cargo build --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install boto3 pytest
+      - name: Run the s3vectors conformance subset
+        working-directory: test/vectors
+        run: |
+          cp ../../weed weed
+          cp ../../seaweed-vector/target/release/weed-vector-server weed-vector-server
+          ./run_test.sh
