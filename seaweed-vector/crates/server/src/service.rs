@@ -284,6 +284,11 @@ impl VectorService for VectorServer {
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(invalid)?;
+        if req.vectors.is_empty() {
+            return Ok(Response::new(pb::PutVectorsResponse {
+                version: dataset.version().version,
+            }));
+        }
         let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
             .map_err(invalid)?
             .dimension;
@@ -516,5 +521,28 @@ impl VectorService for VectorServer {
             });
         }
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_of_rejects_a_ragged_vector() {
+        let vectors = vec![
+            pb::Vector {
+                key: "a".to_string(),
+                data: vec![1.0, 2.0],
+                metadata: None,
+            },
+            pb::Vector {
+                key: "b".to_string(),
+                data: vec![1.0; 4],
+                metadata: None,
+            },
+        ];
+        let schema = schema_for(4, pb::DistanceMetric::L2);
+        assert!(batch_of(&vectors, 4, schema).is_err());
     }
 }
