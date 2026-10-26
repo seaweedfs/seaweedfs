@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -196,5 +197,194 @@ func TestCreateTableAllowedByIdentityActions(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+// Apache Spark numbers the columns of a new table from 0
+// and leaves assigning fresh IDs to the catalog. This is the schema Spark 
+// sent for CREATE TABLE t (id BIGINT, v STRING, ts TIMESTAMP).
+const zeroBasedSchema = `{"type":"struct","schema-id":0,"fields":[
+	{"id":0,"name":"id","required":false,"type":"long"},
+	{"id":1,"name":"v","required":false,"type":"string"},
+	{"id":2,"name":"ts","required":false,"type":"timestamptz"}]}`
+
+// The same table as PyIceberg sends it, numbered from 1.
+const oneBasedSchema = `{"type":"struct","schema-id":0,"fields":[
+	{"id":1,"name":"id","required":false,"type":"long"},
+	{"id":2,"name":"v","required":false,"type":"string"},
+	{"id":3,"name":"ts","required":false,"type":"timestamptz"}]}`
+
+func createTableBody(name, schema, spec, order string) string {
+	parts := []string{`"name":"` + name + `"`, `"schema":` + schema}
+	if spec != "" {
+		parts = append(parts, `"partition-spec":`+spec)
+	}
+	if order != "" {
+		parts = append(parts, `"write-order":`+order)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+type partitionWant struct{ name, transform, column string }
+
+type sourceIDCase struct {
+	name string
+	// spec and order reference the zero-based schema; oneBasedSpec and
+	// oneBasedOrder are the same definitions against oneBasedSchema.
+	spec, order, oneBasedSpec, oneBasedOrder string
+	wantPartitions                           []partitionWant
+	wantSortColumns                          []string
+}
+
+var sourceIDCases = []sourceIDCase{
+	{
+		// The body Spark sent for PARTITIONED BY (bucket(4, id)).
+		name:           "bucket on the first column",
+		spec:           `{"spec-id":0,"fields":[{"name":"id_bucket","transform":"bucket[4]","source-id":0,"field-id":1000}]}`,
+		oneBasedSpec:   `{"spec-id":0,"fields":[{"name":"id_bucket","transform":"bucket[4]","source-id":1,"field-id":1000}]}`,
+		wantPartitions: []partitionWant{{"id_bucket", "bucket[4]", "id"}},
+	},
+	{
+		name: "identity on the first column and day on another",
+		spec: `{"spec-id":0,"fields":[{"name":"id","transform":"identity","source-id":0,"field-id":1000},
+			{"name":"ts_day","transform":"day","source-id":2,"field-id":1001}]}`,
+		oneBasedSpec: `{"spec-id":0,"fields":[{"name":"id","transform":"identity","source-id":1,"field-id":1000},
+			{"name":"ts_day","transform":"day","source-id":3,"field-id":1001}]}`,
+		wantPartitions: []partitionWant{{"id", "identity", "id"}, {"ts_day", "day", "ts"}},
+	},
+	{
+		name:            "write order on the first column",
+		order:           `{"order-id":1,"fields":[{"source-id":0,"transform":"identity","direction":"asc","null-order":"nulls-first"}]}`,
+		oneBasedOrder:   `{"order-id":1,"fields":[{"source-id":1,"transform":"identity","direction":"asc","null-order":"nulls-first"}]}`,
+		wantSortColumns: []string{"id"},
+	},
+}
+
+func metadataFromBody(t *testing.T, body string) table.Metadata {
+	t.Helper()
+	var req CreateTableRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("decode create-table request: %v", err)
+	}
+	metadata, err := newTableMetadata(uuid.New(), "s3://bkt/ns/t", req.Schema, req.partitionSpec(), req.writeOrder(), req.Properties)
+	if err != nil {
+		t.Fatalf("newTableMetadata() error = %v", err)
+	}
+	return metadata
+}
+
+func checkResolvedSourceIDs(t *testing.T, metadata table.Metadata, tc sourceIDCase) {
+	t.Helper()
+	schema := metadata.CurrentSchema()
+	if id, ok := schema.FindFieldByName("id"); !ok || id.ID != 1 {
+		t.Errorf("first column id = %+v, want fresh field ID 1", id)
+	}
+
+	spec := metadata.PartitionSpec()
+	var got []partitionWant
+	for _, field := range spec.Fields() {
+		column, _ := schema.FindColumnName(field.SourceID())
+		got = append(got, partitionWant{field.Name, field.Transform.String(), column})
+	}
+	if len(got) != len(tc.wantPartitions) {
+		t.Fatalf("partition fields = %+v, want %+v", got, tc.wantPartitions)
+	}
+	for i := range got {
+		if got[i] != tc.wantPartitions[i] {
+			t.Errorf("partition field %d = %+v, want %+v", i, got[i], tc.wantPartitions[i])
+		}
+	}
+
+	var sortColumns []string
+	for _, field := range metadata.SortOrder().Fields() {
+		column, _ := schema.FindColumnName(field.SourceIDs[0])
+		sortColumns = append(sortColumns, column)
+	}
+	if strings.Join(sortColumns, ",") != strings.Join(tc.wantSortColumns, ",") {
+		t.Errorf("sort columns = %v, want %v", sortColumns, tc.wantSortColumns)
+	}
+}
+
+// A bound PartitionSpec or SortOrder refuses source-id 0, which rejected every
+// Spark CREATE TABLE partitioned or sorted by its first column. newTableMetadata
+// resolves the client's placeholders through the request schema, so a
+// zero-based request yields the same table as the one-based request PyIceberg
+// sends, which the bound types always accepted.
+func TestNewTableMetadataResolvesZeroBasedSourceIDs(t *testing.T) {
+	marshal := func(t *testing.T, metadata table.Metadata) string {
+		t.Helper()
+		spec := metadata.PartitionSpec()
+		out, err := json.Marshal([]any{metadata.CurrentSchema(), &spec, metadata.SortOrder()})
+		if err != nil {
+			t.Fatalf("marshal metadata parts: %v", err)
+		}
+		return string(out)
+	}
+	for _, tc := range sourceIDCases {
+		t.Run(tc.name, func(t *testing.T) {
+			zero := metadataFromBody(t, createTableBody("t", zeroBasedSchema, tc.spec, tc.order))
+			checkResolvedSourceIDs(t, zero, tc)
+
+			one := metadataFromBody(t, createTableBody("t", oneBasedSchema, tc.oneBasedSpec, tc.oneBasedOrder))
+			if got, want := marshal(t, zero), marshal(t, one); got != want {
+				t.Errorf("zero-based request produced\n%s\nwant (one-based)\n%s", got, want)
+			}
+		})
+	}
+}
+
+// Through the handler, the request Spark sends is accepted and answered with
+// the resolved spec.
+func TestCreateTablePartitionedByFirstColumn(t *testing.T) {
+	const bucket = "warehouse"
+	tc := sourceIDCases[1]
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	w := httptest.NewRecorder()
+	body := createTableBody("events", zeroBasedSchema, tc.spec, "")
+	s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", body, "alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var result struct {
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	metadata, err := table.ParseMetadataBytes(result.Metadata)
+	if err != nil {
+		t.Fatalf("parse response metadata: %v", err)
+	}
+	checkResolvedSourceIDs(t, metadata, tc)
+}
+
+// A spec or order naming a column the request schema lacks is the client's
+// error: 400, not 500.
+func TestCreateTableRejectsUnresolvableSourceID(t *testing.T) {
+	const bucket = "warehouse"
+	for name, body := range map[string]string{
+		"partition spec": createTableBody("orders", zeroBasedSchema,
+			`{"spec-id":0,"fields":[{"name":"x","transform":"identity","source-id":42,"field-id":1000}]}`, ""),
+		"write order": createTableBody("orders", zeroBasedSchema, "",
+			`{"order-id":1,"fields":[{"source-id":42,"transform":"identity","direction":"asc","null-order":"nulls-first"}]}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc := newMemFiler()
+			seedNamespace(fc, bucket, "finance", "alice")
+			s := NewServer(fc, nil)
+
+			w := httptest.NewRecorder()
+			s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", body, "alice"))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "BadRequestException") {
+				t.Errorf("body = %s, want a BadRequestException", w.Body.String())
+			}
+		})
 	}
 }

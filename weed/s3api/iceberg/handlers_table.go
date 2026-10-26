@@ -31,6 +31,25 @@ func validateCreateTableRequest(req CreateTableRequest) error {
 	return nil
 }
 
+// partitionSpec returns the requested spec with the client's source IDs, which
+// newTableMetadata resolves through the request schema before assigning fresh
+// IDs.
+func (req CreateTableRequest) partitionSpec() *iceberg.PartitionSpec {
+	if req.PartitionSpec == nil {
+		return nil
+	}
+	return &req.PartitionSpec.PartitionSpec
+}
+
+// writeOrder returns the requested sort order with the client's source IDs; see
+// partitionSpec.
+func (req CreateTableRequest) writeOrder() *table.SortOrder {
+	if req.WriteOrder == nil {
+		return nil
+	}
+	return &req.WriteOrder.SortOrder
+}
+
 // handleListTables lists tables in a namespace.
 func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -142,7 +161,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateTableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body: "+err.Error())
 		return
 	}
 
@@ -202,9 +221,16 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build proper Iceberg table metadata using iceberg-go types
-	metadata, err := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	metadata, err := newTableMetadata(tableUUID, location, req.Schema, req.partitionSpec(), req.writeOrder(), req.Properties)
 	if err != nil {
 		glog.V(1).Infof("Iceberg: CreateTable %s metadata error: %v", req.Name, err)
+		// Everything the metadata is built from comes from the request, so a
+		// spec or order that does not resolve against its schema is the
+		// client's error, not a server fault.
+		if errors.Is(err, table.ErrInvalidMetadata) || errors.Is(err, table.ErrInvalidSortSourceID) {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
+		}
 		writeManagerError(w, err)
 		return
 	}
