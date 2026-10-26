@@ -39,7 +39,7 @@ fn query_for(vector: Vec<f32>, k: usize) -> Query {
         vector,
         k,
         filter: None,
-        prefilter: false,
+        postfilter: false,
         distance: DistanceType::L2,
         nprobes: Some(4),
     }

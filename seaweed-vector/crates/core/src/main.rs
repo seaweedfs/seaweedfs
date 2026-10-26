@@ -58,9 +58,10 @@ enum Command {
         /// Exact scan, no index.
         #[arg(long)]
         flat: bool,
-        /// Filter before the ANN search.
+        /// Filter the top-K rows after ranking (Lance's default); off keeps
+        /// the filter before the ANN search.
         #[arg(long)]
-        prefilter: bool,
+        postfilter: bool,
         /// Pin the query to this committed version.
         #[arg(long)]
         version: Option<u64>,
@@ -152,7 +153,7 @@ async fn main() -> Result<()> {
             filter,
             metric,
             flat,
-            prefilter,
+            postfilter,
             version,
             vector_column,
             key_column,
@@ -180,7 +181,7 @@ async fn main() -> Result<()> {
                 vector,
                 k,
                 filter,
-                prefilter,
+                postfilter,
                 distance,
                 nprobes,
             };
