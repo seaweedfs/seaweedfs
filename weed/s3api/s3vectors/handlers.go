@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -571,13 +572,40 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
+	if req.MaxResults < 0 {
+		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be non-negative")
+		return
+	}
 	// AWS exposes a static split: segmentIndex/segmentCount divides the full
 	// listing. The engine service does not know AWS segments, so page through
-	// the whole index here and slice the caller's share — O(index) per call,
-	// acceptable for the MVP.
+	// the index here and keep only the caller's share — O(index) per call,
+	// acceptable for the MVP. The engine's next_token is a row offset, so the
+	// caller's token is the offset to resume scanning from.
 	if req.SegmentCount > 0 {
-		var all []*vector_pb.Vector
-		token := ""
+		if req.SegmentIndex < 0 || req.SegmentIndex >= req.SegmentCount {
+			writeError(w, http.StatusBadRequest, "ValidationException", "segmentIndex must be in [0, segmentCount)")
+			return
+		}
+		var offset uint64
+		if req.NextToken != "" {
+			var err error
+			if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
+				writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
+				return
+			}
+		}
+		limit := req.MaxResults
+		if limit <= 0 {
+			limit = 500
+		} else if limit > 1000 {
+			limit = 1000
+		}
+		segmentCount := uint64(req.SegmentCount)
+		segmentIndex := uint64(req.SegmentIndex)
+		var out []*vector_pb.Vector
+		nextToken := ""
+		token := strconv.FormatUint(offset, 10)
+	scan:
 		for {
 			page, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
 				Table:          tableID(arns.bucket, arns.index),
@@ -590,25 +618,28 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 				return
 			}
-			all = append(all, page.Vectors...)
-			if page.NextToken == "" {
+			base := offset
+			offset += uint64(len(page.Vectors))
+			for j, v := range page.Vectors {
+				if (base+uint64(j))%segmentCount == segmentIndex {
+					out = append(out, v)
+					if len(out) == limit {
+						if j+1 < len(page.Vectors) || page.NextToken != "" {
+							nextToken = strconv.FormatUint(base+uint64(j)+1, 10)
+						}
+						break scan
+					}
+				}
+			}
+			if len(page.Vectors) == 0 || page.NextToken == "" {
 				break
 			}
 			token = page.NextToken
 		}
-		var out []*vector_pb.Vector
-		for i, v := range all {
-			if i%int(req.SegmentCount) == int(req.SegmentIndex) {
-				out = append(out, v)
-			}
-		}
 		writeJSON(w, http.StatusOK, &ListVectorsResponse{
-			Vectors: toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
+			NextToken: nextToken,
+			Vectors:   toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
 		})
-		return
-	}
-	if req.MaxResults < 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be non-negative")
 		return
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
