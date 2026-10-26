@@ -107,14 +107,14 @@ func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	if !found {
 		return &filer_pb.DeleteEntryResponse{Error: filer_pb.ErrNotFound.Error()}, nil
 	}
-	if req.IfNotModifiedAfter > 0 {
-		entryMtime := entry.Attributes.GetMtime()
-		if req.IfNotModifiedAfter > 1_000_000_000_000 {
-			entryMtime = entryMtime*1e9 + int64(entry.Attributes.GetMtimeNs())
-		}
-		if entryMtime > req.IfNotModifiedAfter {
-			return &filer_pb.DeleteEntryResponse{}, nil
-		}
+	entryNewer := false
+	if req.IfNotModifiedAfterNs > 0 {
+		entryNewer = entry.Attributes.GetMtime()*1e9+int64(entry.Attributes.GetMtimeNs()) > req.IfNotModifiedAfterNs
+	} else if req.IfNotModifiedAfter > 0 {
+		entryNewer = entry.Attributes.GetMtime() > req.IfNotModifiedAfter
+	}
+	if entryNewer {
+		return &filer_pb.DeleteEntryResponse{}, nil
 	}
 	for path := range s.entries {
 		if strings.HasPrefix(path, fullPath+"/") {

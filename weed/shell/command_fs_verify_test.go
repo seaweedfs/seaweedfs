@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -49,14 +50,16 @@ func (s *fsVerifyTestFilerServer) LookupDirectoryEntry(_ context.Context, req *f
 
 func (s *fsVerifyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	s.deleted = append(s.deleted, req)
-	// mirror the real filer: an entry newer than IfNotModifiedAfter is
+	// mirror the real filer: an entry newer than the cutoff is
 	// silently skipped, no error and no Error field
-	if s.entry != nil && req.IfNotModifiedAfter > 0 {
-		entryMtime := s.entry.Attributes.GetMtime()
-		if req.IfNotModifiedAfter > 1_000_000_000_000 {
-			entryMtime = entryMtime*1e9 + int64(s.entry.Attributes.GetMtimeNs())
+	if s.entry != nil {
+		entryNewer := false
+		if req.IfNotModifiedAfterNs > 0 {
+			entryNewer = s.entry.Attributes.GetMtime()*1e9+int64(s.entry.Attributes.GetMtimeNs()) > req.IfNotModifiedAfterNs
+		} else if req.IfNotModifiedAfter > 0 {
+			entryNewer = s.entry.Attributes.GetMtime() > req.IfNotModifiedAfter
 		}
-		if entryMtime > req.IfNotModifiedAfter {
+		if entryNewer {
 			return &filer_pb.DeleteEntryResponse{}, nil
 		}
 	}
@@ -242,14 +245,15 @@ func TestFsVerifyVerifyEntryPrunability(t *testing.T) {
 // verification pass — a re-upload fixes the file and must survive.
 func TestFsVerifyPruneEntryGuards(t *testing.T) {
 	mtimeNs := time.Now().Add(-time.Hour).UnixNano()
+	attr := &filer_pb.FuseAttributes{
+		Mtime:   mtimeNs / 1e9,
+		MtimeNs: int32(mtimeNs % 1e9),
+		Md5:     []byte("md5"),
+	}
 	filer := &fsVerifyTestFilerServer{entry: &filer_pb.Entry{
-		Name: "file",
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:   mtimeNs / 1e9,
-			MtimeNs: int32(mtimeNs % 1e9),
-			Md5:     []byte("md5"),
-		},
-		Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
+		Name:       "file",
+		Attributes: attr,
+		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}}
 	commandEnv, _, cleanup := newFsVerifyTestCommandEnv(t, filer, &fsVerifyTestVolumeServer{})
 	defer cleanup()
@@ -257,15 +261,19 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 
 	chunks := []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}}
 
-	// unchanged entry: deleted
-	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	// unchanged entry: deleted; the request carries the cutoff in seconds
+	// for older filers and nanoseconds for same-second precision
+	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), attr, chunks)
 	if err != nil || !pruned {
 		t.Fatalf("expected prune of unchanged entry, got pruned=%v err=%v", pruned, err)
+	}
+	if len(filer.deleted) != 1 || filer.deleted[0].IfNotModifiedAfter != mtimeNs/1e9 || filer.deleted[0].IfNotModifiedAfterNs != mtimeNs {
+		t.Fatalf("delete sent wrong cutoffs: %+v", filer.deleted)
 	}
 
 	// re-uploaded entry (new mtime/md5): must survive
 	filer.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs/1e9 + 1, Md5: []byte("new")}}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), attr, chunks)
 	if err != nil || pruned {
 		t.Fatalf("changed entry must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
@@ -277,7 +285,7 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs%1e9) + 1, Md5: []byte("md5")},
 		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), attr, chunks)
 	if err != nil || pruned {
 		t.Fatalf("sub-second rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
@@ -289,7 +297,7 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs % 1e9), Md5: []byte("md5")},
 		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 999}}},
 	}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), attr, chunks)
 	if err != nil || pruned {
 		t.Fatalf("same-second rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
@@ -300,16 +308,42 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs % 1e9), Md5: []byte("md5")},
 		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, []byte("md5"), chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), attr, chunks)
 	if err != nil || !pruned {
 		t.Fatalf("expected prune when chunk set matches, got pruned=%v err=%v", pruned, err)
 	}
 
 	// entry already gone: no error, no delete
 	filer.entry = nil
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), mtimeNs, nil, chunks)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), &filer_pb.FuseAttributes{Mtime: mtimeNs / 1e9, MtimeNs: int32(mtimeNs % 1e9)}, chunks)
 	if err != nil || pruned {
 		t.Fatalf("missing entry must be a no-op, got pruned=%v err=%v", pruned, err)
+	}
+}
+
+func TestDeleteEntryCutoff(t *testing.T) {
+	// a regular mtime fills both fields
+	sec, ns, ok := deleteEntryCutoff(1_761_504_000, 500_000_000)
+	if !ok || sec != 1_761_504_000 || ns != 1_761_504_000_500_000_000 {
+		t.Fatalf("regular mtime: got %d %d %v", sec, ns, ok)
+	}
+	// an mtime in the first seconds after the epoch is unambiguous in both
+	// fields once units are explicit
+	sec, ns, ok = deleteEntryCutoff(100, 0)
+	if !ok || sec != 100 || ns != 100_000_000_000 {
+		t.Fatalf("epoch mtime: got %d %d %v", sec, ns, ok)
+	}
+	// a pre-epoch mtime cannot arm either field — the delete must be skipped
+	if _, _, ok = deleteEntryCutoff(-100, 0); ok {
+		t.Fatal("pre-epoch mtime must report ok=false")
+	}
+	if _, _, ok = deleteEntryCutoff(0, 0); ok {
+		t.Fatal("zero mtime must report ok=false")
+	}
+	// an mtime past the UnixNano range degrades to the seconds field
+	sec, ns, ok = deleteEntryCutoff(math.MaxInt64/1_000_000_000+1, 0)
+	if !ok || ns != 0 || sec != math.MaxInt64/1_000_000_000+1 {
+		t.Fatalf("overflow mtime: got %d %d %v", sec, ns, ok)
 	}
 }
 
