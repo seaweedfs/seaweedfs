@@ -104,7 +104,9 @@ message QueryVectorsRequest {
   Table table = 1;
   repeated float query_vector = 2;
   uint32 top_k = 3;
-  // Lance SQL filter over the metadata columns; empty means unfiltered.
+  // Lance SQL filter; empty means unfiltered. Metadata is one JSON
+  // `metadata` column, so the gateway translates S3 Vectors filter
+  // expressions onto it before they land here.
   string filter = 4;
   // Lance's post-filter escape hatch; off prefilters, matching S3 Vectors.
   bool postfilter = 5;

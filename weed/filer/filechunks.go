@@ -169,6 +169,12 @@ type ChunkView struct {
 	ModifiedTsNs  int64
 }
 
+// String omits CipherKey so %-format logging can never leak a chunk's key.
+func (cv *ChunkView) String() string {
+	return fmt.Sprintf("{FileId:%s OffsetInChunk:%d ViewSize:%d ViewOffset:%d ChunkSize:%d IsGzipped:%v ModifiedTsNs:%d}",
+		cv.FileId, cv.OffsetInChunk, cv.ViewSize, cv.ViewOffset, cv.ChunkSize, cv.IsGzipped, cv.ModifiedTsNs)
+}
+
 func (cv *ChunkView) SetStartStop(start, stop int64) {
 	cv.OffsetInChunk += start - cv.ViewOffset
 	cv.ViewOffset = start

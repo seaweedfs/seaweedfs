@@ -14,6 +14,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+func TestChunkViewStringOmitsCipherKey(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	cv := &ChunkView{FileId: "1,aaa", CipherKey: key}
+	for _, format := range []string{"%v", "%+v", "%s"} {
+		got := fmt.Sprintf(format, cv)
+		assert.NotContains(t, got, string(key), "format %s", format)
+		assert.Contains(t, got, cv.FileId, "format %s", format)
+	}
+}
+
 func TestCompactFileChunks(t *testing.T) {
 	chunks := []*filer_pb.FileChunk{
 		{Offset: 10, Size: 100, FileId: "abc", ModifiedTsNs: 50},

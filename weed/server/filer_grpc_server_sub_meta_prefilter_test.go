@@ -38,7 +38,7 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 	sender := &recordingSender{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		decoded++
 		unsyncedEvents = 0 // emulate a delivery, like the notification fn after a send
 		return nil
@@ -84,7 +84,7 @@ func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		decoded++
 		return nil
 	}, &unsyncedEvents)
@@ -93,5 +93,68 @@ func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {
 	}
 	if decoded != 1 {
 		t.Fatalf("unfiltered subscriber must decode every entry, got %d", decoded)
+	}
+}
+
+func TestEachLogEntryFnDeliversStreamPositionTs(t *testing.T) {
+	// The event stamp is taken before the store write while the buffer
+	// append lands after it, so a delayed append keeps an early stamp in
+	// the payload while LogEntry.TsNs is bumped to stay monotone.
+	// Subscribers must see the stream position: a cursor saved past the
+	// payload stamp would filter the event out forever.
+	req := &filer_pb.SubscribeMetadataRequest{}
+	var unsyncedEvents int64
+	var gotTsNs, gotMutationTsNs int64
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+		gotTsNs = tsNs
+		gotMutationTsNs = mutationTsNs
+		return nil
+	}, &unsyncedEvents)
+
+	data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b",
+		TsNs:      99, // stamped before the store write
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "expire1/foo"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The buffer appended it after a ts=100 write already landed: bumped to 101.
+	if _, err := fn(&filer_pb.LogEntry{TsNs: 101, Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	if gotTsNs != 101 {
+		t.Fatalf("delivered ts = %d, want stream position 101", gotTsNs)
+	}
+	if gotMutationTsNs != 99 {
+		t.Fatalf("mutation ts = %d, want payload stamp 99", gotMutationTsNs)
+	}
+}
+
+func TestEachLogEntryFnFilteredHeartbeatUsesStreamPosition(t *testing.T) {
+	req := &filer_pb.SubscribeMetadataRequest{PathPrefix: "/buckets/keep/"}
+	sender := &recordingSender{}
+	unsyncedEvents := int64(MaxUnsyncedEvents)
+	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+		return nil
+	}, &unsyncedEvents)
+
+	data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/other",
+		TsNs:      99,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "x"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fn(&filer_pb.LogEntry{TsNs: 101, Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.sent) != 1 || sender.sent[0].TsNs != 101 {
+		t.Fatalf("heartbeat ts = %+v, want stream position 101", sender.sent)
 	}
 }

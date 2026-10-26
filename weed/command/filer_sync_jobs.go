@@ -479,7 +479,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs
 				}
-				glog.Errorf("process %v: %v", resp, jobErr)
+				glog.Errorf("process %s -> %s ts_ns=%d: %v", jobPaths.path, jobPaths.newPath, resp.TsNs, jobErr)
 			} else if _, recorded := t.failedTs[failedKey]; !recorded {
 				if len(t.failedTs) >= maxFailedSyncEvents {
 					t.failedSticky = true
@@ -487,14 +487,14 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 					if resp.TsNs < t.oldestFailedTsNs {
 						t.oldestFailedTsNs = resp.TsNs
 					}
-					glog.Warningf("process %v: %v; over %d unresolved failures, pinning sync offset at %v until restart", resp, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
+					glog.Warningf("process %s -> %s ts_ns=%d: %v; over %d unresolved failures, pinning sync offset at %v until restart", jobPaths.path, jobPaths.newPath, resp.TsNs, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
 				} else {
 					t.failedTs[failedKey] = struct{}{}
 					if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
 						t.oldestFailedTsNs = resp.TsNs
-						glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+						glog.Errorf("process %s -> %s ts_ns=%d: %v; holding sync offset at %v so this event is replayed on restart", jobPaths.path, jobPaths.newPath, resp.TsNs, jobErr, time.Unix(0, resp.TsNs))
 					} else {
-						glog.Errorf("process %v: %v", resp, jobErr)
+						glog.Errorf("process %s -> %s ts_ns=%d: %v", jobPaths.path, jobPaths.newPath, resp.TsNs, jobErr)
 					}
 				}
 			}

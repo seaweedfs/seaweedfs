@@ -467,7 +467,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	if existingTarget != nil {
 		toDelete, err := filer.MinusChunks(ctx, fs.filer.MasterClient.GetLookupFileIdFunction(), existingTarget.GetChunks(), newEntry.GetChunks(), fs.filer.MasterClient)
 		if err != nil {
-			glog.ErrorfCtx(ctx, "Failed to resolve overwrite target chunks during rename. new: %v, old: %v", newEntry.GetChunks(), existingTarget.GetChunks())
+			glog.ErrorfCtx(ctx, "Failed to resolve overwrite target chunks during rename. new: %v, old: %v", filer_pb.FileIdsString(newEntry.GetChunks()), filer_pb.FileIdsString(existingTarget.GetChunks()))
 		} else if len(toDelete) > 0 {
 			// Defer chunk deletion until after CommitTransaction so that a
 			// failure in any subsequent step (child moves, oldPath delete,

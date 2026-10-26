@@ -675,7 +675,7 @@ func (f *Filer) deleteChunksIfNotNew(ctx context.Context, oldEntry, newEntry *En
 
 	toDelete, err := MinusChunks(ctx, f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks, f.MasterClient)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s", newChunks, oldChunks)
+		glog.ErrorfCtx(ctx, "Failed to resolve old entry chunks when delete old entry chunks. new: %v, old: %v", filer_pb.FileIdsString(newChunks), filer_pb.FileIdsString(oldChunks))
 		return
 	}
 	f.DeleteChunksNotRecursive(toDelete)

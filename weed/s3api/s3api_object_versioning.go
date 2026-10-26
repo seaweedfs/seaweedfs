@@ -1993,6 +1993,11 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	}, maxRetries)
 
 	if err != nil {
+		// Only a genuine miss means "no .versions directory" and earns the
+		// pre-versioning fallback; a failed lookup says nothing about the dir.
+		if !isObjectEntryMiss(err) {
+			return nil, fmt.Errorf("failed to get %s/%s .versions directory: %w", bucket, normalizedObject, err)
+		}
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
@@ -2000,6 +2005,9 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 
 		regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 		if regularErr != nil {
+			if !isObjectEntryMiss(regularErr) {
+				return nil, fmt.Errorf("failed to get regular object %s/%s: %w", bucket, normalizedObject, regularErr)
+			}
 			glog.V(1).Infof("getLatestObjectVersion: no pre-versioning object found for %s/%s (error: %v)", bucket, normalizedObject, regularErr)
 			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, normalizedObject, err)
 		}

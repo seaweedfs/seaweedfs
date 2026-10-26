@@ -558,6 +558,14 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 }
 
 func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) error {
+	_, err := logBuffer.AddDataToBufferAndGetTs(partitionKey, data, processingTsNs)
+	return err
+}
+
+// AddDataToBufferAndGetTs appends like AddDataToBuffer and returns the
+// position the entry was assigned, bumped past processingTsNs when the
+// buffer must stay monotone.
+func (logBuffer *LogBuffer) AddDataToBufferAndGetTs(partitionKey, data []byte, processingTsNs int64) (int64, error) {
 
 	// An entry this large gets a window to itself, so it will seal and copy one;
 	// wait for the queue to have room before joining the queue for the lock.
@@ -582,7 +590,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	}
 
 	if !logBuffer.beginWrite() {
-		return ErrBufferStopped
+		return 0, ErrBufferStopped
 	}
 	var toFlush *dataToFlush
 	var marshalErr error
@@ -653,7 +661,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 			if size < 0 || size > math.MaxInt-4 || size > maxBufferSize-4 {
 				marshalErr = fmt.Errorf("message size %d exceeds maximum allowed size", size)
 				glog.Errorf("%v", marshalErr)
-				return marshalErr
+				return 0, marshalErr
 			}
 			// Fit the entry exactly. Doubling left room for a second oversized
 			// record in the same window, which only doubles the flush copy and
@@ -669,7 +677,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	if _, err := logEntry.MarshalToSizedBufferVT(logBuffer.buf[logBuffer.pos+4 : logBuffer.pos+4+size]); err != nil {
 		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
 		glog.Errorf("%v", marshalErr)
-		return marshalErr
+		return 0, marshalErr
 	}
 	logBuffer.idx = append(logBuffer.idx, logBuffer.pos)
 	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
@@ -684,7 +692,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	}
 
 	logBuffer.offset++
-	return nil
+	return logEntry.TsNs, nil
 }
 
 func (logBuffer *LogBuffer) IsStopping() bool {

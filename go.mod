@@ -116,7 +116,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.3
-	github.com/a-h/templ v0.3.1070
+	github.com/a-h/templ v0.3.1100
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/apache/iceberg-go v0.7.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
@@ -314,7 +314,7 @@ require (
 	github.com/ProtonMail/go-srp v0.0.7 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/abbot/go-http-auth v0.4.0 // indirect
-	github.com/andybalholm/brotli v1.2.6 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
