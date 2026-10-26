@@ -819,7 +819,9 @@ type QueryVectorsRequest struct {
 	Table       *Table                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
 	QueryVector []float32              `protobuf:"fixed32,2,rep,packed,name=query_vector,json=queryVector,proto3" json:"query_vector,omitempty"`
 	TopK        uint32                 `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
-	// Lance SQL filter over the metadata columns; empty means unfiltered.
+	// Lance SQL filter; empty means unfiltered. Metadata is one JSON
+	// `metadata` column, so the gateway translates S3 Vectors filter
+	// expressions onto it before they land here.
 	Filter string `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
 	// Lance's post-filter escape hatch; off prefilters, matching S3 Vectors.
 	Postfilter     bool `protobuf:"varint,5,opt,name=postfilter,proto3" json:"postfilter,omitempty"`
