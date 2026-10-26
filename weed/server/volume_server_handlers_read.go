@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -77,9 +78,12 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if len(lookupResult.Locations) >= 2 {
-		rand.Shuffle(len(lookupResult.Locations), func(i, j int) {
-			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
+		// cached locations are shared between lookups, so shuffle a copy
+		locations := slices.Clone(lookupResult.Locations)
+		rand.Shuffle(len(locations), func(i, j int) {
+			locations[i], locations[j] = locations[j], locations[i]
 		})
+		lookupResult.Locations = locations
 	}
 	var targetUrl *url.URL
 	location := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
