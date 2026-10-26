@@ -247,6 +247,14 @@ func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processE
 		glog.Errorf("unmarshal log entry: %v", err)
 		return 0, nil // skip corrupt entries
 	}
+	// Same normalization the server applies in eachLogEntryFn: the payload
+	// stamp predates the log append, so deliver the stream position and keep
+	// the stamp in MutationTsNs (payloads written before that field existed
+	// still carry it in event.TsNs).
+	if event.MutationTsNs == 0 {
+		event.MutationTsNs = event.TsNs
+	}
+	event.TsNs = logEntry.TsNs
 	if !matchesFilter(event, filter) {
 		return event.TsNs, nil
 	}

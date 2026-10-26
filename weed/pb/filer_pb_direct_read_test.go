@@ -475,3 +475,39 @@ func TestProcessOneLogEntrySkipsInvalidUTF8(t *testing.T) {
 		t.Fatalf("tsNs = %d, want 0 for a skipped entry", tsNs)
 	}
 }
+
+// TestProcessOneLogEntryDeliversStreamPosition verifies the same
+// stamp-vs-position normalization the server applies in eachLogEntryFn: the
+// payload TsNs predates the log append, so the entry is delivered under its
+// stream position while the mutation stamp moves to MutationTsNs.
+func TestProcessOneLogEntryDeliversStreamPosition(t *testing.T) {
+	data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b",
+		TsNs:      99,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "foo"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *filer_pb.SubscribeMetadataResponse
+	lastTsNs, err := processOneLogEntry(&filer_pb.LogEntry{TsNs: 101, Data: data},
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			got = resp
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastTsNs != 101 {
+		t.Fatalf("cursor = %d, want stream position 101", lastTsNs)
+	}
+	if got.TsNs != 101 {
+		t.Fatalf("delivered ts = %d, want stream position 101", got.TsNs)
+	}
+	if got.MutationTsNs != 99 {
+		t.Fatalf("mutation ts = %d, want payload stamp 99", got.MutationTsNs)
+	}
+}
