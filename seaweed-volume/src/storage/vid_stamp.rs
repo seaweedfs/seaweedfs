@@ -95,7 +95,9 @@ impl Store {
         };
         let mut failed = false;
         for loc in &self.locations {
-            if loc.read_only_mount {
+            // The stamp lives on the data directory, which stays writable
+            // when only the index directory is read-only.
+            if super::disk_location::is_read_only_mount(&loc.directory) {
                 continue;
             }
             if let Err(e) = write_vid_stamp(Path::new(&loc.directory), &stamp) {
