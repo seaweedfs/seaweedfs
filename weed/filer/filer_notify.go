@@ -282,7 +282,8 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 			Signatures:         signatures,
 		},
 		// In flight until appended to the local log buffer (see metaLogInflight).
-		TsNs: tsNs,
+		TsNs:         tsNs,
+		MutationTsNs: tsNs,
 	}
 }
 
