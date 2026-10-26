@@ -143,11 +143,16 @@ fn hits(batch: &RecordBatch, table: &VectorTable) -> Result<Vec<Hit>> {
     }
     (0..batch.num_rows())
         .map(|i| {
+            let key = match keys {
+                Some(keys) if !keys.is_null(i) => keys.value(i).to_string(),
+                Some(_) => bail!(
+                    "key column {} has a null at row {i}",
+                    table.key_column.as_deref().unwrap_or_default()
+                ),
+                None => row_ids.value(i).to_string(),
+            };
             Ok(Hit {
-                key: match keys {
-                    Some(keys) if !keys.is_null(i) => keys.value(i).to_string(),
-                    _ => row_ids.value(i).to_string(),
-                },
+                key,
                 distance: distances.value(i),
                 row_id: row_ids.value(i),
             })
