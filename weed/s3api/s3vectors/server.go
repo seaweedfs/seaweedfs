@@ -54,17 +54,27 @@ func (s *Server) SetRegion(region string) { s.region = region }
 // SetAccountID configures the account id embedded in the ARNs this server mints.
 func (s *Server) SetAccountID(id string) { s.accountID = id }
 
-// RegisterRoutes mounts POST / dispatching on the X-Amz-Target header.
+// RegisterRoutes mounts POST / dispatching on the X-Amz-Target header and
+// POST /{Operation} for clients that route per-path.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/", s.Auth(s.dispatch)).Methods(http.MethodPost)
+	router.HandleFunc("/{op}", s.Auth(s.dispatch)).Methods(http.MethodPost)
 }
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
-	target := r.Header.Get("X-Amz-Target")
-	op := target[strings.LastIndex(target, ".")+1:]
+	// Clients carry the operation in the X-Amz-Target header or in the path —
+	// POST /QueryVectors and POST / with a target mean the same call here.
+	op := strings.Trim(r.URL.Path, "/")
+	if i := strings.LastIndex(op, "/"); i >= 0 {
+		op = op[i+1:]
+	}
+	if op == "" {
+		target := r.Header.Get("X-Amz-Target")
+		op = target[strings.LastIndex(target, ".")+1:]
+	}
 	handler, ok := handlers[op]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+target)
+		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
 		return
 	}
 	handler(s, w, r)

@@ -57,7 +57,11 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 		v.bucket = arn
 		return nil
 	}
-	rest := arn[strings.Index(arn, "bucket/")+len("bucket/"):]
+	i := strings.Index(arn, "bucket/")
+	if i < 0 {
+		return fmt.Errorf("malformed ARN %q", arn)
+	}
+	rest := arn[i+len("bucket/"):]
 	parts := strings.Split(rest, "/index/")
 	v.bucket = parts[0]
 	if len(parts) == 2 {
@@ -122,10 +126,16 @@ func isNotFound(err error) bool {
 }
 
 func catalogErr(w http.ResponseWriter, err error) {
-	if isNotFound(err) {
-		writeError(w, http.StatusNotFound, "NotFoundException", err.Error())
-	} else {
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+	msg := err.Error()
+	switch {
+	case isNotFound(err):
+		writeError(w, http.StatusNotFound, "NotFoundException", msg)
+	case strings.Contains(msg, "AccessDenied") || strings.Contains(msg, "PermissionDenied"):
+		writeError(w, http.StatusForbidden, "AccessDeniedException", "access denied")
+	case strings.Contains(msg, "AlreadyExists") || strings.Contains(msg, "Conflict"):
+		writeError(w, http.StatusConflict, "ConflictException", msg)
+	default:
+		writeError(w, http.StatusBadRequest, "ValidationException", msg)
 	}
 }
 
@@ -266,14 +276,28 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if req.Dimension <= 0 || req.Dimension > 4096 {
+		writeError(w, http.StatusBadRequest, "ValidationException", "dimension must be 1..=4096")
+		return
+	}
 	metadata := map[string]string{
 		"dimension":      fmt.Sprint(req.Dimension),
 		"distanceMetric": req.DistanceMetric,
 	}
-	if req.MetadataConfiguration != nil {
-		metadata["nonFilterableMetadataKeys"] = strings.Join(req.MetadataConfiguration.NonFilterableMetadataKeys, ",")
+	if keys, err := json.Marshal(req.MetadataConfiguration.NonFilterableMetadataKeys); req.MetadataConfiguration != nil && err == nil {
+		metadata["nonFilterableMetadataKeys"] = string(keys)
 	}
 	metadataJSON, _ := json.Marshal(metadata)
+	var nsResp map[string]interface{}
+	// The index namespace is implicit on AWS; declare it, tolerating an
+	// already-existing namespace.
+	if err := s.catalog(r.Context(), "CreateNamespace", &s3tables.CreateNamespaceRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		Namespace:      []string{indexNamespace},
+	}, &nsResp, r); err != nil && !strings.Contains(err.Error(), "AlreadyExists") && !strings.Contains(err.Error(), "Conflict") {
+		catalogErr(w, err)
+		return
+	}
 	var resp map[string]interface{}
 	err = s.catalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
@@ -291,12 +315,19 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		nonFilterable = req.MetadataConfiguration.NonFilterableMetadataKeys
 	}
 	_, err = s.vectors.CreateIndex(r.Context(), &vector_pb.CreateIndexRequest{
-		Table:                       tableID(arns.bucket, arns.index),
-		Dimension:                   uint32(req.Dimension),
-		DistanceMetric:              metric,
-		NonFilterableMetadataKeys:   nonFilterable,
+		Table:                     tableID(arns.bucket, arns.index),
+		Dimension:                 uint32(req.Dimension),
+		DistanceMetric:            metric,
+		NonFilterableMetadataKeys: nonFilterable,
 	})
 	if err != nil {
+		// Roll the index record back so a half-created index does not linger.
+		var delResp map[string]interface{}
+		_ = s.catalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
+			TableBucketARN: s.s3tablesArn(arns.bucket),
+			Namespace:      []string{indexNamespace},
+			Name:           arns.index,
+		}, &delResp, r)
 		writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 		return
 	}
@@ -310,16 +341,21 @@ func indexFromRecord(s *Server, bucket, name string, m map[string]interface{}) *
 		VectorBucketName: bucket,
 		DataType:         "float32",
 	}
+	if created, ok := m["createdAt"].(string); ok {
+		idx.CreationTime, _ = time.Parse(time.RFC3339, created)
+	}
 	if meta, ok := m["metadata"].(map[string]interface{}); ok {
 		if fm, ok := meta["fullMetadata"].(map[string]interface{}); ok {
 			var dim float64
 			fmt.Sscan(fmt.Sprint(fm["dimension"]), &dim)
 			idx.Dimension = int32(dim)
 			idx.DistanceMetric = fmt.Sprint(fm["distanceMetric"])
-			if keys := fmt.Sprint(fm["nonFilterableMetadataKeys"]); keys != "" && keys != "<nil>" {
-				idx.MetadataConfiguration = &MetadataConfiguration{
-					NonFilterableMetadataKeys: strings.Split(keys, ","),
+			if keys, ok := fm["nonFilterableMetadataKeys"].([]interface{}); ok {
+				var list []string
+				for _, k := range keys {
+					list = append(list, fmt.Sprint(k))
 				}
+				idx.MetadataConfiguration = &MetadataConfiguration{NonFilterableMetadataKeys: list}
 			}
 		}
 	}
@@ -447,6 +483,10 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 	}
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
 	for _, v := range req.Vectors {
+		if v == nil {
+			writeError(w, http.StatusBadRequest, "ValidationException", "vectors contains a null element")
+			return
+		}
 		metadata, err := metadataStruct(v.Metadata)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
@@ -527,6 +567,46 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
 		catalogErr(w, err)
+		return
+	}
+	// AWS exposes a static split: segmentIndex/segmentCount divides the full
+	// listing. The engine service does not know AWS segments, so page through
+	// the whole index here and slice the caller's share — O(index) per call,
+	// acceptable for the MVP.
+	if req.SegmentCount > 0 {
+		var all []*vector_pb.Vector
+		token := ""
+		for {
+			page, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
+				Table:          tableID(arns.bucket, arns.index),
+				MaxResults:     1000,
+				NextToken:      token,
+				ReturnData:     req.ReturnData,
+				ReturnMetadata: req.ReturnMetadata,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+				return
+			}
+			all = append(all, page.Vectors...)
+			if page.NextToken == "" {
+				break
+			}
+			token = page.NextToken
+		}
+		var out []*vector_pb.Vector
+		for i, v := range all {
+			if i%int(req.SegmentCount) == int(req.SegmentIndex) {
+				out = append(out, v)
+			}
+		}
+		writeJSON(w, http.StatusOK, &ListVectorsResponse{
+			Vectors: toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
+		})
+		return
+	}
+	if req.MaxResults < 0 {
+		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be non-negative")
 		return
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
@@ -639,11 +719,11 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				op := "="
+				sym := "="
 				if op == "$ne" {
-					op = "<>"
+					sym = "<>"
 				}
-				parts = append(parts, fmt.Sprintf("%s %s %s", col, op, lit))
+				parts = append(parts, fmt.Sprintf("%s %s %s", col, sym, lit))
 			case "$in", "$nin":
 				list, ok := operand.([]interface{})
 				if !ok {
@@ -729,6 +809,10 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if req.TopK < 0 {
+		writeError(w, http.StatusBadRequest, "ValidationException", "topK must be non-negative")
+		return
+	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{
 		Table:          tableID(arns.bucket, arns.index),
 		QueryVector:    queryVector,
@@ -745,7 +829,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {
-			o.Distance = v.Distance
+			o.Distance = &v.Distance
 		}
 		if req.ReturnMetadata {
 			o.Metadata = structToMap(v.Metadata)

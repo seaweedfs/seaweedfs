@@ -3,6 +3,7 @@ package s3vectors
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 )
@@ -37,8 +38,10 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+const maxRequestBodyBytes = 32 << 20
+
 func readJSON(r *http.Request, req interface{}) error {
-	return json.NewDecoder(r.Body).Decode(req)
+	return json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes)).Decode(req)
 }
 
 // Request/response shapes for the AWS S3 Vectors API (awsJson1_1).
@@ -49,7 +52,7 @@ type vectorBucketARNs struct {
 }
 
 type CreateVectorBucketRequest struct {
-	VectorBucketName string                 `json:"vectorBucketName"`
+	VectorBucketName        string                 `json:"vectorBucketName"`
 	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 	MetadataResourceTags    map[string]string      `json:"-"`
 }
@@ -90,14 +93,14 @@ type DeleteVectorBucketRequest struct {
 type DeleteVectorBucketResponse struct{}
 
 type CreateIndexRequest struct {
-	DataType                   string                 `json:"dataType"`
-	Dimension                  int32                  `json:"dimension"`
-	DistanceMetric             string                 `json:"distanceMetric"`
-	IndexArn                   string                 `json:"indexArn"`
-	IndexName                  string                 `json:"indexName"`
-	MetadataConfiguration      *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
-	VectorBucketName           string                 `json:"vectorBucketName"`
-	VectorBucketArn            string                 `json:"vectorBucketArn"`
+	DataType              string                 `json:"dataType"`
+	Dimension             int32                  `json:"dimension"`
+	DistanceMetric        string                 `json:"distanceMetric"`
+	IndexArn              string                 `json:"indexArn"`
+	IndexName             string                 `json:"indexName"`
+	MetadataConfiguration *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
+	VectorBucketName      string                 `json:"vectorBucketName"`
+	VectorBucketArn       string                 `json:"vectorBucketArn"`
 }
 
 type MetadataConfiguration struct {
@@ -114,14 +117,14 @@ type GetIndexRequest struct {
 }
 
 type Index struct {
-	CreationTime      time.Time              `json:"creationTime"`
-	DataType          string                 `json:"dataType"`
-	Dimension         int32                  `json:"dimension"`
-	DistanceMetric    string                 `json:"distanceMetric"`
-	IndexArn          string                 `json:"indexArn"`
-	IndexName         string                 `json:"indexName"`
+	CreationTime          time.Time              `json:"creationTime"`
+	DataType              string                 `json:"dataType"`
+	Dimension             int32                  `json:"dimension"`
+	DistanceMetric        string                 `json:"distanceMetric"`
+	IndexArn              string                 `json:"indexArn"`
+	IndexName             string                 `json:"indexName"`
 	MetadataConfiguration *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
-	VectorBucketName  string                 `json:"vectorBucketName"`
+	VectorBucketName      string                 `json:"vectorBucketName"`
 }
 
 type GetIndexResponse struct {
@@ -137,8 +140,8 @@ type ListIndexesRequest struct {
 }
 
 type ListIndexesResponse struct {
-	Indexes  []*Index `json:"indexes"`
-	NextToken string  `json:"nextToken,omitempty"`
+	Indexes   []*Index `json:"indexes"`
+	NextToken string   `json:"nextToken,omitempty"`
 }
 
 type DeleteIndexRequest struct {
@@ -171,13 +174,13 @@ type PutVectorsRequest struct {
 type PutVectorsResponse struct{}
 
 type GetVectorsRequest struct {
-	IndexArn        string   `json:"indexArn"`
-	IndexName       string   `json:"indexName"`
-	VectorBucketName string  `json:"vectorBucketName"`
+	IndexArn         string   `json:"indexArn"`
+	IndexName        string   `json:"indexName"`
+	VectorBucketName string   `json:"vectorBucketName"`
 	VectorBucketArn  string   `json:"vectorBucketArn"`
-	Keys            []string `json:"keys"`
-	ReturnData      bool     `json:"returnData"`
-	ReturnMetadata  bool     `json:"returnMetadata"`
+	Keys             []string `json:"keys"`
+	ReturnData       bool     `json:"returnData"`
+	ReturnMetadata   bool     `json:"returnMetadata"`
 }
 
 type OutputVector struct {
@@ -191,16 +194,16 @@ type GetVectorsResponse struct {
 }
 
 type ListVectorsRequest struct {
-	IndexArn        string `json:"indexArn"`
-	IndexName       string `json:"indexName"`
+	IndexArn         string `json:"indexArn"`
+	IndexName        string `json:"indexName"`
 	VectorBucketName string `json:"vectorBucketName"`
 	VectorBucketArn  string `json:"vectorBucketArn"`
-	MaxResults      int    `json:"maxResults"`
-	NextToken       string `json:"nextToken"`
-	ReturnData      bool   `json:"returnData"`
-	ReturnMetadata  bool   `json:"returnMetadata"`
-	SegmentCount    int    `json:"segmentCount"`
-	SegmentIndex    int    `json:"segmentIndex"`
+	MaxResults       int    `json:"maxResults"`
+	NextToken        string `json:"nextToken"`
+	ReturnData       bool   `json:"returnData"`
+	ReturnMetadata   bool   `json:"returnMetadata"`
+	SegmentCount     int    `json:"segmentCount"`
+	SegmentIndex     int    `json:"segmentIndex"`
 }
 
 type ListVectorsResponse struct {
@@ -209,11 +212,11 @@ type ListVectorsResponse struct {
 }
 
 type DeleteVectorsRequest struct {
-	IndexArn        string   `json:"indexArn"`
-	IndexName       string   `json:"indexName"`
-	VectorBucketName string  `json:"vectorBucketName"`
+	IndexArn         string   `json:"indexArn"`
+	IndexName        string   `json:"indexName"`
+	VectorBucketName string   `json:"vectorBucketName"`
 	VectorBucketArn  string   `json:"vectorBucketArn"`
-	Keys            []string `json:"keys"`
+	Keys             []string `json:"keys"`
 }
 
 type DeleteVectorsResponse struct{}
@@ -237,7 +240,7 @@ type QueryVectorsRequest struct {
 
 type QueryOutputVector struct {
 	Data     *VectorData            `json:"data,omitempty"`
-	Distance float32                `json:"distance,omitempty"`
+	Distance *float32               `json:"distance,omitempty"`
 	Key      string                 `json:"key"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
