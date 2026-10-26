@@ -2070,7 +2070,10 @@ impl VolumeServer for VolumeGrpcService {
         let preallocate_size = self.copy_preallocate_size(&source).await;
         let dest =
             self.plan_copy_destination(&req, vid, &source, had_existing_volume, preallocate_size)?;
-        dest.write_note(vid, &req.source_data_node)?;
+        if let Err(e) = dest.write_note(vid, &req.source_data_node) {
+            dest.release_reservation(&self.state.store.read().unwrap());
+            return Err(e);
+        }
 
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeCopyResponse, Status>>(16);
@@ -5628,6 +5631,10 @@ struct CopyDestination {
     disk_type: DiskType,
     /// A remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier.
     has_remote_dat: bool,
+    /// The disk and headroom charge held by reserve_free_location; released
+    /// when the copy does not land.
+    loc_idx: usize,
+    reserved_space: u64,
 }
 
 impl CopyDestination {
@@ -5642,6 +5649,10 @@ impl CopyDestination {
         std::fs::write(&note_path, format!("copying from {}", source))
             .map_err(|e| Status::internal(format!("write .note for volume {}: {}", vid, e)))?;
         Ok(())
+    }
+
+    fn release_reservation(&self, store: &crate::storage::store::Store) {
+        store.release_free_location(self.loc_idx, self.reserved_space);
     }
 }
 
@@ -5742,7 +5753,7 @@ impl VolumeGrpcService {
 
         // Find a free disk location using Go's Store.ReserveFreeLocation
         // semantics; the slot of the replica being replaced counts as free.
-        let (data_base, idx_base, selected_disk_type) = {
+        let ((data_base, idx_base, selected_disk_type), loc_idx) = {
             let mut store = self.state.store.write().unwrap();
             let Some(loc_idx) = store.reserve_free_location(
                 needed_space,
@@ -5764,9 +5775,12 @@ impl VolumeGrpcService {
                 loc.disk_type.clone(),
             );
             if had_existing_volume {
-                delete_existing_replica(&mut store, vid, vol_info)?;
+                if let Err(e) = delete_existing_replica(&mut store, vid, vol_info) {
+                    store.release_free_location(loc_idx, needed_space);
+                    return Err(e);
+                }
             }
-            selected
+            (selected, loc_idx)
         };
         if had_existing_volume {
             self.state.volume_state_notify.notify_one();
@@ -5782,6 +5796,8 @@ impl VolumeGrpcService {
             idx_base_name,
             disk_type: selected_disk_type,
             has_remote_dat,
+            loc_idx,
+            reserved_space: needed_space,
         })
     }
 }
@@ -6104,6 +6120,8 @@ impl VolumeCopyJob {
         let _ = std::fs::remove_file(format!("{}.idx", idx_base_name));
         let _ = std::fs::remove_file(format!("{}.vif", data_base_name));
         let _ = std::fs::remove_file(&note_path);
+        self.dest
+            .release_reservation(&state.store.read().unwrap());
         let _ = tx.send(Err(e)).await;
     }
 }

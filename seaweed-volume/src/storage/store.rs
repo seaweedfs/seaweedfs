@@ -391,6 +391,17 @@ impl Store {
         Some(loc_idx)
     }
 
+    /// Mirrors Go's Store.ReleaseFreeLocation: returns space
+    /// reserve_free_location charged when the copy it paid for does not
+    /// land, or a failed copy keeps its headroom booked until the next
+    /// disk-space probe and blocks retries. The pick rechecks live stats,
+    /// so a refund landing after a probe only over-reports briefly.
+    pub fn release_free_location(&self, loc_idx: usize, need: u64) {
+        if let Some(loc) = self.locations.get(loc_idx) {
+            loc.available_space.fetch_add(need, Ordering::Relaxed);
+        }
+    }
+
     /// Returns the index of the disk that should receive a new EC
     /// shard / index file for `(collection, vid)`. Selection order:
     ///
@@ -2304,6 +2315,28 @@ mod tests {
 
         let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
         assert_eq!(store.reserve_free_location(30 * MIB, pred, None), None);
+    }
+
+    // Mirrors Go's TestReleaseFreeLocationRestoresReservation: a failed copy
+    // must return its reservation, or the headroom stays booked until the
+    // next disk probe and blocks retries.
+    #[test]
+    fn test_release_free_location_restores_reservation() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let floor = 1000 * MIB;
+        let need = 30 * MIB;
+        // 40 MiB above the floor: room for one 30 MiB reservation, not two.
+        let store = headroom_store(dir, floor + 40 * MIB, floor);
+        store.locations[0]
+            .available_space
+            .store(40 * MIB, Ordering::Relaxed);
+
+        let pred = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
+        store.release_free_location(0, need);
+        assert_eq!(store.reserve_free_location(need, pred, None), Some(0));
     }
 
     // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
