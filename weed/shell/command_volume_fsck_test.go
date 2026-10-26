@@ -96,6 +96,37 @@ func (s *stubFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_p
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 }
 
+func (s *stubFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	var names []string
+	children := make(map[string]*filer_pb.Entry)
+	for path, entry := range s.entries {
+		parent, name := util.FullPath(path).DirAndName()
+		if parent != req.Directory || name == "" {
+			continue
+		}
+		if name < req.StartFromFileName || (name == req.StartFromFileName && !req.InclusiveStartFrom) {
+			continue
+		}
+		names = append(names, name)
+		children[name] = entry
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		stored := children[name]
+		entry := &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: stored.IsDirectory,
+			Chunks:      stored.Chunks,
+			Attributes:  stored.Attributes,
+			HardLinkId:  stored.HardLinkId,
+		}
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	fullPath := string(util.NewFullPath(req.Directory, req.Name))
 	entry, found := s.entries[fullPath]
@@ -304,6 +335,67 @@ func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 	finish()
 	if got := processed.Load(); got != 8 {
 		t.Fatalf("processed %d deletes, want 8", got)
+	}
+}
+
+// A file outside the selected volumes' bucket can still reference their
+// chunks — a filer can bind a collection to any path — so the filer walk must
+// reach them or their live chunks would be reported as orphans.
+func TestVolumeFsckCollectFilerFileIdsReachesOutsideBucket(t *testing.T) {
+	tempDir := t.TempDir()
+	chunk := func(fileKey uint64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Size: 1, Fid: &filer_pb.FileId{VolumeId: 7, FileKey: fileKey, Cookie: 1}}
+	}
+	directory := &filer_pb.Entry{IsDirectory: true}
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		"/":                    directory,
+		"/buckets":             directory,
+		"/buckets/col1":        directory,
+		"/buckets/col1/object": {Chunks: []*filer_pb.FileChunk{chunk(11)}},
+		"/topics":              directory,
+		"/topics/system-log":   {Chunks: []*filer_pb.FileChunk{chunk(22)}},
+	}}
+
+	verbose, findMissing, verify, force := false, false, false, false
+	c := &commandVolumeFsck{
+		tempFolder:               tempDir,
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		verifyNeedle:             &verify,
+		forcePurging:             &force,
+		writer:                   io.Discard,
+		bucketsPath:              "/buckets",
+		env:                      startStubFiler(t, stub),
+	}
+
+	vinfo := map[string]map[uint32]VInfo{"dn1": {7: {collection: "col1"}}}
+	if err := c.collectFilerFileIdAndPaths(vinfo, false, func(purgeItem) {}, 0, 0); err != nil {
+		t.Fatalf("collect filer file ids: %v", err)
+	}
+
+	db := needle_map.NewMemDb()
+	for _, needleId := range []types.NeedleId{11, 22, 33} {
+		if err := db.Set(needleId, types.ToOffset(16), types.Size(1)); err != nil {
+			t.Fatalf("seed volume idx: %v", err)
+		}
+	}
+	if err := db.SaveToIdx(getVolumeFileIdFile(tempDir, "dn1", 7)); err != nil {
+		t.Fatalf("write volume idx: %v", err)
+	}
+	db.Close()
+
+	inUseCount, orphanFileIds, _, err := c.oneVolumeFileIdsSubtractFilerFileIds("dn1", 7, &VInfo{collection: "col1"}, 0, 0)
+	if err != nil {
+		t.Fatalf("subtract filer file ids: %v", err)
+	}
+	if inUseCount != 2 {
+		t.Fatalf("in-use count %d, want 2 (the in-bucket and out-of-bucket references)", inUseCount)
+	}
+	if len(orphanFileIds) != 1 {
+		t.Fatalf("orphans %v, want only the unreferenced needle", orphanFileIds)
+	}
+	if want := types.NeedleId(33).FileId(7); orphanFileIds[0] != want {
+		t.Fatalf("orphan %s, want the unreferenced needle %s", orphanFileIds[0], want)
 	}
 }
 
