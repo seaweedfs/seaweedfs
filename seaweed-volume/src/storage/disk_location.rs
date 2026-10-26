@@ -763,7 +763,10 @@ impl DiskLocation {
         let used = total.saturating_sub(free);
         let is_low = self.min_free_space.is_low(free, total);
         self.is_disk_space_low.store(is_low, Ordering::Relaxed);
-        self.available_space.store(free, Ordering::Relaxed);
+        // Go's DiskLocation.AvailableSpace counts only free space above the
+        // -volume.minFreeSpace floor, so space checks stay above it too.
+        self.available_space
+            .store(self.min_free_space.available_space(free, total), Ordering::Relaxed);
         self.disk_total_bytes.store(total, Ordering::Relaxed);
         self.disk_free_bytes.store(free, Ordering::Relaxed);
 
@@ -1437,6 +1440,43 @@ mod tests {
         let (total, free) = get_disk_stats(tmp.path().to_str().unwrap());
         assert!(total > 0, "expected total>0, got {total}");
         assert!(free > 0, "expected free>0, got {free}");
+    }
+
+    // Mirrors Go's DiskLocation.AvailableSpace: the cached figure a copy is
+    // checked against counts only free space above the min-free-space floor.
+    #[test]
+    fn test_check_disk_space_counts_only_space_above_floor() {
+        const FLOOR: u64 = 1 << 20;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            0,
+            DiskType::HardDrive,
+            MinFreeSpace::Bytes(FLOOR),
+            Vec::new(),
+        )
+        .unwrap();
+        loc.check_disk_space();
+        assert_eq!(
+            loc.available_space.load(Ordering::Relaxed),
+            loc.disk_free_bytes
+                .load(Ordering::Relaxed)
+                .saturating_sub(FLOOR)
+        );
+
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            0,
+            DiskType::HardDrive,
+            MinFreeSpace::Bytes(u64::MAX),
+            Vec::new(),
+        )
+        .unwrap();
+        loc.check_disk_space();
+        assert_eq!(loc.available_space.load(Ordering::Relaxed), 0);
     }
 
     /// When `-dir.idx` is configured the EC `.vif` may live in the idx
