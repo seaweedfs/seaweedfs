@@ -555,6 +555,11 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
 		peerTsNs := event.TsNs
+		if event.MutationTsNs == 0 {
+			// Older peers predate the field; their TsNs was the commit stamp,
+			// so Replay must keep ordering by it after TsNs is restamped.
+			event.MutationTsNs = peerTsNs
+		}
 		tsNs, err := ma.MetaLogBuffer.AddDataToBufferAndGetTs([]byte(dir), data, event.TsNs)
 		if err != nil {
 			glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
