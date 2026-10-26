@@ -10,7 +10,9 @@ func ScrubCipherKeys(entry *Entry) *Entry {
 	}
 	clone := proto.Clone(entry).(*Entry)
 	for _, chunk := range clone.Chunks {
-		chunk.CipherKey = nil
+		if chunk != nil {
+			chunk.CipherKey = nil
+		}
 	}
 	return clone
 }
