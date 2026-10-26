@@ -195,6 +195,35 @@ func TestReplayAppliesEventNewerThanLocalEntry(t *testing.T) {
 	}
 }
 
+// A delayed peer write is delivered under its bumped stream position, which
+// sorts after a newer local commit; Replay must order on MutationTsNs so the
+// older mutation cannot overwrite the newer local entry.
+func TestReplayOrdersByMutationStampNotStreamPosition(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{
+		FullPath:   path,
+		Attr:       Attr{Mtime: now},
+		Content:    []byte("newer local write"),
+		CommitTsNs: now.UnixNano(),
+	}
+
+	event := overwriteEvent("/dir", "file", now.Add(time.Minute).UnixNano(), "stale peer write")
+	event.MutationTsNs = now.Add(-time.Minute).UnixNano()
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	entry, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "newer local write" {
+		t.Fatalf("content = %q, want local write kept", entry.Content)
+	}
+}
+
 func TestReplaySkipsDeleteOlderThanLocalEntry(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
