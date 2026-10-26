@@ -5,6 +5,7 @@ use futures::TryStreamExt;
 use lance::Dataset;
 use lance::dataset::ProjectionRequest;
 use lance::dataset::WriteParams;
+use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance_linalg::distance::DistanceType;
@@ -282,28 +283,28 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await.map_err(invalid)?;
+        let dataset = self.open(&table).await.map_err(invalid)?;
         let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
             .map_err(invalid)?
             .dimension;
-        let batch = batch_of(&req.vectors, dimension).map_err(invalid)?;
-        // Upsert by key: delete the keys being put, then append. A single
-        // merge_insert commit can replace this once it is exercised here.
-        dataset
-            .delete(&key_list(
-                &req.vectors
-                    .iter()
-                    .map(|v| v.key.clone())
-                    .collect::<Vec<_>>(),
-            ))
-            .await
-            .map_err(internal)?;
-        let schema = batch.schema();
-        dataset
-            .append(
-                arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema),
-                None,
-            )
+        let batch = batch_of(
+            &req.vectors,
+            dimension,
+            Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema())),
+        )
+        .map_err(invalid)?;
+        // Upsert by key in one merge commit: no window where the old rows are
+        // already deleted, and a losing writer fails the request instead of
+        // leaving duplicate keys.
+        let mut builder =
+            MergeInsertBuilder::try_new(Arc::new(dataset), vec![KEY_COLUMN.to_string()])
+                .map_err(internal)?;
+        builder.when_matched(WhenMatched::UpdateAll);
+        builder.when_not_matched(WhenNotMatched::InsertAll);
+        let (dataset, _stats) = builder
+            .try_build()
+            .map_err(internal)?
+            .execute_batches(vec![batch])
             .await
             .map_err(internal)?;
         Ok(Response::new(pb::PutVectorsResponse {
