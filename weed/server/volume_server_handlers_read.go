@@ -71,7 +71,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		InternalError(w, r, nil)
 		return
 	}
-	if err != nil || len(lookupResult.Locations) <= 0 {
+	if err != nil || lookupResult == nil || len(lookupResult.Locations) <= 0 {
 		glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 		stats.VolumeServerFileReadInvalidNeedles.Inc()
 		NotFound(w)
