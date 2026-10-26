@@ -482,7 +482,7 @@ func (fs *FilerServer) tusConcatFinalHandler(w http.ResponseWriter, r *http.Requ
 	// The chunks now belong to the final entry, so remove only the partials'
 	// session metadata.
 	for _, partial := range partials {
-		if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionPath(partial.ID)), true, false, false, false, nil, 0, 0); err != nil {
+		if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionPath(partial.ID)), true, false, false, false, nil, 0); err != nil {
 			glog.V(1).Infof("Failed to cleanup TUS partial session %s: %v", partial.ID, err)
 		}
 	}

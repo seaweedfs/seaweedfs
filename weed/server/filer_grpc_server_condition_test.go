@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -380,5 +381,32 @@ func TestUpdateEntryConditionEnforced(t *testing.T) {
 	}
 	if got := store.entries["/test/obj"].Attr.Mtime.Unix(); got != 1700000005 {
 		t.Fatalf("update not applied, mtime %d", got)
+	}
+}
+
+func TestDeleteCutoffNs(t *testing.T) {
+	base := time.Unix(1700000000, 500_000_000)
+
+	// nanoseconds take precedence when set
+	if got := deleteCutoffNs(1, base.UnixNano()); got != base.UnixNano() {
+		t.Fatalf("ns guard should win, got %d", got)
+	}
+	// no guard stays disabled
+	if got := deleteCutoffNs(0, 0); got != 0 {
+		t.Fatalf("no guard must stay 0, got %d", got)
+	}
+	// a whole-second guard covers its full second: entry.Mtime.Unix() > sec
+	// is entry.Mtime after the last nanosecond of that second
+	cutoff := deleteCutoffNs(base.Unix(), 0)
+	if want := (base.Unix()+1)*1_000_000_000 - 1; cutoff != want {
+		t.Fatalf("seconds guard = %d, want %d", cutoff, want)
+	}
+	if base.After(time.Unix(0, cutoff)) {
+		t.Fatal("entry inside the guard second must not be treated as newer")
+	}
+	// a seconds guard beyond the nanosecond range saturates instead of
+	// wrapping to a negative cutoff that would drop the condition
+	if got := deleteCutoffNs(math.MaxInt64/1_000_000_000, 0); got != math.MaxInt64 {
+		t.Fatalf("huge seconds guard = %d, want MaxInt64", got)
 	}
 }
