@@ -220,6 +220,8 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			r.Header.Set("Upgrade", "h2c")
 			r.Header.Set("Te", "trailers")
 			r.Header.Set("X-Hop-Marker", "private")
+			r.Header.Set("Proxy-Connection", "keep-alive")
+			r.Header.Set("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0")
 			w := httptest.NewRecorder()
 			vs.proxyReqToTargetServer(w, r)
 
@@ -235,7 +237,7 @@ func TestProxyReqToTargetServerPreservesMethodAndResponse(t *testing.T) {
 			if got.rangeHeader != "bytes=0-3" || got.ifNoneMatch != `"client-etag"` || got.ifModifiedAt != "Wed, 21 Oct 2015 07:28:00 GMT" {
 				t.Errorf("peer received conditional/range headers %+v", got)
 			}
-			for _, dropped := range []string{"Connection", "Keep-Alive", "Upgrade", "Te", "X-Hop-Marker"} {
+			for _, dropped := range []string{"Connection", "Keep-Alive", "Upgrade", "Te", "X-Hop-Marker", "Proxy-Connection", "Proxy-Authorization"} {
 				if got.header.Get(dropped) != "" {
 					t.Errorf("hop-by-hop header %s reached the replica: %v", dropped, got.header)
 				}

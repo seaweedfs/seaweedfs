@@ -123,6 +123,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		hopByHop := map[string]bool{
 			"Connection": true, "Keep-Alive": true, "Te": true, "Trailer": true,
 			"Upgrade": true, "Host": true, "Content-Length": true, "Transfer-Encoding": true,
+			"Proxy-Connection": true, "Proxy-Authenticate": true, "Proxy-Authorization": true,
 		}
 		for _, v := range r.Header.Values("Connection") {
 			for _, token := range strings.Split(v, ",") {
