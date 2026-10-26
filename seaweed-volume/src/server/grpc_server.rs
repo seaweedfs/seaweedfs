@@ -20,7 +20,7 @@ use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
-use crate::storage::volume::{VolumeSpec, preallocate_file};
+use crate::storage::volume::{PREALLOCATE_SUPPORTED, VolumeSpec, preallocate_file};
 
 use super::grpc_client::{
     GrpcDialOptions, VolumeServerGrpcClient, connect_channel, connect_channel_guarded,
@@ -2067,7 +2067,9 @@ impl VolumeServer for VolumeGrpcService {
         let source_status_before =
             fetch_source_status_before(&mut client, req.volume_id, vid).await;
         let source = SourceVolumeStatus::fetch(&mut client, req.volume_id).await?;
-        let dest = self.plan_copy_destination(&req, vid, &source, had_existing_volume)?;
+        let preallocate_size = self.copy_preallocate_size(&source).await;
+        let dest =
+            self.plan_copy_destination(&req, vid, &source, had_existing_volume, preallocate_size)?;
         dest.write_note(vid, &req.source_data_node)?;
 
         let (tx, rx) =
@@ -2079,6 +2081,7 @@ impl VolumeServer for VolumeGrpcService {
             source,
             source_status_before,
             dest,
+            preallocate_size,
             tx,
         };
 
@@ -5674,6 +5677,36 @@ impl VolumeGrpcService {
         Ok(volume_server_client(channel))
     }
 
+    /// Query master for the .dat reservation a copy will make, as Go's
+    /// VolumeCopy does before picking a destination. A remote-backed volume
+    /// lands no .dat, so only a local copy needs the reservation.
+    async fn copy_preallocate_size(&self, source: &SourceVolumeStatus) -> i64 {
+        let has_remote_dat = source
+            .volume_info
+            .as_ref()
+            .map(|vi| !vi.files.is_empty())
+            .unwrap_or(false);
+        if !has_remote_dat {
+            let master = self.state.current_master().await;
+            let grpc_addr = super::heartbeat::to_grpc_address(&master);
+            match super::heartbeat::try_get_master_configuration(
+                &grpc_addr,
+                self.state.outgoing_grpc_tls.as_ref(),
+            )
+            .await
+            {
+                Ok(resp) if resp.volume_preallocate => {
+                    return resp.volume_size_limit_m_b as i64 * 1024 * 1024;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("get master {} configuration: {}", master, e);
+                }
+            }
+        }
+        0
+    }
+
     /// Picks the destination disk and, under the same write lock, drops a
     /// pre-existing local replica so its slot counts as free for the pick.
     fn plan_copy_destination(
@@ -5682,6 +5715,7 @@ impl VolumeGrpcService {
         vid: VolumeId,
         vol_info: &SourceVolumeStatus,
         had_existing_volume: bool,
+        preallocate_size: i64,
     ) -> Result<CopyDestination, Status> {
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
@@ -5694,11 +5728,17 @@ impl VolumeGrpcService {
             .as_ref()
             .map(|vi| !vi.files.is_empty())
             .unwrap_or(false);
-        let needed_space = if has_remote_dat {
+        let mut needed_space = if has_remote_dat {
             vol_info.idx_file_size
         } else {
             vol_info.dat_file_size
         };
+        if !has_remote_dat && PREALLOCATE_SUPPORTED && preallocate_size as u64 > needed_space {
+            // the .dat reserves the master's volume size limit up front, so
+            // the location must fit the reservation, not just the copied
+            // bytes (Go's neededSpace)
+            needed_space = preallocate_size as u64;
+        }
 
         // Find a free disk location using Go's Store.FindFreeLocation
         // semantics; the slot of the replica being replaced counts as free.
@@ -5753,6 +5793,7 @@ struct VolumeCopyJob {
     source: SourceVolumeStatus,
     source_status_before: Option<volume_server_pb::VolumeStatusResponse>,
     dest: CopyDestination,
+    preallocate_size: i64,
     tx: tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
 }
 
@@ -5799,56 +5840,21 @@ impl VolumeCopyJob {
             .await
     }
 
-    /// Query master for preallocation settings (matching Go VolumeCopy behavior).
+    /// Reserve the .dat's full size up front, matching Go's VolumeCopy
+    /// CreateVolumeFile.
     async fn preallocate_dat(&self) -> Result<(), Status> {
-        let (state, vid, tx) = (&self.state, self.vid, &self.tx);
         let (data_base_name, has_remote_dat) =
             (&self.dest.data_base_name, self.dest.has_remote_dat);
-        let mut preallocate_size: i64 = 0;
-        if !has_remote_dat {
-            let master = state.current_master().await;
-            let grpc_addr = super::heartbeat::to_grpc_address(&master);
-            // Race the master-configuration RPC against the caller's
-            // response channel: a stalled master (or a slow leader
-            // election) would otherwise hold the task and its .note
-            // past a departing caller, since the per-chunk checks in
-            // copy_file_from_source are never reached.
-            let config = tokio::select! {
-                res = super::heartbeat::try_get_master_configuration(
-                    &grpc_addr,
-                    state.outgoing_grpc_tls.as_ref(),
-                ) => res,
-                _ = tx.closed() => {
-                    return Err(Status::cancelled(format!(
-                        "volume {} copy cancelled by caller",
-                        vid
-                    )));
-                }
-            };
-            match config {
-                Ok(resp) => {
-                    if resp.volume_preallocate {
-                        preallocate_size = resp.volume_size_limit_m_b as i64 * 1024 * 1024;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("get master {} configuration: {}", master, e);
-                }
-            }
-
-            if preallocate_size > 0 {
-                let dat_path = format!("{}.dat", data_base_name);
-                let file = std::fs::File::create(&dat_path).map_err(|e| {
-                    Status::internal(format!(
-                        "create preallocated volume file {}: {}",
-                        dat_path, e
-                    ))
-                })?;
-                // Go's CreateVolumeFile fallocates KEEP_SIZE — a sparse
-                // set_len reserves nothing, so a nearly-full disk only
-                // finds out mid-copy. Reserve the blocks up front.
-                preallocate_file(&file, preallocate_size as u64);
-            }
+        let preallocate_size = self.preallocate_size;
+        if preallocate_size > 0 && !has_remote_dat {
+            let dat_path = format!("{}.dat", data_base_name);
+            let file = std::fs::File::create(&dat_path).map_err(|e| {
+                Status::internal(format!(
+                    "create preallocated volume file {}: {}",
+                    dat_path, e
+                ))
+            })?;
+            preallocate_file(&file, preallocate_size as u64);
         }
         Ok(())
     }
