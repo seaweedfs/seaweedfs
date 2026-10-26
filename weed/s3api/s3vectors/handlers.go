@@ -600,47 +600,11 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		limit := req.MaxResults
-		if limit <= 0 {
-			limit = 500
-		} else if limit > 1000 {
-			limit = 1000
-		}
-		segmentCount := uint64(req.SegmentCount)
-		segmentIndex := uint64(req.SegmentIndex)
-		var out []*vector_pb.Vector
-		nextToken := ""
-		token := strconv.FormatUint(offset, 10)
-	scan:
-		for {
-			page, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
-				Table:          tableID(arns.bucket, arns.index),
-				MaxResults:     1000,
-				NextToken:      token,
-				ReturnData:     req.ReturnData,
-				ReturnMetadata: req.ReturnMetadata,
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
-				return
-			}
-			base := offset
-			offset += uint64(len(page.Vectors))
-			for j, v := range page.Vectors {
-				if (base+uint64(j))%segmentCount == segmentIndex {
-					out = append(out, v)
-					if len(out) == limit {
-						if j+1 < len(page.Vectors) || page.NextToken != "" {
-							nextToken = strconv.FormatUint(base+uint64(j)+1, 10)
-						}
-						break scan
-					}
-				}
-			}
-			if len(page.Vectors) == 0 || page.NextToken == "" {
-				break
-			}
-			token = page.NextToken
+		out, nextToken, err := s.listSegmentVectors(r.Context(), tableID(arns.bucket, arns.index),
+			offset, req.MaxResults, uint64(req.SegmentCount), uint64(req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+			return
 		}
 		writeJSON(w, http.StatusOK, &ListVectorsResponse{
 			NextToken: nextToken,
@@ -663,6 +627,61 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		NextToken: resp.NextToken,
 		Vectors:   toOutputVectors(resp.Vectors, req.ReturnData, req.ReturnMetadata),
 	})
+}
+
+// Mirrors the engine's page sizing so a segmented listing pages like a plain
+// one does.
+const (
+	vectorsDefaultPage = 500
+	vectorsMaxPage     = 1000
+)
+
+// listSegmentVectors scans the index from offset, keeping the rows that fall
+// in the caller's segment until limit are collected or the index runs out.
+// The engine's next_token is a row offset, so the returned token is the offset
+// scanning resumes from.
+func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table, offset uint64, maxResults int, segmentCount, segmentIndex uint64, returnData, returnMetadata bool) ([]*vector_pb.Vector, string, error) {
+	limit := maxResults
+	if limit <= 0 {
+		limit = vectorsDefaultPage
+	} else if limit > vectorsMaxPage {
+		limit = vectorsMaxPage
+	}
+	var out []*vector_pb.Vector
+	nextToken := ""
+	token := strconv.FormatUint(offset, 10)
+	for {
+		page, err := s.vectors.ListVectors(ctx, &vector_pb.ListVectorsRequest{
+			Table:          table,
+			MaxResults:     vectorsMaxPage,
+			NextToken:      token,
+			ReturnData:     returnData,
+			ReturnMetadata: returnMetadata,
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		base := offset
+		offset += uint64(len(page.Vectors))
+		full := false
+		for j, v := range page.Vectors {
+			if (base+uint64(j))%segmentCount == segmentIndex {
+				out = append(out, v)
+				if len(out) == limit {
+					if j+1 < len(page.Vectors) || page.NextToken != "" {
+						nextToken = strconv.FormatUint(base+uint64(j)+1, 10)
+					}
+					full = true
+					break
+				}
+			}
+		}
+		if full || len(page.Vectors) == 0 || page.NextToken == "" {
+			break
+		}
+		token = page.NextToken
+	}
+	return out, nextToken, nil
 }
 
 func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
