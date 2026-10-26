@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -536,5 +537,70 @@ func TestFilerSyncResubscribeSignalEndsStream(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("follower did not end after the resubscribe signal")
+	}
+}
+
+// A dropped stream mid-replay must keep the checkpoints the drain already
+// settled: the resubscribe's SinceNs resumes at the last settled entry
+// instead of re-reading the whole ref set.
+func TestChunkReplayCheckpointSurvivesReconnect(t *testing.T) {
+	var events []*filer_pb.SubscribeMetadataResponse
+	for i, ts := range []int64{101, 102, 103, 104} {
+		events = append(events, makeSubEvent("/watched", fmt.Sprintf("f%d", i), ts))
+	}
+	logData := buildLogFileData(events)
+	refsResp := &filer_pb.SubscribeMetadataResponse{
+		LogFileRefs: []*filer_pb.LogFileChunkRef{{
+			FilerId: "f0",
+			Chunks:  []*filer_pb.FileChunk{{FileId: "log-1"}},
+		}},
+	}
+	markerResp := &filer_pb.SubscribeMetadataResponse{
+		EventNotification: &filer_pb.EventNotification{},
+		TsNs:              200,
+	}
+	option := &MetadataFollowOption{
+		ClientName: "mount",
+		StartTsNs:  100,
+		PathPrefix: "/watched/",
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(logData)), nil
+		},
+	}
+
+	var sinceNs []int64
+	client := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			sinceNs = append(sinceNs, req.SinceNs)
+		},
+		stream: &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{refsResp, markerResp}},
+	}
+
+	count := 0
+	wantErr := fmt.Errorf("apply boom")
+	err := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		count++
+		if count == 3 {
+			return wantErr
+		}
+		return nil
+	})(client)
+	if !errors.Is(err, ErrLogFileRead) {
+		t.Fatalf("expected ErrLogFileRead, got %v", err)
+	}
+	// Entries 101 and 102 settled; 102's checkpoint emits when 103 pops, but
+	// 103 failed first, so the last checkpoint is 101.
+	if option.StartTsNs != 101 {
+		t.Fatalf("StartTsNs = %d, want 101", option.StartTsNs)
+	}
+
+	client.stream = &fakeSubscribeStream{}
+	if err := makeSubscribeMetadataFunc(option, func(*filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})(client); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 101 {
+		t.Fatalf("expected subscribes at 100 then 101, got %v", sinceNs)
 	}
 }
