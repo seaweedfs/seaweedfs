@@ -4,16 +4,19 @@
 WEED := ./weed
 VEC := ./weed-vector-server
 
-.PHONY: all test build clean
+.PHONY: all test build clean FORCE
 
 all: test
 
-$(WEED):
+# No prerequisites: go/cargo decide for themselves whether a rebuild is needed.
+$(WEED): FORCE
 	go build -o $(WEED) ../../weed
 
-$(VEC):
+$(VEC): FORCE
 	cargo build --release --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
 	cp ../../seaweed-vector/target/release/weed-vector-server $(VEC)
+
+FORCE:
 
 build: $(WEED) $(VEC)
 
