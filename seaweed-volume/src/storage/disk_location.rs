@@ -761,13 +761,7 @@ impl DiskLocation {
             return;
         }
         let used = total.saturating_sub(free);
-        let is_low = match &self.min_free_space {
-            MinFreeSpace::Percent(pct) => {
-                let free_pct = (free as f64 / total as f64) * 100.0;
-                free_pct < *pct
-            }
-            MinFreeSpace::Bytes(min_bytes) => free < *min_bytes,
-        };
+        let is_low = self.min_free_space.is_low(free, total);
         self.is_disk_space_low.store(is_low, Ordering::Relaxed);
         self.available_space.store(free, Ordering::Relaxed);
         self.disk_total_bytes.store(total, Ordering::Relaxed);

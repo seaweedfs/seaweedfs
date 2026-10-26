@@ -52,6 +52,21 @@ fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), Volum
     }
 }
 
+/// Mirrors Go's hasRoomForNewVolume: a preallocated volume reserves its full
+/// size up front, so it must fit in the free space above the min-free-space
+/// floor. Reads the disk now rather than the once-a-probe is_disk_space_low
+/// flag. A volume without preallocation reserves nothing.
+fn has_room_for_new_volume(location: &DiskLocation, preallocate: u64) -> bool {
+    if preallocate == 0 {
+        return true;
+    }
+    let (all, free) = super::disk_location::get_disk_stats(&location.directory);
+    if location.min_free_space.is_low(free, all) {
+        return false;
+    }
+    location.min_free_space.available_space(free, all) >= preallocate
+}
+
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
     pub locations: Vec<DiskLocation>,
@@ -228,7 +243,7 @@ impl Store {
 
     /// Find the location with fewest volumes (load-balance) of the given disk type.
     /// Matches Go's FindFreeLocation: accounts for EC shards when computing free slots.
-    fn find_free_location(&self, disk_type: &DiskType) -> Option<usize> {
+    fn find_free_location(&self, disk_type: &DiskType, preallocate: u64) -> Option<usize> {
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 
         let mut best: Option<(usize, i64)> = None; // (index, effective_free)
@@ -251,6 +266,9 @@ impl Store {
                 continue;
             }
             if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                continue;
+            }
+            if !has_room_for_new_volume(loc, preallocate) {
                 continue;
             }
             if best.is_none() || effective_free > best.unwrap().1 {
@@ -460,12 +478,14 @@ impl Store {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
         }
-        let loc_idx = self.find_free_location(&disk_type).ok_or_else(|| {
-            VolumeError::Io(io::Error::other(format!(
-                "no free location for disk type {:?}",
-                disk_type
-            )))
-        })?;
+        let loc_idx = self
+            .find_free_location(&disk_type, spec.preallocate)
+            .ok_or_else(|| {
+                VolumeError::Io(io::Error::other(format!(
+                    "no free location for disk type {:?}",
+                    disk_type
+                )))
+            })?;
 
         self.locations[loc_idx].create_volume(vid, self.needle_map_kind, spec)
     }
@@ -875,11 +895,7 @@ impl Store {
     }
 
     /// Delete a needle from a volume.
-    pub fn delete_volume_needle(
-        &self,
-        vid: VolumeId,
-        n: &mut Needle,
-    ) -> Result<Size, VolumeError> {
+    pub fn delete_volume_needle(&self, vid: VolumeId, n: &mut Needle) -> Result<Size, VolumeError> {
         // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         if vol.is_no_write_or_delete() {
@@ -941,10 +957,12 @@ impl Store {
         for loc in &self.locations {
             if loc.original_max_volume_count == 0 {
                 let current = loc.max_volume_count.load(Ordering::Relaxed);
-                let (_, free) = super::disk_location::get_disk_stats(&loc.directory);
+                let (all, free) = super::disk_location::get_disk_stats(&loc.directory);
 
                 let unused_space = loc.unused_space(volume_size_limit);
-                let unclaimed = (free as i64) - (unused_space as i64);
+                // Free space under -volume.minFreeSpace is not available for new volumes.
+                let unclaimed =
+                    loc.min_free_space.available_space(free, all) as i64 - unused_space as i64;
 
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
@@ -1761,7 +1779,7 @@ fn update_dat_replica_placement(
             return Err(VolumeError::Io(io::Error::new(
                 e.kind(),
                 format!("volume {} failed to open {}: {}", vid, dat_path, e),
-            )))
+            )));
         }
     };
     let mut header = [0u8; SUPER_BLOCK_SIZE];
@@ -1775,12 +1793,13 @@ fn update_dat_replica_placement(
     let mut block = header.to_vec();
     block.resize(SUPER_BLOCK_SIZE + extra_size, 0);
     if extra_size > 0 {
-        file.read_exact(&mut block[SUPER_BLOCK_SIZE..]).map_err(|e| {
-            VolumeError::Io(io::Error::new(
-                e.kind(),
-                format!("volume {} failed to parse superblock: {}", vid, e),
-            ))
-        })?;
+        file.read_exact(&mut block[SUPER_BLOCK_SIZE..])
+            .map_err(|e| {
+                VolumeError::Io(io::Error::new(
+                    e.kind(),
+                    format!("volume {} failed to parse superblock: {}", vid, e),
+                ))
+            })?;
     }
     let mut super_block = SuperBlock::from_bytes(&block).map_err(|e| {
         VolumeError::Io(io::Error::new(
@@ -2030,6 +2049,99 @@ mod tests {
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
         assert_eq!(store.total_volume_count(), 1);
+    }
+
+    // Mirrors Go's TestAddVolumeRefusesPreallocationThatCrossesFloor: the
+    // reservation must fit above the floor even though the once-a-probe
+    // is_disk_space_low flag is still false.
+    #[test]
+    fn test_add_volume_refuses_preallocation_crossing_floor() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Bytes(free.saturating_sub(1)),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let spec = VolumeSpec {
+            preallocate: 2,
+            ..VolumeSpec::default()
+        };
+        assert!(
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
+                .is_err()
+        );
+        assert!(!store.has_volume(VolumeId(1)));
+    }
+
+    // A preallocated create is refused while the disk already sits below the
+    // floor; a volume reserving nothing still goes through, as a merge does.
+    #[test]
+    fn test_add_volume_headroom_below_floor() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Bytes(u64::MAX),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let spec = VolumeSpec {
+            preallocate: 1,
+            ..VolumeSpec::default()
+        };
+        assert!(
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &spec)
+                .is_err()
+        );
+        store
+            .add_volume(VolumeId(2), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+    }
+
+    // Mirrors Go's TestMaybeAdjustVolumeMaxIgnoresFreeSpaceInsideFloor: space
+    // inside the floor adds no slots.
+    #[test]
+    fn test_maybe_adjust_volume_max_ignores_free_space_inside_floor() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                0,
+                DiskType::HardDrive,
+                MinFreeSpace::Bytes(u64::MAX),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .volume_size_limit
+            .store(1024 * 1024, Ordering::Relaxed);
+
+        store.maybe_adjust_volume_max();
+
+        assert_eq!(
+            store.locations[0].max_volume_count.load(Ordering::Relaxed),
+            1
+        );
     }
 
     // Mirrors Go's TestConfigureVolumeUpdatesSuperblock: configure must leave
