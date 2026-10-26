@@ -24,10 +24,11 @@ type S3Authenticator interface {
 	DefaultAllow() bool
 }
 
-// Server implements the AWS S3 Vectors JSON API.
+// Server implements the AWS S3 Vectors API.
 type Server struct {
 	filerClient   FilerClient
 	tables        *s3tables.Manager
+	internal      *s3tables.Manager
 	vectors       vector_pb.VectorServiceClient
 	authenticator S3Authenticator
 	region        string
@@ -40,9 +41,15 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator, vectors v
 	if authenticator != nil {
 		manager.SetDefaultAllow(authenticator.DefaultAllow())
 	}
+	// Bookkeeping calls that ride along an operation the catalog already
+	// authorizes — format lookups, the implicit index namespace — must not
+	// demand read grants the API does not require.
+	internal := s3tables.NewManager()
+	internal.SetTrusted(true)
 	return &Server{
 		filerClient:   filerClient,
 		tables:        manager,
+		internal:      internal,
 		vectors:       vectors,
 		authenticator: authenticator,
 	}

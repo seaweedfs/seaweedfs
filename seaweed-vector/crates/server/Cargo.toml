@@ -16,6 +16,7 @@ path = "src/main.rs"
 weed-vector-core = { path = "../core" }
 weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
 lance = { version = "10", default-features = false, features = ["aws"] }
+lance-arrow = "10"
 lance-linalg = "10"
 arrow-array = "58"
 arrow-cast = "58"

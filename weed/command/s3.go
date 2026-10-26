@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -507,14 +507,9 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 		grace.OnInterrupt(certProvider.Close)
 
-		caCertPool := x509.NewCertPool()
-		if *s3opt.tlsCACertificate != "" {
-			// load CA certificate file and add it to list of client CAs
-			caCertFile, err := ioutil.ReadFile(*s3opt.tlsCACertificate)
-			if err != nil {
-				glog.Fatalf("error reading CA certificate: %v", err)
-			}
-			caCertPool.AppendCertsFromPEM(caCertFile)
+		caCertPool, err := loadClientCAPool(*s3opt.tlsCACertificate)
+		if err != nil {
+			glog.Fatalf("%v", err)
 		}
 
 		clientAuth := tls.NoClientCert
@@ -726,6 +721,40 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 
+	// Mirror the main API: when TLS is configured the vectors port serves
+	// HTTPS, not a second plaintext endpoint. Build the TLS config before
+	// binding listeners so a certificate failure does not leave ports bound.
+	var tlsConfig *tls.Config
+	if *s3opt.tlsPrivateKey != "" {
+		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
+		if err != nil {
+			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
+			conn.Close()
+			return nil
+		}
+		clientAuth := tls.NoClientCert
+		var caCertPool *x509.CertPool
+		if *s3opt.tlsVerifyClientCert {
+			clientAuth = tls.RequireAndVerifyClientCert
+			caCertPool, err = loadClientCAPool(*s3opt.tlsCACertificate)
+			if err != nil {
+				glog.Errorf("S3 Vectors: %v", err)
+				conn.Close()
+				return nil
+			}
+		}
+		tlsConfig = &tls.Config{
+			GetCertificate: getCert,
+			ClientAuth:     clientAuth,
+			ClientCAs:      caCertPool,
+		}
+		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
+			glog.Errorf("S3 Vectors: tls config: %v", err)
+			conn.Close()
+			return nil
+		}
+	}
+
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portVectors)
 	vectorsListener, vectorsLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.portVectors, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
@@ -735,55 +764,49 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		return nil
 	}
 
-	// Mirror the main API: when TLS is configured the vectors port serves
-	// HTTPS, not a second plaintext endpoint.
-	if *s3opt.tlsPrivateKey != "" {
-		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
-		if err != nil {
-			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
-			return nil
-		}
-		clientAuth := tls.NoClientCert
-		if *s3opt.tlsVerifyClientCert {
-			clientAuth = tls.RequireAndVerifyClientCert
-		}
-		tlsConfig := &tls.Config{GetCertificate: getCert, ClientAuth: clientAuth}
-		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
-			glog.Errorf("S3 Vectors: tls config: %v", err)
-			return nil
-		}
-		httpS := newHttpServer(vectorsRouter, tlsConfig)
-		if vectorsLocalListener != nil {
-			go func() {
-				if err := httpS.ServeTLS(vectorsLocalListener, "", ""); err != nil && err != http.ErrServerClosed {
-					glog.V(0).Infof("S3 Vectors localhost listener error: %v", err)
-				}
-			}()
-		}
-		go func() {
-			if err := httpS.ServeTLS(vectorsListener, "", ""); err != nil && err != http.ErrServerClosed {
-				glog.Errorf("S3 Vectors API Server Fail to serve: %v", err)
-			}
-		}()
-		return httpS
+	if tlsConfig != nil {
+		glog.V(0).Infof("Start S3 Vectors API Server at https://%s", listenAddress)
+	} else {
+		glog.V(0).Infof("Start S3 Vectors API Server at http://%s", listenAddress)
 	}
 
-	glog.V(0).Infof("Start S3 Vectors API Server at http://%s", listenAddress)
-
-	httpS := newHttpServer(vectorsRouter, nil)
+	httpS := newHttpServer(vectorsRouter, tlsConfig)
+	serve := func(listener net.Listener) error {
+		if tlsConfig != nil {
+			return httpS.ServeTLS(listener, "", "")
+		}
+		return httpS.Serve(listener)
+	}
 	if vectorsLocalListener != nil {
 		go func() {
-			if err := httpS.Serve(vectorsLocalListener); err != nil && err != http.ErrServerClosed {
+			if err := serve(vectorsLocalListener); err != nil && err != http.ErrServerClosed {
 				glog.V(0).Infof("S3 Vectors localhost listener error: %v", err)
 			}
 		}()
 	}
 	go func() {
-		if err := httpS.Serve(vectorsListener); err != nil && err != http.ErrServerClosed {
+		if err := serve(vectorsListener); err != nil && err != http.ErrServerClosed {
 			glog.Errorf("S3 Vectors API Server Fail to serve: %v", err)
 		}
 	}()
 	return httpS
+}
+
+// loadClientCAPool builds the client CA pool from -cacert.file, failing when
+// the file reads but carries no usable certificate.
+func loadClientCAPool(caCertFile string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if caCertFile == "" {
+		return pool, nil
+	}
+	pem, err := os.ReadFile(caCertFile)
+	if err != nil {
+		return nil, fmt.Errorf("error reading CA certificate: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no valid certificates found in %s", caCertFile)
+	}
+	return pool, nil
 }
 
 // deriveLanceStorageEndpoint picks the endpoint the Lance namespace puts in

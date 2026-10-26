@@ -57,7 +57,9 @@ type CreateVectorBucketRequest struct {
 	MetadataResourceTags    map[string]string      `json:"-"`
 }
 
-type CreateVectorBucketResponse struct{}
+type CreateVectorBucketResponse struct {
+	VectorBucketArn string `json:"vectorBucketArn"`
+}
 
 type GetVectorBucketRequest struct {
 	VectorBucketName string `json:"vectorBucketName"`
@@ -107,7 +109,9 @@ type MetadataConfiguration struct {
 	NonFilterableMetadataKeys []string `json:"nonFilterableMetadataKeys"`
 }
 
-type CreateIndexResponse struct{}
+type CreateIndexResponse struct {
+	IndexArn string `json:"indexArn"`
+}
 
 type GetIndexRequest struct {
 	IndexArn         string `json:"indexArn"`
@@ -139,9 +143,18 @@ type ListIndexesRequest struct {
 	VectorBucketArn  string `json:"vectorBucketArn"`
 }
 
+// IndexSummary is the listing shape: the catalog knows the name, ARN, and
+// creation time without a per-index metadata read.
+type IndexSummary struct {
+	CreationTime     time.Time `json:"creationTime"`
+	IndexArn         string    `json:"indexArn"`
+	IndexName        string    `json:"indexName"`
+	VectorBucketName string    `json:"vectorBucketName"`
+}
+
 type ListIndexesResponse struct {
-	Indexes   []*Index `json:"indexes"`
-	NextToken string   `json:"nextToken,omitempty"`
+	Indexes   []*IndexSummary `json:"indexes"`
+	NextToken string          `json:"nextToken,omitempty"`
 }
 
 type DeleteIndexRequest struct {
