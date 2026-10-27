@@ -28,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // lookupIPAddrFunc resolves a host to one or more IP addresses. It is a
@@ -311,6 +312,20 @@ func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client
 	}
 }
 
+// newGuardedPeerHTTPClient is newGuardedHTTPClientPolicy for uploads to cluster
+// peers: a volume server fronted by TLS expects the https.client configuration
+// the shared global client carries, so the guarded transport borrows it along
+// with its redirect policy — a redirect must not downgrade an upload carrying
+// data and auth headers to plaintext.
+func newGuardedPeerHTTPClient(endpoint string) *http.Client {
+	globalClient := util_http.GetGlobalHttpClient()
+	client := newGuardedHTTPClientPolicy(endpoint, true)
+	client.Transport.(*http.Transport).TLSClientConfig =
+		globalClient.GetClientTransport().TLSClientConfig
+	client.CheckRedirect = globalClient.Client.CheckRedirect
+	return client
+}
+
 // guardedRemoteClient reports the caller-supplied endpoint a backend dials
 // directly and a constructor that routes through the given HTTP client, or
 // ok=false when nothing in the conf steers a destination. The S3-SDK family,
@@ -573,8 +588,14 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 			wg.Add(1)
 			go func(idx int, targetVolumeServer string) {
 				defer wg.Done()
+				uploadUrl, urlErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(
+					fmt.Sprintf("%s/%s?type=replicate", targetVolumeServer, fileId.String()))
+				if urlErr != nil {
+					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, urlErr)
+					return
+				}
 				uploadOption := &operation.UploadOption{
-					UploadUrl:         fmt.Sprintf("http://%s/%s?type=replicate", targetVolumeServer, fileId.String()),
+					UploadUrl:         uploadUrl,
 					Filename:          "",
 					Cipher:            false,
 					IsInputCompressed: false,
@@ -597,7 +618,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 						return
 					}
 				} else {
-					uploader = operation.NewUploaderWithHttpClient(newGuardedHTTPClientPolicy(targetVolumeServer, true))
+					uploader = operation.NewUploaderWithHttpClient(newGuardedPeerHTTPClient(targetVolumeServer))
 				}
 
 				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil {

@@ -102,6 +102,22 @@ fn main() {
     }
 }
 
+/// Mirrors Go's rejectHttpsDowngrade: a redirect must not downgrade a request
+/// carrying data and auth headers from https to plaintext.
+fn redirect_is_https_downgrade(previous: &[reqwest::Url], next: &reqwest::Url) -> bool {
+    matches!(previous.first(), Some(url) if url.scheme() == "https") && next.scheme() != "https"
+}
+
+fn reject_https_downgrade(attempt: reqwest::redirect::Attempt) -> reqwest::redirect::Action {
+    if attempt.previous().len() >= 10 {
+        attempt.error("redirect limit reached")
+    } else if redirect_is_https_downgrade(attempt.previous(), attempt.url()) {
+        attempt.error("redirect downgraded https to plaintext")
+    } else {
+        attempt.follow()
+    }
+}
+
 fn build_outgoing_http_client(
     config: &VolumeServerConfig,
 ) -> Result<(reqwest::Client, String), Box<dyn std::error::Error>> {
@@ -110,11 +126,17 @@ fn build_outgoing_http_client(
     } else {
         "http"
     };
+    let redirect_policy = reqwest::redirect::Policy::custom(reject_https_downgrade);
     if !config.https_client_enabled {
-        return Ok((reqwest::Client::new(), scheme.to_string()));
+        return Ok((
+            reqwest::Client::builder()
+                .redirect(redirect_policy)
+                .build()?,
+            scheme.to_string(),
+        ));
     }
 
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder().redirect(redirect_policy);
     if !config.https_client_ca_file.is_empty() {
         let ca_pem = std::fs::read(&config.https_client_ca_file).map_err(|e| {
             format!(
@@ -1151,5 +1173,20 @@ mod tests {
             max_version: String::new(),
             cipher_suites: String::new(),
         }));
+    }
+
+    #[test]
+    fn test_redirect_is_https_downgrade() {
+        use super::redirect_is_https_downgrade;
+        let https = reqwest::Url::parse("https://peer:8443/1?type=replicate").unwrap();
+        let http = reqwest::Url::parse("http://other:8080/1?type=replicate").unwrap();
+        assert!(redirect_is_https_downgrade(&[https.clone()], &http));
+        assert!(!redirect_is_https_downgrade(&[http.clone()], &https));
+        assert!(!redirect_is_https_downgrade(&[http.clone()], &http));
+        assert!(!redirect_is_https_downgrade(&[https.clone()], &https));
+        assert!(!redirect_is_https_downgrade(&[], &http));
+        // Only the origin scheme counts (Go's via[0]): a chain that started
+        // plaintext loses nothing by returning to plaintext.
+        assert!(!redirect_is_https_downgrade(&[http.clone(), https.clone()], &http));
     }
 }

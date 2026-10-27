@@ -2,16 +2,29 @@ package weed_server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"io"
+	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // stubLookup returns a resolver func that maps the supplied hostnames to
@@ -777,5 +790,183 @@ func TestValidateRemoteConfForLoad(t *testing.T) {
 	}
 	if _, err := BuildGuardedRemoteStorageClient(context.Background(), aliyunNoEndpoint, false); err == nil {
 		t.Error("aliyun with empty endpoint should be rejected by the guard")
+	}
+}
+
+// TestGuardedPeerHTTPClientCarriesClusterTLS confirms the replica-upload
+// client borrows the shared global client's TLS configuration — an https
+// volume server expects the https.client cert and CA — while the remote
+// storage client stays on a plain transport.
+func TestGuardedPeerHTTPClientCarriesClusterTLS(t *testing.T) {
+	globalTransport := util_http.GetGlobalHttpClient().GetClientTransport()
+	original := globalTransport.TLSClientConfig
+	globalTransport.TLSClientConfig = &tls.Config{ServerName: "volume-peer.test"}
+	t.Cleanup(func() { globalTransport.TLSClientConfig = original })
+
+	peer := newGuardedPeerHTTPClient("10.0.0.1:8080")
+	if peer.Transport.(*http.Transport).TLSClientConfig != globalTransport.TLSClientConfig {
+		t.Error("peer upload client should share the global TLS config")
+	}
+	if peer.CheckRedirect == nil {
+		t.Error("peer upload client should share the global redirect policy")
+	}
+	if remote := newGuardedHTTPClient("10.0.0.1:8080").Transport.(*http.Transport); remote.TLSClientConfig != nil {
+		t.Error("remote storage client should not carry cluster TLS config")
+	}
+}
+
+// peerIPv4 returns a non-loopback IPv4 of this host — the only kind of
+// address the peer dialer connects to — or skips the test when none exists.
+func peerIPv4(t *testing.T) net.IP {
+	t.Helper()
+
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("list interface addresses: %v", err)
+	}
+	for _, addr := range addrs {
+		ipnet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip := ipnet.IP.To4(); ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+			return ip
+		}
+	}
+	t.Skip("no non-loopback IPv4 for the peer dialer to reach")
+	return nil
+}
+
+// peerTLSServer runs handler over TLS on a non-loopback IPv4 under a
+// self-signed cert carrying that IP, and returns its host:port plus a pool
+// trusting the cert.
+func peerTLSServer(t *testing.T, handler http.Handler) (string, *x509.CertPool) {
+	t.Helper()
+
+	peerIP := peerIPv4(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "volume-peer"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{peerIP},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(parsed)
+
+	listener, err := net.Listen("tcp", net.JoinHostPort(peerIP.String(), "0"))
+	if err != nil {
+		t.Skipf("bind non-loopback %s: %v", peerIP, err)
+	}
+	server := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+		TLS:      &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}},
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return listener.Addr().String(), pool
+}
+
+// usePeerCA points the shared global client's transport at pool for the test.
+func usePeerCA(t *testing.T, pool *x509.CertPool) {
+	t.Helper()
+	transport := util_http.GetGlobalHttpClient().GetClientTransport()
+	original := transport.TLSClientConfig
+	transport.TLSClientConfig = &tls.Config{RootCAs: pool}
+	t.Cleanup(func() { transport.TLSClientConfig = original })
+}
+
+// TestGuardedPeerHTTPClientUploadsOverTLS sends a real replicate upload
+// through the guarded peer client to a TLS server — the global client's CA
+// config and the https scheme must carry it, so a hardcoded http:// URL
+// could never reach the handler.
+func TestGuardedPeerHTTPClientUploadsOverTLS(t *testing.T) {
+	var sawReplicate atomic.Bool
+	addr, pool := peerTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil {
+			t.Error("peer upload arrived over plaintext")
+		}
+		sawReplicate.Store(r.URL.Query().Get("type") == "replicate")
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	usePeerCA(t, pool)
+
+	uploader := operation.NewUploaderWithHttpClient(newGuardedPeerHTTPClient(addr))
+	data := []byte("needle-data")
+	result, err := uploader.UploadData(t.Context(), data, &operation.UploadOption{
+		UploadUrl:     "https://" + addr + "/1,01637037d6?type=replicate",
+		IsReplication: true,
+	})
+	if err != nil {
+		t.Fatalf("upload to TLS peer: %v", err)
+	}
+	if !sawReplicate.Load() {
+		t.Error("peer never saw a ?type=replicate upload")
+	}
+	if result == nil || result.Size != uint32(len(data)) {
+		t.Errorf("unexpected upload result %+v", result)
+	}
+}
+
+// TestGuardedPeerHTTPClientRejectsHTTPSDowngrade pins the downgrade guard the
+// global client carries: an HTTPS peer answering with a redirect to a
+// reachable http server must fail the upload rather than resend the body and
+// auth header in plaintext. The plaintext target sits on an address the peer
+// dialer accepts, so only the redirect policy can stop the resend.
+func TestGuardedPeerHTTPClientRejectsHTTPSDowngrade(t *testing.T) {
+	var sawPlaintext atomic.Bool
+	plaintext := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPlaintext.Store(true)
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	listener, err := net.Listen("tcp", net.JoinHostPort(peerIPv4(t).String(), "0"))
+	if err != nil {
+		t.Skipf("bind non-loopback plaintext target: %v", err)
+	}
+	plaintext.Listener = listener
+	plaintext.Start()
+	defer plaintext.Close()
+
+	var sawUpload atomic.Bool
+	addr, pool := peerTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpload.Store(true)
+		io.Copy(io.Discard, r.Body)
+		http.Redirect(w, r, "http://"+listener.Addr().String()+"/latest/meta-data", http.StatusTemporaryRedirect)
+	}))
+	usePeerCA(t, pool)
+
+	uploader := operation.NewUploaderWithHttpClient(newGuardedPeerHTTPClient(addr))
+	if _, err := uploader.UploadData(t.Context(), []byte("needle-data"), &operation.UploadOption{
+		UploadUrl:     "https://" + addr + "/1,01637037d6?type=replicate",
+		IsReplication: true,
+		MaxAttempts:   1,
+	}); err == nil {
+		t.Error("HTTPS→HTTP redirect must fail the upload, not resend the body in plaintext")
+	}
+	if sawPlaintext.Load() {
+		t.Error("redirect resend reached the plaintext server")
+	}
+	if !sawUpload.Load() {
+		t.Error("HTTPS peer never saw the original upload")
 	}
 }

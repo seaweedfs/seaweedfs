@@ -5076,15 +5076,25 @@ impl VolumeServer for VolumeGrpcService {
                 handles.push(tokio::spawn(async move {
                     let form = reqwest::multipart::Form::new()
                         .part("file", reqwest::multipart::Part::bytes(data_clone));
-                    client_clone
+                    let resp = client_clone
                         .post(&url)
                         .multipart(form)
                         .send()
                         .await
-                        .map(|_| ())
                         .map_err(|e| {
                             format!("remote write needle {} size {}: {}", needle_id, size, e)
-                        })
+                        })?;
+                    if resp.status().is_success() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "remote write needle {} size {}: {} returned status {}",
+                            needle_id,
+                            size,
+                            url,
+                            resp.status()
+                        ))
+                    }
                 }));
             }
         }
