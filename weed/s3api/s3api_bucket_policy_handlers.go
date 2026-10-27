@@ -149,15 +149,7 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 
 	glog.V(3).Infof("DeleteBucketPolicyHandler: bucket=%s", bucket)
 
-	// Validate bucket exists first for correct error mapping
-	_, err := s3a.getBucketEntry(bucket)
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			glog.Errorf("Failed to check bucket existence for %s: %v", bucket, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		}
+	if !s3a.checkBucketExistsOrReply(w, r, bucket) {
 		return
 	}
 
