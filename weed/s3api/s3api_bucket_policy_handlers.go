@@ -258,11 +258,15 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 		// Set the bucket policy metadata
 		entry.Extended[BUCKET_POLICY_METADATA_KEY] = policyJSON
 
-		// Update the entry with new metadata
+		// Update the entry with new metadata; a bucket deleted between the
+		// lookup above and this write surfaces as a filer NotFound.
 		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: s3a.bucketRoot(bucket),
 			Entry:     entry,
 		})
+		if err != nil && isBucketNotFoundErr(err) {
+			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+		}
 
 		return err
 	})
@@ -291,11 +295,15 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 		// Remove the bucket policy metadata
 		delete(entry.Extended, BUCKET_POLICY_METADATA_KEY)
 
-		// Update the entry
+		// Update the entry; a bucket deleted between the lookup above and this
+		// write surfaces as a filer NotFound.
 		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: s3a.bucketRoot(bucket),
 			Entry:     entry,
 		})
+		if err != nil && isBucketNotFoundErr(err) {
+			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+		}
 
 		return err
 	})

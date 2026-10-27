@@ -13,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ErrNoEncryptionConfig is returned when a bucket has no encryption configuration
@@ -198,9 +200,12 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 // Internal methods following the bucket configuration pattern
 
 // isBucketNotFoundErr reports whether an error came from looking up a bucket
-// directory that does not exist (directly, or via the negative cache).
+// directory that does not exist (directly, via the negative cache, or as a gRPC
+// NotFound from the filer's UpdateEntry on the vanished entry).
 func isBucketNotFoundErr(err error) bool {
-	return errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found")
+	return errors.Is(err, filer_pb.ErrNotFound) ||
+		status.Code(err) == codes.NotFound ||
+		strings.Contains(err.Error(), "bucket directory not found")
 }
 
 // getEncryptionConfiguration retrieves encryption configuration with caching
