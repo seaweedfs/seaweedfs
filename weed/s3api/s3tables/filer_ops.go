@@ -314,6 +314,24 @@ func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.S
 	return filer_pb.DoRemove(ctx, client, dir, name, true, true, true, false, nil)
 }
 
+// deleteDirectoryIfUnmodified deletes a directory only while its entry keeps
+// the mtime the caller captured when it inspected the record: the filer
+// evaluates the bound under the entry's path lock, so a delete that raced a
+// recreate is refused — silently, as a no-op — instead of erasing the
+// replacement.
+func (h *S3TablesHandler) deleteDirectoryIfUnmodified(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, mtimeNs int64) error {
+	dir, name := splitPath(path)
+	_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+		Directory:            dir,
+		Name:                 name,
+		IsDeleteData:         true,
+		IsRecursive:          true,
+		IgnoreRecursiveError: true,
+		IfNotModifiedAfterNs: mtimeNs,
+	})
+	return err
+}
+
 // entryExists checks if an entry exists at the given path
 func (h *S3TablesHandler) entryExists(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) bool {
 	dir, name := splitPath(path)

@@ -896,8 +896,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	var bucketTags map[string]string
 	var tableTags map[string]string
 	var bucketMetadata tableBucketMetadata
+	var tableEntry *filer_pb.Entry
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.readTableMetadata(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+
+		tableEntry, err = h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
@@ -989,6 +995,11 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return ErrVersionTokenMismatch
 	}
 
+	var tableMtimeNs int64
+	if a := tableEntry.GetAttributes(); a != nil {
+		tableMtimeNs = a.Mtime*int64(time.Second) + int64(a.MtimeNs)
+	}
+
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
@@ -1035,6 +1046,22 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// lives elsewhere. Purge the data, then clear the catalog marker
 			// without deleting the name path -- it may still hold another
 			// table's data that was left when this name was reused.
+			if req.VersionToken != "" && tableEntry != nil {
+				// A token caller owns exactly the record it read: strip the
+				// marker under a compare on the captured attributes, so a
+				// delete+recreate in between aborts here instead of losing the
+				// replacement, and only then purge the data.
+				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, snapshotExtended(tableEntry.Extended),
+					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
+				if err != nil {
+					if errors.Is(err, ErrConcurrentUpdate) {
+						return ErrVersionTokenMismatch
+					}
+					return err
+				}
+				return h.deleteDirectory(r.Context(), client, dataPath)
+			}
 			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
 				return err
 			}
@@ -1042,11 +1069,30 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 		}
-		// Colocated table: the name path holds the data.
+		// Colocated table: the name path holds the data. A token caller's
+		// delete carries the observed mtime as a filer precondition, evaluated
+		// under the path lock: a recreated entry is newer and refused.
+		if req.VersionToken != "" && tableEntry != nil {
+			if err := h.deleteDirectoryIfUnmodified(r.Context(), client, tablePath, tableMtimeNs); err != nil {
+				return err
+			}
+			// A refused delete is a silent no-op; the recreated entry's
+			// presence is what distinguishes it from a real delete.
+			if _, err := h.lookupEntry(r.Context(), client, tablePath); err == nil {
+				return ErrVersionTokenMismatch
+			} else if !errors.Is(err, filer_pb.ErrNotFound) {
+				return err
+			}
+			return nil
+		}
 		return h.deleteDirectory(r.Context(), client, tablePath)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrVersionTokenMismatch) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table")
 		return err
 	}
