@@ -112,8 +112,9 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			// instead of conflicting with its own lease until it expires.
 			renewToken = oldValue.Token
 			generation = oldValue.Generation
-			seq = oldValue.Seq
+			seq = oldValue.Seq + 1
 			oldValue.ExpiredAtNs = expiredAtNs
+			oldValue.Seq = seq
 			return
 		}
 		if token == "" {

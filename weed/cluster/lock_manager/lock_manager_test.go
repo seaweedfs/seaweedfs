@@ -93,16 +93,26 @@ func TestLockManager_LostRenewalResponseReplaysToken(t *testing.T) {
 	assert.NoError(t, err)
 
 	// The renewal rotated token1 to token2; the client never learned it.
-	_, token2, _, _, err := lm.Lock("key1", expires, token1, "owner1")
+	_, token2, generation, seq2, err := lm.Lock("key1", expires, token1, "owner1")
 	assert.NoError(t, err)
 	assert.NotEqual(t, token1, token2)
 
 	// Retrying with the superseded token replays the current one instead of
-	// conflicting with its own lease until it expires.
-	owner, replayed, _, _, err := lm.Lock("key1", expires, token1, "owner1")
+	// conflicting with its own lease until it expires. The replayed mutation
+	// still advances seq so backups accept the extended expiry as fresh.
+	later := time.Now().Add(60 * time.Second).UnixNano()
+	owner, replayed, _, seq3, err := lm.Lock("key1", later, token1, "owner1")
 	assert.NoError(t, err)
 	assert.Equal(t, "owner1", owner)
 	assert.Equal(t, token2, replayed)
+	assert.Greater(t, seq3, seq2)
+
+	backup := NewLockManager()
+	backup.InsertBackupLock("key1", expires, token2, "owner1", generation, seq2)
+	backup.InsertBackupLock("key1", later, token2, "owner1", generation, seq3)
+	backupLock, found := backup.GetLock("key1")
+	assert.True(t, found)
+	assert.Equal(t, later, backupLock.ExpiredAtNs)
 
 	// A replay from a different owner still mismatches.
 	_, _, _, _, err = lm.Lock("key1", expires, token1, "intruder")
