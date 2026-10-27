@@ -360,16 +360,18 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			oldBucket, oldRemoteStorageMountLocation, oldRemoteStorage, oldOk := option.detectBucketInfo(resp.Directory)
 			newBucket, newRemoteStorageMountLocation, newRemoteStorage, newOk := option.detectBucketInfo(message.NewParentPath)
 			if oldOk && newOk {
-				if !shouldSendToRemote(message.NewEntry) {
-					glog.V(2).Infof("skipping updating: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
-					return nil
-				}
 				client, err := remote_storage.GetRemoteStorage(oldRemoteStorage)
 				if err != nil {
 					return err
 				}
 				if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
-					// update the same entry
+					// update the same entry; the sync-stamp check holds only
+					// for updates in place: a rename keeps the mtime, so a
+					// synced or pending-stamped rename must still run
+					if !shouldSendToRemote(message.NewEntry) {
+						glog.V(2).Infof("skipping updating: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
+						return nil
+					}
 					if message.NewEntry.IsDirectory {
 						// update directory property
 						return nil
@@ -448,10 +450,6 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				}
 			}
 			if newOk {
-				if !shouldSendToRemote(message.NewEntry) {
-					glog.V(2).Infof("skipping updating: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
-					return nil
-				}
 				client, err := remote_storage.GetRemoteStorage(newRemoteStorage)
 				if err != nil {
 					return err
