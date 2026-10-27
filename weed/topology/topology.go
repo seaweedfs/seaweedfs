@@ -869,6 +869,14 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 		})
 		t.quarantineLock.Unlock()
 		if registered {
+			// RegisterVolume rebuilds only the read-only flags, so a
+			// location list recreated flagless would pass the writable
+			// check before the next heartbeat re-measures the volume.
+			// This report carries the size; mark from it first. A report
+			// that carries none leaves the remembered verdict in place.
+			if v.Size > 0 {
+				vl.UpdateOversizedState(&v, dn)
+			}
 			vl.EnsureCorrectWritables(&v)
 			t.flagDuplicateVolumeIdAsync(v, dn)
 			return
