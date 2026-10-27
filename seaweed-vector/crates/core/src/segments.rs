@@ -9,15 +9,31 @@ use uuid::Uuid;
 
 /// UUIDs of every physical index segment covering `field` at this version.
 pub async fn index_segments(dataset: &Dataset, field: &str) -> Result<Vec<Uuid>> {
+    Ok(segment_fragments(dataset, field)
+        .await?
+        .iter()
+        .map(|(id, _)| *id)
+        .collect())
+}
+
+/// Per index segment on `field`: its uuid and the live fragments it covers.
+/// Segments with unknown coverage (no bitmap) are skipped — callers needing
+/// strict coverage must treat that as a degenerate plan.
+pub async fn segment_fragments(
+    dataset: &Dataset,
+    field: &str,
+) -> Result<Vec<(Uuid, roaring::RoaringBitmap)>> {
     let field = dataset
         .schema()
         .field(field)
         .ok_or_else(|| anyhow::anyhow!("no such field {field}"))?;
-    let indices = dataset.load_indices().await?;
-    Ok(indices
+    let live: roaring::RoaringBitmap = dataset.fragments().iter().map(|f| f.id as u32).collect();
+    Ok(dataset
+        .load_indices()
+        .await?
         .iter()
         .filter(|i| i.fields == [field.id])
-        .map(|i| i.uuid)
+        .filter_map(|i| i.fragment_bitmap.clone().map(|b| (i.uuid, b & &live)))
         .collect())
 }
 
@@ -91,15 +107,31 @@ mod tests {
             .map(|h| (h.row_id, h.distance.to_bits()))
             .collect();
 
-        let segments = index_segments(&dataset, "vector").await.unwrap();
+        let segments_bitmap = segment_fragments(&dataset, "vector").await.unwrap();
+        let segments: Vec<Uuid> = segments_bitmap.iter().map(|(id, _)| *id).collect();
         assert!(
             segments.len() >= 2,
             "expected >=2 segments, got {segments:?}"
         );
+        // The unindexed fragment belongs to nobody's segment; worker 0
+        // sweeps it — the same contract plan_search implements on the
+        // enterprise side.
+        let unindexed: Vec<u64> = {
+            let all: std::collections::BTreeSet<u64> =
+                dataset.fragments().iter().map(|f| f.id).collect();
+            let mut indexed = std::collections::BTreeSet::new();
+            for (_, b) in &segments_bitmap {
+                indexed.extend(b.iter().map(|i| i as u64));
+            }
+            all.difference(&indexed).copied().collect()
+        };
         let mut merged: Vec<(f32, u64)> = Vec::new();
-        for share in partition(&segments, 2) {
+        for (w, share) in partition(&segments, 2).into_iter().enumerate() {
             let mut worker_q = base.clone();
             worker_q.index_segments = Some(share);
+            if w == 0 && !unindexed.is_empty() {
+                worker_q.fragments = Some(unindexed.clone());
+            }
             merged.extend(
                 query::ann(&dataset, &resolved, &worker_q)
                     .await

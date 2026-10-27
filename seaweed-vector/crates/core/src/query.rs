@@ -32,10 +32,11 @@ pub struct Query {
     /// Enterprise planner fans a query out across them). When `fragments` is
     /// also set, listed fragments not covered by the selected segments are
     /// searched with flat KNN by lance; without `fragments`, unindexed
-    /// fragments outside the segments are not searched.
+    /// fragments outside the segments are not searched — the caller owns
+    /// disjoint coverage of them.
     pub index_segments: Option<Vec<uuid::Uuid>>,
     /// Restrict the scan to these fragment ids — used by the planner to give
-    /// a worker the unindexed-fragment sweep.
+    /// a worker the unindexed-fragment sweep. An empty list scans nothing.
     pub fragments: Option<Vec<u64>>,
 }
 
@@ -51,6 +52,9 @@ pub struct Hit {
 
 /// Exact top-K over every fragment, ignoring any index.
 pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
+    if empty_scope(query) {
+        return Ok(Vec::new());
+    }
     run(scanner(dataset, table, query, false)?, table).await
 }
 
@@ -58,7 +62,18 @@ pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resu
 /// the rest. Whether the index is used is Lance's decision per fragment, so
 /// rows written after the last index build are always candidates.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
+    if empty_scope(query) {
+        return Ok(Vec::new());
+    }
     run(scanner(dataset, table, query, true)?, table).await
+}
+
+/// An explicitly-empty assignment means "search nothing", not "search all":
+/// `with_fragments` is skipped for empty lists, so they must short-circuit
+/// here instead of falling through to an unrestricted scan.
+fn empty_scope(query: &Query) -> bool {
+    matches!(&query.fragments, Some(f) if f.is_empty())
+        || (matches!(&query.index_segments, Some(s) if s.is_empty()) && query.fragments.is_none())
 }
 
 /// Fetch rows by key.
@@ -118,7 +133,7 @@ fn scanner(
         scanner.nprobes(nprobes);
     }
     if let Some(segments) = &query.index_segments {
-        if use_index {
+        if use_index && !segments.is_empty() {
             scanner.with_index_segments(segments.clone())?;
         }
     }
