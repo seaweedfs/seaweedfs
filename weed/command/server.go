@@ -521,6 +521,9 @@ func idleTimeoutSeconds(seconds *int) time.Duration {
 	if seconds == nil {
 		return 10 * time.Second
 	}
+	if *seconds <= 0 {
+		return 0
+	}
 	return time.Duration(min(int64(*seconds), math.MaxInt64/int64(time.Second))) * time.Second
 }
 
