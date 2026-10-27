@@ -393,18 +393,25 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 							remoteEntry = updated
 						}
 						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
-					} else {
-						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
-						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)
-						if errors.Is(writeErr, errSuperseded) {
-							glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(newDest), writeErr)
-							return nil
-						}
-						if writeErr != nil {
-							return writeErr
-						}
-						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					}
+					if isDroppedLocalCopy(message.NewEntry) {
+						// remote.uncache, eviction, or remote.meta.sync dropped
+						// the local copy: the object at this key is the entry's
+						// content, and uploading the chunkless entry replaces
+						// it with zero bytes
+						glog.V(2).Infof("skipping update of remote-only entry: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
+						return nil
+					}
+					newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
+					remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)
+					if errors.Is(writeErr, errSuperseded) {
+						glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(newDest), writeErr)
+						return nil
+					}
+					if writeErr != nil {
+						return writeErr
+					}
+					return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 				}
 			}
 
