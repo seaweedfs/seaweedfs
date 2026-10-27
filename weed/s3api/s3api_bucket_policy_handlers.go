@@ -129,7 +129,7 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Update IAM integration with new bucket policy
-	if s3a.iam.iamIntegration != nil {
+	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
 		if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
 			glog.Errorf("Failed to update IAM with bucket policy: %v", err)
 			// Don't fail the request, but log the warning
@@ -182,7 +182,7 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 	}
 
 	// Update IAM integration to remove bucket policy
-	if s3a.iam.iamIntegration != nil {
+	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
 		if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
 			glog.Errorf("Failed to remove bucket policy from IAM: %v", err)
 			// Don't fail the request, but log the warning
