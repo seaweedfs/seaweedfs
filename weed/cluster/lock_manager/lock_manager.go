@@ -221,7 +221,7 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 }
 
 // InsertLock inserts a lock from a transfer if it is newer than the current state.
-func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) bool {
+func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) bool {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -231,7 +231,7 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 			return false
 		}
 	}
-	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
 	lm.advanceGenerationFloor(generation)
 	return true
 }
@@ -240,7 +240,7 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 // It rejects stale mutations by comparing (generation, seq). If a current primary
 // already exists on this node, newer replicated state refreshes that primary copy
 // without demoting it back to a backup.
-func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
+func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -251,6 +251,7 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 		}
 		lm.locks[path] = &Lock{
 			Token:       token,
+			PrevToken:   prevToken,
 			ExpiredAtNs: expiredAtNs,
 			Owner:       owner,
 			IsBackup:    existing.IsBackup,
@@ -260,7 +261,7 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 		lm.advanceGenerationFloor(generation)
 		return
 	}
-	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
 	lm.advanceGenerationFloor(generation)
 }
 

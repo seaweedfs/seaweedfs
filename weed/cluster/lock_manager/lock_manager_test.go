@@ -10,7 +10,7 @@ import (
 func TestLockManager_GetLockOwnerIgnoresExpiredLock(t *testing.T) {
 	lm := NewLockManager()
 
-	lm.InsertLock("key1", time.Now().Add(-time.Second).UnixNano(), "token1", "owner1", 7, 3)
+	lm.InsertLock("key1", time.Now().Add(-time.Second).UnixNano(), "token1", "", "owner1", 7, 3)
 
 	owner, err := lm.GetLockOwner("key1")
 	assert.Empty(t, owner)
@@ -20,8 +20,8 @@ func TestLockManager_GetLockOwnerIgnoresExpiredLock(t *testing.T) {
 func TestLockManager_InsertLockRejectsStaleTransfer(t *testing.T) {
 	lm := NewLockManager()
 
-	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 8, 4)
-	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "owner1", 7, 3)
+	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 8, 4)
+	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "", "owner1", 7, 3)
 
 	lock, found := lm.GetLock("key1")
 	assert.True(t, found)
@@ -33,7 +33,7 @@ func TestLockManager_InsertLockRejectsStaleTransfer(t *testing.T) {
 func TestLockManager_InsertLockAdvancesGenerationCounter(t *testing.T) {
 	lm := NewLockManager()
 
-	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token1", "owner1", 12, 1)
+	lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token1", "", "owner1", 12, 1)
 
 	_, renewToken, generation, _, err := lm.Lock("key2", time.Now().Add(30*time.Second).UnixNano(), "", "owner2")
 	assert.NoError(t, err)
@@ -44,8 +44,8 @@ func TestLockManager_InsertLockAdvancesGenerationCounter(t *testing.T) {
 func TestLockManager_InsertBackupLockRejectsOlderGeneration(t *testing.T) {
 	lm := NewLockManager()
 
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 8, 1)
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "owner1", 7, 9)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 8, 1)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "", "owner1", 7, 9)
 
 	lock, found := lm.GetLock("key1")
 	assert.True(t, found)
@@ -57,10 +57,10 @@ func TestLockManager_InsertBackupLockRejectsOlderGeneration(t *testing.T) {
 func TestLockManager_InsertBackupLockKeepsPrimaryRole(t *testing.T) {
 	lm := NewLockManager()
 
-	ok := lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "owner1", 8, 1)
+	ok := lm.InsertLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "", "owner1", 8, 1)
 	assert.True(t, ok)
 
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 8, 2)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 8, 2)
 
 	lock, found := lm.GetLock("key1")
 	assert.True(t, found)
@@ -73,7 +73,7 @@ func TestLockManager_InsertBackupLockKeepsPrimaryRole(t *testing.T) {
 func TestLockManager_RemoveBackupLockRejectsOlderGeneration(t *testing.T) {
 	lm := NewLockManager()
 
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 8, 1)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 8, 1)
 
 	removed := lm.RemoveBackupLockIfSeq("key1", 7, 9)
 	assert.False(t, removed)
@@ -149,4 +149,25 @@ func TestLockManager_LostRenewalReplayAdvancesSeq(t *testing.T) {
 	_, _, _, seq4, err := lm.Lock("key1", later, token1, "owner1")
 	assert.NoError(t, err)
 	assert.Equal(t, seq3+1, seq4)
+}
+
+func TestLockManager_InsertBackupLockKeepsPrevToken(t *testing.T) {
+	lm := NewLockManager()
+	expires := time.Now().Add(30 * time.Second).UnixNano()
+
+	// Backup copy of a renewed lock carries both the current token and the
+	// superseded one a client may still present after a lost response.
+	lm.InsertBackupLock("key1", expires, "token2", "token1", "owner1", 8, 2)
+
+	lock, found := lm.GetLock("key1")
+	assert.True(t, found)
+	assert.Equal(t, "token2", lock.Token)
+	assert.Equal(t, "token1", lock.PrevToken)
+
+	// Once promoted, the node still replays a retry of the superseded token.
+	assert.True(t, lm.PromoteLock("key1"))
+	owner, replayed, _, _, err := lm.Lock("key1", expires, "token1", "owner1")
+	assert.NoError(t, err)
+	assert.Equal(t, "owner1", owner)
+	assert.Equal(t, "token2", replayed)
 }
