@@ -68,6 +68,21 @@ func TestCheckAccessByOwnershipDeniesNonOwner(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone, s3a.checkAccessByOwnership(owner, "b"), "the actual owner is still allowed")
 }
 
+// With auth off nobody has an account id, so the owner check must not deny:
+// GetBucketOwnershipControls and friends answered AccessDenied to every caller.
+func TestCheckAccessByOwnershipAllowsWhenAuthDisabled(t *testing.T) {
+	adminOwner := AccountAdmin.Id
+	s3a := &S3ApiServer{
+		bucketRegistry: NewBucketRegistry(nil),
+		iam:            &IdentityAccessManagement{},
+	}
+	require.False(t, s3a.iam.isEnabled())
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: "b", Owner: &s3.Owner{ID: &adminOwner}})
+
+	req := httptest.NewRequest(http.MethodGet, "/b?ownershipControls=", nil)
+	assert.Equal(t, s3err.ErrNone, s3a.checkAccessByOwnership(req, "b"))
+}
+
 // An account-less identity's synthesized account must be registered in the
 // account lookup so its id resolves to a display name. Otherwise ACL grantee
 // validation and owner display report the id as "not exists" — the regression
