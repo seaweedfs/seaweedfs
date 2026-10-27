@@ -36,7 +36,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("invalid format")
 	}
 
-	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, false)
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("metadataLocation is required")
 	}
 
-	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, nil)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, nil, false)
 	if err != nil {
 		return err
 	}
@@ -1750,7 +1750,7 @@ type createTableTarget struct {
 // Deferred creates (Iceberg stage-create) write into the table bucket before any
 // table is registered, so they run this same gate first through
 // Manager.AuthorizeCreateTable.
-func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, tableBucketARN string, namespace []string, name string, requestTags map[string]string) (*createTableTarget, error) {
+func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, tableBucketARN string, namespace []string, name string, requestTags map[string]string, allowMissingNamespace bool) (*createTableTarget, error) {
 	if tableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return nil, fmt.Errorf("tableBucketARN is required")
@@ -1782,13 +1782,20 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
 	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	namespaceExists := err == nil
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		if errors.Is(err, filer_pb.ErrNotFound) && allowMissingNamespace {
+			// An implicit namespace can be authorized before it is declared:
+			// evaluate the grant against the bucket alone.
+			err = nil
 		} else {
-			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+			} else {
+				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	// Authorize table creation using policy framework (namespace + bucket policies)
@@ -1811,12 +1818,15 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		}
 
 		// Fetch namespace policy if it exists
-		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
-		if err == nil {
-			namespacePolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch namespace policy: %v", err)
+		if namespaceExists {
+			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+			if err == nil {
+				namespacePolicy = string(policyData)
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch namespace policy: %v", err)
+			}
 		}
+		var policyData []byte
 
 		// Fetch bucket policy if it exists
 		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
@@ -1839,6 +1849,9 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		return nil, err
 	}
 
+	if !namespaceExists {
+		namespaceMetadata.OwnerAccountID = bucketMetadata.OwnerAccountID
+	}
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{

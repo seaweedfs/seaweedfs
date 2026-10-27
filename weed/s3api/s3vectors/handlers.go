@@ -425,17 +425,20 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	// The namespace is implicit on AWS and internal bookkeeping here; declare
-	// it before the caller's create grant is exercised against it.
-	if err := s.ensureIndexNamespace(r.Context(), arns.bucket); err != nil {
+	// The create grant is exercised before any write: a denied caller must not
+	// leave even the implicit namespace behind. The namespace may not exist
+	// yet, so the check tolerates its absence.
+	if err := s.tables.AuthorizeCreateTable(r.Context(), s.filerClient, &s3tables.CreateTableRequest{
+		TableBucketARN:        s.s3tablesArn(arns.bucket),
+		Namespace:             []string{indexNamespace},
+		Name:                  arns.index,
+		AllowMissingNamespace: true,
+	}, identityOf(r)); err != nil {
 		catalogErr(w, err)
 		return
 	}
-	if err := s.tables.AuthorizeCreateTable(r.Context(), s.filerClient, &s3tables.CreateTableRequest{
-		TableBucketARN: s.s3tablesArn(arns.bucket),
-		Namespace:      []string{indexNamespace},
-		Name:           arns.index,
-	}, identityOf(r)); err != nil {
+	// The namespace is implicit on AWS and internal bookkeeping here.
+	if err := s.ensureIndexNamespace(r.Context(), arns.bucket); err != nil {
 		catalogErr(w, err)
 		return
 	}
