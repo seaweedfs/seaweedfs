@@ -387,6 +387,11 @@ impl VectorService for VectorServer {
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(open_status)?;
+        // Lease the resolved version so maintenance cannot reclaim its files
+        // while this query runs against it.
+        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
+            .await
+            .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         let batches = query::get(&dataset, &resolved, &req.keys)
             .await
@@ -481,6 +486,11 @@ impl VectorService for VectorServer {
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open(&table).await.map_err(open_status)?;
+        // Lease the resolved version so maintenance cannot reclaim its files
+        // while this query runs against it.
+        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
+            .await
+            .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(

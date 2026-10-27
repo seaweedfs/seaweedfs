@@ -18,6 +18,7 @@ path = "src/main.rs"
 # no common root manifest.
 weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
 lance = { version = "10", default-features = false, features = ["aws"] }
+object_store = "0.13"
 lance-index = "10"
 lance-linalg = "10"
 lance-table = "10"
@@ -32,6 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio.workspace = true
 tracing.workspace = true
+uuid = { version = "1", features = ["v4"] }
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
