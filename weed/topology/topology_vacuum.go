@@ -156,6 +156,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 	isCommitSuccess := true
 	isReadOnly := false
 	isFullCapacity := false
+	freshSizes := make(map[*DataNode]uint64)
 	for _, dn := range vacuumLocationList.list {
 		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -165,10 +166,11 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 				VolumeId: uint32(vid),
 			})
 			if resp != nil {
+				freshSizes[dn] = resp.VolumeSize
 				if resp.IsReadOnly {
 					isReadOnly = true
 				}
-				if resp.VolumeSize > t.volumeSizeLimit {
+				if resp.VolumeSize >= t.volumeSizeLimit {
 					isFullCapacity = true
 				}
 			}
@@ -203,7 +205,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 						if resp.IsReadOnly {
 							isReadOnly = true
 						}
-						if resp.VolumeSize > t.volumeSizeLimit {
+						if resp.VolumeSize >= t.volumeSizeLimit {
 							isFullCapacity = true
 						}
 					}
@@ -227,7 +229,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 
 		for _, dn := range vacuumLocationList.list {
 			t.quarantineLock.Lock()
-			vl.SetVolumeAvailable(dn, vid, isReadOnly, isFullCapacity, t.isQuarantined(dn, vid))
+			vl.SetVolumeAvailable(dn, vid, freshSizes[dn], isReadOnly, isFullCapacity, t.isQuarantined(dn, vid))
 			t.quarantineLock.Unlock()
 		}
 	}
