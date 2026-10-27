@@ -6486,6 +6486,7 @@ dependencies = [
  "clap",
  "futures",
  "lance",
+ "lance-arrow",
  "lance-linalg",
  "prost",
  "prost-types",
