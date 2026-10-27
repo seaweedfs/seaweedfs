@@ -898,12 +898,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	var bucketMetadata tableBucketMetadata
 	var tableEntry *filer_pb.Entry
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.readTableMetadata(r.Context(), client, tablePath)
+		// One lookup feeds both the version-token check and the conditional
+		// delete below: a second read could land on a replacement entry while
+		// the token was validated against the old one.
+		tableEntry, err = h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
-
-		tableEntry, err = h.lookupEntry(r.Context(), client, tablePath)
+		data, err := tableMetadata(tableEntry)
 		if err != nil {
 			return err
 		}
@@ -1169,6 +1171,13 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 	if err != nil {
 		return nil, err
 	}
+	return tableMetadata(entry)
+}
+
+// tableMetadata extracts the table-metadata xattr from an entry. A view stored
+// at the same name is reported absent, the way GetTable and the renamer's
+// entry-type check already treat kind mismatches.
+func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
 	if EntryType(entry.Extended) == EntryTypeView {
 		return nil, filer_pb.ErrNotFound
 	}
