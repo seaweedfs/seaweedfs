@@ -71,7 +71,7 @@ func (m *Manager) AuthorizeCreateTable(ctx context.Context, filerClient FilerCli
 		return err
 	}
 	recorder := httptest.NewRecorder()
-	_, authErr := m.handler.authorizeCreateTable(recorder, httpReq, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags)
+	_, authErr := m.handler.authorizeCreateTable(recorder, httpReq, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, req.AllowMissingNamespace)
 	if authErr == nil {
 		return nil
 	}

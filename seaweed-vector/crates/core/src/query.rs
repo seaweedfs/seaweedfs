@@ -167,6 +167,9 @@ mod tests {
     use super::*;
     use crate::table::VectorTable;
     use crate::testing::{DIM, write_dataset};
+    use arrow_array::{FixedSizeListArray, RecordBatchIterator, types::Float32Type};
+    use arrow_schema::{DataType, Field, Schema};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn l2(a: &[f32], b: &[f32]) -> f32 {
@@ -238,6 +241,135 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].key, "k0");
         assert_eq!(hits[1].key, "k2");
+    }
+
+    #[tokio::test]
+    async fn filter_matches_json_types_exactly() {
+        let dir = TempDir::new().unwrap();
+        let metas = vec![
+            r#"{"k": 3}"#,      // k0: number
+            r#"{"k": "3"}"#,    // k1: numeric string
+            r#"{"k": true}"#,   // k2: bool
+            r#"{"k": "abc"}"#,  // k3: non-numeric string
+            r#"{"x": 1}"#,      // k4: missing key
+            r#"{"k": [1, 2]}"#, // k5: array
+            r#"{"k": null}"#,   // k6: null
+            r#"{"k": 1}"#,      // k7: serializes to '1', castable to boolean
+            r#"{"k": 0}"#,      // k8: serializes to '0', castable to boolean
+        ];
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("key", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    DIM as i32,
+                ),
+                false,
+            ),
+            Field::new("metadata", DataType::Utf8, true).with_metadata(
+                [("ARROW:extension:name".to_string(), "arrow.json".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        ]));
+        let keys: Vec<String> = (0..metas.len()).map(|i| format!("k{i}")).collect();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(keys)),
+                Arc::new(
+                    FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+                        (0..metas.len())
+                            .map(|i| Some(vec![Some(i as f32); DIM]))
+                            .collect::<Vec<_>>(),
+                        DIM as i32,
+                    ),
+                ),
+                Arc::new(StringArray::from(
+                    metas
+                        .iter()
+                        .map(|m| Some(m.to_string()))
+                        .collect::<Vec<_>>(),
+                )),
+            ],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+        let dataset = Dataset::write(reader, dir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        async fn run(dataset: &Dataset, table: &VectorTable, filter: &str) -> Vec<Hit> {
+            flat(
+                dataset,
+                table,
+                &Query {
+                    vector: vec![1.0, 0.0, 0.0, 0.0],
+                    k: 10,
+                    filter: Some(filter.to_string()),
+                    postfilter: false,
+                    distance: DistanceType::L2,
+                    nprobes: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+        let keys_of = |hits: Vec<Hit>| {
+            let mut keys: Vec<String> = hits.into_iter().map(|h| h.key).collect();
+            keys.sort();
+            keys
+        };
+
+        // A stored string, boolean, array, or null must not satisfy a numeric
+        // comparison — nor fail the query, the way the converting json_get_*
+        // extractors do.
+        let hits = run(
+            &dataset,
+            &table,
+            "TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) = 3",
+        )
+        .await;
+        assert_eq!(keys_of(hits), ["k0"]);
+        let hits = run(
+            &dataset,
+            &table,
+            "TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) > 1",
+        )
+        .await;
+        assert_eq!(keys_of(hits), ["k0"]);
+
+        // Booleans compare the serialized form as well: '1' and '0' would
+        // satisfy a cast but not the text match.
+        let hits = run(
+            &dataset,
+            &table,
+            "json_extract(`metadata`, '$[\"k\"]') = 'true'",
+        )
+        .await;
+        assert_eq!(keys_of(hits), ["k2"]);
+
+        // The serialized extract is exact for strings too: the numeric 3 is
+        // not a match for '"3"', and comparing json_extract never trips on
+        // the array or null rows.
+        let hits = run(
+            &dataset,
+            &table,
+            "json_extract(`metadata`, '$[\"k\"]') = '\"3\"'",
+        )
+        .await;
+        assert_eq!(keys_of(hits), ["k1"]);
+        let hits = run(
+            &dataset,
+            &table,
+            "NOT COALESCE(json_extract(`metadata`, '$[\"k\"]') = '\"3\"', false)",
+        )
+        .await;
+        assert_eq!(
+            keys_of(hits),
+            ["k0", "k2", "k3", "k4", "k5", "k6", "k7", "k8"]
+        );
     }
 
     #[tokio::test]

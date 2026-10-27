@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path"
 	"testing"
 
@@ -19,6 +20,86 @@ func runDeleteTable(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, namespa
 		Namespace:      []string{namespace},
 		Name:           name,
 	}, nil, "")
+}
+
+// A write that lands between the delete's read and its conditional commit —
+// an xattr update keeps mtime — must turn a token delete into a conflict, not
+// get erased by it.
+func TestDeleteTableTokenDeleteLosesToConcurrentUpdate(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	token := "tok-ct"
+	meta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "ct",
+		Namespace:      "ns",
+		Format:         "ICEBERG",
+		OwnerAccountID: DefaultAccountID,
+		VersionToken:   token,
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "ct", map[string][]byte{
+		ExtendedKeyMetadata: meta,
+	})
+	tablePath := GetTablePath(renameTestBucket, "ns", "ct")
+	fs.Put(tablePath, "data", nil)
+
+	fs.BeforeDelete = func() {
+		fs.Put(GetNamespacePath(renameTestBucket, "ns"), "ct", map[string][]byte{
+			ExtendedKeyMetadata: meta,
+			ExtendedKeyTags:     []byte(`{"k":"v"}`),
+		})
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "ct",
+		VersionToken:   token,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "ct"), "the updated record must survive")
+	assert.NotNil(t, fs.Get(tablePath, "data"), "the table's data must survive")
+}
+
+// A create that checked the name while it was free must not write over a
+// delete's restore: the claim loses instead of layering new metadata over the
+// old tags, policy, and maintenance settings.
+func TestCreateTableLosesToRestoredMarkers(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "newt", nil)
+
+	oldMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "newt",
+		Namespace:      "ns",
+		Format:         "ICEBERG",
+		OwnerAccountID: DefaultAccountID,
+	})
+	restored := map[string][]byte{
+		ExtendedKeyMetadata:    oldMeta,
+		ExtendedKeyEntryType:   []byte(EntryTypeTable),
+		ExtendedKeyTags:        []byte(`{"old":"tag"}`),
+		ExtendedKeyMaintenance: []byte(`{"old":"maintenance"}`),
+	}
+	fs.BeforeUpdate = func() {
+		fs.Put(nsPath, "newt", restored)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "CreateTable", &CreateTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "newt",
+		Format:         FormatIceberg,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeTableAlreadyExists, resp.Type)
+
+	got := fs.Get(nsPath, "newt")
+	require.NotNil(t, got)
+	assert.Equal(t, restored[ExtendedKeyTags], got.Extended[ExtendedKeyTags], "restored markers must not be overwritten")
+	assert.Equal(t, restored[ExtendedKeyMetadata], got.Extended[ExtendedKeyMetadata])
 }
 
 // A table whose data was decoupled from its name (created over a leftover from a
@@ -167,4 +248,78 @@ func TestDeleteTableRefusesNestedSiblingDataPath(t *testing.T) {
 		"data inside another table's directory must survive")
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "nsa"), "vtab"),
 		"the victim table's catalog entry must survive")
+}
+
+// A rename that completes in the token delete's check-to-claim window moves
+// the record to another name: the stale delete must lose on the claim instead
+// of purging the data the moved record still points at.
+func TestDeleteTableTokenDeleteLosesToCompletedRename(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	token := "tok-rn"
+	meta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "rn",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		VersionToken:     token,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/old-x/metadata/v1.metadata.json",
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "rn", map[string][]byte{
+		ExtendedKeyMetadata:  meta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+	dataPath := GetTablePath(renameTestBucket, "ns", "old-x")
+	fs.Put(dataPath, "data", nil)
+
+	fs.BeforeUpdate = func() {
+		// The rename's source clear has already run by the time the delete's
+		// claim write lands.
+		fs.Put(GetNamespacePath(renameTestBucket, "ns"), "rn", nil)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "rn",
+		VersionToken:   token,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(dataPath, "data"), "the moved table's data must survive the stale delete")
+}
+
+// A delete's claim on the source must turn a rename into a conflict before
+// any destination entry exists: the claim is what keeps a losing rename from
+// leaving a destination marker pointing at data the delete went on to purge.
+func TestRenameTableLosesToDeleteClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() {
+		e := fs.Get(nsPath, "t")
+		claimed := map[string][]byte{}
+		for k, v := range e.Extended {
+			claimed[k] = v
+		}
+		claimed[ExtendedKeyDeleting] = []byte("delete")
+		fs.Put(nsPath, "t", claimed)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.Nil(t, fs.Get(nsPath, "t2"), "a losing rename must not publish the destination")
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed source record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
 }

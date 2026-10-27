@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -36,7 +37,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("invalid format")
 	}
 
-	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, false)
 	if err != nil {
 		return err
 	}
@@ -129,6 +130,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	var tagsBytes []byte
+	if len(req.Tags) > 0 {
+		if tagsBytes, err = json.Marshal(req.Tags); err != nil {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
+			return fmt.Errorf("failed to marshal tags: %w", err)
+		}
+	}
+
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Ensure table directory exists (may already be created by object storage clients)
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
@@ -141,31 +150,21 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
+		attrs := map[string][]byte{
+			ExtendedKeyMetadata:  metadataBytes,
+			ExtendedKeyEntryType: []byte(EntryTypeTable),
 		}
-
-		// Tag the entry as a table so view listings can exclude it.
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyEntryType, []byte(EntryTypeTable)); err != nil {
-			return err
+		if len(tagsBytes) > 0 {
+			attrs[ExtendedKeyTags] = tagsBytes
 		}
-
-		// Set tags if provided
-		if len(req.Tags) > 0 {
-			tagsBytes, err := json.Marshal(req.Tags)
-			if err != nil {
-				return fmt.Errorf("failed to marshal tags: %w", err)
-			}
-			if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return h.claimCatalogEntry(r.Context(), client, tablePath, attrs)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create table")
 		return err
 	}
@@ -228,7 +227,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("metadataLocation is required")
 	}
 
-	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, nil)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, nil, false)
 	if err != nil {
 		return err
 	}
@@ -282,9 +281,15 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		return h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes)
+		return h.claimCatalogEntry(r.Context(), client, tablePath, map[string][]byte{
+			ExtendedKeyMetadata: metadataBytes,
+		})
 	})
 	if err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to register table")
 		return err
 	}
@@ -896,8 +901,16 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	var bucketTags map[string]string
 	var tableTags map[string]string
 	var bucketMetadata tableBucketMetadata
+	var tableEntry *filer_pb.Entry
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.readTableMetadata(r.Context(), client, tablePath)
+		// One lookup feeds both the version-token check and the conditional
+		// delete below: a second read could land on a replacement entry while
+		// the token was validated against the old one.
+		tableEntry, err = h.lookupEntry(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+		data, err := tableMetadata(tableEntry)
 		if err != nil {
 			return err
 		}
@@ -1035,6 +1048,40 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// lives elsewhere. Purge the data, then clear the catalog marker
 			// without deleting the name path -- it may still hold another
 			// table's data that was left when this name was reused.
+			if req.VersionToken != "" && tableEntry != nil {
+				// A token caller owns exactly the record it read. Claim it
+				// under the captured attributes before any data is removed:
+				// a rename or delete+recreate that moved the record aborts
+				// here, while it still points at live data. The claim holds
+				// the name through the purge, a failed purge releases it so
+				// the intact record can be retried, and the marker comes off
+				// under a compare on the claimed record.
+				snapshot := snapshotExtended(tableEntry.Extended)
+				if err := h.claimCatalogRecord(r.Context(), client, tablePath, snapshot, "delete"); err != nil {
+					if errors.Is(err, ErrConcurrentUpdate) {
+						return ErrVersionTokenMismatch
+					}
+					return err
+				}
+				claimed := snapshotExtended(tableEntry.Extended)
+				claimed[ExtendedKeyDeleting] = []byte("delete")
+				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+					if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+						glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
+					}
+					return err
+				}
+				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, claimed,
+					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
+				if err != nil {
+					if errors.Is(err, ErrConcurrentUpdate) {
+						return ErrVersionTokenMismatch
+					}
+					return err
+				}
+				return nil
+			}
 			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
 				return err
 			}
@@ -1042,11 +1089,27 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 		}
-		// Colocated table: the name path holds the data.
+		// Colocated table: the name path holds the data. A token caller's
+		// delete carries the captured attributes as a filer precondition, so
+		// compare and removal are one operation under the path lock: an xattr
+		// write that keeps Mtime, or a delete+recreate in between, refuses it.
+		if req.VersionToken != "" && tableEntry != nil {
+			if err := h.deleteDirectoryIfMatches(r.Context(), client, tablePath, tableEntry); err != nil {
+				if errors.Is(err, ErrConcurrentUpdate) {
+					return ErrVersionTokenMismatch
+				}
+				return err
+			}
+			return nil
+		}
 		return h.deleteDirectory(r.Context(), client, tablePath)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrVersionTokenMismatch) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table")
 		return err
 	}
@@ -1123,6 +1186,13 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 	if err != nil {
 		return nil, err
 	}
+	return tableMetadata(entry)
+}
+
+// tableMetadata extracts the table-metadata xattr from an entry. A view stored
+// at the same name is reported absent, the way GetTable and the renamer's
+// entry-type check already treat kind mismatches.
+func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
 	if EntryType(entry.Extended) == EntryTypeView {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -1214,10 +1284,6 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	var metadataVersionXattr []byte
 	var maintenanceXattr []byte
 	var maintenanceStatusXattr []byte
-	// The values the rename copies. The source is only cleared while it still
-	// holds exactly these, so a write that lands mid-rename is not deleted here
-	// after having missed the copy to the destination.
-	var copiedFromSource map[string][]byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1255,10 +1321,6 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		srcExtended = srcEntry.Extended
-		copiedFromSource = make(map[string][]byte, len(renamedTableAttributes))
-		for _, key := range renamedTableAttributes {
-			copiedFromSource[key] = srcEntry.Extended[key]
-		}
 
 		// The maintenance configuration and its last-run status belong to the
 		// table, so they move with it; leaving them behind re-enables
@@ -1421,52 +1483,69 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	// Write the destination entry before deleting the source so a mid-rename
-	// failure can never lose the table.
+	// Claim the source record before publishing the destination: a delete or
+	// a second rename that wins the claim backs out here — while no
+	// destination entry exists — instead of leaving one behind pointing at
+	// data a delete already removed.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.createDirectory(r.Context(), client, destPath); err != nil {
+		if err := h.claimCatalogRecord(r.Context(), client, srcPath, snapshotExtended(srcExtended), "rename"); err != nil {
 			return err
+		}
+		claimed := snapshotExtended(srcExtended)
+		claimed[ExtendedKeyDeleting] = []byte("rename")
+		releaseClaim := func(err error) error {
+			if relErr := h.releaseCatalogRecord(r.Context(), client, srcPath, claimed); relErr != nil {
+				glog.Warningf("rename %s: release claim: %v", srcPath, relErr)
+			}
+			return err
+		}
+		if err := h.createDirectory(r.Context(), client, destPath); err != nil {
+			return releaseClaim(err)
 		}
 		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
+			return releaseClaim(err)
 		}
 		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyEntryType, []byte(kind.entryType)); err != nil {
-			return err
+			return releaseClaim(err)
 		}
 		if len(metadataVersionXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadataVersion, metadataVersionXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(tableTags) > 0 {
 			tagsBytes, err := json.Marshal(tableTags)
 			if err != nil {
-				return fmt.Errorf("failed to marshal tags: %w", err)
+				return releaseClaim(fmt.Errorf("failed to marshal tags: %w", err))
 			}
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyTags, tagsBytes); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if tablePolicy != "" {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyPolicy, []byte(tablePolicy)); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(maintenanceXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenance, maintenanceXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(maintenanceStatusXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenanceStatus, maintenanceStatusXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
 		// (manifests embed absolute paths, so the data must not move).
-		return h.removeExtendedAttributesIf(r.Context(), client, srcPath, copiedFromSource,
-			renamedTableAttributes...)
+		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
+			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
+		if err != nil {
+			return releaseClaim(err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -1750,7 +1829,7 @@ type createTableTarget struct {
 // Deferred creates (Iceberg stage-create) write into the table bucket before any
 // table is registered, so they run this same gate first through
 // Manager.AuthorizeCreateTable.
-func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, tableBucketARN string, namespace []string, name string, requestTags map[string]string) (*createTableTarget, error) {
+func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, tableBucketARN string, namespace []string, name string, requestTags map[string]string, allowMissingNamespace bool) (*createTableTarget, error) {
 	if tableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return nil, fmt.Errorf("tableBucketARN is required")
@@ -1781,14 +1860,21 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	nsMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	namespaceExists := err == nil
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		if errors.Is(err, filer_pb.ErrNotFound) && allowMissingNamespace {
+			// An implicit namespace can be authorized before it is declared:
+			// evaluate the grant against the bucket alone.
+			err = nil
 		} else {
-			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+			} else {
+				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	// Authorize table creation using policy framework (namespace + bucket policies)
@@ -1811,12 +1897,15 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		}
 
 		// Fetch namespace policy if it exists
-		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
-		if err == nil {
-			namespacePolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch namespace policy: %v", err)
+		if namespaceExists {
+			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+			if err == nil {
+				namespacePolicy = string(policyData)
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch namespace policy: %v", err)
+			}
 		}
+		var policyData []byte
 
 		// Fetch bucket policy if it exists
 		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
@@ -1839,6 +1928,11 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		return nil, err
 	}
 
+	if !namespaceExists {
+		// The implicit namespace has no record yet: authorize it as the
+		// bucket owner's instead of dereferencing the absent metadata.
+		nsMetadata = &namespaceMetadata{OwnerAccountID: bucketMetadata.OwnerAccountID}
+	}
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{
@@ -1854,7 +1948,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		DefaultAllow:     h.defaultAllowFor(r),
 	}
 	if !CheckTableOrBucketPermission("CreateTable", accountID,
-		namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN,
+		nsMetadata.OwnerAccountID, namespacePolicy, bucketARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return nil, ErrAccessDenied
@@ -1865,6 +1959,6 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		namespaceName:  namespaceName,
 		tableName:      tableName,
 		bucketFormat:   bucketMetadata.Format,
-		ownerAccountID: namespaceMetadata.OwnerAccountID,
+		ownerAccountID: nsMetadata.OwnerAccountID,
 	}, nil
 }

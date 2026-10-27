@@ -195,6 +195,10 @@ type CreateTableRequest struct {
 	MetadataVersion  int               `json:"metadataVersion,omitempty"`
 	MetadataLocation string            `json:"metadataLocation,omitempty"`
 	Tags             map[string]string `json:"tags,omitempty"`
+	// AllowMissingNamespace lets an authorization gate evaluate a create whose
+	// namespace is implicit and not yet declared; the write path still
+	// validates existence. Never deserialized: internal callers set it.
+	AllowMissingNamespace bool `json:"-"`
 }
 
 type CreateTableResponse struct {

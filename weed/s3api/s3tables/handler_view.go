@@ -151,12 +151,16 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err := h.ensureDirectory(r.Context(), client, viewPath); err != nil {
 			return err
 		}
-		return h.setExtendedAttributes(r.Context(), client, viewPath, map[string][]byte{
+		return h.claimCatalogEntry(r.Context(), client, viewPath, map[string][]byte{
 			ExtendedKeyMetadata:  metadataBytes,
 			ExtendedKeyEntryType: []byte(EntryTypeView),
 		})
 	})
 	if err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("view %s already exists", viewName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create view")
 		return err
 	}

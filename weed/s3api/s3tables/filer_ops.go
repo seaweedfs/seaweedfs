@@ -17,6 +17,7 @@ import (
 var (
 	ErrAttributeNotFound = errors.New("attribute not found")
 	ErrConcurrentUpdate  = errors.New("attribute changed concurrently")
+	ErrNameTaken         = errors.New("catalog name is taken")
 )
 
 // extendedAttributeUpdateAttempts bounds the read-modify-write retry loop in
@@ -179,6 +180,75 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 	})
 }
 
+// claimCatalogEntry writes a new catalog entry's marker attributes in one
+// compare-checked update. Every catalog marker must still be absent: a
+// delete's restore or a competing create that landed since the caller's check
+// is a name conflict, not a record this write may overwrite — an overwrite
+// would leave the loser's tags, policy, and maintenance settings on the new
+// record.
+func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for _, key := range s3tablesExtendedKeys {
+			if _, ok := extended[key]; ok {
+				return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+			}
+		}
+		for key, data := range attrs {
+			extended[key] = data
+		}
+		return nil
+	})
+}
+
+// claimCatalogRecord reserves a catalog record for an in-flight delete or
+// rename under one compare-checked write: the entry must still hold exactly
+// expected. A record claimed by another kind of operation refuses the claim,
+// so the loser backs out before any data or destination entry is written;
+// a retry of the same kind may adopt its own earlier claim.
+func (h *S3TablesHandler) claimCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	expected map[string][]byte,
+	claim string,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if key == ExtendedKeyDeleting {
+				continue
+			}
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
+		if cur, ok := extended[ExtendedKeyDeleting]; ok && string(cur) != claim {
+			return fmt.Errorf("%w: %s held on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, path)
+		}
+		extended[ExtendedKeyDeleting] = []byte(claim)
+		return nil
+	})
+}
+
+// releaseCatalogRecord lifts a claimCatalogRecord reservation while the entry
+// still holds expected — which includes the claim itself — restoring the
+// record so the failed operation can be retried.
+func (h *S3TablesHandler) releaseCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	expected map[string][]byte,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
+		delete(extended, ExtendedKeyDeleting)
+		return nil
+	})
+}
+
 // updateExtendedAttribute applies mutate to the current value of key and writes
 // the result back. mutate runs again on each retry, so it always sees the
 // current value.
@@ -211,6 +281,7 @@ var s3tablesExtendedKeys = []string{
 	ExtendedKeyMaintenance,
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
+	ExtendedKeyDeleting,
 }
 
 // SnapshotExtended captures an entry's attributes as an UpdateEntry
@@ -312,6 +383,27 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
 	return filer_pb.DoRemove(ctx, client, dir, name, true, true, true, false, nil)
+}
+
+// deleteDirectoryIfMatches deletes a directory and all its contents only
+// while the entry still carries the extended attributes the caller captured:
+// the filer compares and removes in one operation under the path lock, so an
+// attribute write that keeps Mtime or a delete+recreate in between refuses the
+// delete with ErrConcurrentUpdate instead of losing the replacement.
+func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
+	dir, name := splitPath(path)
+	_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+		Directory:            dir,
+		Name:                 name,
+		IsDeleteData:         true,
+		IsRecursive:          true,
+		IgnoreRecursiveError: true,
+		ExpectedExtended:     snapshotExtended(expected.Extended),
+	})
+	if status.Code(err) == codes.FailedPrecondition {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+	}
+	return err
 }
 
 // entryExists checks if an entry exists at the given path

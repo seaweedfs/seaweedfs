@@ -32,6 +32,10 @@ const (
 	// contend on the same attribute.
 	ExtendedKeyMaintenanceStatus = s3_constants.ExtS3TablesPrefix + "maintenanceStatus"
 	ExtendedKeyEntryType         = s3_constants.ExtS3TablesPrefix + "entryType"
+	// ExtendedKeyDeleting marks a catalog record claimed by an in-flight
+	// delete or rename, so the claim survives until the operation finishes
+	// or releases it.
+	ExtendedKeyDeleting = s3_constants.ExtS3TablesPrefix + "deleting"
 
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".
