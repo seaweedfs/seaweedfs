@@ -527,6 +527,11 @@ message DeleteEntryRequest {
     int64 if_not_modified_after = 9;    // unix time in seconds
     bool keep_remote_object = 10;
     int64 if_not_modified_after_ns = 11; // unix time in nanoseconds; overrides if_not_modified_after when set
+    // Optional precondition evaluated against the entry atomically with the
+    // delete, under the filer's per-path lock. The request is routed to the
+    // entry's owner filer for the check to be authoritative.
+    map<string, bytes> expected_extended = 12;
+    bool is_moved = 13;             // set on a forwarded request so the owner applies it locally
 }
 
 message DeleteEntryResponse {

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -998,11 +997,6 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return ErrVersionTokenMismatch
 	}
 
-	var tableMtimeNs int64
-	if a := tableEntry.GetAttributes(); a != nil {
-		tableMtimeNs = a.Mtime*int64(time.Second) + int64(a.MtimeNs)
-	}
-
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
@@ -1050,10 +1044,15 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// without deleting the name path -- it may still hold another
 			// table's data that was left when this name was reused.
 			if req.VersionToken != "" && tableEntry != nil {
-				// A token caller owns exactly the record it read: strip the
-				// marker under a compare on the captured attributes, so a
-				// delete+recreate in between aborts here instead of losing the
-				// replacement, and only then purge the data.
+				// A token caller owns exactly the record it read. Purge the
+				// data while the marker still holds the name: a create cannot
+				// reuse it mid-purge, and a failed purge leaves the record
+				// intact so a retry resumes. The marker then comes off under
+				// a compare on the captured attributes, so a delete+recreate
+				// in between aborts here instead of losing the replacement.
+				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+					return err
+				}
 				snapshot := snapshotExtended(tableEntry.Extended)
 				markerKeys := []string{
 					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
@@ -1063,14 +1062,6 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				if err != nil {
 					if errors.Is(err, ErrConcurrentUpdate) {
 						return ErrVersionTokenMismatch
-					}
-					return err
-				}
-				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
-					// The marker is already stripped; put it back so a retry
-					// finds the table and resumes the purge.
-					if restoreErr := h.restoreExtendedAttributes(r.Context(), client, tablePath, snapshot, markerKeys...); restoreErr != nil {
-						glog.V(1).Infof("delete table %s: data purge failed (%v) and marker restore failed: %v", tablePath, err, restoreErr)
 					}
 					return err
 				}
@@ -1084,25 +1075,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 		}
 		// Colocated table: the name path holds the data. A token caller's
-		// delete first proves the entry still carries the captured attributes
-		// under the path lock — an xattr write keeps Mtime, so the mtime
-		// precondition alone cannot see it — then carries the observed mtime
-		// as a filer precondition: a recreated entry is newer and refused.
+		// delete carries the captured attributes as a filer precondition, so
+		// compare and removal are one operation under the path lock: an xattr
+		// write that keeps Mtime, or a delete+recreate in between, refuses it.
 		if req.VersionToken != "" && tableEntry != nil {
-			if err := h.assertEntryUnchanged(r.Context(), client, tablePath, tableEntry); err != nil {
+			if err := h.deleteDirectoryIfMatches(r.Context(), client, tablePath, tableEntry); err != nil {
 				if errors.Is(err, ErrConcurrentUpdate) {
 					return ErrVersionTokenMismatch
 				}
-				return err
-			}
-			if err := h.deleteDirectoryIfUnmodified(r.Context(), client, tablePath, tableMtimeNs); err != nil {
-				return err
-			}
-			// A refused delete is a silent no-op; the recreated entry's
-			// presence is what distinguishes it from a real delete.
-			if _, err := h.lookupEntry(r.Context(), client, tablePath); err == nil {
-				return ErrVersionTokenMismatch
-			} else if !errors.Is(err, filer_pb.ErrNotFound) {
 				return err
 			}
 			return nil

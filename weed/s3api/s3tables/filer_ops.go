@@ -179,54 +179,6 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 	})
 }
 
-// assertEntryUnchanged verifies under the filer's path lock that the entry at
-// path still carries the extended attributes the caller captured. An xattr
-// update keeps Mtime, so the mtime-conditioned delete alone cannot see one;
-// this check fails the write before the delete runs. When only non-extended
-// fields changed the update writes the captured entry back, which the caller
-// tolerates: the captured state is the one it just authorized.
-func (h *S3TablesHandler) assertEntryUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
-	dir, _ := splitPath(path)
-	_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-		Directory:        dir,
-		Entry:            expected,
-		ExpectedExtended: snapshotExtended(expected.Extended),
-	})
-	if status.Code(err) == codes.FailedPrecondition {
-		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
-	}
-	return err
-}
-
-// restoreExtendedAttributes puts previously removed attributes back only while
-// the entry still matches the state the removal left, so a rewritten or
-// recreated record is left alone.
-func (h *S3TablesHandler) restoreExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, snapshot map[string][]byte, keys ...string) error {
-	removed := make(map[string]bool, len(keys))
-	for _, key := range keys {
-		removed[key] = true
-	}
-	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		for key, want := range snapshot {
-			if removed[key] {
-				if _, ok := extended[key]; ok {
-					return fmt.Errorf("%w: %s rewritten on %s", ErrConcurrentUpdate, key, path)
-				}
-				continue
-			}
-			if !bytes.Equal(extended[key], want) {
-				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
-			}
-		}
-		for _, key := range keys {
-			if want, ok := snapshot[key]; ok {
-				extended[key] = want
-			}
-		}
-		return nil
-	})
-}
-
 // updateExtendedAttribute applies mutate to the current value of key and writes
 // the result back. mutate runs again on each retry, so it always sees the
 // current value.
@@ -362,12 +314,12 @@ func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.S
 	return filer_pb.DoRemove(ctx, client, dir, name, true, true, true, false, nil)
 }
 
-// deleteDirectoryIfUnmodified deletes a directory only while its entry keeps
-// the mtime the caller captured when it inspected the record: the filer
-// evaluates the bound under the entry's path lock, so a delete that raced a
-// recreate is refused — silently, as a no-op — instead of erasing the
-// replacement.
-func (h *S3TablesHandler) deleteDirectoryIfUnmodified(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, mtimeNs int64) error {
+// deleteDirectoryIfMatches deletes a directory and all its contents only
+// while the entry still carries the extended attributes the caller captured:
+// the filer compares and removes in one operation under the path lock, so an
+// attribute write that keeps Mtime or a delete+recreate in between refuses the
+// delete with ErrConcurrentUpdate instead of losing the replacement.
+func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
 	dir, name := splitPath(path)
 	_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
 		Directory:            dir,
@@ -375,8 +327,11 @@ func (h *S3TablesHandler) deleteDirectoryIfUnmodified(ctx context.Context, clien
 		IsDeleteData:         true,
 		IsRecursive:          true,
 		IgnoreRecursiveError: true,
-		IfNotModifiedAfterNs: mtimeNs,
+		ExpectedExtended:     snapshotExtended(expected.Extended),
 	})
+	if status.Code(err) == codes.FailedPrecondition {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+	}
 	return err
 }
 
