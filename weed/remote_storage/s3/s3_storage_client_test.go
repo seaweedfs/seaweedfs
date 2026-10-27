@@ -3,6 +3,8 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +13,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client/metadata"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/request"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -165,15 +169,16 @@ func (m *removeDirectoryMock) ListObjectsV2Pages(input *awss3.ListObjectsV2Input
 	return nil
 }
 
-func (m *removeDirectoryMock) DeleteObjects(input *awss3.DeleteObjectsInput) (*awss3.DeleteObjectsOutput, error) {
+func (m *removeDirectoryMock) DeleteObjectsRequest(input *awss3.DeleteObjectsInput) (*request.Request, *awss3.DeleteObjectsOutput) {
 	m.deleteInputs = append(m.deleteInputs, input)
-	if m.deleteErr != nil {
-		return nil, m.deleteErr
+	out := m.deleteResp
+	if out == nil {
+		out = &awss3.DeleteObjectsOutput{}
 	}
-	if m.deleteResp != nil {
-		return m.deleteResp, nil
-	}
-	return &awss3.DeleteObjectsOutput{}, nil
+	req := request.New(aws.Config{}, metadata.ClientInfo{}, request.Handlers{}, nil,
+		&request.Operation{Name: "DeleteObjects"}, input, out)
+	req.Error = m.deleteErr
+	return req, out
 }
 
 func listPage(keys ...string) *awss3.ListObjectsV2Output {
@@ -262,6 +267,43 @@ func TestS3RemoveDirectoryReturnsPerKeyError(t *testing.T) {
 	err := client.RemoveDirectory(loc)
 	require.ErrorContains(t, err, "2 keys failed")
 	require.ErrorContains(t, err, "testdir/a.bin")
+}
+
+// deleteObjectsProbe answers the listing and delete calls RemoveDirectory
+// makes against a real *s3.S3 client, and captures the DeleteObjects request
+// so the test can check the Content-MD5 header AWS requires.
+type deleteObjectsProbe struct {
+	deleteReq  *http.Request
+	deleteBody []byte
+}
+
+func (c *deleteObjectsProbe) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Contents><Key>testdir/a.bin</Key></Contents></ListBucketResult>`
+	if strings.Contains(req.URL.RawQuery, "delete") {
+		c.deleteReq = req.Clone(req.Context())
+		if req.Body != nil {
+			c.deleteBody, _ = io.ReadAll(req.Body)
+			_ = req.Body.Close()
+		}
+		body = `<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func TestS3RemoveDirectorySendsContentMD5(t *testing.T) {
+	rt := &deleteObjectsProbe{}
+	client := newS3ClientWithTransport(t, rt, false)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+	require.NotNil(t, rt.deleteReq, "DeleteObjects should be issued for the listed keys")
+	sum := md5.Sum(rt.deleteBody)
+	require.Equal(t, base64.StdEncoding.EncodeToString(sum[:]), rt.deleteReq.Header.Get("Content-Md5"))
 }
 
 // captureRoundTripper records the PUT request that the s3manager uploader
