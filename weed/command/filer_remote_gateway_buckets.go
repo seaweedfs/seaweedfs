@@ -416,6 +416,19 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 
 			// the following is entry rename
+			if newOk && !message.NewEntry.IsDirectory {
+				// A remote-only entry's content is the object its
+				// renamed-from path maps to; copying it on the remote
+				// completes the rename. Deleting the source and uploading
+				// the chunkless entry would lose the only copy.
+				current, err := currentEntry(filerSource, message.NewParentPath, message.NewEntry.Name)
+				if err != nil {
+					return err
+				}
+				if isRemoteOnly(current) {
+					return gatewayRemoteOnlyRename(option, option, resp, current)
+				}
+			}
 			if oldOk {
 				client, err := remote_storage.GetRemoteStorage(oldRemoteStorage)
 				if err != nil {
@@ -425,8 +438,12 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if message.OldEntry.IsDirectory {
 					return client.RemoveDirectory(oldDest)
 				}
+				if !newOk && isRemoteOnly(message.OldEntry) {
+					glog.V(0).Infof("keep %s: the renamed entry's only content", remote_storage.FormatLocation(oldDest))
+					return nil
+				}
 				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
-				if err := client.DeleteFile(oldDest); err != nil {
+				if err := deleteRemoteFileIfUnchanged(client, oldDest, message.OldEntry.GetRemoteEntry()); err != nil {
 					return err
 				}
 			}
@@ -458,6 +475,83 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+// gatewayRemoteOnlyRename completes a rename whose content exists only as
+// the object the renamed-from path maps to: the chunkless entry has nothing
+// to upload. When the destination already holds what the entry's stamp
+// describes (an earlier run copied it), only the stamp is refreshed.
+// Otherwise the source object is copied over, the entry is stamped with the
+// copy so reads stop resolving through the pending-source marker, and the
+// source goes only while it is still the object the stamp describes. With
+// neither object present the content is lost: the event fails and holds the
+// offset for recovery.
+func gatewayRemoteOnlyRename(filerClient filer_pb.FilerClient, option *RemoteGatewayOptions, resp *filer_pb.SubscribeMetadataResponse, current *filer_pb.Entry) error {
+	message := resp.EventNotification
+	srcPath := util.FullPath(current.Extended[filer.ExtRemoteRenameSourceKey])
+	if srcPath == "" {
+		srcPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+	}
+	srcDir, _ := srcPath.DirAndName()
+	srcBucket, srcMountLocation, srcStorage, ok := option.detectBucketInfo(srcDir)
+	if !ok {
+		return fmt.Errorf("rename source %s is not under a mounted bucket", srcPath)
+	}
+	srcClient, err := remote_storage.GetRemoteStorage(srcStorage)
+	if err != nil {
+		return err
+	}
+	srcLoc := toRemoteStorageLocation(srcBucket, srcPath, srcMountLocation)
+	stamp := message.OldEntry.GetRemoteEntry()
+	if stamp == nil {
+		stamp = proto.Clone(current.RemoteEntry).(*filer_pb.RemoteEntry)
+	}
+
+	newBucket, newMountLocation, newStorage, ok := option.detectBucketInfo(message.NewParentPath)
+	if !ok {
+		return nil
+	}
+	client, err := remote_storage.GetRemoteStorage(newStorage)
+	if err != nil {
+		return err
+	}
+	dest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, current.Name), newMountLocation)
+	source := renameSource{path: srcPath, loc: srcLoc, stamp: stamp}
+	if existing, statErr := client.StatFile(dest); statErr == nil {
+		if remote_storage.Describes(current.RemoteEntry, existing) {
+			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
+			if len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+				if err := updateLocalEntry(filerClient, message.NewParentPath, current, existing); err != nil {
+					return err
+				}
+			}
+			return deleteRenameSource(filerClient, srcClient, message.NewParentPath, current.Name, source, stamp)
+		}
+		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it from %s", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize, remote_storage.FormatLocation(srcLoc))
+	} else if !errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
+		return statErr
+	}
+	stat, err := srcClient.StatFile(srcLoc)
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return fmt.Errorf("%s: content is on neither %s nor %s", util.NewFullPath(message.NewParentPath, current.Name), remote_storage.FormatLocation(srcLoc), remote_storage.FormatLocation(dest))
+	}
+	if err != nil {
+		return err
+	}
+	reader, err := openRemoteObject(srcClient, srcLoc, stat.RemoteSize)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	glog.V(0).Infof("copy %s -> %s", remote_storage.FormatLocation(srcLoc), remote_storage.FormatLocation(dest))
+	remoteEntry, err := client.WriteFile(dest, current, reader)
+	if err != nil {
+		return err
+	}
+	if err := updateLocalEntry(filerClient, message.NewParentPath, current, remoteEntry); err != nil {
+		return err
+	}
+	return deleteRenameSource(filerClient, srcClient, message.NewParentPath, current.Name, source, stamp)
 }
 
 func (option *RemoteGatewayOptions) findRemoteStorageClient(bucketName string) (client remote_storage.RemoteStorageClient, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, err error) {

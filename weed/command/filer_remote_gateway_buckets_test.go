@@ -88,6 +88,121 @@ func TestGatewayUncachedRewriteIsStillUploaded(t *testing.T) {
 	}
 }
 
+// TestGatewayRemoteOnlyRenameCopiesTheObject: a remote-only entry holds its
+// content only as the object the renamed-from path maps to. The rename copies
+// that object to the destination key, stamps the entry so reads stop going
+// through the pending-source marker, and removes the source. Uploading the
+// chunkless entry would put a zero-byte object over it, and deleting the
+// source first would lose the only copy.
+func TestGatewayRemoteOnlyRenameCopiesTheObject(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-rename")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-rename") })
+
+	oldPath := "/buckets/gold/dir/old.txt"
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-rename", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	oldEntry := &filer_pb.Entry{Name: "old.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5}, RemoteEntry: stamp}
+	current := &filer_pb.Entry{
+		Name:        "new.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5},
+		RemoteEntry: stamp,
+		Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte(oldPath)},
+	}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: oldEntry, NewParentPath: "/buckets/gold/dir", NewEntry: current,
+		},
+	}
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/gold/dir/new.txt": current}}
+
+	remote.objects = map[string][]byte{"/dir/old.txt": []byte("hello")}
+	remote.statETag = `"abc"`
+	remote.statMtime = 100
+
+	if err := gatewayRemoteOnlyRename(filerClient, option, resp, current); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 1 || remote.writes[0].Path != "/dir/new.txt" {
+		t.Fatalf("writes = %+v, want the source object copied to /dir/new.txt", remote.writes)
+	}
+	if string(remote.written[0]) != "hello" {
+		t.Errorf("copied %q, want the source object's content", remote.written[0])
+	}
+	if filerClient.updates != 1 {
+		t.Errorf("stamped the entry %d times, want 1 to clear the pending-source marker", filerClient.updates)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/dir/old.txt" {
+		t.Errorf("deletes = %+v, want the source object removed", remote.deletes)
+	}
+}
+
+// TestGatewayRemoteOnlyRenameAlreadyComplete: when the destination already
+// holds what the stamp describes (an earlier run copied it), the rename only
+// refreshes the stamp and removes the source.
+func TestGatewayRemoteOnlyRenameAlreadyComplete(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-rename-complete")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-rename-complete") })
+
+	oldPath := "/buckets/gold/dir/old.txt"
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-rename-complete", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	oldEntry := &filer_pb.Entry{Name: "old.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5}, RemoteEntry: stamp}
+	current := &filer_pb.Entry{
+		Name:        "new.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5},
+		RemoteEntry: stamp,
+		Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte(oldPath)},
+	}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: oldEntry, NewParentPath: "/buckets/gold/dir", NewEntry: current,
+		},
+	}
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/gold/dir/new.txt": current}}
+
+	remote.objects = map[string][]byte{"/dir/old.txt": []byte("hello"), "/dir/new.txt": []byte("hello")}
+	remote.statETag = `"abc"`
+	remote.statMtime = 100
+
+	if err := gatewayRemoteOnlyRename(filerClient, option, resp, current); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: the destination already holds the content", remote.writes)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/dir/old.txt" {
+		t.Errorf("deletes = %+v, want the source object removed", remote.deletes)
+	}
+}
+
+// TestGatewayRenameOutKeepsRemoteOnlyObject: a remote-only entry renamed out
+// of the gateway's coverage keeps the remote object: it is the entry's only
+// content.
+func TestGatewayRenameOutKeepsRemoteOnlyObject(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-out")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-out") })
+	process, err := option.makeBucketedEventProcessor(&source.FilerSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-out", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "old.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5}, RemoteEntry: stamp},
+			NewParentPath: "/outside/dir",
+			NewEntry:      &filer_pb.Entry{Name: "new.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5}, RemoteEntry: stamp},
+		},
+	}
+	if err := process(resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 0 {
+		t.Errorf("deletes = %+v, want the remote-only object kept", remote.deletes)
+	}
+}
+
 func TestGatewayMetadataOnlyDeleteKeepsTheRemoteObject(t *testing.T) {
 	remote := &recordingRemote{}
 	remote_storage.RemoteStorageClientMakers["gatewaytest"] = recordingRemoteMaker{client: remote}
