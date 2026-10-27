@@ -537,6 +537,9 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	}
 	glog.V(3).Infof("updateBucketConfig: patching %d/%d extended keys for bucket %s", len(set), len(del), bucket)
 	if err := s3a.patchBucketEntry(bucket, &filer_pb.ObjectMutation{SetExtended: set, DeleteExtended: del}); err != nil {
+		if isBucketNotFoundErr(err) {
+			return s3err.ErrNoSuchBucket
+		}
 		glog.Errorf("updateBucketConfig: failed to patch bucket entry for %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
@@ -582,7 +585,10 @@ func applyBucketConfigToExtended(config *BucketConfig, ext map[string][]byte) er
 // patchBucketEntry applies a field-level PATCH_EXTENDED mutation to the bucket's
 // entry via ObjectTransaction, routed to the bucket's owner filer so its per-path
 // lock serializes concurrent config writes cluster-wide rather than racing
-// whole-entry rewrites. A nil/empty mutation is a no-op.
+// whole-entry rewrites. A nil/empty mutation is a no-op. The transaction
+// requires the bucket entry to exist: a PATCH on an absent entry is otherwise a
+// silent no-op (idempotent replay), which would acknowledge a config write that
+// never landed.
 func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutation) error {
 	if m == nil || (len(m.SetExtended) == 0 && len(m.DeleteExtended) == 0 && !m.SetContent) {
 		return nil
@@ -595,11 +601,17 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   bucketPath,
 		RouteKey:  objectWriteRouteKeyPrefix + bucketPath,
+		Condition: clause(filer_pb.WriteCondition_IF_EXISTS),
 		Mutations: []*filer_pb.ObjectMutation{m},
 	}
 	respErr := func(resp *filer_pb.ObjectTransactionResponse, err error) error {
 		if err != nil {
 			return err
+		}
+		// The only precondition on this request is the bucket's own existence,
+		// so a failed condition is a missing bucket, not a policy violation.
+		if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED || resp.Error == "precondition failed" {
+			return fmt.Errorf("patch bucket %s: %w", bucket, filer_pb.ErrNotFound)
 		}
 		if resp.Error != "" {
 			return fmt.Errorf("patch bucket %s: %s", bucket, resp.Error)
