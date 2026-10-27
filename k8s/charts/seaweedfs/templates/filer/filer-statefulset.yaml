@@ -101,27 +101,30 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
+            {{- $secretExtraEnvironmentVars := .Values.filer.secretExtraEnvironmentVars | default dict }}
             {{- if $mysqlEnabled }}
-            - name: WEED_MYSQL_USERNAME
+            {{- /* A credential set in extraEnvironmentVars or secretExtraEnvironmentVars
+                   replaces the db secret's, so the key is rendered once. */}}
+            {{- range $credential := list (list "WEED_MYSQL_USERNAME" "user") (list "WEED_MYSQL_PASSWORD" "password") }}
+            {{- $key := index $credential 0 }}
+            {{- $secretKey := index $credential 1 }}
+            {{- if not (or (hasKey $mergedExtraEnvironmentVars $key) (hasKey $secretExtraEnvironmentVars $key)) }}
+            - name: {{ $key }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "seaweedfs.fullname" . }}-db-secret
-                  key: user
+                  name: {{ include "seaweedfs.fullname" $ }}-db-secret
+                  key: {{ $secretKey }}
                   optional: true
-            - name: WEED_MYSQL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "seaweedfs.fullname" . }}-db-secret
-                  key: password
-                  optional: true
+            {{- end }}
+            {{- end }}
             {{- end }}
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
             {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
             {{- end }}
-            {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
             {{- if not $mysqlEnabled }}
             {{- range $key := keys $mergedExtraEnvironmentVars }}
             {{- if hasPrefix "WEED_MYSQL_" $key }}

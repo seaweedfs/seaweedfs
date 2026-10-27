@@ -636,6 +636,15 @@ jobs:
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-on-secret.yaml
           grep -A 4 -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml | grep -q "name: db"
+          # It replaces the db secret's entry rather than adding a second one, which
+          # Helm 4's server-side apply rejects as a duplicate.
+          test "$(grep -c -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml)" -eq 1
+          test "$(grep -c -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-secret.yaml)" -eq 1
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app > /tmp/filer-mysql-on-plain.yaml
+          test "$(grep -c -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml)" -eq 1
+          grep -A 1 -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml | grep -q 'value: "app"'
           # A flag the chart cannot read counts as selected, not as off.
           helm template test $CHART_DIR \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
