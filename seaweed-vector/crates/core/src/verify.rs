@@ -43,6 +43,7 @@ fn query_for(vector: Vec<f32>, k: usize) -> Query {
         distance: DistanceType::L2,
         nprobes: Some(4),
         index_segments: None,
+        fragments: None,
     }
 }
 

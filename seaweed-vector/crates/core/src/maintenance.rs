@@ -173,6 +173,7 @@ mod tests {
             distance: DistanceType::L2,
             nprobes: None,
             index_segments: None,
+            fragments: None,
         };
         let mut ids: Vec<u64> = query::flat(&pinned, &resolved, &q)
             .await
@@ -416,6 +417,7 @@ mod tests {
             distance: DistanceType::L2,
             nprobes: None,
             index_segments: None,
+            fragments: None,
         };
         assert!(query::flat(&dataset, &resolved, &q).await.is_err());
     }

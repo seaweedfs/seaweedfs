@@ -519,6 +519,7 @@ impl VectorService for VectorServer {
             distance,
             nprobes: None,
             index_segments: None,
+            fragments: None,
         };
         let hits = query::ann(&dataset, &resolved, &query)
             .await

@@ -82,6 +82,7 @@ mod tests {
             distance: DistanceType::L2,
             nprobes: None,
             index_segments: None,
+            fragments: None,
         };
         let want: Vec<(u64, u32)> = query::ann(&dataset, &resolved, &base)
             .await
