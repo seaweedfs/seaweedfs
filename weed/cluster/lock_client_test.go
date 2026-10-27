@@ -286,6 +286,53 @@ func TestNewShortLivedLockFailsFastOnUnreachableFiler(t *testing.T) {
 	}
 }
 
+type hangingLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *hangingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("test: server never answered")
+	}
+}
+
+// A ring member that accepts connections but never answers stalls the caller
+// the same way a partially partitioned peer does: each attempt must fail
+// within the per-attempt bound so the retry window can give up.
+func TestNewShortLivedLockBoundsHangingAttempt(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &hangingLockFiler{})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+	lc.lockRpcTimeout = 50 * time.Millisecond
+
+	start := time.Now()
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	elapsed := time.Since(start)
+
+	if lock != nil {
+		t.Fatal("expected nil lock when the ring member never answers")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("lock acquisition took %v, expected it bounded by the per-attempt timeout", elapsed)
+	}
+}
+
 // LiveLock.generation is a fencing token written and read with 64-bit atomic
 // operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
 // op requires an 8-byte-aligned address, which Go only guarantees for the

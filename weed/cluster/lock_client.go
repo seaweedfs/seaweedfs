@@ -45,6 +45,12 @@ type LockClient struct {
 	// snapshot) but short enough that a write fails instead of hanging
 	// forever.
 	noLockServerRetryPeriod time.Duration
+
+	// lockRpcTimeout bounds a single DistributedLock attempt: a ring member
+	// reachable from the masters but not from this filer would otherwise
+	// block an attempt on the TCP connect timeout, far past
+	// noLockServerRetryPeriod.
+	lockRpcTimeout time.Duration
 }
 
 func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
@@ -55,6 +61,7 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 		seedFiler:               seedFiler,
 		priorWindow:             5 * time.Second,
 		noLockServerRetryPeriod: 15 * time.Second,
+		lockRpcTimeout:          10 * time.Second,
 	}
 }
 
@@ -417,7 +424,12 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 	previousOwner := lock.owner
 
 	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
+		// Bound the attempt so an unreachable owner fails within the retry
+		// window. A timed-out attempt keeps no renew token, so the lock
+		// server still grants the key to at most one owner.
+		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
+		defer cancel()
+		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),
 			RenewToken:    lock.renewToken,
