@@ -84,3 +84,39 @@ func TestLockManager_RemoveBackupLockRejectsOlderGeneration(t *testing.T) {
 	assert.Equal(t, int64(8), lock.Generation)
 	assert.Equal(t, int64(1), lock.Seq)
 }
+
+func TestLockManager_LostRenewalResponseReplaysToken(t *testing.T) {
+	lm := NewLockManager()
+	expires := time.Now().Add(30 * time.Second).UnixNano()
+
+	_, token1, _, _, err := lm.Lock("key1", expires, "", "owner1")
+	assert.NoError(t, err)
+
+	// The renewal rotated token1 to token2; the client never learned it.
+	_, token2, _, _, err := lm.Lock("key1", expires, token1, "owner1")
+	assert.NoError(t, err)
+	assert.NotEqual(t, token1, token2)
+
+	// Retrying with the superseded token replays the current one instead of
+	// conflicting with its own lease until it expires.
+	owner, replayed, _, _, err := lm.Lock("key1", expires, token1, "owner1")
+	assert.NoError(t, err)
+	assert.Equal(t, "owner1", owner)
+	assert.Equal(t, token2, replayed)
+
+	// A replay from a different owner still mismatches.
+	_, _, _, _, err = lm.Lock("key1", expires, token1, "intruder")
+	assert.Error(t, err)
+
+	// The next rotation retires the superseded token for good.
+	_, token3, _, _, err := lm.Lock("key1", expires, token2, "owner1")
+	assert.NoError(t, err)
+	assert.NotEqual(t, token2, token3)
+	_, _, _, _, err = lm.Lock("key1", expires, token1, "owner1")
+	assert.Error(t, err)
+
+	// A superseded token still releases its own lock.
+	unlocked, _, _, err := lm.Unlock("key1", token2)
+	assert.NoError(t, err)
+	assert.True(t, unlocked)
+}
