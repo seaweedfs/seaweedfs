@@ -65,8 +65,7 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	if fh == nil {
 		// If handle is not found, it might have been already released
 		// This is not an error condition for FLUSH
-		if in.LockOwner != 0 {
-			wfs.releasePosixOwner(in.NodeId, in.LockOwner)
+		if in.LockOwner != 0 && wfs.releasePosixOwner(in.NodeId, in.LockOwner) {
 			wfs.forgetLockOwner(in.NodeId, in.LockOwner)
 		}
 		return fuse.OK
@@ -90,8 +89,7 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	defer cancelFunc()
 
 	status := wfs.doFlush(ctx, fh, in.Uid, in.Gid, allowAsync)
-	if in.LockOwner != 0 {
-		wfs.releasePosixOwner(in.NodeId, in.LockOwner)
+	if in.LockOwner != 0 && wfs.releasePosixOwner(in.NodeId, in.LockOwner) {
 		wfs.forgetLockOwner(in.NodeId, in.LockOwner)
 	}
 	return status

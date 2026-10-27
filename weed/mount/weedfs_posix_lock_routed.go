@@ -297,13 +297,13 @@ func posixPollAcquire(cancel <-chan struct{}, try func() (bool, error)) fuse.Sta
 	}
 }
 
-func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
+func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) bool {
 	if !wfs.posixHint.has(inode, owner) {
-		return
+		return true
 	}
 	key, ok := wfs.posixLockKeyForInode(inode)
 	if !ok {
-		return
+		return false
 	}
 	wfs.posixOwn.ReleasePosixOwner(key, wfs.posixSid, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
@@ -313,9 +313,10 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) {
 		// transient failure would strand the lock until the owner filer's
 		// session-lease reaping expires it.
 		glog.Warningf("routed release posix owner %s: %v", key, err)
-		return
+		return false
 	}
 	wfs.posixHint.drop(inode, owner)
+	return true
 }
 
 func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
@@ -343,12 +344,16 @@ func (wfs *WFS) crossMountLocks() bool {
 // authority or the local table based on crossMountLocks, keeping the Flush and
 // Release call sites flag-agnostic.
 
-func (wfs *WFS) releasePosixOwner(inode, owner uint64) {
+// releasePosixOwner reports whether the owner's locks were released. A false
+// return means a routed release failed and the close-time owner records must
+// be kept so a later Flush or the final Release retries instead of stranding
+// a live lock on the owner filer.
+func (wfs *WFS) releasePosixOwner(inode, owner uint64) bool {
 	if wfs.crossMountLocks() {
-		wfs.routedReleasePosixOwner(inode, owner)
-		return
+		return wfs.routedReleasePosixOwner(inode, owner)
 	}
 	wfs.posixLocks.ReleasePosixOwner(inode, owner)
+	return true
 }
 
 func (wfs *WFS) releaseFlockOwner(inode, owner uint64) {
