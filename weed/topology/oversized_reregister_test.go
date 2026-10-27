@@ -89,15 +89,14 @@ func TestOversizedVolumeRejectsExplicitWritableMark(t *testing.T) {
 
 	// A vacuum commit asks the node whether the volume fits; its fresh
 	// answer supersedes that replica's remembered verdict. Both replicas
-	// commit at the new shrunken size, so the stored records shrink first.
+	// commit at the new shrunken size while the cached reports on the nodes
+	// still carry the pre-compaction size.
 	shrunk := v
 	shrunk.Size = 10
-	dn1.UpdateVolumes([]storage.VolumeInfo{shrunk})
-	dn2.UpdateVolumes([]storage.VolumeInfo{shrunk})
-	if vl.SetVolumeAvailable(dn1, v.Id, false, false, false) {
+	if vl.SetVolumeAvailable(dn1, v.Id, uint64(shrunk.Size), false, false, false) {
 		t.Fatal("the other replica's oversized verdict still stands")
 	}
-	if !vl.SetVolumeAvailable(dn2, v.Id, false, false, false) || !isWritable(t, topo, v) {
+	if !vl.SetVolumeAvailable(dn2, v.Id, uint64(shrunk.Size), false, false, false) || !isWritable(t, topo, v) {
 		t.Fatal("a committed volume under the limit should be writable")
 	}
 }

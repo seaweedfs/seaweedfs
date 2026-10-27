@@ -1210,7 +1210,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity, quarantined bool) (becameWritable bool) {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, size uint64, isReadOnly, isFullCapacity, quarantined bool) (becameWritable bool) {
 	restoreActiveVolumeCount := false
 	vl.accessLock.Lock()
 	defer func() {
@@ -1234,6 +1234,12 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	location := vl.getOrCreateLocationList(vid)
 	moveLookupOwnership(vid, location.Set(dn), dn)
 
+	// The caller just asked the node whether the volume fits; record that
+	// fresh measurement on this replica's mark and remembered verdict rather
+	// than trusting the cached report, which predates the compaction.
+	vInfo.Size = size
+	vl.rememberOversizedVolume(&vInfo, dn)
+
 	if quarantined {
 		location.SetReadOnly(dn, true)
 		return false
@@ -1241,11 +1247,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
-	// The caller just asked the node whether the volume fits; apply that
-	// fresh measurement to this replica's mark and remembered verdict
-	// instead of trusting the older ones.
-	vl.rememberOversizedVolume(&vInfo, dn)
-	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
+	vl.initSizeTracking(vid, size, vInfo.CompactRevision)
 
 	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
