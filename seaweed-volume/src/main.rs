@@ -109,9 +109,10 @@ fn redirect_is_https_downgrade(previous: &[reqwest::Url], next: &reqwest::Url) -
 }
 
 fn reject_https_downgrade(attempt: reqwest::redirect::Attempt) -> reqwest::redirect::Action {
-    if attempt.previous().len() >= 10 || redirect_is_https_downgrade(attempt.previous(), attempt.url())
-    {
-        attempt.stop()
+    if attempt.previous().len() >= 10 {
+        attempt.error("redirect limit reached")
+    } else if redirect_is_https_downgrade(attempt.previous(), attempt.url()) {
+        attempt.error("redirect downgraded https to plaintext")
     } else {
         attempt.follow()
     }
@@ -1184,5 +1185,8 @@ mod tests {
         assert!(!redirect_is_https_downgrade(&[http.clone()], &http));
         assert!(!redirect_is_https_downgrade(&[https.clone()], &https));
         assert!(!redirect_is_https_downgrade(&[], &http));
+        // Only the origin scheme counts (Go's via[0]): a chain that started
+        // plaintext loses nothing by returning to plaintext.
+        assert!(!redirect_is_https_downgrade(&[http.clone(), https.clone()], &http));
     }
 }
