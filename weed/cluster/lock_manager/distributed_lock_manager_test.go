@@ -696,14 +696,13 @@ func TestDLM_ReplayedRenewalExtendsBackupExpiry(t *testing.T) {
 	_, replayed, _, _, err := primary.LockWithTimeout(key, e2, token1, "owner1")
 	require.NoError(t, err)
 	assert.Equal(t, token2, replayed)
-	time.Sleep(10 * time.Millisecond)
 
 	// The backup must accept the extended expiry instead of rejecting the
 	// replayed mutation as stale.
-	lock, found := backupDlm.GetLock(key)
-	require.True(t, found)
-	assert.Equal(t, e2, lock.ExpiredAtNs)
-	assert.Equal(t, int64(3), lock.Seq)
+	require.Eventually(t, func() bool {
+		lock, found := backupDlm.GetLock(key)
+		return found && lock.ExpiredAtNs == e2 && lock.Seq == 3
+	}, time.Second, time.Millisecond)
 }
 
 func TestDLM_BackupPromotionKeepsLostRenewalRecovery(t *testing.T) {
@@ -725,10 +724,10 @@ func TestDLM_BackupPromotionKeepsLostRenewalRecovery(t *testing.T) {
 	// The backup copy must carry the superseded token too, or a promoted
 	// backup could not serve a retry of the lost renewal.
 	backupDlm := cluster.get(backup)
-	lock, found := backupDlm.GetLock(key)
-	require.True(t, found)
-	assert.Equal(t, token2, lock.Token)
-	assert.Equal(t, token1, lock.PrevToken)
+	require.Eventually(t, func() bool {
+		lock, found := backupDlm.GetLock(key)
+		return found && lock.Token == token2 && lock.PrevToken == token1
+	}, time.Second, time.Millisecond)
 
 	// Primary dies; backup is promoted to primary.
 	cluster.removeNode(primaryHost)
