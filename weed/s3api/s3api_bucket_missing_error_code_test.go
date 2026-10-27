@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -208,6 +209,27 @@ func TestBucketSubresourceWritesOnVanishedPatch(t *testing.T) {
 			t.Fatalf("vanished-patch encryption delete: %d %s, want 404 NoSuchBucket", code, body)
 		}
 	})
+}
+
+// An unchanged configuration produces an empty patch, but the transaction
+// still runs so its existence condition reports a bucket deleted after the
+// config read — a no-op write must not answer success on a vanished bucket.
+func TestUnchangedConfigWriteOnVanishedBucket(t *testing.T) {
+	const bucket = "unchanged-bucket"
+	filer := &fakeLookupFiler{
+		entry: &filer_pb.Entry{Name: bucket, IsDirectory: true},
+		txnResp: &filer_pb.ObjectTransactionResponse{
+			Error:     "precondition failed",
+			ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}}
+	s3a := newHeadBucketTestServer(t, filer)
+
+	if errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error { return nil }); errCode != s3err.ErrNoSuchBucket {
+		t.Fatalf("unchanged config on vanished bucket: errCode=%d, want NoSuchBucket", errCode)
+	}
+	if len(filer.txnSeen) != 1 || len(filer.txnSeen[0].GetMutations()) != 0 ||
+		filer.txnSeen[0].GetCondition().GetClauses()[0].GetKind() != filer_pb.WriteCondition_IF_EXISTS {
+		t.Fatalf("unchanged write must send a condition-only transaction: %+v", filer.txnSeen)
+	}
 }
 
 // A transient filer failure that arrives mid-write (after the existence check
