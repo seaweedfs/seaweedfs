@@ -432,7 +432,12 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 					return err
 				}
 				if isRemoteOnly(current) {
-					return gatewayRemoteOnlyRename(option, option, resp, current)
+					if err := gatewayRemoteOnlyRename(option, option, resp, current); err != nil {
+						return err
+					}
+					// a pending entry the filer copied on this rename
+					// leaves the source its marker named
+					return releaseGatewayRenamedSource(filerSource, option, message)
 				}
 				if current == nil && len(message.NewEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
 					// the rename's copy was pending and the entry has moved
@@ -471,12 +476,15 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)
 				if errors.Is(writeErr, errSuperseded) {
 					glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(newDest), writeErr)
-					return nil
+					return releaseGatewayRenamedSource(filerSource, option, message)
 				}
 				if writeErr != nil {
 					return writeErr
 				}
-				return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
+				if err := updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry); err != nil {
+					return err
+				}
+				return releaseGatewayRenamedSource(filerSource, option, message)
 			}
 		}
 
@@ -560,6 +568,44 @@ func gatewayRemoteOnlyRename(filerClient filer_pb.FilerClient, option *RemoteGat
 		return err
 	}
 	return deleteRenameSource(filerClient, srcClient, message.NewParentPath, current.Name, source, stamp)
+}
+
+// releaseGatewayRenamedSource releases the pending source a rename's old
+// entry read, once the renamed entry no longer reads through a marker: the
+// gateway-side releaseRenamedSource, with the source resolved through its
+// own bucket's mount.
+func releaseGatewayRenamedSource(filerSource filer_pb.FilerClient, option *RemoteGatewayOptions, message *filer_pb.EventNotification) error {
+	srcPath := util.FullPath(message.OldEntry.GetExtended()[filer.ExtRemoteRenameSourceKey])
+	if srcPath == "" {
+		return nil
+	}
+	current, err := currentEntry(filerSource, message.NewParentPath, message.NewEntry.Name)
+	if err != nil {
+		return err
+	}
+	if current != nil && len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+		return nil
+	}
+	srcDir, srcName := srcPath.DirAndName()
+	srcBucket, srcMountLocation, srcStorage, ok := option.detectBucketInfo(srcDir)
+	if !ok {
+		return nil
+	}
+	current, err = currentEntry(filerSource, srcDir, srcName)
+	if err != nil {
+		return err
+	}
+	if isRemoteOnly(current) {
+		glog.V(0).Infof("keep %s: a remote-only entry holds the pending rename's source", srcPath)
+		return nil
+	}
+	srcClient, err := remote_storage.GetRemoteStorage(srcStorage)
+	if err != nil {
+		return err
+	}
+	srcLoc := toRemoteStorageLocation(srcBucket, srcPath, srcMountLocation)
+	glog.V(0).Infof("delete %s, the source of a pending rename", remote_storage.FormatLocation(srcLoc))
+	return deleteRemoteFileIfUnchanged(srcClient, srcLoc, message.OldEntry.GetRemoteEntry())
 }
 
 func (option *RemoteGatewayOptions) findRemoteStorageClient(bucketName string) (client remote_storage.RemoteStorageClient, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, err error) {

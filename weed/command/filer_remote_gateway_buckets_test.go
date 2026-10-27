@@ -175,6 +175,70 @@ func TestGatewayRemoteOnlyRenameAlreadyComplete(t *testing.T) {
 	}
 }
 
+// TestGatewayRenameReleasesPendingSource: a rename whose old entry read a
+// pending source (an earlier rename's deferred copy had not finished) leaves
+// that source behind once the renamed entry no longer reads through a
+// marker. The gateway deletes it, guarded by the old entry's stamp.
+func TestGatewayRenameReleasesPendingSource(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-release")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-release") })
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-release", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	oldEntry := &filer_pb.Entry{
+		Name:        "mid.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5},
+		RemoteEntry: stamp,
+		Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/gold/dir/orig.txt")},
+	}
+	newEntry := &filer_pb.Entry{Name: "new.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5}, RemoteEntry: stamp}
+	message := &filer_pb.EventNotification{OldEntry: oldEntry, NewParentPath: "/buckets/gold/dir", NewEntry: newEntry}
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+		"/buckets/gold/dir/new.txt": newEntry,
+	}}
+	remote.objects = map[string][]byte{"/dir/orig.txt": []byte("hello")}
+	remote.statETag = `"abc"`
+	remote.statMtime = 100
+
+	if err := releaseGatewayRenamedSource(filerClient, option, message); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/dir/orig.txt" {
+		t.Errorf("deletes = %+v, want the pending source released", remote.deletes)
+	}
+}
+
+// TestGatewayRenameKeepsHeldPendingSource: the pending source stays while a
+// remote-only entry still holds its path.
+func TestGatewayRenameKeepsHeldPendingSource(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-release")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-release") })
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-release", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	oldEntry := &filer_pb.Entry{
+		Name:        "mid.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5},
+		RemoteEntry: stamp,
+		Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/gold/dir/orig.txt")},
+	}
+	newEntry := &filer_pb.Entry{Name: "new.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5}, RemoteEntry: stamp}
+	heldSource := &filer_pb.Entry{Name: "orig.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 300, FileSize: 5}, RemoteEntry: stamp}
+	message := &filer_pb.EventNotification{OldEntry: oldEntry, NewParentPath: "/buckets/gold/dir", NewEntry: newEntry}
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+		"/buckets/gold/dir/new.txt":  newEntry,
+		"/buckets/gold/dir/orig.txt": heldSource,
+	}}
+	remote.objects = map[string][]byte{"/dir/orig.txt": []byte("hello")}
+	remote.statETag = `"abc"`
+	remote.statMtime = 100
+
+	if err := releaseGatewayRenamedSource(filerClient, option, message); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 0 {
+		t.Errorf("deletes = %+v, want the pending source kept while an entry holds its path", remote.deletes)
+	}
+}
+
 // TestGatewayRenameOutKeepsRemoteOnlyObject: a remote-only entry renamed out
 // of the gateway's coverage keeps the remote object: it is the entry's only
 // content.
