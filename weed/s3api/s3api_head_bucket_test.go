@@ -21,10 +21,17 @@ type fakeLookupFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entry     *filer_pb.Entry
 	lookupErr error
+	lookups   int
+	failAfter int
+	failErr   error
 	deleted   []string
 }
 
 func (f *fakeLookupFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.lookups++
+	if f.failAfter > 0 && f.lookups > f.failAfter {
+		return nil, f.failErr
+	}
 	if f.lookupErr != nil {
 		return nil, f.lookupErr
 	}

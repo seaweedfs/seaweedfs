@@ -63,6 +63,92 @@ func TestBucketSubresourceWritesOnMissingBucket(t *testing.T) {
 			t.Fatalf("missing bucket policy put: %d %s, want 404 NoSuchBucket", code, body)
 		}
 	})
+
+	t.Run("delete bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{}, http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("missing bucket policy delete: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+}
+
+// A bucket deleted between the existence check and the write itself still
+// reports NoSuchBucket: the write path classifies its own miss.
+func TestBucketSubresourceWritesOnBucketVanishingMidRequest(t *testing.T) {
+	const bucket = "vanishing-bucket"
+	entry := &filer_pb.Entry{Name: bucket, IsDirectory: true}
+
+	t.Run("put bucket encryption", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filer_pb.ErrNotFound},
+			http.MethodPut, bucket, testEncryptionBody,
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketEncryptionHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanishing bucket encryption put: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+
+	t.Run("delete bucket encryption", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filer_pb.ErrNotFound},
+			http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketEncryptionHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanishing bucket encryption delete: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+
+	t.Run("put bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filer_pb.ErrNotFound},
+			http.MethodPut, bucket, testPolicyBody(bucket),
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketPolicyHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanishing bucket policy put: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+
+	t.Run("delete bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filer_pb.ErrNotFound},
+			http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanishing bucket policy delete: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+}
+
+// A transient filer failure that arrives mid-write (after the existence check
+// passed) must still be InternalError, not a definite 404.
+func TestBucketSubresourceWritesOnFilerFailureMidRequest(t *testing.T) {
+	const bucket = "flaky-bucket"
+	entry := &filer_pb.Entry{Name: bucket, IsDirectory: true}
+	filerError := status.Error(codes.Internal, "filer store unavailable")
+
+	t.Run("put bucket encryption", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filerError},
+			http.MethodPut, bucket, testEncryptionBody,
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketEncryptionHandler })
+		if code != http.StatusInternalServerError || !strings.Contains(body, "InternalError") {
+			t.Fatalf("mid-write filer failure encryption put: %d %s, want 500 InternalError", code, body)
+		}
+	})
+
+	t.Run("put bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filerError},
+			http.MethodPut, bucket, testPolicyBody(bucket),
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketPolicyHandler })
+		if code != http.StatusInternalServerError || !strings.Contains(body, "InternalError") {
+			t.Fatalf("mid-write filer failure policy put: %d %s, want 500 InternalError", code, body)
+		}
+	})
+
+	t.Run("delete bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: entry, failAfter: 1, failErr: filerError},
+			http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
+		if code != http.StatusInternalServerError || !strings.Contains(body, "InternalError") {
+			t.Fatalf("mid-write filer failure policy delete: %d %s, want 500 InternalError", code, body)
+		}
+	})
 }
 
 // A lookup that failed for another reason must not be reported as a missing
