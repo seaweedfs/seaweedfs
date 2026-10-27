@@ -119,12 +119,15 @@ type VolumeServerJwtFunction func(fileId string) string
 // refreshUrls lets a fetch loop relearn a chunk's locations inside a single
 // read: drop the cached entry and look it up again, whether every location
 // failed or one did while another answered. Nil when there is nothing to
-// invalidate against.
+// invalidate against. A cancelled read keeps the cached locations.
 func refreshUrls(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string) util_http.RefreshUrlsFunc {
 	if invalidator == nil || lookupFn == nil {
 		return nil
 	}
 	return func() []string {
+		if ctx.Err() != nil {
+			return nil
+		}
 		invalidator.InvalidateCache(fileId)
 		urls, err := lookupFn(ctx, fileId)
 		if err != nil {
