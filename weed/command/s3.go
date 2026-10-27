@@ -726,6 +726,14 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 	// binding listeners so a certificate failure does not leave ports bound.
 	var tlsConfig *tls.Config
 	if *s3opt.tlsPrivateKey != "" {
+		// The reloading provider reads the key pair asynchronously, so validate
+		// it once up front: a missing or mismatched pair must fail here rather
+		// than after the listeners bind an endpoint that cannot handshake.
+		if _, err := tls.LoadX509KeyPair(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
+			conn.Close()
+			return nil
+		}
 		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
 		if err != nil {
 			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
