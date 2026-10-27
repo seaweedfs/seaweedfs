@@ -1038,6 +1038,14 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				if err != nil {
 					return "", err
 				}
+				if typedOperand(operand) {
+					match := fmt.Sprintf("(%s = %s AND %s)", col, lit, nonStringGuard(field))
+					if op == "$ne" {
+						match = "NOT COALESCE(" + match + ", false)"
+					}
+					parts = append(parts, match)
+					continue
+				}
 				sym := "="
 				if op == "$ne" {
 					sym = "<>"
@@ -1056,7 +1064,9 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					}
 					continue
 				}
-				// Members may mix types; each extractor only sees its own.
+				// Members may mix types; each extractor only sees its own. A
+				// member whose typed extractor returns NULL must not let NOT
+				// invert NULL into NULL under $nin, so every group coalesces.
 				var groups []string
 				for _, item := range list {
 					col, err := fieldAccess(field, item)
@@ -1067,7 +1077,11 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					if err != nil {
 						return "", err
 					}
-					groups = append(groups, fmt.Sprintf("%s in (%s)", col, lit))
+					g := fmt.Sprintf("%s in (%s)", col, lit)
+					if typedOperand(item) {
+						g = "(" + g + " AND " + nonStringGuard(field) + ")"
+					}
+					groups = append(groups, fmt.Sprintf("COALESCE(%s, false)", g))
 				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {
@@ -1084,7 +1098,7 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				}
 				sym := map[string]string{"$lt": "<", "$lte": "<=", "$gt": ">", "$gte": ">="}[op]
 				col := fmt.Sprintf("json_get_float(`metadata`, '%s')", sqlEscape(field))
-				parts = append(parts, fmt.Sprintf("%s %s %s", col, sym, lit))
+				parts = append(parts, fmt.Sprintf("(%s %s %s AND %s)", col, sym, lit, nonStringGuard(field)))
 			default:
 				return "", fmt.Errorf("unsupported operator %s", op)
 			}
@@ -1099,8 +1113,31 @@ func fieldClause(field string, cond interface{}) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if typedOperand(cond) {
+			return fmt.Sprintf("(%s = %s AND %s)", col, lit, nonStringGuard(field)), nil
+		}
 		return fmt.Sprintf("%s = %s", col, lit), nil
 	}
+}
+
+// nonStringGuard excludes stored strings from a numeric or boolean
+// comparison: the jsonb extractors convert a numeric-looking string through
+// json_get_float and "true"/"false" through json_get_bool, so without it '3'
+// would satisfy a filter for the number 3 even though AWS treats metadata
+// types as exact.
+func nonStringGuard(field string) string {
+	return fmt.Sprintf("json_get_string(`metadata`, '%s') IS NULL", sqlEscape(field))
+}
+
+// typedOperand reports whether an operand's comparison can be satisfied by a
+// stored string through extractor conversion — floats and bools can, strings
+// cannot (json_get_string does not convert numbers or booleans).
+func typedOperand(operand interface{}) bool {
+	switch operand.(type) {
+	case float64, bool:
+		return true
+	}
+	return false
 }
 
 func sqlLiteral(v interface{}) (string, error) {
