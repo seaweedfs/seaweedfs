@@ -526,13 +526,18 @@ func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLoca
 			return true
 		}
 		// a listing page holds at most 1000 keys, the DeleteObjects limit
-		resp, batchErr := s.conn.DeleteObjects(&s3.DeleteObjectsInput{
+		req, resp := s.conn.DeleteObjectsRequest(&s3.DeleteObjectsInput{
 			Bucket: aws.String(loc.Bucket),
 			Delete: &s3.Delete{
 				Objects: objects,
 				Quiet:   aws.Bool(true),
 			},
 		})
+		// the client-level S3DisableContentMD5Validation also drops the
+		// Content-MD5 header this operation requires; the request config is a
+		// copy, so re-enabling it here leaves other operations untouched
+		req.Config.S3DisableContentMD5Validation = aws.Bool(false)
+		batchErr := req.Send()
 		if batchErr != nil {
 			deleteErr = batchErr
 			return false
