@@ -1827,7 +1827,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	nsMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	namespaceExists := err == nil
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) && allowMissingNamespace {
@@ -1896,7 +1896,9 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	}
 
 	if !namespaceExists {
-		namespaceMetadata.OwnerAccountID = bucketMetadata.OwnerAccountID
+		// The implicit namespace has no record yet: authorize it as the
+		// bucket owner's instead of dereferencing the absent metadata.
+		nsMetadata = &namespaceMetadata{OwnerAccountID: bucketMetadata.OwnerAccountID}
 	}
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
@@ -1913,7 +1915,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		DefaultAllow:     h.defaultAllowFor(r),
 	}
 	if !CheckTableOrBucketPermission("CreateTable", accountID,
-		namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN,
+		nsMetadata.OwnerAccountID, namespacePolicy, bucketARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return nil, ErrAccessDenied
@@ -1924,6 +1926,6 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		namespaceName:  namespaceName,
 		tableName:      tableName,
 		bucketFormat:   bucketMetadata.Format,
-		ownerAccountID: namespaceMetadata.OwnerAccountID,
+		ownerAccountID: nsMetadata.OwnerAccountID,
 	}, nil
 }
