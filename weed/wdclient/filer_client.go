@@ -788,6 +788,13 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			}()
 
 			if err != nil {
+				// a caller that gave up says nothing about this filer
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					if lastErr != nil {
+						return nil, fmt.Errorf("%w (earlier filer error: %v)", ctxErr, lastErr)
+					}
+					return nil, ctxErr
+				}
 				glog.V(1).Infof("FilerClient: filer %s lookup failed (attempt %d/%d, retry %d/%d): %v", filerAddress, x+1, n, retry+1, maxRetries, err)
 				fc.recordFilerFailureWithHealth(health)
 				lastErr = err
