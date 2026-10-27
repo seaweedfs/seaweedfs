@@ -197,6 +197,12 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 
 // Internal methods following the bucket configuration pattern
 
+// isBucketNotFoundErr reports whether an error came from looking up a bucket
+// directory that does not exist (directly, or via the negative cache).
+func isBucketNotFoundErr(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found")
+}
+
 // getEncryptionConfiguration retrieves encryption configuration with caching
 func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.EncryptionConfiguration, s3err.ErrorCode) {
 	// Get metadata using structured API
@@ -205,7 +211,7 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 		// If the bucket directory is not found (e.g., during bucket recreation after
 		// a partial delete), treat it as having no encryption configured rather than
 		// failing the upload with an internal error.
-		if errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found") {
+		if isBucketNotFoundErr(err) {
 			glog.Warningf("getEncryptionConfiguration: bucket metadata not found for %s, treating as no encryption: %v", bucket, err)
 			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
 		}
@@ -227,6 +233,9 @@ func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionC
 	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketEncryption(bucket, encryptionConfig)
 	if err != nil {
+		if isBucketNotFoundErr(err) {
+			return s3err.ErrNoSuchBucket
+		}
 		glog.Errorf("updateEncryptionConfiguration: failed to update encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
@@ -239,6 +248,9 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	// Check if encryption configuration exists
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
+		if isBucketNotFoundErr(err) {
+			return s3err.ErrNoSuchBucket
+		}
 		glog.Errorf("removeEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
@@ -252,6 +264,9 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	// already invalidates the cache synchronously after successful update
 	err = s3a.ClearBucketEncryption(bucket)
 	if err != nil {
+		if isBucketNotFoundErr(err) {
+			return s3err.ErrNoSuchBucket
+		}
 		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
