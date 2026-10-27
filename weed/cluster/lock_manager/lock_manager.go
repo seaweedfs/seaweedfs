@@ -24,6 +24,7 @@ type LockManager struct {
 }
 type Lock struct {
 	Token       string
+	PrevToken   string // token superseded by the latest renewal; a holder whose renewal response was lost still presents it
 	ExpiredAtNs int64
 	Key         string // only used for moving locks
 	Owner       string
@@ -102,19 +103,28 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			generation = oldValue.Generation // keep same generation on renewal
 			seq = oldValue.Seq + 1
 			glog.V(4).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
-			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
-			return
-		} else {
-			if token == "" {
-				// new lock
-				glog.V(4).Infof("key %s locked by %v", path, oldValue.Owner)
-				err = fmt.Errorf("lock already owned by %v", oldValue.Owner)
-				return
-			}
-			glog.V(4).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
-			err = fmt.Errorf("lock: token mismatch")
+			lm.locks[path] = &Lock{Token: renewToken, PrevToken: oldValue.Token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
 			return
 		}
+		if token != "" && token == oldValue.PrevToken && owner == oldValue.Owner {
+			// The latest renewal already rotated the token but its response
+			// was lost: replay the current token so the holder recovers it
+			// instead of conflicting with its own lease until it expires.
+			renewToken = oldValue.Token
+			generation = oldValue.Generation
+			seq = oldValue.Seq
+			oldValue.ExpiredAtNs = expiredAtNs
+			return
+		}
+		if token == "" {
+			// new lock
+			glog.V(4).Infof("key %s locked by %v", path, oldValue.Owner)
+			err = fmt.Errorf("lock already owned by %v", oldValue.Owner)
+			return
+		}
+		glog.V(4).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
+		err = fmt.Errorf("lock: token mismatch")
+		return
 	} else {
 		glog.V(4).Infof("key %s no lock owner %v", path, owner)
 		if token == "" {
@@ -148,7 +158,7 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, gener
 			delete(lm.locks, path)
 			return
 		}
-		if oldValue.Token == token {
+		if oldValue.Token == token || (token != "" && token == oldValue.PrevToken) {
 			isUnlocked = true
 			generation = oldValue.Generation
 			seq = oldValue.Seq + 1

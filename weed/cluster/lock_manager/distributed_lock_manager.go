@@ -46,7 +46,7 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 		// ring update and lock transfer completion — the old primary remains
 		// authoritative for locks it still holds.
 		if token != "" {
-			if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && lock.Token == token {
+			if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && (lock.Token == token || lock.PrevToken == token) {
 				var seq int64
 				lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 				if err == nil && renewToken != "" {
@@ -95,7 +95,7 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 	}
 	if primary != dlm.Host {
 		// If we still hold this lock locally, serve the unlock here
-		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && lock.Token == token {
+		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && token != "" && (lock.Token == token || lock.PrevToken == token) {
 			var isUnlocked bool
 			var generation int64
 			var seq int64
