@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
@@ -216,6 +216,124 @@ fn key_list(keys: &[String]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+// The json_get_* functions lance registers only take a LargeBinary jsonb
+// column; on an index written before metadata became jsonb the stored column
+// is plain Utf8 and the SQL filter fails to plan. There the filter document
+// is evaluated per row and the query is constrained to the matching keys.
+fn metadata_is_jsonb(dataset: &Dataset) -> bool {
+    let schema: arrow_schema::Schema = dataset.schema().into();
+    matches!(
+        schema
+            .field_with_name(METADATA_COLUMN)
+            .map(|f| f.data_type()),
+        Ok(DataType::LargeBinary)
+    )
+}
+
+async fn matching_keys(dataset: &Dataset, filter_json: &str) -> Result<Vec<String>> {
+    let filter: serde_json::Value =
+        serde_json::from_str(filter_json).context("filter_json is not a JSON document")?;
+    let mut scanner = dataset.scan();
+    scanner.project(&[KEY_COLUMN, METADATA_COLUMN])?;
+    let mut stream = scanner.try_into_stream().await?;
+    let mut keys = Vec::new();
+    while let Some(batch) = stream.try_next().await? {
+        let keys_col = batch
+            .column_by_name(KEY_COLUMN)
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let metas = batch
+            .column_by_name(METADATA_COLUMN)
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let (Some(keys_col), Some(metas)) = (keys_col, metas) else {
+            continue;
+        };
+        for i in 0..batch.num_rows() {
+            if metas.is_null(i) {
+                continue;
+            }
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(metas.value(i)) else {
+                continue;
+            };
+            if filter_matches(&filter, &meta) {
+                keys.push(keys_col.value(i).to_string());
+            }
+        }
+    }
+    Ok(keys)
+}
+
+fn filter_matches(filter: &serde_json::Value, meta: &serde_json::Value) -> bool {
+    let Some(clauses) = filter.as_object() else {
+        return false;
+    };
+    clauses.iter().all(|(key, cond)| match key.as_str() {
+        "$and" => cond
+            .as_array()
+            .is_some_and(|subs| subs.iter().all(|s| filter_matches(s, meta))),
+        "$or" => cond
+            .as_array()
+            .is_some_and(|subs| subs.iter().any(|s| filter_matches(s, meta))),
+        _ if key.starts_with('$') => false,
+        _ => field_matches(meta.get(key), cond),
+    })
+}
+
+fn field_matches(value: Option<&serde_json::Value>, cond: &serde_json::Value) -> bool {
+    let Some(ops) = cond.as_object() else {
+        return json_eq(value, cond);
+    };
+    ops.iter().all(|(op, operand)| match op.as_str() {
+        "$exists" => value.is_some() == operand.as_bool().unwrap_or_default(),
+        "$eq" => json_eq(value, operand),
+        "$ne" => value.is_some() && !json_eq(value, operand),
+        "$in" => operand
+            .as_array()
+            .is_some_and(|list| list.iter().any(|item| json_eq(value, item))),
+        "$nin" => {
+            value.is_some()
+                && operand
+                    .as_array()
+                    .is_some_and(|list| !list.iter().any(|item| json_eq(value, item)))
+        }
+        "$lt" | "$lte" | "$gt" | "$gte" => json_cmp(value, operand, op.as_str()),
+        _ => false,
+    })
+}
+
+// json_get_string semantics: strings read back as-is, scalars take their text
+// form, documents serialize; a JSON null reads as NULL and never compares.
+fn json_text(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => Some(v.to_string()),
+    }
+}
+
+fn json_eq(value: Option<&serde_json::Value>, operand: &serde_json::Value) -> bool {
+    match (value.and_then(json_text), json_text(operand)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn json_cmp(value: Option<&serde_json::Value>, operand: &serde_json::Value, op: &str) -> bool {
+    let numeric = |v: &serde_json::Value| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    };
+    let (Some(v), Some(o)) = (value.and_then(numeric), numeric(operand)) else {
+        return false;
+    };
+    match op {
+        "$lt" => v < o,
+        "$lte" => v <= o,
+        "$gt" => v > o,
+        "$gte" => v >= o,
+        _ => false,
+    }
 }
 
 fn rows_as_vectors(
@@ -502,14 +620,26 @@ impl VectorService for VectorServer {
             Some("DOT_PRODUCT") => DistanceType::Dot,
             _ => DistanceType::L2,
         };
+        let mut filter = if req.filter.is_empty() {
+            None
+        } else {
+            Some(req.filter)
+        };
+        if filter.is_some() && !req.filter_json.is_empty() && !metadata_is_jsonb(&dataset) {
+            let keys = matching_keys(&dataset, &req.filter_json)
+                .await
+                .map_err(internal)?;
+            if keys.is_empty() {
+                return Ok(Response::new(pb::QueryVectorsResponse {
+                    vectors: Vec::new(),
+                }));
+            }
+            filter = Some(key_list(&keys));
+        }
         let query = Query {
             vector: req.query_vector,
             k: req.top_k as usize,
-            filter: if req.filter.is_empty() {
-                None
-            } else {
-                Some(req.filter)
-            },
+            filter,
             postfilter: req.postfilter,
             distance,
             nprobes: None,
@@ -630,5 +760,103 @@ mod tests {
             },
         ];
         assert!(batch_of(&vectors, 4, schema).is_err());
+    }
+
+    #[test]
+    fn filter_matches_the_gateway_operators() {
+        let meta = meta_of(r#"{"color":"red","n":3,"flag":true}"#);
+        assert!(filter_matches(&meta_of(r#"{"color":"red"}"#), &meta));
+        assert!(filter_matches(
+            &meta_of(r#"{"color":{"$eq":"red"}}"#),
+            &meta
+        ));
+        assert!(!filter_matches(
+            &meta_of(r#"{"color":{"$ne":"red"}}"#),
+            &meta
+        ));
+        assert!(filter_matches(
+            &meta_of(r#"{"color":{"$in":["red","blue"]}}"#),
+            &meta
+        ));
+        assert!(!filter_matches(
+            &meta_of(r#"{"color":{"$nin":["red"]}}"#),
+            &meta
+        ));
+        assert!(filter_matches(
+            &meta_of(r#"{"missing":{"$exists":false}}"#),
+            &meta
+        ));
+        assert!(!filter_matches(
+            &meta_of(r#"{"missing":{"$exists":true}}"#),
+            &meta
+        ));
+        assert!(filter_matches(
+            &meta_of(r#"{"n":{"$gte":3,"$lt":4}}"#),
+            &meta
+        ));
+        assert!(!filter_matches(&meta_of(r#"{"n":{"$gt":3}}"#), &meta));
+        // Comparisons on a missing field read as NULL: nothing matches,
+        // not even $ne/$nin.
+        assert!(!filter_matches(
+            &meta_of(r#"{"missing":{"$ne":"x"}}"#),
+            &meta
+        ));
+        assert!(!filter_matches(
+            &meta_of(r#"{"missing":{"$nin":["x"]}}"#),
+            &meta
+        ));
+        let or = meta_of(r#"{"$or":[{"color":"blue"},{"n":{"$lt":4}}]}"#);
+        assert!(filter_matches(&or, &meta));
+        let and = meta_of(r#"{"$and":[{"color":"red"},{"flag":true}]}"#);
+        assert!(filter_matches(&and, &meta));
+    }
+
+    fn meta_of(json: &str) -> serde_json::Value {
+        serde_json::from_str(json).unwrap()
+    }
+
+    async fn legacy_dataset() -> Dataset {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(KEY_COLUMN, DataType::Utf8, false),
+            Field::new(METADATA_COLUMN, DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b", "c"])),
+                Arc::new(StringArray::from(vec![
+                    Some(r#"{"color":"red","n":3}"#),
+                    Some(r#"{"color":"blue","n":7}"#),
+                    None,
+                ])),
+            ],
+        )
+        .unwrap();
+        let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+        Dataset::write(reader, "memory://legacy-meta-index", None)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn matching_keys_scans_utf8_metadata_rows() {
+        let dataset = legacy_dataset().await;
+        assert!(!metadata_is_jsonb(&dataset));
+        assert_eq!(
+            matching_keys(&dataset, r#"{"color":"red"}"#).await.unwrap(),
+            vec!["a".to_string()]
+        );
+        assert_eq!(
+            matching_keys(&dataset, r#"{"n":{"$gte":3}}"#)
+                .await
+                .unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert!(
+            matching_keys(&dataset, r#"{"color":"green"}"#)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }
