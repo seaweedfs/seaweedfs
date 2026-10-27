@@ -14,10 +14,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Issue 12131: PUT/DELETE bucket encryption and PUT bucket policy answered 500
-// InternalError for a bucket that does not exist, because the failed filer
-// lookup only surfaced from inside the configuration update, which maps every
-// error to an internal one. S3 answers 404 NoSuchBucket.
+// Bucket encryption and policy writes used to answer 500 InternalError for a
+// bucket that does not exist, because the failed filer lookup only surfaced
+// from inside the configuration update, which maps every error to an internal
+// one. S3 answers 404 NoSuchBucket.
 
 func testPolicyBody(bucket string) string {
 	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::` + bucket + `/*"}]}`
