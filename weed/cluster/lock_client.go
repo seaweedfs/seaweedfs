@@ -327,6 +327,9 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 		if remaining := lock.lc.noLockServerRetryPeriod - time.Since(unavailableSince); remaining < attemptTimeout {
 			if remaining <= 0 {
 				if lock.hostFiler.Equals(lock.lc.seedFiler) || seedRetried {
+					if err == nil {
+						err = fmt.Errorf("lock %s: no lock server granted within %s", lock.key, lock.lc.noLockServerRetryPeriod)
+					}
 					return err
 				}
 				glog.V(0).Infof("LOCK: no response within %s for key=%s filer=%s, falling back to seed filer=%s",
@@ -341,7 +344,9 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 		hostBefore := lock.hostFiler
 		err = lock.attemptToLockWithin(lockDuration, attemptTimeout)
 		if err == nil {
-			unavailableSince = time.Now()
+			// A clean LockHostMovedTo redirect returns no error and no
+			// token; it must still count against the window, or a redirect
+			// cycle between ring-disagreeing filers retries forever.
 			continue
 		}
 		glog.V(1).Infof("create lock %s: %v", lock.key, err)

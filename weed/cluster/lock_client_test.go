@@ -421,6 +421,68 @@ func TestNewShortLivedLockBoundsSeedRedirectCycle(t *testing.T) {
 	}
 }
 
+type cleanRedirectLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	movedTo string
+}
+
+func (s *cleanRedirectLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	return &filer_pb.LockResponse{LockHostMovedTo: s.movedTo}, nil
+}
+
+// A second hop whose ring disagrees answers with a bare LockHostMovedTo and
+// no error, so the first hop relays a clean redirect. Two filers pointing at
+// each other then bounce the client forever if every redirect refills the
+// window — tokenless redirects must count against it like failures do.
+func TestNewShortLivedLockBoundsCleanRedirectCycle(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	listenerA, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	listenerB, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hostA, portA, err := net.SplitHostPort(listenerA.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	hostB, portB, err := net.SplitHostPort(listenerB.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	addrA := pb.ServerAddress(fmt.Sprintf("%s:1.%s", hostA, portA))
+	addrB := pb.ServerAddress(fmt.Sprintf("%s:2.%s", hostB, portB))
+
+	serverA := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(serverA, &cleanRedirectLockFiler{movedTo: string(addrB)})
+	go serverA.Serve(listenerA)
+	defer serverA.Stop()
+	serverB := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(serverB, &cleanRedirectLockFiler{movedTo: string(addrA)})
+	go serverB.Serve(listenerB)
+	defer serverB.Stop()
+
+	lc := NewLockClient(dialOption, addrA)
+	lc.lockRpcTimeout = 50 * time.Millisecond
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+
+	done := make(chan *LiveLock, 1)
+	go func() {
+		done <- lc.NewShortLivedLock("test-key", "test-owner")
+	}()
+	select {
+	case lock := <-done:
+		if lock != nil {
+			t.Fatal("expected nil lock when the ring keeps redirecting")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("clean redirect cycle was not bounded by the retry window")
+	}
+}
+
 // A failed attempt keeps the token it sent: the request may have renewed the
 // lease server-side before its response was lost, and a retry with the last
 // token can still succeed. Only a definitive rejection may clear it.
