@@ -210,6 +210,7 @@ func init() {
 
 	filerStartSftp = cmdFiler.Flag.Bool("sftp", false, "whether to start the SFTP server")
 	filerSftpOptions.port = cmdFiler.Flag.Int("sftp.port", 2022, "SFTP server listen port")
+	filerSftpOptions.idleTimeout = cmdFiler.Flag.Int("sftp.idleTimeout", 10, "connection idle seconds")
 	filerSftpOptions.sshPrivateKey = cmdFiler.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	filerSftpOptions.hostKeysFolder = cmdFiler.Flag.String("sftp.hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
 	filerSftpOptions.authMethods = cmdFiler.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, certificate")

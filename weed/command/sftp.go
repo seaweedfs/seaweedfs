@@ -27,6 +27,7 @@ type SftpOptions struct {
 	bindIp                *string
 	listenOnLocalhost     *bool
 	port                  *int
+	idleTimeout           *int
 	sshPrivateKey         *string
 	hostKeysFolder        *string
 	authMethods           *string
@@ -62,6 +63,7 @@ func init() {
 	sftpOptionsStandalone.filer = cmdSftp.Flag.String("filer", "localhost:8888", "filer server address (ip:port)")
 	sftpOptionsStandalone.bindIp = cmdSftp.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
 	sftpOptionsStandalone.port = cmdSftp.Flag.Int("port", 2022, "SFTP server listen port")
+	sftpOptionsStandalone.idleTimeout = cmdSftp.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	sftpOptionsStandalone.sshPrivateKey = cmdSftp.Flag.String("sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	sftpOptionsStandalone.hostKeysFolder = cmdSftp.Flag.String("hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
 	sftpOptionsStandalone.authMethods = cmdSftp.Flag.String("authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, certificate")
@@ -111,6 +113,10 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	listenOnLocalhost := *sftpOpt.bindIp == ""
 	if sftpOpt.listenOnLocalhost != nil {
 		listenOnLocalhost = *sftpOpt.listenOnLocalhost
+	}
+	idleTimeout := time.Duration(10) * time.Second
+	if sftpOpt.idleTimeout != nil {
+		idleTimeout = time.Duration(*sftpOpt.idleTimeout) * time.Second
 	}
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
@@ -201,7 +207,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Start the SFTP service on TCP
 	listenAddress := fmt.Sprintf("%s:%d", *sftpOpt.bindIp, *sftpOpt.port)
-	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second, listenOnLocalhost)
+	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, idleTimeout, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
 	}
