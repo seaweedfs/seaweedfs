@@ -168,7 +168,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 				if resp.IsReadOnly {
 					isReadOnly = true
 				}
-				if resp.VolumeSize > t.volumeSizeLimit {
+				if resp.VolumeSize >= t.volumeSizeLimit {
 					isFullCapacity = true
 				}
 			}
@@ -203,7 +203,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 						if resp.IsReadOnly {
 							isReadOnly = true
 						}
-						if resp.VolumeSize > t.volumeSizeLimit {
+						if resp.VolumeSize >= t.volumeSizeLimit {
 							isFullCapacity = true
 						}
 					}
