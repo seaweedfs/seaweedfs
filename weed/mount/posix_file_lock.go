@@ -41,12 +41,13 @@ type lockWaiter struct {
 	wakeRefHeld bool
 }
 
-// fhLockOwners maps each open file handle to the non-flock lock owners that
+// fhLockOwners maps each open's fh value to the non-flock lock owners that
 // acquired locks through it. The kernel scopes POSIX fcntl locks to the
 // process — released on FLUSH by LockOwner — while OFD fcntl locks are scoped
 // to the open file description and get no cleanup notice: RELEASE carries a
-// lock_owner only for flock holders. Tracking owners per handle lets Release
-// drop every lock the file description held.
+// lock_owner only for flock holders. Tracking owners per open lets Release
+// drop the locks of the description that is closing while sibling opens of
+// the same inode keep theirs.
 type fhLockOwners struct {
 	mu sync.Mutex
 	m  map[uint64]map[uint64]struct{}

@@ -69,7 +69,7 @@ func (wfs *WFS) SetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 	return status
 }
 
-// noteFhLockOwner remembers a granted non-flock lock owner under the handle it
+// noteFhLockOwner remembers a granted non-flock lock owner under the open it
 // was taken on, so Release can drain every lock the file description held —
 // the kernel sends no cleanup notice for OFD locks.
 func (wfs *WFS) noteFhLockOwner(in *fuse.LkIn, status fuse.Status) {

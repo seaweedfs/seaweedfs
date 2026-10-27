@@ -22,6 +22,7 @@ var IsDebugFileReadWrite = false
 type FileHandle struct {
 	fh              FileHandleId
 	counter         int64
+	fhs             map[FileHandleId]struct{} // live fh values, one per open; guarded by fhMap's lock
 	entry           *LockedEntry
 	entryLock       sync.RWMutex
 	entryChunkGroup *filer.ChunkGroup
@@ -79,6 +80,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	fh := &FileHandle{
 		fh:      handleId,
 		counter: 1,
+		fhs:     map[FileHandleId]struct{}{handleId: {}},
 		inode:   inode,
 		wfs:     wfs,
 	}

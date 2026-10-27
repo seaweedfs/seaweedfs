@@ -65,11 +65,12 @@ import (
 */
 func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut) (status fuse.Status) {
 	var fileHandle *FileHandle
+	var openFh FileHandleId
 	ctx, cancelFunc := ctxFromCancel(cancel)
 	defer cancelFunc()
-	fileHandle, status = wfs.AcquireHandle(ctx, in.NodeId, in.Flags, in.Uid, in.Gid)
+	fileHandle, openFh, status = wfs.AcquireHandle(ctx, in.NodeId, in.Flags, in.Uid, in.Gid)
 	if status == fuse.OK {
-		out.Fh = uint64(fileHandle.fh)
+		out.Fh = uint64(openFh)
 		out.OpenFlags = 0
 
 		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime
@@ -144,7 +145,7 @@ func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 	// of how writeback fares, and a flush stuck on an unreachable filer must
 	// not pin a dead holder's lock in the table. The kernel only reports a
 	// lock_owner for flock holders, so OFD and leftover POSIX locks are
-	// drained through the owners recorded for this handle.
+	// drained through the owners recorded for this open's fh value.
 	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
 		wfs.releaseFlockOwner(in.NodeId, in.LockOwner)
 	}

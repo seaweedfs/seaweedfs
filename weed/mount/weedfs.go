@@ -160,7 +160,7 @@ type WFS struct {
 	posixSid              uint64             // this mount's session id, for routed-lock owner identity
 	posixHint             *posixLockHint     // local fcntl-lock hint for routed mode
 	posixOwn              *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
-	fhLocks               fhLockOwners       // non-flock lock owners per file handle, drained at release
+	fhLocks               fhLockOwners       // non-flock lock owners per open fh, drained at release
 	peerRegistrar         *PeerRegistrar
 	peerDirectory         *PeerDirectory
 	peerGrpcServer        *PeerGrpcServer

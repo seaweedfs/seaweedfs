@@ -22,7 +22,7 @@ func newOpenFileHandle(t *testing.T, fileSize uint64) (*WFS, *FileHandle) {
 	wfs := newCopyRangeTestWFS()
 	path := util.FullPath("/file.txt")
 	inode := wfs.inodeToPath.Lookup(path, 1, false, false, 0, true)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name: "file.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,

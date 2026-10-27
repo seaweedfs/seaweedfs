@@ -20,7 +20,7 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "f",
 		Attributes: &filer_pb.FuseAttributes{},
 	}, 0, 0)
@@ -87,15 +87,20 @@ func TestReleaseDropsOfdLocks(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	entry := &filer_pb.Entry{
 		Name:       "f",
 		Attributes: &filer_pb.FuseAttributes{},
-	}, 0, 0)
+	}
+	_, openFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	_, siblingFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	if siblingFh == openFh {
+		t.Fatal("sibling open must get its own fh value")
+	}
 
 	const ofdOwner = uint64(0x0fd0001)
 	ofd := &fuse.LkIn{
 		InHeader: fuse.InHeader{NodeId: inode},
-		Fh:       uint64(fh.fh),
+		Fh:       uint64(openFh),
 		Owner:    ofdOwner,
 		Lk:       fuse.FileLock{Start: 0, End: math.MaxUint64, Typ: f_RDLCK},
 	}
@@ -104,7 +109,7 @@ func TestReleaseDropsOfdLocks(t *testing.T) {
 	const siblingOwner = uint64(0x0fd0002)
 	sibling := &fuse.LkIn{
 		InHeader: fuse.InHeader{NodeId: inode},
-		Fh:       999,
+		Fh:       uint64(siblingFh),
 		Owner:    siblingOwner,
 		Lk:       fuse.FileLock{Start: 0, End: math.MaxUint64, Typ: f_RDLCK},
 	}
@@ -117,7 +122,7 @@ func TestReleaseDropsOfdLocks(t *testing.T) {
 
 	wfs.Release(nil, &fuse.ReleaseIn{
 		InHeader: fuse.InHeader{NodeId: inode},
-		Fh:       uint64(fh.fh),
+		Fh:       uint64(openFh),
 	})
 
 	// The dead description's read lock is gone: the sibling can upgrade to a
