@@ -394,7 +394,9 @@ func (lock *LiveLock) StopShortLivedLock() error {
 		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
 	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
+		defer cancel()
+		_, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
 			Name:       lock.key,
 			RenewToken: lock.renewToken,
 		})
