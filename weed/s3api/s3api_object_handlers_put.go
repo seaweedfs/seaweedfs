@@ -590,7 +590,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
-	if !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
+	// Multipart parts take their encryption from the decision snapshotted into the
+	// upload entry at CreateMultipartUpload (replayed above via request headers), so
+	// a PutBucketEncryption landing mid-upload must not split it into a mix of
+	// plaintext and ciphertext parts.
+	isMultipartPart := strings.HasPrefix(filePath, s3a.genUploadsFolder(bucket)+"/") && strings.HasSuffix(filePath, ".part")
+	if !isMultipartPart && !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
 
 		// Apply bucket default encryption and get the result

@@ -114,3 +114,50 @@ func TestPutObjectAppliesBucketDefaultEncryptionWithVolumeCipher(t *testing.T) {
 		})
 	}
 }
+
+// A part staged under .uploads must not pick up a bucket default encryption
+// change: the upload's encryption is fixed at CreateMultipartUpload, so a part
+// written after PutBucketEncryption would otherwise mix plaintext and
+// ciphertext parts and the completed object would fail to decrypt.
+func TestPutObjectPartSkipsBucketDefaultEncryption(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{
+		Name: "b",
+		Encryption: &s3_pb.EncryptionConfiguration{
+			SseAlgorithm: "AES256",
+		},
+	})
+
+	filePath := "/buckets/b/.uploads/up1/0002_deadbeef.part"
+	r := httptest.NewRequest(http.MethodPut, "/b/o?partNumber=2&uploadId=up1", nil)
+	etag, code, sseMeta := s3a.putToFiler(r, filePath, strings.NewReader("part data"), "b", "", 2, 0, nil, false, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler = %v, want %v", code, s3err.ErrNone)
+	}
+	if etag == "" {
+		t.Fatal("expected non-empty etag")
+	}
+	if sseMeta.SSEType != "" {
+		t.Fatalf("part unexpectedly encrypted, SSEType=%s", sseMeta.SSEType)
+	}
+
+	entry, ok := filerImpl.entries[filePath]
+	if !ok {
+		t.Fatalf("entry not found on filer at %s", filePath)
+	}
+	if _, has := entry.Extended[s3_constants.AmzServerSideEncryption]; has {
+		t.Fatal("part entry carries SSE attributes from bucket default encryption")
+	}
+	for i, chunk := range entry.Chunks {
+		if chunk.SseType != filer_pb.SSEType_NONE {
+			t.Errorf("chunk %d: expected SseType NONE, got %v", i, chunk.SseType)
+		}
+	}
+}
