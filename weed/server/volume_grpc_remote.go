@@ -314,11 +314,15 @@ func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client
 
 // newGuardedPeerHTTPClient is newGuardedHTTPClientPolicy for uploads to cluster
 // peers: a volume server fronted by TLS expects the https.client configuration
-// the shared global client carries, so the guarded transport borrows it.
+// the shared global client carries, so the guarded transport borrows it along
+// with its redirect policy — a redirect must not downgrade an upload carrying
+// data and auth headers to plaintext.
 func newGuardedPeerHTTPClient(endpoint string) *http.Client {
+	globalClient := util_http.GetGlobalHttpClient()
 	client := newGuardedHTTPClientPolicy(endpoint, true)
 	client.Transport.(*http.Transport).TLSClientConfig =
-		util_http.GetGlobalHttpClient().GetClientTransport().TLSClientConfig
+		globalClient.GetClientTransport().TLSClientConfig
+	client.CheckRedirect = globalClient.Client.CheckRedirect
 	return client
 }
 
