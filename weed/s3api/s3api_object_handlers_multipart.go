@@ -492,7 +492,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	// start the TTL clock before CompleteMultipartUpload ever assembled
 	// the object. filer.conf storage rules are the opposite case: they
 	// place the bytes the part becomes, so they resolve against the object.
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, "", partID, 0, nil, false, s3a.toFilerPath(bucket, object))
+	etag, errCode, sseMetadata := s3a.putToFiler(withMultipartPart(r), filePath, dataReader, bucket, "", partID, 0, nil, false, s3a.toFilerPath(bucket, object))
 	if errCode != s3err.ErrNone {
 		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
 			errCode, bucket, object, partID)
