@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -1048,21 +1049,31 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// without deleting the name path -- it may still hold another
 			// table's data that was left when this name was reused.
 			if req.VersionToken != "" && tableEntry != nil {
-				// A token caller owns exactly the record it read. Purge the
-				// data while the marker still holds the name: a create cannot
-				// reuse it mid-purge, and a failed purge leaves the record
-				// intact so a retry resumes. The marker then comes off under
-				// a compare on the captured attributes, so a delete+recreate
-				// in between aborts here instead of losing the replacement.
-				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+				// A token caller owns exactly the record it read. Claim it
+				// under the captured attributes before any data is removed:
+				// a rename or delete+recreate that moved the record aborts
+				// here, while it still points at live data. The claim holds
+				// the name through the purge, a failed purge releases it so
+				// the intact record can be retried, and the marker comes off
+				// under a compare on the claimed record.
+				snapshot := snapshotExtended(tableEntry.Extended)
+				if err := h.claimCatalogRecord(r.Context(), client, tablePath, snapshot, "delete"); err != nil {
+					if errors.Is(err, ErrConcurrentUpdate) {
+						return ErrVersionTokenMismatch
+					}
 					return err
 				}
-				snapshot := snapshotExtended(tableEntry.Extended)
-				markerKeys := []string{
-					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus,
+				claimed := snapshotExtended(tableEntry.Extended)
+				claimed[ExtendedKeyDeleting] = []byte("delete")
+				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+					if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+						glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
+					}
+					return err
 				}
-				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, snapshot, markerKeys...)
+				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, claimed,
+					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
 				if err != nil {
 					if errors.Is(err, ErrConcurrentUpdate) {
 						return ErrVersionTokenMismatch
@@ -1273,10 +1284,6 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	var metadataVersionXattr []byte
 	var maintenanceXattr []byte
 	var maintenanceStatusXattr []byte
-	// The values the rename copies. The source is only cleared while it still
-	// holds exactly these, so a write that lands mid-rename is not deleted here
-	// after having missed the copy to the destination.
-	var copiedFromSource map[string][]byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1314,10 +1321,6 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		srcExtended = srcEntry.Extended
-		copiedFromSource = make(map[string][]byte, len(renamedTableAttributes))
-		for _, key := range renamedTableAttributes {
-			copiedFromSource[key] = srcEntry.Extended[key]
-		}
 
 		// The maintenance configuration and its last-run status belong to the
 		// table, so they move with it; leaving them behind re-enables
@@ -1480,52 +1483,69 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	// Write the destination entry before deleting the source so a mid-rename
-	// failure can never lose the table.
+	// Claim the source record before publishing the destination: a delete or
+	// a second rename that wins the claim backs out here — while no
+	// destination entry exists — instead of leaving one behind pointing at
+	// data a delete already removed.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.createDirectory(r.Context(), client, destPath); err != nil {
+		if err := h.claimCatalogRecord(r.Context(), client, srcPath, snapshotExtended(srcExtended), "rename"); err != nil {
 			return err
+		}
+		claimed := snapshotExtended(srcExtended)
+		claimed[ExtendedKeyDeleting] = []byte("rename")
+		releaseClaim := func(err error) error {
+			if relErr := h.releaseCatalogRecord(r.Context(), client, srcPath, claimed); relErr != nil {
+				glog.Warningf("rename %s: release claim: %v", srcPath, relErr)
+			}
+			return err
+		}
+		if err := h.createDirectory(r.Context(), client, destPath); err != nil {
+			return releaseClaim(err)
 		}
 		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
+			return releaseClaim(err)
 		}
 		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyEntryType, []byte(kind.entryType)); err != nil {
-			return err
+			return releaseClaim(err)
 		}
 		if len(metadataVersionXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadataVersion, metadataVersionXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(tableTags) > 0 {
 			tagsBytes, err := json.Marshal(tableTags)
 			if err != nil {
-				return fmt.Errorf("failed to marshal tags: %w", err)
+				return releaseClaim(fmt.Errorf("failed to marshal tags: %w", err))
 			}
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyTags, tagsBytes); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if tablePolicy != "" {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyPolicy, []byte(tablePolicy)); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(maintenanceXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenance, maintenanceXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		if len(maintenanceStatusXattr) > 0 {
 			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenanceStatus, maintenanceStatusXattr); err != nil {
-				return err
+				return releaseClaim(err)
 			}
 		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
 		// (manifests embed absolute paths, so the data must not move).
-		return h.removeExtendedAttributesIf(r.Context(), client, srcPath, copiedFromSource,
-			renamedTableAttributes...)
+		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
+			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
+		if err != nil {
+			return releaseClaim(err)
+		}
+		return nil
 	})
 
 	if err != nil {
